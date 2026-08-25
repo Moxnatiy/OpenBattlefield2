@@ -15,6 +15,7 @@
 #include "obf2/core/platform.h"
 #include "obf2/gfx/mesh_renderer.h"
 #include "obf2/mesh/bf2_mesh.h"
+#include "obf2/texture/dds.h"
 #include "obf2/vfs/filesystem.h"
 
 namespace {
@@ -107,7 +108,38 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "рендерер: %s\n", error.c_str());
     return 1;
   }
-  auto gpuMesh = renderer->upload(*renderMesh, &error);
+  // Резолвер текстур: шлях із матеріалу -> байти з архіву -> розібраний DDS.
+  int texturesLoaded = 0, texturesMissing = 0;
+  auto resolveTexture =
+      [&](const std::string& mapName) -> std::optional<obf2::texture::Texture> {
+    const std::string path = obf2::normalizeAssetPath(mapName);
+    auto bytes = files.read(path);
+    if (!bytes) {
+      // Частина матеріалів посилається на текстуру без префікса точки
+      // монтування — пробуємо ще раз у "objects".
+      bytes = files.read(obf2::joinAssetPath("objects", path));
+    }
+    if (!bytes) {
+      ++texturesMissing;
+      std::fprintf(stderr, "  текстуру не знайдено: %s\n", path.c_str());
+      return std::nullopt;
+    }
+
+    std::string textureError;
+    auto decoded = obf2::texture::loadDds(*bytes, &textureError);
+    if (!decoded) {
+      ++texturesMissing;
+      std::fprintf(stderr, "  %s: %s\n", path.c_str(), textureError.c_str());
+      return std::nullopt;
+    }
+    ++texturesLoaded;
+    std::printf("  текстура: %s (%ux%u, %s, рівнів %zu)\n", path.c_str(), decoded->width,
+                decoded->height, std::string(obf2::texture::formatName(decoded->format)).c_str(),
+                decoded->mips.size());
+    return decoded;
+  };
+
+  auto gpuMesh = renderer->upload(*renderMesh, resolveTexture, &error);
   if (!gpuMesh) {
     std::fprintf(stderr, "завантаження в GPU: %s\n", error.c_str());
     return 1;
@@ -157,6 +189,7 @@ int main(int argc, char** argv) {
   }
 
   renderer->release(*gpuMesh);
+  std::printf("текстур завантажено: %d, не знайдено: %d\n", texturesLoaded, texturesMissing);
   std::printf("кадрів намальовано: %d\n", frame);
   return 0;
 }

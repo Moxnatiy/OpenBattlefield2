@@ -77,6 +77,59 @@ int main(int argc, char** argv) {
   obf2::FileSystem files = mountGame(argv[1]);
   const std::string what = argv[2];
 
+  // Розвідка: які technique зустрічаються і що лежить у кожному слоті текстур.
+  // Потрібно, щоб зрозуміти, який слот вважати базовим кольором.
+  if (what == "--materials") {
+    std::map<std::string, int> techniques;
+    std::map<std::string, int> slotSuffix;  // "слот N: суфікс" -> скільки разів
+
+    auto scan = files.list();
+    std::sort(scan.begin(), scan.end());
+    scan.erase(std::unique(scan.begin(), scan.end()), scan.end());
+
+    for (const auto& path : scan) {
+      if (obf2::assetExtension(path) != "staticmesh") continue;
+      const auto bytes = files.read(path);
+      if (!bytes) continue;
+      const auto mesh = obf2::mesh::load(*bytes, obf2::mesh::Kind::Static);
+      if (!mesh) continue;
+
+      for (const auto& geometry : mesh->geometries) {
+        for (const auto& lod : geometry.lods) {
+          for (const auto& material : lod.materials) {
+            ++techniques[material.technique];
+            for (std::size_t slot = 0; slot < material.maps.size() && slot < 4; ++slot) {
+              const std::string& map = material.maps[slot];
+              const std::size_t dot = map.find_last_of('.');
+              const std::size_t underscore = map.find_last_of('_', dot);
+              std::string suffix = (underscore == std::string::npos || dot == std::string::npos)
+                                       ? "<без суфікса>"
+                                       : map.substr(underscore, dot - underscore);
+              ++slotSuffix["слот " + std::to_string(slot) + ": " + suffix];
+            }
+          }
+        }
+      }
+    }
+
+    std::puts("technique (топ-10):");
+    std::vector<std::pair<std::string, int>> sortedTechniques(techniques.begin(), techniques.end());
+    std::sort(sortedTechniques.begin(), sortedTechniques.end(),
+              [](auto& a, auto& b) { return a.second > b.second; });
+    for (std::size_t i = 0; i < sortedTechniques.size() && i < 10; ++i) {
+      std::printf("  %-28s %d\n", sortedTechniques[i].first.c_str(), sortedTechniques[i].second);
+    }
+
+    std::puts("\nсуфікси текстур по слотах (топ-14):");
+    std::vector<std::pair<std::string, int>> sortedSlots(slotSuffix.begin(), slotSuffix.end());
+    std::sort(sortedSlots.begin(), sortedSlots.end(),
+              [](auto& a, auto& b) { return a.second > b.second; });
+    for (std::size_t i = 0; i < sortedSlots.size() && i < 14; ++i) {
+      std::printf("  %-28s %d\n", sortedSlots[i].first.c_str(), sortedSlots[i].second);
+    }
+    return 0;
+  }
+
   if (what != "--all") { printOne(files, obf2::normalizeAssetPath(what)); return 0; }
 
   const std::string wanted = argc > 3 ? argv[3] : "";
