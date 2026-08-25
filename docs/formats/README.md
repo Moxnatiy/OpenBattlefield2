@@ -11,6 +11,8 @@
 | `.ske` / `.baf` (скелет, анімація) | ⬜ специфікація є у Project Dalian + BfMeshView | — |
 | `.collisionmesh` | ⬜ те саме | — |
 | `.dds` | ✅ 2229 з 2230 текстур гри, рендериться | [dds.md](dds.md), `src/texture` |
+| Шрифти `.dif` + локалізація `.utxt` | ✅ текстові формати, меню й екран завантаження | [font-and-localization.md](font-and-localization.md), `src/font`, `src/loc` |
+| netcode: BitStream і заголовки | 🟡 примітиви готові, з'єднання попереду | [../research/04-netcode.md](../research/04-netcode.md), `src/net` |
 | netcode-протокол | ⬜ потребує RE (Ghidra / BitStream Emulator) | — |
 
 Графічний бекенд: SDL3 + SDL_GPU, рішення — [../research/01-render-backend.md](../research/01-render-backend.md).

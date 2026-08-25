@@ -65,6 +65,54 @@ std::size_t levelSize(Format format, std::uint32_t width, std::uint32_t height) 
   return 0;
 }
 
+namespace {
+
+// A4R4G4B4 / R5G6B5 -> B8G8R8A8. Нібблі й п'ятірки бітів розтягуються так,
+// щоб 0xF став 0xFF, а не 0xF0.
+void expandToBgra8(Texture& texture) {
+  std::vector<std::byte> out;
+  std::vector<MipLevel> mips;
+  out.reserve(texture.data.size() * 2);
+
+  for (const MipLevel& mip : texture.mips) {
+    const std::size_t pixels = static_cast<std::size_t>(mip.width) * mip.height;
+    const std::size_t start = out.size();
+
+    for (std::size_t i = 0; i < pixels; ++i) {
+      const std::size_t at = mip.offset + i * 2;
+      if (at + 1 >= texture.data.size()) break;
+      const auto value = static_cast<std::uint32_t>(
+          static_cast<std::uint8_t>(texture.data[at]) |
+          (static_cast<std::uint32_t>(static_cast<std::uint8_t>(texture.data[at + 1])) << 8));
+
+      std::uint8_t b = 0, g = 0, r = 0, a = 255;
+      if (texture.format == Format::Bgra4) {
+        const auto expand4 = [](std::uint32_t v) { return static_cast<std::uint8_t>(v * 17u); };
+        b = expand4(value & 0xF);
+        g = expand4((value >> 4) & 0xF);
+        r = expand4((value >> 8) & 0xF);
+        a = expand4((value >> 12) & 0xF);
+      } else {  // R5G6B5
+        b = static_cast<std::uint8_t>(((value & 0x1F) * 255 + 15) / 31);
+        g = static_cast<std::uint8_t>((((value >> 5) & 0x3F) * 255 + 31) / 63);
+        r = static_cast<std::uint8_t>((((value >> 11) & 0x1F) * 255 + 15) / 31);
+      }
+
+      out.push_back(static_cast<std::byte>(b));
+      out.push_back(static_cast<std::byte>(g));
+      out.push_back(static_cast<std::byte>(r));
+      out.push_back(static_cast<std::byte>(a));
+    }
+    mips.push_back(MipLevel{mip.width, mip.height, start, out.size() - start});
+  }
+
+  texture.format = Format::Bgra8;
+  texture.data = std::move(out);
+  texture.mips = std::move(mips);
+}
+
+}  // namespace
+
 Texture solidColor(float red, float green, float blue, float alpha) {
   auto toByte = [](float value) {
     const float clamped = value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value);
@@ -159,6 +207,16 @@ std::optional<Texture> loadDds(std::span<const std::byte> bytes, std::string* er
 
   texture.data.resize(offset);
   std::memcpy(texture.data.data(), bytes.data() + payloadOffset, offset);
+
+  // 16-бітні формати розгортаємо у B8G8R8A8 ще на завантаженні.
+  //
+  // Причина: у DDS порядок каналів заданий масками (A4R4G4B4 — альфа в
+  // старшому нібблі), а імена пакованих 16-бітних форматів у графічних API
+  // означають порядок по-своєму. Ризикувати перекрученими каналами заради
+  // 345 невеликих текстур інтерфейсу не варто — дешевше розгорнути.
+  if (texture.format == Format::Bgra4 || texture.format == Format::Bgr565) {
+    expandToBgra8(texture);
+  }
   return texture;
 }
 

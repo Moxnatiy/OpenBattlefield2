@@ -18,7 +18,9 @@
 #include <vector>
 
 #include "obf2/engine/console.h"
+#include "obf2/engine/control_map.h"
 #include "obf2/engine/settings.h"
+#include "obf2/loc/lexicon.h"
 #include "obf2/vfs/filesystem.h"
 
 namespace obf2::engine {
@@ -39,6 +41,14 @@ struct Movie {
   std::size_t sizeBytes = 0;
 };
 
+// Рівень у списку меню. Назву беремо з Info/<ім'я>.desc, як і гра.
+struct LevelEntry {
+  std::string directory;   // ім'я теки: Dalian_plant
+  std::string displayName; // <name> з .desc
+  std::string loadImage;   // Info/loadmap.png, якщо є
+  std::string briefingKey; // locid із <briefing> — опис на екрані завантаження
+};
+
 class Engine {
  public:
   // Виконує стартовий ланцюжок .con у тому ж порядку, що й гра.
@@ -46,26 +56,42 @@ class Engine {
 
   void update(float deltaSeconds);
 
+  // Перехід до завантаження рівня — як вибір карти в меню.
+  bool startLoading(std::string_view levelDirectory);
+  void finishLoading();
+
   // Пропустити поточну заставку — як пробіл у грі.
   void skipMovie();
+  // Пропустити всі заставки одразу (потрібно для детермінованих знімків).
+  void skipAllMovies();
 
   State state() const { return state_; }
   const Settings& settings() const { return settings_; }
+  const ControlMap& controls() const { return controls_; }
   Console& console() { return console_; }
   const Console& console() const { return console_; }
 
   const std::vector<Movie>& movies() const { return movies_; }
+  const std::vector<LevelEntry>& levels() const { return levels_; }
+  const loc::Lexicon& lexicon() const { return lexicon_; }
+  const LevelEntry* loadingLevel() const;
   int currentMovie() const { return currentMovie_; }
   const std::vector<std::string>& bootFiles() const { return bootFiles_; }
 
  private:
   void enter(State next);
+  void loadLexicon(FileSystem& files);
+  void scanLevels(FileSystem& files, const std::filesystem::path& modDir);
 
   Console console_;
   Settings settings_;
+  ControlMap controls_;
   State state_ = State::Boot;
 
   std::vector<Movie> movies_;
+  std::vector<LevelEntry> levels_;
+  loc::Lexicon lexicon_;
+  int loadingIndex_ = -1;
   std::vector<std::string> bootFiles_;  // які .con реально прочиталися
   int currentMovie_ = -1;
   float movieElapsed_ = 0.0f;

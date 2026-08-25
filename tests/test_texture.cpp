@@ -111,10 +111,13 @@ static void testUncompressedVariants() {
     std::uint32_t maskA;
     Format expected;
   };
+  // 16-бітні формати розгортаються у B8G8R8A8 ще на завантаженні: імена
+  // пакованих 16-бітних форматів у графічних API означають порядок каналів
+  // по-своєму, і покладатися на збіг із масками DDS ненадійно.
   const Case cases[] = {
       {32, 0x00FF0000, 0xFF000000, Format::Bgra8},
-      {16, 0x00000F00, 0x0000F000, Format::Bgra4},
-      {16, 0x0000F800, 0x00000000, Format::Bgr565},
+      {16, 0x00000F00, 0x0000F000, Format::Bgra8},
+      {16, 0x0000F800, 0x00000000, Format::Bgra8},
   };
 
   for (const Case& c : cases) {
@@ -122,7 +125,7 @@ static void testUncompressedVariants() {
                            .size(4, 4)
                            .mipCount(1)
                            .rgb(c.bits, c.maskR, c.maskA)
-                           .payload(levelSize(c.expected, 4, 4))
+                           .payload(levelSize(c.bits == 32 ? Format::Bgra8 : Format::Bgra4, 4, 4))
                            .build();
     std::string error;
     const auto texture = loadDds(bytes, &error);

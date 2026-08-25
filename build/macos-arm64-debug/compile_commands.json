@@ -73,21 +73,51 @@
 },
 {
   "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
-  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/engine/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/vfs/include -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror -o src/engine/CMakeFiles/obf2_engine.dir/src/console.cpp.o -c /Users/miami/OpenBattlefield2/src/engine/src/console.cpp",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/engine/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/vfs/include -I/Users/miami/OpenBattlefield2/src/loc/include -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror -o src/engine/CMakeFiles/obf2_engine.dir/src/console.cpp.o -c /Users/miami/OpenBattlefield2/src/engine/src/console.cpp",
   "file": "/Users/miami/OpenBattlefield2/src/engine/src/console.cpp",
   "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/engine/CMakeFiles/obf2_engine.dir/src/console.cpp.o"
 },
 {
   "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
-  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/engine/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/vfs/include -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror -o src/engine/CMakeFiles/obf2_engine.dir/src/settings.cpp.o -c /Users/miami/OpenBattlefield2/src/engine/src/settings.cpp",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/engine/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/vfs/include -I/Users/miami/OpenBattlefield2/src/loc/include -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror -o src/engine/CMakeFiles/obf2_engine.dir/src/settings.cpp.o -c /Users/miami/OpenBattlefield2/src/engine/src/settings.cpp",
   "file": "/Users/miami/OpenBattlefield2/src/engine/src/settings.cpp",
   "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/engine/CMakeFiles/obf2_engine.dir/src/settings.cpp.o"
 },
 {
   "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
-  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/engine/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/vfs/include -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror -o src/engine/CMakeFiles/obf2_engine.dir/src/engine.cpp.o -c /Users/miami/OpenBattlefield2/src/engine/src/engine.cpp",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/engine/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/vfs/include -I/Users/miami/OpenBattlefield2/src/loc/include -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror -o src/engine/CMakeFiles/obf2_engine.dir/src/control_map.cpp.o -c /Users/miami/OpenBattlefield2/src/engine/src/control_map.cpp",
+  "file": "/Users/miami/OpenBattlefield2/src/engine/src/control_map.cpp",
+  "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/engine/CMakeFiles/obf2_engine.dir/src/control_map.cpp.o"
+},
+{
+  "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/engine/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/vfs/include -I/Users/miami/OpenBattlefield2/src/loc/include -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror -o src/engine/CMakeFiles/obf2_engine.dir/src/engine.cpp.o -c /Users/miami/OpenBattlefield2/src/engine/src/engine.cpp",
   "file": "/Users/miami/OpenBattlefield2/src/engine/src/engine.cpp",
   "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/engine/CMakeFiles/obf2_engine.dir/src/engine.cpp.o"
+},
+{
+  "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/net/include -I/Users/miami/OpenBattlefield2/src/core/include -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror -o src/net/CMakeFiles/obf2_net.dir/src/bitstream.cpp.o -c /Users/miami/OpenBattlefield2/src/net/src/bitstream.cpp",
+  "file": "/Users/miami/OpenBattlefield2/src/net/src/bitstream.cpp",
+  "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/net/CMakeFiles/obf2_net.dir/src/bitstream.cpp.o"
+},
+{
+  "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/font/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/mesh/include -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror -o src/font/CMakeFiles/obf2_font.dir/src/dif_font.cpp.o -c /Users/miami/OpenBattlefield2/src/font/src/dif_font.cpp",
+  "file": "/Users/miami/OpenBattlefield2/src/font/src/dif_font.cpp",
+  "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/font/CMakeFiles/obf2_font.dir/src/dif_font.cpp.o"
+},
+{
+  "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/font/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/mesh/include -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror -o src/font/CMakeFiles/obf2_font.dir/src/text.cpp.o -c /Users/miami/OpenBattlefield2/src/font/src/text.cpp",
+  "file": "/Users/miami/OpenBattlefield2/src/font/src/text.cpp",
+  "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/font/CMakeFiles/obf2_font.dir/src/text.cpp.o"
+},
+{
+  "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/loc/include -I/Users/miami/OpenBattlefield2/src/core/include -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror -o src/loc/CMakeFiles/obf2_loc.dir/src/lexicon.cpp.o -c /Users/miami/OpenBattlefield2/src/loc/src/lexicon.cpp",
+  "file": "/Users/miami/OpenBattlefield2/src/loc/src/lexicon.cpp",
+  "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/loc/CMakeFiles/obf2_loc.dir/src/lexicon.cpp.o"
 },
 {
   "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
@@ -103,7 +133,7 @@
 },
 {
   "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
-  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/gfx/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/mesh/include -I/Users/miami/OpenBattlefield2/src/texture/include -I/opt/homebrew/include -I/Users/miami/OpenBattlefield2/src/vfs/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/game/include -I/Users/miami/OpenBattlefield2/src/level/include -I/Users/miami/OpenBattlefield2/src/engine/include -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror -o src/app/CMakeFiles/openbf2.dir/main.cpp.o -c /Users/miami/OpenBattlefield2/src/app/main.cpp",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/gfx/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/mesh/include -I/Users/miami/OpenBattlefield2/src/texture/include -I/opt/homebrew/include -I/Users/miami/OpenBattlefield2/src/vfs/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/game/include -I/Users/miami/OpenBattlefield2/src/level/include -I/Users/miami/OpenBattlefield2/src/engine/include -I/Users/miami/OpenBattlefield2/src/loc/include -I/Users/miami/OpenBattlefield2/src/font/include -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror -o src/app/CMakeFiles/openbf2.dir/main.cpp.o -c /Users/miami/OpenBattlefield2/src/app/main.cpp",
   "file": "/Users/miami/OpenBattlefield2/src/app/main.cpp",
   "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/app/CMakeFiles/openbf2.dir/main.cpp.o"
 },
@@ -175,8 +205,20 @@
 },
 {
   "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
-  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/tests -I/Users/miami/OpenBattlefield2/src/engine/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/vfs/include -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror -o tests/CMakeFiles/test_engine.dir/test_engine.cpp.o -c /Users/miami/OpenBattlefield2/tests/test_engine.cpp",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/tests -I/Users/miami/OpenBattlefield2/src/engine/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/vfs/include -I/Users/miami/OpenBattlefield2/src/loc/include -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror -o tests/CMakeFiles/test_engine.dir/test_engine.cpp.o -c /Users/miami/OpenBattlefield2/tests/test_engine.cpp",
   "file": "/Users/miami/OpenBattlefield2/tests/test_engine.cpp",
   "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_engine.dir/test_engine.cpp.o"
+},
+{
+  "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/tests -I/Users/miami/OpenBattlefield2/src/net/include -I/Users/miami/OpenBattlefield2/src/core/include -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror -o tests/CMakeFiles/test_bitstream.dir/test_bitstream.cpp.o -c /Users/miami/OpenBattlefield2/tests/test_bitstream.cpp",
+  "file": "/Users/miami/OpenBattlefield2/tests/test_bitstream.cpp",
+  "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_bitstream.dir/test_bitstream.cpp.o"
+},
+{
+  "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/tests -I/Users/miami/OpenBattlefield2/src/font/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/mesh/include -I/Users/miami/OpenBattlefield2/src/loc/include -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror -o tests/CMakeFiles/test_font_loc.dir/test_font_loc.cpp.o -c /Users/miami/OpenBattlefield2/tests/test_font_loc.cpp",
+  "file": "/Users/miami/OpenBattlefield2/tests/test_font_loc.cpp",
+  "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_font_loc.dir/test_font_loc.cpp.o"
 }
 ]

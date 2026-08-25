@@ -20,6 +20,7 @@
 #include "obf2/core/path.h"
 #include "obf2/core/platform.h"
 #include "obf2/engine/engine.h"
+#include "obf2/font/text.h"
 #include "obf2/game/scene.h"
 #include "obf2/gfx/mesh_renderer.h"
 #include "obf2/level/level.h"
@@ -38,6 +39,7 @@ struct Args {
   int lodIndex = 0;
   int frames = 0;  // 0 = крутитися, доки не закриють вікно
   std::string screenshot;
+  std::string screen;  // menu | loading — для детермінованих знімків
   std::optional<obf2::Vec3f> focus;  // куди дивиться камера
   float distance = 0.0f;             // 0 = підібрати за габаритами
 };
@@ -54,6 +56,7 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--lod" && i + 1 < argc) args.lodIndex = std::atoi(argv[++i]);
     else if (flag == "--frames" && i + 1 < argc) args.frames = std::atoi(argv[++i]);
     else if (flag == "--screenshot" && i + 1 < argc) args.screenshot = argv[++i];
+    else if (flag == "--screen" && i + 1 < argc) args.screen = argv[++i];
     else if (flag == "--dist" && i + 1 < argc) args.distance = static_cast<float>(std::atof(argv[++i]));
     else if (flag == "--focus" && i + 1 < argc) {
       // Формат як у грі: x/y/z
@@ -225,6 +228,33 @@ obf2::mesh::RenderMesh buildScreenQuad(const std::string& imagePath) {
   return quad;
 }
 
+// Шрифт: пара .dif (метрики) + .dds (атлас) з Fonts_client.zip.
+struct LoadedFont {
+  obf2::font::Font font;
+  std::string atlasPath;
+  bool valid = false;
+};
+
+LoadedFont loadFont(obf2::FileSystem& files, const std::string& base) {
+  LoadedFont out;
+  const auto metrics = files.read(base + ".dif");
+  if (!metrics) return out;
+
+  const std::string text(reinterpret_cast<const char*>(metrics->data()), metrics->size());
+  std::string error;
+  auto parsed = obf2::font::parseDif(text, &error);
+  if (!parsed) {
+    std::fprintf(stderr, "шрифт %s: %s\n", base.c_str(), error.c_str());
+    return out;
+  }
+
+  out.font = std::move(*parsed);
+  out.atlasPath = base + ".dds";
+  out.valid = files.exists(out.atlasPath);
+  if (!out.valid) std::fprintf(stderr, "немає атласа шрифту: %s\n", out.atlasPath.c_str());
+  return out;
+}
+
 // Тло головного меню. У грі меню — це Flash, який рушій крутить своїм
 // програвачем; ассети до нього лежать звичайними PNG, і саме їх ми беремо.
 std::string findMenuBackground(obf2::FileSystem& files) {
@@ -351,6 +381,9 @@ int main(int argc, char** argv) {
   const bool bootMode = args.levelName.empty() && args.objectName.empty() && args.meshPath.empty();
   int introQuad = -1;
   int menuQuad = -1;
+  int loadingQuad = -1;
+  std::vector<int> menuTextQuads;
+  std::vector<int> loadingTextQuads;
 
   if (bootMode) {
     engine.boot(files, args.modDir);
@@ -373,7 +406,7 @@ int main(int argc, char** argv) {
                 console.handlerCount(), console.executedCount(), console.unknownCount());
     int shown = 0;
     for (const auto& [name, count] : console.unknownCommands()) {
-      if (shown++ >= 8) break;
+      if (shown++ >= 24) break;
       std::printf("    без обробника: %s (x%d)\n", name.c_str(), count);
     }
 
@@ -386,6 +419,75 @@ int main(int argc, char** argv) {
     introQuad = static_cast<int>(scene.meshes.size()) - 1;
     scene.meshes.push_back(buildScreenQuad(background));
     menuQuad = static_cast<int>(scene.meshes.size()) - 1;
+
+    // --- шрифт, локалізація, список карт ---
+    const LoadedFont menuFont = loadFont(files, "Fonts/800/dynamicText_13");
+    std::printf("  шрифт: %s, гліфів %zu, пар кернінгу %zu, атлас %dx%d\n",
+                menuFont.valid ? menuFont.font.name.c_str() : "(немає)",
+                menuFont.font.glyphCount(), menuFont.font.kerningCount(),
+                menuFont.font.atlasWidth, menuFont.font.atlasHeight);
+    std::printf("  локалізація: %zu рядків, рівнів: %zu\n", engine.lexicon().size(),
+                engine.levels().size());
+
+    if (menuFont.valid) {
+      obf2::font::TextLayout layout;
+      layout.screenWidth = 1280;
+      layout.screenHeight = 720;
+
+      auto addText = [&](std::string_view text, float x, float y, float scale) {
+        layout.x = x;
+        layout.y = y;
+        layout.scale = scale;
+        auto geometry = obf2::font::buildText(menuFont.font, text, layout, menuFont.atlasPath);
+        if (geometry.indices.empty()) return -1;
+        scene.meshes.push_back(std::move(geometry));
+        return static_cast<int>(scene.meshes.size()) - 1;
+      };
+
+      menuTextQuads.push_back(addText("OpenBattlefield2", 64.0f, 48.0f, 2.5f));
+      // Підпис беремо з лексикону гри — так само, як це робить меню.
+      menuTextQuads.push_back(
+          addText(engine.lexicon().text("HUD_SINGLEPLAYER_STARTGAME"), 64.0f, 110.0f, 1.4f));
+
+      float y = 160.0f;
+      for (const auto& entry : engine.levels()) {
+        if (y > 660.0f) break;
+        menuTextQuads.push_back(addText(entry.displayName, 80.0f, y, 1.2f));
+        y += 24.0f;
+      }
+      menuTextQuads.erase(std::remove(menuTextQuads.begin(), menuTextQuads.end(), -1),
+                          menuTextQuads.end());
+
+      // --- екран завантаження ---
+      const auto* first = engine.levels().empty() ? nullptr : &engine.levels().front();
+      if (first != nullptr) {
+        const std::string image = first->loadImage.empty() ? std::string("#101418") : first->loadImage;
+        scene.meshes.push_back(buildScreenQuad(image));
+        loadingQuad = static_cast<int>(scene.meshes.size()) - 1;
+
+        loadingTextQuads.push_back(addText(first->displayName, 64.0f, 520.0f, 2.0f));
+
+        // Опис карти — той самий рядок лексикону, що показує гра
+        // (locid із <briefing> у .desc).
+        if (!first->briefingKey.empty()) {
+          const std::string_view briefing = engine.lexicon().text(first->briefingKey);
+          float y = 570.0f;
+          for (const auto& line : obf2::font::wrapText(menuFont.font, briefing, 900.0f, 1.1f)) {
+            if (y > 690.0f) break;
+            loadingTextQuads.push_back(addText(line, 64.0f, y, 1.1f));
+            y += 18.0f;
+          }
+        }
+        loadingTextQuads.erase(std::remove(loadingTextQuads.begin(), loadingTextQuads.end(), -1),
+                               loadingTextQuads.end());
+      }
+    }
+
+    if (args.screen == "menu") engine.skipAllMovies();
+    if (args.screen == "loading" && !engine.levels().empty()) {
+      engine.skipAllMovies();
+      engine.startLoading(engine.levels().front().directory);
+    }
   } else if (args.levelName.empty()) {
     std::optional<obf2::mesh::RenderMesh> single;
     if (!args.objectName.empty()) {
@@ -520,14 +622,23 @@ int main(int argc, char** argv) {
       engine.update(1.0f / 60.0f);
       if (device->consumeSkip()) engine.skipMovie();
 
-      const int quad = engine.state() == obf2::engine::State::Intro ? introQuad : menuQuad;
+      const bool loading = engine.state() == obf2::engine::State::Loading;
+      const int quad = engine.state() == obf2::engine::State::Intro ? introQuad
+                       : loading                                    ? loadingQuad
+                                                                    : menuQuad;
+      const std::vector<int>& overlay = loading ? loadingTextQuads : menuTextQuads;
+
       std::vector<obf2::gfx::MeshRenderer::DrawItem> screen;
-      if (quad >= 0 && uploadedOk[static_cast<std::size_t>(quad)]) {
+      auto push = [&](int index) {
+        if (index < 0 || !uploadedOk[static_cast<std::size_t>(index)]) return;
         screen.push_back(obf2::gfx::MeshRenderer::DrawItem{
-            &gpuMeshes[static_cast<std::size_t>(quad)], obf2::Mat4::identity()});
+            &gpuMeshes[static_cast<std::size_t>(index)], obf2::Mat4::identity()});
+      };
+      push(quad);
+      if (engine.state() != obf2::engine::State::Intro) {
+        for (const int index : overlay) push(index);
       }
-      renderer->renderScene(*acquired, screen, obf2::Mat4::identity(),
-                            obf2::gfx::Color{0.0f, 0.0f, 0.0f, 1.0f});
+      renderer->renderOverlay(*acquired, screen, obf2::gfx::Color{0.0f, 0.0f, 0.0f, 1.0f});
     } else {
       renderer->renderScene(*acquired, items, projection * view,
                             obf2::gfx::Color{0.42f, 0.55f, 0.68f, 1.0f});

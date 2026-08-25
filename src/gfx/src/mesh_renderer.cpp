@@ -50,6 +50,48 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
 }
 )MSL";
 
+// Шейдер інтерфейсу: текстура як є, з альфою, без освітлення.
+constexpr const char* kOverlayShaderSource = R"MSL(
+#include <metal_stdlib>
+using namespace metal;
+
+struct VertexIn {
+    float3 position [[attribute(0)]];
+    float3 normal   [[attribute(1)]];
+    float2 uv       [[attribute(2)]];
+};
+
+struct VertexOut {
+    float4 position [[position]];
+    float2 uv;
+};
+
+vertex VertexOut overlay_vertex(VertexIn in [[stage_in]]) {
+    VertexOut out;
+    out.position = float4(in.position, 1.0);
+    out.uv = in.uv;
+    return out;
+}
+
+fragment float4 overlay_fragment(VertexOut in [[stage_in]],
+                                 texture2d<float> image [[texture(0)]],
+                                 sampler imageSampler [[sampler(0)]]) {
+    return image.sample(imageSampler, in.uv);
+}
+)MSL";
+
+SDL_GPUShader* createOverlayShader(SDL_GPUDevice* gpu, SDL_GPUShaderStage stage,
+                                   const char* entrypoint) {
+  SDL_GPUShaderCreateInfo info{};
+  info.code = reinterpret_cast<const Uint8*>(kOverlayShaderSource);
+  info.code_size = std::strlen(kOverlayShaderSource);
+  info.entrypoint = entrypoint;
+  info.format = SDL_GPU_SHADERFORMAT_MSL;
+  info.stage = stage;
+  info.num_samplers = stage == SDL_GPU_SHADERSTAGE_FRAGMENT ? 1 : 0;
+  return SDL_CreateGPUShader(gpu, &info);
+}
+
 SDL_GPUShader* createShader(SDL_GPUDevice* gpu, SDL_GPUShaderStage stage, const char* entrypoint) {
   const bool isVertex = stage == SDL_GPU_SHADERSTAGE_VERTEX;
   SDL_GPUShaderCreateInfo info{};
@@ -84,6 +126,7 @@ MeshRenderer::~MeshRenderer() {
   if (device_ == nullptr) return;
   SDL_GPUDevice* gpu = device_->gpu();
   if (placeholder_ != nullptr) SDL_ReleaseGPUTexture(gpu, placeholder_);
+  if (overlayPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, overlayPipeline_);
   if (sampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, sampler_);
   if (pipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, pipeline_);
 }
@@ -152,6 +195,39 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   auto renderer = std::unique_ptr<MeshRenderer>(new MeshRenderer());
   renderer->device_ = &device;
   renderer->pipeline_ = pipeline;
+
+  // Другий пайплайн — для інтерфейсу: глибини немає (порядок задає сам
+  // виклик), зате є альфа-змішування, без якого гліфи шрифту були б
+  // непрозорими прямокутниками.
+  SDL_GPUShader* overlayVertex = createOverlayShader(gpu, SDL_GPU_SHADERSTAGE_VERTEX, "overlay_vertex");
+  SDL_GPUShader* overlayFragment =
+      createOverlayShader(gpu, SDL_GPU_SHADERSTAGE_FRAGMENT, "overlay_fragment");
+  if (overlayVertex == nullptr || overlayFragment == nullptr) return fail("шейдер інтерфейсу");
+
+  SDL_GPUColorTargetDescription overlayTarget{};
+  overlayTarget.format = device.colorFormat();
+  overlayTarget.blend_state.enable_blend = true;
+  overlayTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
+  overlayTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+  overlayTarget.blend_state.color_blend_op = SDL_GPU_BLENDOP_ADD;
+  overlayTarget.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+  overlayTarget.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+  overlayTarget.blend_state.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
+
+  SDL_GPUGraphicsPipelineCreateInfo overlayInfo{};
+  overlayInfo.vertex_shader = overlayVertex;
+  overlayInfo.fragment_shader = overlayFragment;
+  overlayInfo.vertex_input_state = info.vertex_input_state;
+  overlayInfo.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+  overlayInfo.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+  overlayInfo.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+  overlayInfo.target_info.color_target_descriptions = &overlayTarget;
+  overlayInfo.target_info.num_color_targets = 1;
+
+  renderer->overlayPipeline_ = SDL_CreateGPUGraphicsPipeline(gpu, &overlayInfo);
+  SDL_ReleaseGPUShader(gpu, overlayVertex);
+  SDL_ReleaseGPUShader(gpu, overlayFragment);
+  if (renderer->overlayPipeline_ == nullptr) return fail("пайплайн інтерфейсу");
 
   SDL_GPUSamplerCreateInfo samplerInfo{};
   samplerInfo.min_filter = SDL_GPU_FILTER_LINEAR;
@@ -343,6 +419,38 @@ void MeshRenderer::release(GpuMesh& gpuMesh) {
   if (gpuMesh.vertices != nullptr) SDL_ReleaseGPUBuffer(gpu, gpuMesh.vertices);
   if (gpuMesh.indices != nullptr) SDL_ReleaseGPUBuffer(gpu, gpuMesh.indices);
   gpuMesh = GpuMesh{};
+}
+
+void MeshRenderer::renderOverlay(const Frame& frame, const std::vector<DrawItem>& items,
+                                 Color clearColor) {
+  SDL_GPUColorTargetInfo colorTarget{};
+  colorTarget.texture = frame.swapchain;
+  colorTarget.clear_color = SDL_FColor{clearColor.r, clearColor.g, clearColor.b, clearColor.a};
+  colorTarget.load_op = SDL_GPU_LOADOP_CLEAR;
+  colorTarget.store_op = SDL_GPU_STOREOP_STORE;
+
+  SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(frame.commands, &colorTarget, 1, nullptr);
+  SDL_BindGPUGraphicsPipeline(pass, overlayPipeline_);
+
+  // Порядок малювання і є порядком накладання: спершу тло, далі текст.
+  for (const DrawItem& item : items) {
+    if (item.mesh == nullptr || item.mesh->vertices == nullptr) continue;
+
+    const SDL_GPUBufferBinding vertexBinding{item.mesh->vertices, 0};
+    SDL_BindGPUVertexBuffers(pass, 0, &vertexBinding, 1);
+    const SDL_GPUBufferBinding indexBinding{item.mesh->indices, 0};
+    SDL_BindGPUIndexBuffer(pass, &indexBinding, SDL_GPU_INDEXELEMENTSIZE_32BIT);
+
+    for (const GpuMesh::Range& range : item.mesh->ranges) {
+      if (range.indexCount == 0) continue;
+      SDL_GPUTextureSamplerBinding binding{
+          range.texture != nullptr ? range.texture : placeholder_, sampler_};
+      SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+      SDL_DrawGPUIndexedPrimitives(pass, range.indexCount, 1, range.indexStart, 0, 0);
+    }
+  }
+
+  SDL_EndGPURenderPass(pass);
 }
 
 void MeshRenderer::render(const Frame& frame, const GpuMesh& gpuMesh,

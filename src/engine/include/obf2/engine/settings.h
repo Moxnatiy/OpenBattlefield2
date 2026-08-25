@@ -37,7 +37,27 @@ struct GeneralSettings {
   int minimapTransparency = 20;
   bool staticMinimap = true;
   bool toolTip = false;
+  bool radioToolTip = true;
   float crosshairColor[3] = {255.0f, 255.0f, 0.0f};
+
+  int skirmishPercentageOfBots = 150;
+  int skirmishPercentageOfCpu = 20;
+  int campaignPercentageOfBots = 150;
+  int campaignPercentageOfCpu = 20;
+  std::string defaultIp;
+  int defaultPort = 0;
+};
+
+// Розміри повідомлень у чаті — окремий блок команд `chat.*`.
+struct ChatSettings {
+  int chatMessageSize = 4;
+  int gameInfoMessageSize = 2;
+  int killMessageSize = 3;
+  int oldChatListStyle = 0;
+  int oldChatListHistory = 8;
+  float timeUntilMessageRemoved = 10.0f;
+  bool ignoreRadioText = false;
+  bool ignoreRadioAudio = false;
 };
 
 struct AudioSettings {
@@ -51,6 +71,7 @@ struct Settings {
   VideoSettings video;
   GeneralSettings general;
   AudioSettings audio;
+  ChatSettings chat;
 
   // Реєструє обробники в консолі. Все, що прочитається з .con, потрапить
   // сюди; решта осяде в списку невідомих команд.

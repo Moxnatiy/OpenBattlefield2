@@ -63,12 +63,17 @@ class MeshRenderer {
   void renderScene(const Frame& frame, const std::vector<DrawItem>& items,
                    const Mat4& viewProjection, Color clearColor);
 
+  // Прохід для інтерфейсу: без глибини, з альфа-змішуванням і без освітлення.
+  // Координати вершин уже в NDC, тому матриця не потрібна.
+  void renderOverlay(const Frame& frame, const std::vector<DrawItem>& items, Color clearColor);
+
  private:
   MeshRenderer() = default;
   SDL_GPUTexture* uploadTexture(const texture::Texture& source);
 
   Device* device_ = nullptr;
   SDL_GPUGraphicsPipeline* pipeline_ = nullptr;
+  SDL_GPUGraphicsPipeline* overlayPipeline_ = nullptr;
   SDL_GPUSampler* sampler_ = nullptr;
   SDL_GPUTexture* placeholder_ = nullptr;  // біла 1x1 для матеріалів без текстури
 };

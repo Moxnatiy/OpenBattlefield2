@@ -20,3 +20,7 @@ add_test([=[test_level]=] "/Users/miami/OpenBattlefield2/build/macos-arm64-debug
 set_tests_properties([=[test_level]=] PROPERTIES  _BACKTRACE_TRIPLES "/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;5;add_test;/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;14;obf2_add_test;/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;0;")
 add_test([=[test_engine]=] "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_engine")
 set_tests_properties([=[test_engine]=] PROPERTIES  _BACKTRACE_TRIPLES "/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;5;add_test;/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;15;obf2_add_test;/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;0;")
+add_test([=[test_bitstream]=] "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_bitstream")
+set_tests_properties([=[test_bitstream]=] PROPERTIES  _BACKTRACE_TRIPLES "/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;5;add_test;/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;16;obf2_add_test;/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;0;")
+add_test([=[test_font_loc]=] "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_font_loc")
+set_tests_properties([=[test_font_loc]=] PROPERTIES  _BACKTRACE_TRIPLES "/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;5;add_test;/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;17;obf2_add_test;/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;0;")

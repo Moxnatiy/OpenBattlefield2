@@ -96,6 +96,94 @@ void Settings::bind(Console& console) {
     general.connectionType = c.argInt(0).value_or(general.connectionType);
   });
 
+  // --- game.*: решта профілю ---
+  console.bind("game.setRadioToolTip", [this](const con::Command& c) {
+    general.radioToolTip = flagOf(c, general.radioToolTip);
+  });
+  console.bind("game.setSkirmishPercentageOfBots", [this](const con::Command& c) {
+    general.skirmishPercentageOfBots = c.argInt(0).value_or(general.skirmishPercentageOfBots);
+  });
+  console.bind("game.setSkirmishPercentageOfCpu", [this](const con::Command& c) {
+    general.skirmishPercentageOfCpu = c.argInt(0).value_or(general.skirmishPercentageOfCpu);
+  });
+  console.bind("game.setCampaignPercentageOfBots", [this](const con::Command& c) {
+    general.campaignPercentageOfBots = c.argInt(0).value_or(general.campaignPercentageOfBots);
+  });
+  console.bind("game.setCampaignPercentageOfCpu", [this](const con::Command& c) {
+    general.campaignPercentageOfCpu = c.argInt(0).value_or(general.campaignPercentageOfCpu);
+  });
+  console.bind("game.setDefaultIp", [this](const con::Command& c) {
+    general.defaultIp = std::string(c.argStr(0));
+    general.defaultPort = c.argInt(1).value_or(general.defaultPort);
+  });
+  console.bind("game.setRadioToolTipColor", [](const con::Command&) {});
+
+  // Якість графіки профіль задає ще й через game.* — ті самі значення,
+  // що й renderer.set*Quality, лише іншим шляхом.
+  console.bind("game.setGraphicsQuality", [this](const con::Command& c) {
+    video.geometryQuality = c.argInt(0).value_or(video.geometryQuality);
+  });
+  console.bind("game.setEffectsQuality", [this](const con::Command& c) {
+    video.effectsQuality = c.argInt(0).value_or(video.effectsQuality);
+  });
+  console.bind("game.setTerrainQuality", [this](const con::Command& c) {
+    video.terrainQuality = c.argInt(0).value_or(video.terrainQuality);
+  });
+  console.bind("game.setGameDisplayMode", [this](const con::Command& c) {
+    video.fullScreen = c.argInt(0).value_or(0) != 0;
+  });
+  console.bind("game.setDetailTexture", [](const con::Command&) {});
+  console.bind("game.setLightmaps", [](const con::Command&) {});
+  console.bind("game.setShadows", [this](const con::Command& c) {
+    video.dynamicShadowsQuality = c.argInt(0).value_or(video.dynamicShadowsQuality);
+  });
+  console.bind("game.setPerformance", [](const con::Command&) {});
+  console.bind("game.setMenuViewDistance", [](const con::Command&) {});
+  console.bind("game.setRenderWhenSpawnMenu", [](const con::Command&) {});
+  console.bind("game.setTextureQuality", [this](const con::Command& c) {
+    video.textureQuality = c.argInt(0).value_or(video.textureQuality);
+  });
+  console.bind("game.setLightingQuality", [this](const con::Command& c) {
+    video.lightingQuality = c.argInt(0).value_or(video.lightingQuality);
+  });
+  console.bind("game.setAntialiasing", [this](const con::Command& c) {
+    video.antialiasing = c.argInt(0).value_or(video.antialiasing);
+  });
+  console.bind("game.setEnvironmentMapping", [](const con::Command&) {});
+  console.bind("game.setViewDistanceScale", [this](const con::Command& c) {
+    video.globalLodRadius = c.argFloat(0).value_or(video.globalLodRadius);
+  });
+
+  // --- chat.* ---
+  console.bind("chat.setChatMessageSize", [this](const con::Command& c) {
+    chat.chatMessageSize = c.argInt(0).value_or(chat.chatMessageSize);
+  });
+  console.bind("chat.setGameInfoMessageSize", [this](const con::Command& c) {
+    chat.gameInfoMessageSize = c.argInt(0).value_or(chat.gameInfoMessageSize);
+  });
+  console.bind("chat.setKillMessageSize", [this](const con::Command& c) {
+    chat.killMessageSize = c.argInt(0).value_or(chat.killMessageSize);
+  });
+  console.bind("chat.setOldChatListStyle", [this](const con::Command& c) {
+    chat.oldChatListStyle = c.argInt(0).value_or(chat.oldChatListStyle);
+  });
+  console.bind("chat.setOldChatListHistory", [this](const con::Command& c) {
+    chat.oldChatListHistory = c.argInt(0).value_or(chat.oldChatListHistory);
+  });
+  console.bind("chat.setTimeUntilMessageRemoved", [this](const con::Command& c) {
+    chat.timeUntilMessageRemoved = c.argFloat(0).value_or(chat.timeUntilMessageRemoved);
+  });
+  console.bind("chat.setIgnoreRadioText", [this](const con::Command& c) {
+    chat.ignoreRadioText = flagOf(c, chat.ignoreRadioText);
+  });
+  console.bind("chat.setIgnoreRadioAudio", [this](const con::Command& c) {
+    chat.ignoreRadioAudio = flagOf(c, chat.ignoreRadioAudio);
+  });
+
+  // --- консоль ---
+  console.bind("console.showStats", [](const con::Command&) {});
+  console.bind("console.showFps", [](const con::Command&) {});
+
   // --- звук ---
   console.bind("AudioSettings.setEffectsVolume", [this](const con::Command& c) {
     audio.effectsVolume = c.argFloat(0).value_or(audio.effectsVolume);
