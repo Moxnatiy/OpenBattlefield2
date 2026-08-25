@@ -8,3 +8,5 @@ add_test([=[test_path]=] "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/
 set_tests_properties([=[test_path]=] PROPERTIES  _BACKTRACE_TRIPLES "/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;5;add_test;/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;8;obf2_add_test;/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;0;")
 add_test([=[test_con]=] "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_con")
 set_tests_properties([=[test_con]=] PROPERTIES  _BACKTRACE_TRIPLES "/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;5;add_test;/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;9;obf2_add_test;/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;0;")
+add_test([=[test_mesh]=] "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_mesh")
+set_tests_properties([=[test_mesh]=] PROPERTIES  _BACKTRACE_TRIPLES "/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;5;add_test;/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;10;obf2_add_test;/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;0;")

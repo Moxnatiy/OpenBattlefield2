@@ -17,6 +17,10 @@
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/vfs/CMakeFiles/test.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/vfs/CMakeFiles/edit_cache.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/vfs/CMakeFiles/rebuild_cache.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/mesh/CMakeFiles/obf2_mesh.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/mesh/CMakeFiles/test.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/mesh/CMakeFiles/edit_cache.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/mesh/CMakeFiles/rebuild_cache.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/gfx/CMakeFiles/obf2_gfx.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/gfx/CMakeFiles/test.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/gfx/CMakeFiles/edit_cache.dir
@@ -29,8 +33,13 @@
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/con_dump/CMakeFiles/test.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/con_dump/CMakeFiles/edit_cache.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/con_dump/CMakeFiles/rebuild_cache.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/mesh_info/CMakeFiles/mesh_info.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/mesh_info/CMakeFiles/test.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/mesh_info/CMakeFiles/edit_cache.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/mesh_info/CMakeFiles/rebuild_cache.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_path.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_con.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_mesh.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/edit_cache.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/rebuild_cache.dir

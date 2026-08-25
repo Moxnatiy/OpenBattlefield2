@@ -47,7 +47,20 @@ class Device {
 
   // nullopt — кадр пропущено (вікно згорнуте чи swapchain недоступний).
   std::optional<Frame> beginFrame();
-  void endFrame(const Frame& frame, Color clear);
+  // Прохід, що лише очищає екран — коли малювати нема чого.
+  void clear(const Frame& frame, Color color);
+  void submit(const Frame& frame);
+
+  // Дописує до кадру завантаження swapchain у пам'ять, відправляє його,
+  // чекає завершення і зберігає результат у BMP. Замінює submit().
+  // Потрібно, щоб перевіряти рендер автоматично, без людини перед екраном.
+  bool submitAndSave(const Frame& frame, const char* path, std::string* error = nullptr);
+
+  // Буфер глибини під розмір swapchain; перестворюється при зміні розміру
+  // вікна. nullptr — не вдалося створити.
+  SDL_GPUTexture* acquireDepthTarget(Uint32 width, Uint32 height);
+  SDL_GPUTextureFormat colorFormat() const;
+  SDL_GPUTextureFormat depthFormat() const { return depthFormat_; }
 
   std::string_view driver() const { return driver_; }
   SDL_Window* window() const { return window_; }
@@ -60,6 +73,10 @@ class Device {
   SDL_GPUDevice* gpu_ = nullptr;
   std::string driver_;
   bool quit_ = false;
+
+  SDL_GPUTexture* depth_ = nullptr;
+  SDL_GPUTextureFormat depthFormat_ = SDL_GPU_TEXTUREFORMAT_INVALID;
+  Uint32 depthWidth_ = 0, depthHeight_ = 0;
 };
 
 }  // namespace obf2::gfx

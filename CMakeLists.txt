@@ -43,11 +43,13 @@ add_subdirectory(third_party/miniz)
 add_subdirectory(src/core)
 add_subdirectory(src/con)
 add_subdirectory(src/vfs)
+add_subdirectory(src/mesh)
 add_subdirectory(src/gfx)
 add_subdirectory(src/app)
 
 if(OBF2_BUILD_TOOLS)
   add_subdirectory(tools/con_dump)
+  add_subdirectory(tools/mesh_info)
 endif()
 
 if(OBF2_BUILD_TESTS)
