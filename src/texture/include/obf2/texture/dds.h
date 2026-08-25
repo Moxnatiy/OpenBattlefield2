@@ -56,6 +56,13 @@ std::size_t levelSize(Format format, std::uint32_t width, std::uint32_t height);
 // зберігають посилання на вхідний буфер — Texture::data самодостатній.
 std::optional<Texture> loadDds(std::span<const std::byte> bytes, std::string* error = nullptr);
 
+// PNG. Ігрові текстури — DDS, але ассети меню (BF2 малює його у Flash)
+// лежать у PNG, тому для екрана меню потрібні обидва.
+std::optional<Texture> loadPng(std::span<const std::byte> bytes, std::string* error = nullptr);
+
+// Розбирає за вмістом: DDS має підпис "DDS ", PNG — свій.
+std::optional<Texture> loadImage(std::span<const std::byte> bytes, std::string* error = nullptr);
+
 // Текстура 1x1 заданого кольору. Потрібна там, де гра задає колір числом,
 // а не файлом — наприклад renderer.waterColor у Water.con рівня.
 Texture solidColor(float red, float green, float blue, float alpha = 1.0f);

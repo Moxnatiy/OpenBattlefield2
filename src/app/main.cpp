@@ -19,6 +19,7 @@
 #include "obf2/core/math.h"
 #include "obf2/core/path.h"
 #include "obf2/core/platform.h"
+#include "obf2/engine/engine.h"
 #include "obf2/game/scene.h"
 #include "obf2/gfx/mesh_renderer.h"
 #include "obf2/level/level.h"
@@ -28,12 +29,9 @@
 
 namespace {
 
-constexpr const char* kDefaultMesh =
-    "objects/staticobjects/common/com_objects/barrel_green/meshes/barrel_green.staticmesh";
-
 struct Args {
   std::filesystem::path modDir = "Game Files/mods/bf2";
-  std::string meshPath = kDefaultMesh;
+  std::string meshPath;  // порожньо -> звичайний запуск рушія
   std::string objectName;
   std::string levelName;
   int geometryIndex = -1;  // -1 = вибрати за кількістю lod-ів
@@ -200,6 +198,46 @@ std::optional<obf2::mesh::RenderMesh> buildObjectMesh(obf2::FileSystem& files,
   return render;
 }
 
+// Прямокутник на весь екран у координатах NDC: з одиничною матрицею
+// вершинний шейдер лишає їх як є.
+//
+// Нормаль ставимо рівно вздовж джерела світла з фрагментного шейдера —
+// тоді півламбертів множник дорівнює одиниці й картинка виходить без
+// затемнення. Тимчасовий трюк: щойно з'явиться окремий пайплайн для
+// інтерфейсу, він стане непотрібним.
+obf2::mesh::RenderMesh buildScreenQuad(const std::string& imagePath) {
+  const obf2::Vec3f light = obf2::normalize(obf2::Vec3f{0.4f, 0.9f, 0.35f});
+  const obf2::mesh::Vec3 normal{light.x, light.y, light.z};
+
+  obf2::mesh::RenderMesh quad;
+  quad.vertices = {
+      obf2::mesh::Vertex{{-1.0f, -1.0f, 0.0f}, normal, {0.0f, 1.0f}},
+      obf2::mesh::Vertex{{1.0f, -1.0f, 0.0f}, normal, {1.0f, 1.0f}},
+      obf2::mesh::Vertex{{-1.0f, 1.0f, 0.0f}, normal, {0.0f, 0.0f}},
+      obf2::mesh::Vertex{{1.0f, 1.0f, 0.0f}, normal, {1.0f, 0.0f}},
+  };
+  quad.indices = {0, 1, 2, 2, 1, 3};
+
+  obf2::mesh::DrawRange range;
+  range.indexCount = static_cast<std::uint32_t>(quad.indices.size());
+  if (!imagePath.empty()) range.maps.push_back(imagePath);
+  quad.ranges.push_back(std::move(range));
+  return quad;
+}
+
+// Тло головного меню. У грі меню — це Flash, який рушій крутить своїм
+// програвачем; ассети до нього лежать звичайними PNG, і саме їх ми беремо.
+std::string findMenuBackground(obf2::FileSystem& files) {
+  for (const char* candidate : {
+           "menu/external/flashmenu/images/background/background_2.png",
+           "menu/external/flashmenu/images/background/background_3.png",
+           "menu/external/flashmenu/images/background/background_1.png",
+       }) {
+    if (files.exists(candidate)) return candidate;
+  }
+  return {};
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -309,7 +347,46 @@ int main(int argc, char** argv) {
 
   // --- решта режимів ----------------------------------------------------
 
-  if (args.levelName.empty()) {
+  obf2::engine::Engine engine;
+  const bool bootMode = args.levelName.empty() && args.objectName.empty() && args.meshPath.empty();
+  int introQuad = -1;
+  int menuQuad = -1;
+
+  if (bootMode) {
+    engine.boot(files, args.modDir);
+    const auto& settings = engine.settings();
+
+    std::printf("запуск рушія\n  прочитано: ");
+    for (const auto& file : engine.bootFiles()) std::printf("%s ", file.c_str());
+    std::printf("\n  гравець: \"%s\", повноекранний: %d, поле зору: %.2f\n",
+                settings.general.playerName.c_str(), settings.video.fullScreen ? 1 : 0,
+                settings.video.fieldOfView);
+    std::printf("  показувати заставку: %d, заставок знайдено: %zu\n",
+                settings.general.viewIntroMovie ? 1 : 0, engine.movies().size());
+    for (const auto& movie : engine.movies()) {
+      std::printf("    %s (%.1f МБ)\n", movie.path.c_str(),
+                  static_cast<double>(movie.sizeBytes) / (1024.0 * 1024.0));
+    }
+
+    const auto& console = engine.console();
+    std::printf("  консоль: обробників %zu, виконано команд %lld, невідомих %lld\n",
+                console.handlerCount(), console.executedCount(), console.unknownCount());
+    int shown = 0;
+    for (const auto& [name, count] : console.unknownCommands()) {
+      if (shown++ >= 8) break;
+      std::printf("    без обробника: %s (x%d)\n", name.c_str(), count);
+    }
+
+    const std::string background = findMenuBackground(files);
+    std::printf("  стан: %s, тло меню: %s\n",
+                std::string(obf2::engine::stateName(engine.state())).c_str(),
+                background.empty() ? "(немає)" : background.c_str());
+
+    scene.meshes.push_back(buildScreenQuad("#000000"));
+    introQuad = static_cast<int>(scene.meshes.size()) - 1;
+    scene.meshes.push_back(buildScreenQuad(background));
+    menuQuad = static_cast<int>(scene.meshes.size()) - 1;
+  } else if (args.levelName.empty()) {
     std::optional<obf2::mesh::RenderMesh> single;
     if (!args.objectName.empty()) {
       registry = buildRegistry(files);
@@ -353,11 +430,18 @@ int main(int argc, char** argv) {
   std::unordered_map<std::string, std::optional<obf2::texture::Texture>> textureCache;
   auto resolveTexture =
       [&](const std::string& mapName) -> std::optional<obf2::texture::Texture> {
-    // Колір води задано числом у Water.con, а не файлом — рушій підставляє
-    // під цим іменем текстуру 1x1.
+    // Імена, що починаються з '#', — не файли, а кольори: гра подекуди
+    // задає колір числом (renderer.waterColor), а нам ще потрібні заливки
+    // для екранів без зображення.
     if (level && mapName == obf2::level::kWaterColorMap) {
       const obf2::Vec3f color = level->terrain.waterColor;
       return obf2::texture::solidColor(color.x, color.y, color.z);
+    }
+    if (mapName.size() == 7 && mapName[0] == '#') {
+      const auto channel = [&](std::size_t offset) {
+        return static_cast<float>(std::stoi(mapName.substr(offset, 2), nullptr, 16)) / 255.0f;
+      };
+      return obf2::texture::solidColor(channel(1), channel(3), channel(5));
     }
 
     const std::string path = obf2::normalizeAssetPath(mapName);
@@ -374,7 +458,7 @@ int main(int argc, char** argv) {
     }
 
     std::string textureError;
-    auto decoded = obf2::texture::loadDds(*bytes, &textureError);
+    auto decoded = obf2::texture::loadImage(*bytes, &textureError);
     if (!decoded) ++texturesMissing; else ++texturesLoaded;
     textureCache.emplace(path, decoded);
     return decoded;
@@ -432,8 +516,22 @@ int main(int argc, char** argv) {
         obf2::perspective(1.05f, aspect, scene.radius * 0.002f + 0.05f, scene.radius * 40.0f);
     const obf2::Mat4 view = obf2::lookAt(eye, scene.center, obf2::Vec3f{0.0f, 1.0f, 0.0f});
 
-    renderer->renderScene(*acquired, items, projection * view,
-                          obf2::gfx::Color{0.42f, 0.55f, 0.68f, 1.0f});
+    if (bootMode) {
+      engine.update(1.0f / 60.0f);
+      if (device->consumeSkip()) engine.skipMovie();
+
+      const int quad = engine.state() == obf2::engine::State::Intro ? introQuad : menuQuad;
+      std::vector<obf2::gfx::MeshRenderer::DrawItem> screen;
+      if (quad >= 0 && uploadedOk[static_cast<std::size_t>(quad)]) {
+        screen.push_back(obf2::gfx::MeshRenderer::DrawItem{
+            &gpuMeshes[static_cast<std::size_t>(quad)], obf2::Mat4::identity()});
+      }
+      renderer->renderScene(*acquired, screen, obf2::Mat4::identity(),
+                            obf2::gfx::Color{0.0f, 0.0f, 0.0f, 1.0f});
+    } else {
+      renderer->renderScene(*acquired, items, projection * view,
+                            obf2::gfx::Color{0.42f, 0.55f, 0.68f, 1.0f});
+    }
 
     const bool lastFrame = args.frames > 0 && frame + 1 >= args.frames;
     if (lastFrame && !args.screenshot.empty()) {

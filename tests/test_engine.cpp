@@ -1,0 +1,139 @@
+#include <map>
+#include <string>
+
+#include "check.h"
+#include "obf2/engine/console.h"
+#include "obf2/engine/settings.h"
+
+using namespace obf2;
+
+namespace {
+
+class MemoryFiles : public con::FileProvider {
+ public:
+  std::map<std::string, std::string> files;
+  std::optional<std::string> loadText(std::string_view path) override {
+    const auto it = files.find(std::string(path));
+    return it == files.end() ? std::nullopt : std::optional<std::string>{it->second};
+  }
+};
+
+// Проганяє текст .con через інтерпретатор у консоль — рівно так, як це
+// робить рушій на старті.
+void feed(engine::Console& console, const std::string& source) {
+  MemoryFiles files;
+  files.files["a.con"] = source;
+  con::Interpreter interpreter(files,
+                               [&](const con::Command& c) { console.execute(c); });
+  interpreter.runFile("a.con");
+}
+
+}  // namespace
+
+static void testDispatch() {
+  engine::Console console;
+  int calls = 0;
+  std::string lastArgument;
+
+  console.bind("game.setPlayerName", [&](const con::Command& c) {
+    ++calls;
+    lastArgument = std::string(c.argStr(0));
+  });
+
+  feed(console, "game.setPlayerName \"ARNE\"\n");
+  CHECK_EQ(calls, 1);
+  CHECK_EQ(lastArgument, std::string("ARNE"));
+  CHECK_EQ(console.executedCount(), 1LL);
+  CHECK_EQ(console.unknownCount(), 0LL);
+}
+
+static void testDispatchIsCaseInsensitive() {
+  // У файлах гри той самий виклик трапляється в різному регістрі.
+  engine::Console console;
+  int calls = 0;
+  console.bind("GeneralSettings.setViewIntroMovie", [&](const con::Command&) { ++calls; });
+
+  feed(console,
+       "GeneralSettings.setViewIntroMovie 1\n"
+       "generalsettings.setviewintromovie 0\n"
+       "GENERALSETTINGS.SETVIEWINTROMOVIE 1\n");
+  CHECK_EQ(calls, 3);
+}
+
+static void testUnknownCommandsAreCounted() {
+  // Головна метрика готовності порту: рушій знає 1735 команд, і треба
+  // бачити, які з тих, що трапилися, ще без обробника.
+  engine::Console console;
+  console.bind("game.setPlayerName", [](const con::Command&) {});
+
+  feed(console,
+       "game.setPlayerName ARNE\n"
+       "chat.setChatMessageSize 4\n"
+       "chat.setChatMessageSize 5\n"
+       "renderer.setSomethingNew 1\n");
+
+  CHECK_EQ(console.executedCount(), 1LL);
+  CHECK_EQ(console.unknownCount(), 3LL);
+  CHECK_EQ(console.unknownCommands().size(), std::size_t(2));
+  const auto found = console.unknownCommands().find("chat.setchatmessagesize");
+  CHECK(found != console.unknownCommands().end());
+  if (found != console.unknownCommands().end()) CHECK_EQ(found->second, 2);
+}
+
+static void testSettingsFromRealFileShape() {
+  // Текст узятий із Settings/VideoDefault.con і профілю стокової гри.
+  engine::Console console;
+  engine::Settings settings;
+  settings.bind(console);
+
+  feed(console,
+       "rem * TEMP *\n"
+       "renderer.setFullScreen 1\n"
+       "renderer.fieldOfView 1.2\n"
+       "renderer.globalLodRadius 2\n"
+       "renderer.setTerrainQuality 3\n"
+       "renderer.setEffectsQuality 1\n"
+       "renderer.setDynamicShadowsQuality 0\n"
+       "renderer.setResolution 1280x1024@60\n"
+       "game.setPlayerName \"ARNE\"\n"
+       "game.setConnection 2\n"
+       "game.setMinimapTransparency 20\n"
+       "game.setCrossHairColor 255.000000 128.000000 0.000000\n"
+       "GeneralSettings.setViewIntroMovie 0\n"
+       "AudioSettings.setMusicVolume 0.35\n");
+
+  CHECK(settings.video.fullScreen);
+  CHECK(settings.video.fieldOfView > 1.19f && settings.video.fieldOfView < 1.21f);
+  CHECK_EQ(settings.video.terrainQuality, 3);
+  CHECK_EQ(settings.video.effectsQuality, 1);
+  CHECK_EQ(settings.video.dynamicShadowsQuality, 0);
+  CHECK_EQ(settings.video.width, 1280);
+  CHECK_EQ(settings.video.height, 1024);
+
+  CHECK_EQ(settings.general.playerName, std::string("ARNE"));
+  CHECK_EQ(settings.general.connectionType, 2);
+  CHECK_EQ(settings.general.minimapTransparency, 20);
+  CHECK(!settings.general.viewIntroMovie);
+  CHECK(settings.general.crosshairColor[1] > 127.9f && settings.general.crosshairColor[1] < 128.1f);
+
+  CHECK(settings.audio.musicVolume > 0.34f && settings.audio.musicVolume < 0.36f);
+}
+
+static void testMissingArgumentKeepsPreviousValue() {
+  // Зіпсований рядок у налаштуваннях не має обнуляти значення.
+  engine::Console console;
+  engine::Settings settings;
+  settings.bind(console);
+  settings.video.fieldOfView = 1.5f;
+
+  feed(console, "renderer.fieldOfView\nrenderer.fieldOfView немаєЧисла\n");
+  CHECK(settings.video.fieldOfView > 1.49f && settings.video.fieldOfView < 1.51f);
+}
+
+TEST_MAIN({
+  testDispatch();
+  testDispatchIsCaseInsensitive();
+  testUnknownCommandsAreCounted();
+  testSettingsFromRealFileShape();
+  testMissingArgumentKeepsPreviousValue();
+})

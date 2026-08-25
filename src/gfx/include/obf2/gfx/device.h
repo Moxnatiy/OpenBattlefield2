@@ -45,6 +45,10 @@ class Device {
   // false — користувач закрив вікно або натиснув Esc.
   bool pumpEvents();
 
+  // Пробіл або Enter — як пропуск заставки в грі. Прапорець зчитується один
+  // раз, щоб одне натискання не пропустило кілька роликів поспіль.
+  bool consumeSkip();
+
   // nullopt — кадр пропущено (вікно згорнуте чи swapchain недоступний).
   std::optional<Frame> beginFrame();
   // Прохід, що лише очищає екран — коли малювати нема чого.
@@ -73,6 +77,7 @@ class Device {
   SDL_GPUDevice* gpu_ = nullptr;
   std::string driver_;
   bool quit_ = false;
+  bool skip_ = false;
 
   SDL_GPUTexture* depth_ = nullptr;
   SDL_GPUTextureFormat depthFormat_ = SDL_GPU_TEXTUREFORMAT_INVALID;

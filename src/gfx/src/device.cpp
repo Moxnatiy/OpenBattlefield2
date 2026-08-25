@@ -52,12 +52,19 @@ bool Device::pumpEvents() {
         break;
       case SDL_EVENT_KEY_DOWN:
         if (event.key.key == SDLK_ESCAPE) quit_ = true;
+        if (event.key.key == SDLK_SPACE || event.key.key == SDLK_RETURN) skip_ = true;
         break;
       default:
         break;
     }
   }
   return !quit_;
+}
+
+bool Device::consumeSkip() {
+  const bool pressed = skip_;
+  skip_ = false;
+  return pressed;
 }
 
 std::optional<Frame> Device::beginFrame() {

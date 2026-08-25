@@ -39,6 +39,7 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 include(sdl3)
 
 add_subdirectory(third_party/miniz)
+add_subdirectory(third_party/stb)
 
 add_subdirectory(src/core)
 add_subdirectory(src/con)
@@ -47,6 +48,7 @@ add_subdirectory(src/mesh)
 add_subdirectory(src/texture)
 add_subdirectory(src/game)
 add_subdirectory(src/level)
+add_subdirectory(src/engine)
 add_subdirectory(src/gfx)
 add_subdirectory(src/app)
 

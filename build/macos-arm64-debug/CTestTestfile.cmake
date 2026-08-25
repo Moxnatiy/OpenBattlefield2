@@ -5,6 +5,7 @@
 # This file includes the relevant testing commands required for 
 # testing this directory and lists subdirectories to be tested as well.
 subdirs("third_party/miniz")
+subdirs("third_party/stb")
 subdirs("src/core")
 subdirs("src/con")
 subdirs("src/vfs")
@@ -12,6 +13,7 @@ subdirs("src/mesh")
 subdirs("src/texture")
 subdirs("src/game")
 subdirs("src/level")
+subdirs("src/engine")
 subdirs("src/gfx")
 subdirs("src/app")
 subdirs("tools/con_dump")

@@ -5,6 +5,10 @@
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/third_party/miniz/CMakeFiles/test.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/third_party/miniz/CMakeFiles/edit_cache.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/third_party/miniz/CMakeFiles/rebuild_cache.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/third_party/stb/CMakeFiles/stb_image.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/third_party/stb/CMakeFiles/test.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/third_party/stb/CMakeFiles/edit_cache.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/third_party/stb/CMakeFiles/rebuild_cache.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/core/CMakeFiles/obf2_core.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/core/CMakeFiles/test.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/core/CMakeFiles/edit_cache.dir
@@ -33,6 +37,10 @@
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/level/CMakeFiles/test.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/level/CMakeFiles/edit_cache.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/level/CMakeFiles/rebuild_cache.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/engine/CMakeFiles/obf2_engine.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/engine/CMakeFiles/test.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/engine/CMakeFiles/edit_cache.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/engine/CMakeFiles/rebuild_cache.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/gfx/CMakeFiles/obf2_gfx.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/gfx/CMakeFiles/test.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/gfx/CMakeFiles/edit_cache.dir
@@ -64,6 +72,7 @@
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_object_template.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_scene.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_level.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_engine.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/edit_cache.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/rebuild_cache.dir
