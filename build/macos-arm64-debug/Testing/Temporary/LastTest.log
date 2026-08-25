@@ -1,0 +1,35 @@
+Start testing: Aug 25 21:36 EEST
+----------------------------------------------------------
+1/2 Testing: test_path
+1/2 Test: test_path
+Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_path"
+Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
+"test_path" start time: Aug 25 21:36 EEST
+Output:
+----------------------------------------------------------
+OK
+<end of output>
+Test time =   0.43 sec
+----------------------------------------------------------
+Test Passed.
+"test_path" end time: Aug 25 21:36 EEST
+"test_path" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/2 Testing: test_con
+2/2 Test: test_con
+Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_con"
+Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
+"test_con" start time: Aug 25 21:36 EEST
+Output:
+----------------------------------------------------------
+OK
+<end of output>
+Test time =   0.30 sec
+----------------------------------------------------------
+Test Passed.
+"test_con" end time: Aug 25 21:36 EEST
+"test_con" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Aug 25 21:36 EEST

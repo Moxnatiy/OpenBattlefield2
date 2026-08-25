@@ -1,0 +1,17 @@
+# Оригінальні файли гри — ніколи не потрапляють у git
+Game Files/
+game/
+extract/
+
+# Ghidra
+ghidra_projects/
+*.gpr
+*.rep
+
+# Python
+.venv/
+__pycache__/
+
+# Архіви / macOS
+*.arc
+.DS_Store

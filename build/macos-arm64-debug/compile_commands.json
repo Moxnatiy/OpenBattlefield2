@@ -1,0 +1,50 @@
+[
+{
+  "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
+  "command": "/usr/bin/cc -I/Users/miami/OpenBattlefield2/third_party/miniz -g -arch arm64 -fPIC -w -o third_party/miniz/CMakeFiles/miniz.dir/miniz.c.o -c /Users/miami/OpenBattlefield2/third_party/miniz/miniz.c",
+  "file": "/Users/miami/OpenBattlefield2/third_party/miniz/miniz.c",
+  "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/third_party/miniz/CMakeFiles/miniz.dir/miniz.c.o"
+},
+{
+  "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/core/include -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror -o src/core/CMakeFiles/obf2_core.dir/src/path.cpp.o -c /Users/miami/OpenBattlefield2/src/core/src/path.cpp",
+  "file": "/Users/miami/OpenBattlefield2/src/core/src/path.cpp",
+  "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/core/CMakeFiles/obf2_core.dir/src/path.cpp.o"
+},
+{
+  "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror -o src/con/CMakeFiles/obf2_con.dir/src/lexer.cpp.o -c /Users/miami/OpenBattlefield2/src/con/src/lexer.cpp",
+  "file": "/Users/miami/OpenBattlefield2/src/con/src/lexer.cpp",
+  "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/con/CMakeFiles/obf2_con.dir/src/lexer.cpp.o"
+},
+{
+  "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror -o src/con/CMakeFiles/obf2_con.dir/src/interpreter.cpp.o -c /Users/miami/OpenBattlefield2/src/con/src/interpreter.cpp",
+  "file": "/Users/miami/OpenBattlefield2/src/con/src/interpreter.cpp",
+  "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/con/CMakeFiles/obf2_con.dir/src/interpreter.cpp.o"
+},
+{
+  "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/vfs/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/third_party/miniz -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror -o src/vfs/CMakeFiles/obf2_vfs.dir/src/filesystem.cpp.o -c /Users/miami/OpenBattlefield2/src/vfs/src/filesystem.cpp",
+  "file": "/Users/miami/OpenBattlefield2/src/vfs/src/filesystem.cpp",
+  "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/vfs/CMakeFiles/obf2_vfs.dir/src/filesystem.cpp.o"
+},
+{
+  "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/vfs/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/con/include -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror -o tools/con_dump/CMakeFiles/con_dump.dir/main.cpp.o -c /Users/miami/OpenBattlefield2/tools/con_dump/main.cpp",
+  "file": "/Users/miami/OpenBattlefield2/tools/con_dump/main.cpp",
+  "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/con_dump/CMakeFiles/con_dump.dir/main.cpp.o"
+},
+{
+  "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/tests -I/Users/miami/OpenBattlefield2/src/core/include -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror -o tests/CMakeFiles/test_path.dir/test_path.cpp.o -c /Users/miami/OpenBattlefield2/tests/test_path.cpp",
+  "file": "/Users/miami/OpenBattlefield2/tests/test_path.cpp",
+  "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_path.dir/test_path.cpp.o"
+},
+{
+  "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/tests -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror -o tests/CMakeFiles/test_con.dir/test_con.cpp.o -c /Users/miami/OpenBattlefield2/tests/test_con.cpp",
+  "file": "/Users/miami/OpenBattlefield2/tests/test_con.cpp",
+  "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_con.dir/test_con.cpp.o"
+}
+]

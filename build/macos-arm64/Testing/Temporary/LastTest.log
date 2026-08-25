@@ -1,0 +1,39 @@
+Start testing: Aug 25 21:33 EEST
+----------------------------------------------------------
+1/2 Testing: test_path
+1/2 Test: test_path
+Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_path"
+Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
+"test_path" start time: Aug 25 21:33 EEST
+Output:
+----------------------------------------------------------
+FAIL /Users/miami/OpenBattlefield2/tests/test_path.cpp:27: std::string(assetExtension("a/b.TWEAK")) == std::string("tweak")
+  було:  TWEAK
+  треба: tweak
+
+1 перевірок не пройшло
+<end of output>
+Test time =   0.31 sec
+----------------------------------------------------------
+Test Failed.
+"test_path" end time: Aug 25 21:33 EEST
+"test_path" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/2 Testing: test_con
+2/2 Test: test_con
+Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_con"
+Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
+"test_con" start time: Aug 25 21:33 EEST
+Output:
+----------------------------------------------------------
+OK
+<end of output>
+Test time =   0.30 sec
+----------------------------------------------------------
+Test Passed.
+"test_con" end time: Aug 25 21:33 EEST
+"test_con" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Aug 25 21:33 EEST
