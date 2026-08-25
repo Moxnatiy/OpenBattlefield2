@@ -1,10 +1,10 @@
-Start testing: Aug 25 22:15 EEST
+Start testing: Aug 25 22:34 EEST
 ----------------------------------------------------------
-1/5 Testing: test_path
-1/5 Test: test_path
+1/6 Testing: test_path
+1/6 Test: test_path
 Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_path"
 Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
-"test_path" start time: Aug 25 22:15 EEST
+"test_path" start time: Aug 25 22:34 EEST
 Output:
 ----------------------------------------------------------
 OK
@@ -12,15 +12,15 @@ OK
 Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"test_path" end time: Aug 25 22:15 EEST
+"test_path" end time: Aug 25 22:34 EEST
 "test_path" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-2/5 Testing: test_con
-2/5 Test: test_con
+2/6 Testing: test_con
+2/6 Test: test_con
 Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_con"
 Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
-"test_con" start time: Aug 25 22:15 EEST
+"test_con" start time: Aug 25 22:34 EEST
 Output:
 ----------------------------------------------------------
 OK
@@ -28,31 +28,31 @@ OK
 Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"test_con" end time: Aug 25 22:15 EEST
+"test_con" end time: Aug 25 22:34 EEST
 "test_con" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-3/5 Testing: test_mesh
-3/5 Test: test_mesh
+3/6 Testing: test_mesh
+3/6 Test: test_mesh
 Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_mesh"
 Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
-"test_mesh" start time: Aug 25 22:15 EEST
+"test_mesh" start time: Aug 25 22:34 EEST
 Output:
 ----------------------------------------------------------
 OK
 <end of output>
-Test time =   0.00 sec
+Test time =   0.53 sec
 ----------------------------------------------------------
 Test Passed.
-"test_mesh" end time: Aug 25 22:15 EEST
+"test_mesh" end time: Aug 25 22:34 EEST
 "test_mesh" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-4/5 Testing: test_texture
-4/5 Test: test_texture
+4/6 Testing: test_texture
+4/6 Test: test_texture
 Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_texture"
 Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
-"test_texture" start time: Aug 25 22:15 EEST
+"test_texture" start time: Aug 25 22:34 EEST
 Output:
 ----------------------------------------------------------
 OK
@@ -60,24 +60,40 @@ OK
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"test_texture" end time: Aug 25 22:15 EEST
+"test_texture" end time: Aug 25 22:34 EEST
 "test_texture" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-5/5 Testing: test_object_template
-5/5 Test: test_object_template
+5/6 Testing: test_object_template
+5/6 Test: test_object_template
 Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_object_template"
 Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
-"test_object_template" start time: Aug 25 22:15 EEST
+"test_object_template" start time: Aug 25 22:34 EEST
 Output:
 ----------------------------------------------------------
 OK
 <end of output>
-Test time =   0.45 sec
+Test time =   0.38 sec
 ----------------------------------------------------------
 Test Passed.
-"test_object_template" end time: Aug 25 22:15 EEST
+"test_object_template" end time: Aug 25 22:34 EEST
 "test_object_template" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-End testing: Aug 25 22:15 EEST
+6/6 Testing: test_scene
+6/6 Test: test_scene
+Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_scene"
+Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
+"test_scene" start time: Aug 25 22:34 EEST
+Output:
+----------------------------------------------------------
+OK
+<end of output>
+Test time =   0.30 sec
+----------------------------------------------------------
+Test Passed.
+"test_scene" end time: Aug 25 22:34 EEST
+"test_scene" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Aug 25 22:34 EEST

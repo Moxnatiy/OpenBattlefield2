@@ -43,9 +43,15 @@
 },
 {
   "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
-  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/game/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror -o src/game/CMakeFiles/obf2_game.dir/src/object_template.cpp.o -c /Users/miami/OpenBattlefield2/src/game/src/object_template.cpp",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/game/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/mesh/include -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror -o src/game/CMakeFiles/obf2_game.dir/src/object_template.cpp.o -c /Users/miami/OpenBattlefield2/src/game/src/object_template.cpp",
   "file": "/Users/miami/OpenBattlefield2/src/game/src/object_template.cpp",
   "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/game/CMakeFiles/obf2_game.dir/src/object_template.cpp.o"
+},
+{
+  "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/game/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/mesh/include -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror -o src/game/CMakeFiles/obf2_game.dir/src/scene.cpp.o -c /Users/miami/OpenBattlefield2/src/game/src/scene.cpp",
+  "file": "/Users/miami/OpenBattlefield2/src/game/src/scene.cpp",
+  "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/game/CMakeFiles/obf2_game.dir/src/scene.cpp.o"
 },
 {
   "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
@@ -61,7 +67,7 @@
 },
 {
   "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
-  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/gfx/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/mesh/include -I/Users/miami/OpenBattlefield2/src/texture/include -I/opt/homebrew/include -I/Users/miami/OpenBattlefield2/src/vfs/include -I/Users/miami/OpenBattlefield2/src/con/include -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror -o src/app/CMakeFiles/openbf2.dir/main.cpp.o -c /Users/miami/OpenBattlefield2/src/app/main.cpp",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/gfx/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/mesh/include -I/Users/miami/OpenBattlefield2/src/texture/include -I/opt/homebrew/include -I/Users/miami/OpenBattlefield2/src/vfs/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/game/include -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror -o src/app/CMakeFiles/openbf2.dir/main.cpp.o -c /Users/miami/OpenBattlefield2/src/app/main.cpp",
   "file": "/Users/miami/OpenBattlefield2/src/app/main.cpp",
   "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/app/CMakeFiles/openbf2.dir/main.cpp.o"
 },
@@ -85,7 +91,7 @@
 },
 {
   "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
-  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/game/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/vfs/include -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror -o tools/object_info/CMakeFiles/object_info.dir/main.cpp.o -c /Users/miami/OpenBattlefield2/tools/object_info/main.cpp",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/game/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/mesh/include -I/Users/miami/OpenBattlefield2/src/vfs/include -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror -o tools/object_info/CMakeFiles/object_info.dir/main.cpp.o -c /Users/miami/OpenBattlefield2/tools/object_info/main.cpp",
   "file": "/Users/miami/OpenBattlefield2/tools/object_info/main.cpp",
   "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/object_info/CMakeFiles/object_info.dir/main.cpp.o"
 },
@@ -115,8 +121,14 @@
 },
 {
   "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
-  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/tests -I/Users/miami/OpenBattlefield2/src/game/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror -o tests/CMakeFiles/test_object_template.dir/test_object_template.cpp.o -c /Users/miami/OpenBattlefield2/tests/test_object_template.cpp",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/tests -I/Users/miami/OpenBattlefield2/src/game/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/mesh/include -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror -o tests/CMakeFiles/test_object_template.dir/test_object_template.cpp.o -c /Users/miami/OpenBattlefield2/tests/test_object_template.cpp",
   "file": "/Users/miami/OpenBattlefield2/tests/test_object_template.cpp",
   "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_object_template.dir/test_object_template.cpp.o"
+},
+{
+  "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/tests -I/Users/miami/OpenBattlefield2/src/game/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/mesh/include -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror -o tests/CMakeFiles/test_scene.dir/test_scene.cpp.o -c /Users/miami/OpenBattlefield2/tests/test_scene.cpp",
+  "file": "/Users/miami/OpenBattlefield2/tests/test_scene.cpp",
+  "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_scene.dir/test_scene.cpp.o"
 }
 ]

@@ -565,13 +565,22 @@ build src/texture/rebuild_cache: phony src/texture/CMakeFiles/rebuild_cache.util
 #############################################
 # Order-only phony target for obf2_game
 
-build cmake_object_order_depends_target_obf2_game: phony || cmake_object_order_depends_target_obf2_con cmake_object_order_depends_target_obf2_core
+build cmake_object_order_depends_target_obf2_game: phony || cmake_object_order_depends_target_obf2_con cmake_object_order_depends_target_obf2_core cmake_object_order_depends_target_obf2_mesh
 
 build src/game/CMakeFiles/obf2_game.dir/src/object_template.cpp.o: CXX_COMPILER__obf2_game_unscanned_Debug /Users/miami/OpenBattlefield2/src/game/src/object_template.cpp || cmake_object_order_depends_target_obf2_game
   CONFIG = Debug
   DEP_FILE = src/game/CMakeFiles/obf2_game.dir/src/object_template.cpp.o.d
   FLAGS = -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror
-  INCLUDES = -I/Users/miami/OpenBattlefield2/src/game/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include
+  INCLUDES = -I/Users/miami/OpenBattlefield2/src/game/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/mesh/include
+  OBJECT_DIR = src/game/CMakeFiles/obf2_game.dir
+  OBJECT_FILE_DIR = src/game/CMakeFiles/obf2_game.dir/src
+  TARGET_SUPPORT_DIR = src/game/CMakeFiles/obf2_game.dir
+
+build src/game/CMakeFiles/obf2_game.dir/src/scene.cpp.o: CXX_COMPILER__obf2_game_unscanned_Debug /Users/miami/OpenBattlefield2/src/game/src/scene.cpp || cmake_object_order_depends_target_obf2_game
+  CONFIG = Debug
+  DEP_FILE = src/game/CMakeFiles/obf2_game.dir/src/scene.cpp.o.d
+  FLAGS = -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -I/Users/miami/OpenBattlefield2/src/game/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/mesh/include
   OBJECT_DIR = src/game/CMakeFiles/obf2_game.dir
   OBJECT_FILE_DIR = src/game/CMakeFiles/obf2_game.dir/src
   TARGET_SUPPORT_DIR = src/game/CMakeFiles/obf2_game.dir
@@ -584,7 +593,7 @@ build src/game/CMakeFiles/obf2_game.dir/src/object_template.cpp.o: CXX_COMPILER_
 #############################################
 # Link the static library src/game/libobf2_game.a
 
-build src/game/libobf2_game.a: CXX_STATIC_LIBRARY_LINKER__obf2_game_Debug src/game/CMakeFiles/obf2_game.dir/src/object_template.cpp.o || src/con/libobf2_con.a src/core/libobf2_core.a
+build src/game/libobf2_game.a: CXX_STATIC_LIBRARY_LINKER__obf2_game_Debug src/game/CMakeFiles/obf2_game.dir/src/object_template.cpp.o src/game/CMakeFiles/obf2_game.dir/src/scene.cpp.o || src/con/libobf2_con.a src/core/libobf2_core.a src/mesh/libobf2_mesh.a
   ARCH_FLAGS = -arch arm64
   CONFIG = Debug
   LANGUAGE_COMPILE_FLAGS = -g
@@ -730,13 +739,13 @@ build src/gfx/rebuild_cache: phony src/gfx/CMakeFiles/rebuild_cache.util
 #############################################
 # Order-only phony target for openbf2
 
-build cmake_object_order_depends_target_openbf2: phony || cmake_object_order_depends_target_miniz cmake_object_order_depends_target_obf2_con cmake_object_order_depends_target_obf2_core cmake_object_order_depends_target_obf2_gfx cmake_object_order_depends_target_obf2_mesh cmake_object_order_depends_target_obf2_texture cmake_object_order_depends_target_obf2_vfs
+build cmake_object_order_depends_target_openbf2: phony || cmake_object_order_depends_target_miniz cmake_object_order_depends_target_obf2_con cmake_object_order_depends_target_obf2_core cmake_object_order_depends_target_obf2_game cmake_object_order_depends_target_obf2_gfx cmake_object_order_depends_target_obf2_mesh cmake_object_order_depends_target_obf2_texture cmake_object_order_depends_target_obf2_vfs
 
 build src/app/CMakeFiles/openbf2.dir/main.cpp.o: CXX_COMPILER__openbf2_unscanned_Debug /Users/miami/OpenBattlefield2/src/app/main.cpp || cmake_object_order_depends_target_openbf2
   CONFIG = Debug
   DEP_FILE = src/app/CMakeFiles/openbf2.dir/main.cpp.o.d
   FLAGS = -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror
-  INCLUDES = -I/Users/miami/OpenBattlefield2/src/gfx/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/mesh/include -I/Users/miami/OpenBattlefield2/src/texture/include -I/opt/homebrew/include -I/Users/miami/OpenBattlefield2/src/vfs/include -I/Users/miami/OpenBattlefield2/src/con/include
+  INCLUDES = -I/Users/miami/OpenBattlefield2/src/gfx/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/mesh/include -I/Users/miami/OpenBattlefield2/src/texture/include -I/opt/homebrew/include -I/Users/miami/OpenBattlefield2/src/vfs/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/game/include
   OBJECT_DIR = src/app/CMakeFiles/openbf2.dir
   OBJECT_FILE_DIR = src/app/CMakeFiles/openbf2.dir
   TARGET_SUPPORT_DIR = src/app/CMakeFiles/openbf2.dir
@@ -749,11 +758,11 @@ build src/app/CMakeFiles/openbf2.dir/main.cpp.o: CXX_COMPILER__openbf2_unscanned
 #############################################
 # Link the executable src/app/openbf2
 
-build src/app/openbf2: CXX_EXECUTABLE_LINKER__openbf2_Debug src/app/CMakeFiles/openbf2.dir/main.cpp.o | src/gfx/libobf2_gfx.a src/vfs/libobf2_vfs.a src/mesh/libobf2_mesh.a src/texture/libobf2_texture.a /opt/homebrew/lib/libSDL3.0.dylib src/con/libobf2_con.a src/core/libobf2_core.a third_party/miniz/libminiz.a || src/con/libobf2_con.a src/core/libobf2_core.a src/gfx/libobf2_gfx.a src/mesh/libobf2_mesh.a src/texture/libobf2_texture.a src/vfs/libobf2_vfs.a third_party/miniz/libminiz.a
+build src/app/openbf2: CXX_EXECUTABLE_LINKER__openbf2_Debug src/app/CMakeFiles/openbf2.dir/main.cpp.o | src/gfx/libobf2_gfx.a src/vfs/libobf2_vfs.a src/game/libobf2_game.a src/texture/libobf2_texture.a /opt/homebrew/lib/libSDL3.0.dylib third_party/miniz/libminiz.a src/mesh/libobf2_mesh.a src/con/libobf2_con.a src/core/libobf2_core.a || src/con/libobf2_con.a src/core/libobf2_core.a src/game/libobf2_game.a src/gfx/libobf2_gfx.a src/mesh/libobf2_mesh.a src/texture/libobf2_texture.a src/vfs/libobf2_vfs.a third_party/miniz/libminiz.a
   CONFIG = Debug
   FLAGS = -g -arch arm64
   LINK_FLAGS = -Wl,-search_paths_first -Wl,-headerpad_max_install_names
-  LINK_LIBRARIES = -Wl,-rpath,/opt/homebrew/lib  src/gfx/libobf2_gfx.a  src/vfs/libobf2_vfs.a  src/mesh/libobf2_mesh.a  src/texture/libobf2_texture.a  /opt/homebrew/lib/libSDL3.0.dylib  src/con/libobf2_con.a  src/core/libobf2_core.a  third_party/miniz/libminiz.a
+  LINK_LIBRARIES = -Wl,-rpath,/opt/homebrew/lib  src/gfx/libobf2_gfx.a  src/vfs/libobf2_vfs.a  src/game/libobf2_game.a  src/texture/libobf2_texture.a  /opt/homebrew/lib/libSDL3.0.dylib  third_party/miniz/libminiz.a  src/mesh/libobf2_mesh.a  src/con/libobf2_con.a  src/core/libobf2_core.a
   OBJECT_DIR = src/app/CMakeFiles/openbf2.dir
   POST_BUILD = :
   PRE_LINK = :
@@ -1046,13 +1055,13 @@ build tools/texture_info/rebuild_cache: phony tools/texture_info/CMakeFiles/rebu
 #############################################
 # Order-only phony target for object_info
 
-build cmake_object_order_depends_target_object_info: phony || cmake_object_order_depends_target_miniz cmake_object_order_depends_target_obf2_con cmake_object_order_depends_target_obf2_core cmake_object_order_depends_target_obf2_game cmake_object_order_depends_target_obf2_vfs
+build cmake_object_order_depends_target_object_info: phony || cmake_object_order_depends_target_miniz cmake_object_order_depends_target_obf2_con cmake_object_order_depends_target_obf2_core cmake_object_order_depends_target_obf2_game cmake_object_order_depends_target_obf2_mesh cmake_object_order_depends_target_obf2_vfs
 
 build tools/object_info/CMakeFiles/object_info.dir/main.cpp.o: CXX_COMPILER__object_info_unscanned_Debug /Users/miami/OpenBattlefield2/tools/object_info/main.cpp || cmake_object_order_depends_target_object_info
   CONFIG = Debug
   DEP_FILE = tools/object_info/CMakeFiles/object_info.dir/main.cpp.o.d
   FLAGS = -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror
-  INCLUDES = -I/Users/miami/OpenBattlefield2/src/game/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/vfs/include
+  INCLUDES = -I/Users/miami/OpenBattlefield2/src/game/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/mesh/include -I/Users/miami/OpenBattlefield2/src/vfs/include
   OBJECT_DIR = tools/object_info/CMakeFiles/object_info.dir
   OBJECT_FILE_DIR = tools/object_info/CMakeFiles/object_info.dir
   TARGET_SUPPORT_DIR = tools/object_info/CMakeFiles/object_info.dir
@@ -1065,11 +1074,11 @@ build tools/object_info/CMakeFiles/object_info.dir/main.cpp.o: CXX_COMPILER__obj
 #############################################
 # Link the executable tools/object_info/object_info
 
-build tools/object_info/object_info: CXX_EXECUTABLE_LINKER__object_info_Debug tools/object_info/CMakeFiles/object_info.dir/main.cpp.o | src/game/libobf2_game.a src/vfs/libobf2_vfs.a src/con/libobf2_con.a src/core/libobf2_core.a third_party/miniz/libminiz.a || src/con/libobf2_con.a src/core/libobf2_core.a src/game/libobf2_game.a src/vfs/libobf2_vfs.a third_party/miniz/libminiz.a
+build tools/object_info/object_info: CXX_EXECUTABLE_LINKER__object_info_Debug tools/object_info/CMakeFiles/object_info.dir/main.cpp.o | src/game/libobf2_game.a src/vfs/libobf2_vfs.a src/mesh/libobf2_mesh.a src/con/libobf2_con.a src/core/libobf2_core.a third_party/miniz/libminiz.a || src/con/libobf2_con.a src/core/libobf2_core.a src/game/libobf2_game.a src/mesh/libobf2_mesh.a src/vfs/libobf2_vfs.a third_party/miniz/libminiz.a
   CONFIG = Debug
   FLAGS = -g -arch arm64
   LINK_FLAGS = -Wl,-search_paths_first -Wl,-headerpad_max_install_names
-  LINK_LIBRARIES = src/game/libobf2_game.a  src/vfs/libobf2_vfs.a  src/con/libobf2_con.a  src/core/libobf2_core.a  third_party/miniz/libminiz.a
+  LINK_LIBRARIES = src/game/libobf2_game.a  src/vfs/libobf2_vfs.a  src/mesh/libobf2_mesh.a  src/con/libobf2_con.a  src/core/libobf2_core.a  third_party/miniz/libminiz.a
   OBJECT_DIR = tools/object_info/CMakeFiles/object_info.dir
   POST_BUILD = :
   PRE_LINK = :
@@ -1277,13 +1286,13 @@ build tests/test_texture: CXX_EXECUTABLE_LINKER__test_texture_Debug tests/CMakeF
 #############################################
 # Order-only phony target for test_object_template
 
-build cmake_object_order_depends_target_test_object_template: phony || cmake_object_order_depends_target_obf2_con cmake_object_order_depends_target_obf2_core cmake_object_order_depends_target_obf2_game
+build cmake_object_order_depends_target_test_object_template: phony || cmake_object_order_depends_target_obf2_con cmake_object_order_depends_target_obf2_core cmake_object_order_depends_target_obf2_game cmake_object_order_depends_target_obf2_mesh
 
 build tests/CMakeFiles/test_object_template.dir/test_object_template.cpp.o: CXX_COMPILER__test_object_template_unscanned_Debug /Users/miami/OpenBattlefield2/tests/test_object_template.cpp || cmake_object_order_depends_target_test_object_template
   CONFIG = Debug
   DEP_FILE = tests/CMakeFiles/test_object_template.dir/test_object_template.cpp.o.d
   FLAGS = -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror
-  INCLUDES = -I/Users/miami/OpenBattlefield2/tests -I/Users/miami/OpenBattlefield2/src/game/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include
+  INCLUDES = -I/Users/miami/OpenBattlefield2/tests -I/Users/miami/OpenBattlefield2/src/game/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/mesh/include
   OBJECT_DIR = tests/CMakeFiles/test_object_template.dir
   OBJECT_FILE_DIR = tests/CMakeFiles/test_object_template.dir
   TARGET_SUPPORT_DIR = tests/CMakeFiles/test_object_template.dir
@@ -1296,17 +1305,55 @@ build tests/CMakeFiles/test_object_template.dir/test_object_template.cpp.o: CXX_
 #############################################
 # Link the executable tests/test_object_template
 
-build tests/test_object_template: CXX_EXECUTABLE_LINKER__test_object_template_Debug tests/CMakeFiles/test_object_template.dir/test_object_template.cpp.o | src/game/libobf2_game.a src/con/libobf2_con.a src/core/libobf2_core.a || src/con/libobf2_con.a src/core/libobf2_core.a src/game/libobf2_game.a
+build tests/test_object_template: CXX_EXECUTABLE_LINKER__test_object_template_Debug tests/CMakeFiles/test_object_template.dir/test_object_template.cpp.o | src/game/libobf2_game.a src/con/libobf2_con.a src/mesh/libobf2_mesh.a src/core/libobf2_core.a || src/con/libobf2_con.a src/core/libobf2_core.a src/game/libobf2_game.a src/mesh/libobf2_mesh.a
   CONFIG = Debug
   FLAGS = -g -arch arm64
   LINK_FLAGS = -Wl,-search_paths_first -Wl,-headerpad_max_install_names
-  LINK_LIBRARIES = src/game/libobf2_game.a  src/con/libobf2_con.a  src/core/libobf2_core.a
+  LINK_LIBRARIES = src/game/libobf2_game.a  src/con/libobf2_con.a  src/mesh/libobf2_mesh.a  src/core/libobf2_core.a
   OBJECT_DIR = tests/CMakeFiles/test_object_template.dir
   POST_BUILD = :
   PRE_LINK = :
   TARGET_FILE = tests/test_object_template
   TARGET_PDB = test_object_template.dbg
   TARGET_SUPPORT_DIR = tests/CMakeFiles/test_object_template.dir
+
+# =============================================================================
+# Object build statements for EXECUTABLE target test_scene
+
+
+#############################################
+# Order-only phony target for test_scene
+
+build cmake_object_order_depends_target_test_scene: phony || cmake_object_order_depends_target_obf2_con cmake_object_order_depends_target_obf2_core cmake_object_order_depends_target_obf2_game cmake_object_order_depends_target_obf2_mesh
+
+build tests/CMakeFiles/test_scene.dir/test_scene.cpp.o: CXX_COMPILER__test_scene_unscanned_Debug /Users/miami/OpenBattlefield2/tests/test_scene.cpp || cmake_object_order_depends_target_test_scene
+  CONFIG = Debug
+  DEP_FILE = tests/CMakeFiles/test_scene.dir/test_scene.cpp.o.d
+  FLAGS = -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -I/Users/miami/OpenBattlefield2/tests -I/Users/miami/OpenBattlefield2/src/game/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/mesh/include
+  OBJECT_DIR = tests/CMakeFiles/test_scene.dir
+  OBJECT_FILE_DIR = tests/CMakeFiles/test_scene.dir
+  TARGET_SUPPORT_DIR = tests/CMakeFiles/test_scene.dir
+
+
+# =============================================================================
+# Link build statements for EXECUTABLE target test_scene
+
+
+#############################################
+# Link the executable tests/test_scene
+
+build tests/test_scene: CXX_EXECUTABLE_LINKER__test_scene_Debug tests/CMakeFiles/test_scene.dir/test_scene.cpp.o | src/game/libobf2_game.a src/con/libobf2_con.a src/mesh/libobf2_mesh.a src/core/libobf2_core.a || src/con/libobf2_con.a src/core/libobf2_core.a src/game/libobf2_game.a src/mesh/libobf2_mesh.a
+  CONFIG = Debug
+  FLAGS = -g -arch arm64
+  LINK_FLAGS = -Wl,-search_paths_first -Wl,-headerpad_max_install_names
+  LINK_LIBRARIES = src/game/libobf2_game.a  src/con/libobf2_con.a  src/mesh/libobf2_mesh.a  src/core/libobf2_core.a
+  OBJECT_DIR = tests/CMakeFiles/test_scene.dir
+  POST_BUILD = :
+  PRE_LINK = :
+  TARGET_FILE = tests/test_scene
+  TARGET_PDB = test_scene.dbg
+  TARGET_SUPPORT_DIR = tests/CMakeFiles/test_scene.dir
 
 
 #############################################
@@ -1395,6 +1442,8 @@ build test_object_template: phony tests/test_object_template
 
 build test_path: phony tests/test_path
 
+build test_scene: phony tests/test_scene
+
 build test_texture: phony tests/test_texture
 
 build texture_info: phony tools/texture_info/texture_info
@@ -1470,7 +1519,7 @@ build src/vfs/all: phony src/vfs/libobf2_vfs.a
 #############################################
 # Folder: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
 
-build tests/all: phony tests/test_path tests/test_con tests/test_mesh tests/test_texture tests/test_object_template
+build tests/all: phony tests/test_path tests/test_con tests/test_mesh tests/test_texture tests/test_object_template tests/test_scene
 
 # =============================================================================
 

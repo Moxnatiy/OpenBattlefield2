@@ -72,6 +72,50 @@ inline Mat4 rotationY(float radians) {
   return out;
 }
 
+inline Mat4 rotationX(float radians) {
+  Mat4 out = Mat4::identity();
+  const float c = std::cos(radians);
+  const float s = std::sin(radians);
+  out.m[5] = c;
+  out.m[6] = s;
+  out.m[9] = -s;
+  out.m[10] = c;
+  return out;
+}
+
+inline Mat4 rotationZ(float radians) {
+  Mat4 out = Mat4::identity();
+  const float c = std::cos(radians);
+  const float s = std::sin(radians);
+  out.m[0] = c;
+  out.m[1] = s;
+  out.m[4] = -s;
+  out.m[5] = c;
+  return out;
+}
+
+// BF2 задає повороти трійкою градусів yaw/pitch/roll (Y, X, Z) — саме в
+// такому порядку вони й застосовуються.
+inline Mat4 rotationYawPitchRoll(float yawDegrees, float pitchDegrees, float rollDegrees) {
+  constexpr float kToRadians = 3.14159265358979323846f / 180.0f;
+  return rotationY(yawDegrees * kToRadians) * rotationX(pitchDegrees * kToRadians) *
+         rotationZ(rollDegrees * kToRadians);
+}
+
+inline Vec3f transformPoint(const Mat4& m, Vec3f v) {
+  return {m.m[0] * v.x + m.m[4] * v.y + m.m[8] * v.z + m.m[12],
+          m.m[1] * v.x + m.m[5] * v.y + m.m[9] * v.z + m.m[13],
+          m.m[2] * v.x + m.m[6] * v.y + m.m[10] * v.z + m.m[14]};
+}
+
+// Напрямок — без переносу. Для нерівномірного масштабу знадобилася б
+// обернено-транспонована матриця, але у BF2 частини не масштабуються.
+inline Vec3f transformDirection(const Mat4& m, Vec3f v) {
+  return {m.m[0] * v.x + m.m[4] * v.y + m.m[8] * v.z,
+          m.m[1] * v.x + m.m[5] * v.y + m.m[9] * v.z,
+          m.m[2] * v.x + m.m[6] * v.y + m.m[10] * v.z};
+}
+
 // Права система координат, камера дивиться вздовж -Z.
 inline Mat4 lookAt(Vec3f eye, Vec3f target, Vec3f up) {
   const Vec3f f = normalize(target - eye);

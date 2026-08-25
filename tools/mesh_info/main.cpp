@@ -23,7 +23,8 @@ obf2::FileSystem mountGame(const std::filesystem::path& modDir) {
   return files;
 }
 
-void printOne(obf2::FileSystem& files, const std::string& path) {
+void printOne(obf2::FileSystem& files, const std::string& path, std::size_t geometryIndex = 0,
+              std::size_t lodIndex = 0) {
   const auto kind = obf2::mesh::kindFromExtension(obf2::assetExtension(path));
   if (!kind) { std::fprintf(stderr, "невідоме розширення: %s\n", path.c_str()); return; }
 
@@ -43,7 +44,7 @@ void printOne(obf2::FileSystem& files, const std::string& path) {
   std::printf("  атрибути:");
   for (const auto& a : mesh->attributes) {
     if (a.flag != 0) continue;
-    std::printf(" usage=%u@%u", a.usage, a.offset);
+    std::printf(" usage=%u@%u(type %u)", a.usage, a.offset, a.vartype);
   }
   std::putchar('\n');
 
@@ -51,11 +52,19 @@ void printOne(obf2::FileSystem& files, const std::string& path) {
     std::printf("  geom %zu: lod-ів %zu\n", g, mesh->geometries[g].lods.size());
   }
 
-  const auto render = obf2::mesh::extract(*mesh, 0, 0, &error);
+  const auto render = obf2::mesh::extract(*mesh, geometryIndex, lodIndex, &error);
   if (!render) { std::fprintf(stderr, "  extract: %s\n", error.c_str()); return; }
-  std::printf("  lod0: вершин %zu, індексів %zu (%zu трикутників), діапазонів %zu\n",
-              render->vertices.size(), render->indices.size(), render->indices.size() / 3,
-              render->ranges.size());
+
+  if (!render->vertexPart.empty()) {
+    std::map<int, int> partHistogram;
+    for (const std::uint8_t part : render->vertexPart) ++partHistogram[part];
+    std::printf("  частини (geometryPart -> вершин):");
+    for (const auto& [part, count] : partHistogram) std::printf(" %d:%d", part, count);
+    std::putchar('\n');
+  }
+  std::printf("  geom %zu lod %zu: вершин %zu, індексів %zu (%zu трикутників), діапазонів %zu\n",
+              geometryIndex, lodIndex, render->vertices.size(), render->indices.size(),
+              render->indices.size() / 3, render->ranges.size());
   std::printf("  bbox: %.2f/%.2f/%.2f .. %.2f/%.2f/%.2f\n", render->bounds.min.x,
               render->bounds.min.y, render->bounds.min.z, render->bounds.max.x,
               render->bounds.max.y, render->bounds.max.z);
@@ -130,7 +139,69 @@ int main(int argc, char** argv) {
     return 0;
   }
 
-  if (what != "--all") { printOne(files, obf2::normalizeAssetPath(what)); return 0; }
+  // Розвідка: у якому порядку обходяться вершини трикутника. Порівнюємо
+  // геометричну нормаль (векторний добуток ребер) із нормалями вершин, які
+  // художник задав явно. Якщо вони дивляться в один бік — обхід проти
+  // годинникової стрілки, і саме такі грані лицьові.
+  if (what == "--winding") {
+    long long agree = 0, disagree = 0, degenerate = 0;
+    int meshesScanned = 0;
+
+    auto paths = files.list();
+    std::sort(paths.begin(), paths.end());
+    paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
+
+    for (const auto& path : paths) {
+      const auto kind = obf2::mesh::kindFromExtension(obf2::assetExtension(path));
+      if (!kind) continue;
+      const auto bytes = files.read(path);
+      if (!bytes) continue;
+      const auto mesh = obf2::mesh::load(*bytes, *kind);
+      if (!mesh) continue;
+      const auto render = obf2::mesh::extract(*mesh, 0, 0);
+      if (!render) continue;
+      ++meshesScanned;
+
+      for (std::size_t i = 0; i + 2 < render->indices.size(); i += 3) {
+        const auto& a = render->vertices[render->indices[i]];
+        const auto& b = render->vertices[render->indices[i + 1]];
+        const auto& c = render->vertices[render->indices[i + 2]];
+
+        const float e1[3] = {b.position.x - a.position.x, b.position.y - a.position.y,
+                             b.position.z - a.position.z};
+        const float e2[3] = {c.position.x - a.position.x, c.position.y - a.position.y,
+                             c.position.z - a.position.z};
+        const float face[3] = {e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2],
+                               e1[0] * e2[1] - e1[1] * e2[0]};
+        const float shading[3] = {a.normal.x + b.normal.x + c.normal.x,
+                                  a.normal.y + b.normal.y + c.normal.y,
+                                  a.normal.z + b.normal.z + c.normal.z};
+        const float dot = face[0] * shading[0] + face[1] * shading[1] + face[2] * shading[2];
+
+        if (face[0] == 0.0f && face[1] == 0.0f && face[2] == 0.0f) ++degenerate;
+        else if (dot > 0.0f) ++agree;
+        else if (dot < 0.0f) ++disagree;
+      }
+    }
+
+    const long long total = agree + disagree;
+    std::printf("мешів: %d, трикутників: %lld (вироджених %lld)\n", meshesScanned, total,
+                degenerate);
+    if (total > 0) {
+      std::printf("  обхід збігається з нормалями вершин: %lld (%.2f%%)\n", agree,
+                  100.0 * static_cast<double>(agree) / static_cast<double>(total));
+      std::printf("  протилежний:                        %lld (%.2f%%)\n", disagree,
+                  100.0 * static_cast<double>(disagree) / static_cast<double>(total));
+    }
+    return 0;
+  }
+
+  if (what != "--all") {
+    const std::size_t geometryIndex = argc > 3 ? static_cast<std::size_t>(std::atoi(argv[3])) : 0;
+    const std::size_t lodIndex = argc > 4 ? static_cast<std::size_t>(std::atoi(argv[4])) : 0;
+    printOne(files, obf2::normalizeAssetPath(what), geometryIndex, lodIndex);
+    return 0;
+  }
 
   const std::string wanted = argc > 3 ? argv[3] : "";
   std::map<std::string, int> parsed, failed;

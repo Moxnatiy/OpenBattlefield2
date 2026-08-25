@@ -101,6 +101,12 @@ struct RenderMesh {
   std::vector<std::uint32_t> indices;
   std::vector<DrawRange> ranges;
   Aabb bounds;
+
+  // BundledMesh: індекс частини для кожної вершини (башта, ствол, колеса —
+  // усе в одному буфері, кожна частина у власних локальних координатах).
+  // Порожній для static/skinned. Береться з атрибута BLENDINDICES, який
+  // зберігається як D3DCOLOR — чотири байти в одному слоті.
+  std::vector<std::uint8_t> vertexPart;
 };
 
 // Тип визначається розширенням файлу — інакше його з вмісту не дізнатися.

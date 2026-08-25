@@ -257,13 +257,16 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
 
   // Зсуви потрібних каналів. Беремо перший TEXCOORD: у BF2 їх до трьох
   // (база, детейл, лайтмапа), і для геометрії досить нульового.
-  bool hasPosition = false, hasNormal = false, hasUv = false;
-  std::size_t positionFloat = 0, normalFloat = 0, uvFloat = 0;
+  bool hasPosition = false, hasNormal = false, hasUv = false, hasPart = false;
+  std::size_t positionFloat = 0, normalFloat = 0, uvFloat = 0, partFloat = 0;
   for (const VertexAttribute& attribute : mesh.attributes) {
     if (attribute.flag != 0) continue;  // 255 = канал вимкнено
     const std::size_t index = attribute.offset / sizeof(float);
+    // usage кодується як (номер каналу << 8) | призначення, тому TEXCOORD1
+    // це 0x105, а TEXCOORD2 (лайтмапа) — 0x205. Нам треба нульовий.
     switch (attribute.usage) {
       case 0: positionFloat = index; hasPosition = true; break;
+      case 2: partFloat = index; hasPart = true; break;
       case 3: normalFloat = index; hasNormal = true; break;
       case 5:
         if (!hasUv) { uvFloat = index; hasUv = true; }
@@ -276,10 +279,19 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
   RenderMesh out;
   out.bounds = Aabb{lod.min, lod.max};
   out.vertices.resize(mesh.vertexCount);
+  if (hasPart && mesh.kind == Kind::Bundled) out.vertexPart.resize(mesh.vertexCount);
 
   for (std::uint32_t i = 0; i < mesh.vertexCount; ++i) {
     const std::size_t base = static_cast<std::size_t>(i) * stride;
     Vertex& vertex = out.vertices[i];
+
+    if (!out.vertexPart.empty() && base + partFloat < mesh.vertexData.size()) {
+      // D3DCOLOR: чотири байти, запхані у float-слот. Номер частини лежить
+      // у молодшому байті; старший використовується під анімовані UV.
+      std::uint32_t packed = 0;
+      std::memcpy(&packed, &mesh.vertexData[base + partFloat], sizeof(packed));
+      out.vertexPart[i] = static_cast<std::uint8_t>(packed & 0xFFu);
+    }
 
     if (base + positionFloat + 2 < mesh.vertexData.size()) {
       vertex.position = {mesh.vertexData[base + positionFloat],

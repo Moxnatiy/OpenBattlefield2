@@ -7,12 +7,14 @@
 
 #include <cmath>
 #include <cstdio>
+#include <algorithm>
 #include <cstdlib>
 #include <string>
 
 #include "obf2/core/math.h"
 #include "obf2/core/path.h"
 #include "obf2/core/platform.h"
+#include "obf2/game/scene.h"
 #include "obf2/gfx/mesh_renderer.h"
 #include "obf2/mesh/bf2_mesh.h"
 #include "obf2/texture/dds.h"
@@ -26,6 +28,9 @@ constexpr const char* kDefaultMesh =
 struct Args {
   std::filesystem::path modDir = "Game Files/mods/bf2";
   std::string meshPath = kDefaultMesh;
+  std::string objectName;  // --object: зібрати за деревом ObjectTemplate
+  int geometryIndex = -1;  // -1 = вибрати найбільший lod0
+  int lodIndex = 0;
   int frames = 0;  // 0 = крутитися, доки не закриють вікно
   std::string screenshot;  // куди зберегти останній кадр
 };
@@ -36,13 +41,49 @@ Args parseArgs(int argc, char** argv) {
     const std::string_view flag = argv[i];
     if (flag == "--mod" && i + 1 < argc) args.modDir = argv[++i];
     else if (flag == "--mesh" && i + 1 < argc) args.meshPath = argv[++i];
+    else if (flag == "--object" && i + 1 < argc) args.objectName = argv[++i];
+    else if (flag == "--geom" && i + 1 < argc) args.geometryIndex = std::atoi(argv[++i]);
+    else if (flag == "--lod" && i + 1 < argc) args.lodIndex = std::atoi(argv[++i]);
     else if (flag == "--frames" && i + 1 < argc) args.frames = std::atoi(argv[++i]);
     else if (flag == "--screenshot" && i + 1 < argc) args.screenshot = argv[++i];
   }
   return args;
 }
 
-std::optional<obf2::mesh::RenderMesh> loadMesh(obf2::FileSystem& files, const std::string& path) {
+// У .bundledmesh техніки кілька geom: вигляд із кабіни, зовнішній вигляд і
+// уламки. Явного маркера у файлі немає, але є надійна ознака: **вигляд із
+// кабіни має рівно один lod** — гравець завжди поруч, тож ланцюжок деталізації
+// йому не потрібен, тоді як зовнішній вигляд має 3-4 рівні.
+//
+//   ahe_ah1z:  geom0 = 1 lod (кабіна), geom1 = 4 (зовні), geom2 = 3 (уламки)
+//   apc_btr90: geom0 = 1 lod (кабіна), geom1 = 4 (зовні), geom2 = 4 (уламки)
+//
+// Тому обираємо geom із найдовшим ланцюжком lod, а за однакової довжини —
+// найдетальніший: у BTR обидва «не-кабінні» geom мають по 4 рівні, і від
+// уламків зовнішній вигляд відрізняє саме кількість трикутників.
+std::size_t pickGeometry(const obf2::mesh::Mesh& mesh, std::size_t lodIndex) {
+  std::size_t best = 0;
+  std::size_t bestLods = 0;
+  std::size_t bestTriangles = 0;
+
+  for (std::size_t g = 0; g < mesh.geometries.size(); ++g) {
+    const auto& lods = mesh.geometries[g].lods;
+    if (lodIndex >= lods.size()) continue;
+
+    std::size_t triangles = 0;
+    for (const auto& material : lods[lodIndex].materials) triangles += material.indexCount / 3;
+
+    if (lods.size() > bestLods || (lods.size() == bestLods && triangles > bestTriangles)) {
+      bestLods = lods.size();
+      bestTriangles = triangles;
+      best = g;
+    }
+  }
+  return best;
+}
+
+std::optional<obf2::mesh::RenderMesh> loadMesh(obf2::FileSystem& files, const std::string& path,
+                                               const Args& args) {
   const std::string normalized = obf2::normalizeAssetPath(path);
   const auto kind = obf2::mesh::kindFromExtension(obf2::assetExtension(normalized));
   if (!kind) {
@@ -61,16 +102,39 @@ std::optional<obf2::mesh::RenderMesh> loadMesh(obf2::FileSystem& files, const st
     std::fprintf(stderr, "не розібрано %s: %s\n", normalized.c_str(), error.c_str());
     return std::nullopt;
   }
-  auto render = obf2::mesh::extract(*parsed, 0, 0, &error);
+
+  const std::size_t lodIndex = static_cast<std::size_t>(std::max(0, args.lodIndex));
+  const std::size_t geometryIndex = args.geometryIndex >= 0
+                                        ? static_cast<std::size_t>(args.geometryIndex)
+                                        : pickGeometry(*parsed, lodIndex);
+
+  auto render = obf2::mesh::extract(*parsed, geometryIndex, lodIndex, &error);
   if (!render) {
     std::fprintf(stderr, "не розпаковано %s: %s\n", normalized.c_str(), error.c_str());
     return std::nullopt;
   }
 
-  std::printf("меш: %s\n  версія %u, вершин %zu, трикутників %zu, матеріалів %zu\n",
-              normalized.c_str(), parsed->header.version, render->vertices.size(),
+  std::printf("меш: %s\n  версія %u, geom %zu/%zu, lod %zu, вершин %zu, трикутників %zu, "
+              "матеріалів %zu\n",
+              normalized.c_str(), parsed->header.version, geometryIndex,
+              parsed->geometries.size(), lodIndex, render->vertices.size(),
               render->indices.size() / 3, render->ranges.size());
   return render;
+}
+
+// Ім'я геометрії з ObjectTemplate — це не шлях. Файл лежить поруч із .con,
+// у підтеці meshes: objects/vehicles/land/apc_btr90/meshes/apc_btr90.bundledmesh.
+std::string resolveGeometryPath(obf2::FileSystem& files, const std::string& templateFile,
+                                const std::string& geometryName) {
+  const std::string_view dir = obf2::assetParentDir(templateFile);
+  for (const char* extension : {".bundledmesh", ".staticmesh", ".skinnedmesh"}) {
+    for (const char* subdirectory : {"meshes/", ""}) {
+      const std::string candidate =
+          obf2::joinAssetPath(dir, std::string(subdirectory) + geometryName + extension);
+      if (files.exists(candidate)) return candidate;
+    }
+  }
+  return {};
 }
 
 }  // namespace
@@ -90,8 +154,54 @@ int main(int argc, char** argv) {
   std::printf("мод: %s | архівів: %d\n", args.modDir.string().c_str(), mounted);
   for (const auto& e : mountErrors) std::printf("  [mount] %s\n", e.c_str());
 
-  const auto renderMesh = loadMesh(files, args.meshPath);
+  // Режим --object: збираємо техніку за деревом ObjectTemplate.
+  std::string meshPath = args.meshPath;
+  std::optional<obf2::game::ObjectInstance> instance;
+  obf2::game::Registry registry;
+
+  if (!args.objectName.empty()) {
+    std::vector<std::string> configs;
+    for (auto& path : files.list()) {
+      const std::string_view extension = obf2::assetExtension(path);
+      if (extension == "con" || extension == "tweak") configs.push_back(std::move(path));
+    }
+    std::sort(configs.begin(), configs.end());
+    configs.erase(std::unique(configs.begin(), configs.end()), configs.end());
+
+    for (const auto& path : configs) {
+      obf2::con::Interpreter interpreter(
+          files, [&](const obf2::con::Command& command) { registry.feed(command); });
+      interpreter.runFile(path);
+    }
+    std::printf("реєстр: %zu шаблонів\n", registry.size());
+
+    instance = obf2::game::flattenObject(registry, args.objectName);
+    if (!instance) {
+      std::fprintf(stderr, "шаблон не знайдено: %s\n", args.objectName.c_str());
+      return 1;
+    }
+    const auto* root = registry.find(args.objectName);
+    meshPath = resolveGeometryPath(files, root->file, instance->geometryName);
+    if (meshPath.empty()) {
+      std::fprintf(stderr, "не знайдено геометрію '%s' поруч із %s\n",
+                   instance->geometryName.c_str(), root->file.c_str());
+      return 1;
+    }
+    std::printf("об'єкт: %s (%s)\n  вузлів у дереві: %zu, глибина: %d, нерозв'язаних: %d, "
+                "циклів: %d\n",
+                instance->rootName.c_str(), root->className.c_str(), instance->parts.size(),
+                instance->maxDepth, instance->unresolved, instance->cycles);
+  }
+
+  auto renderMesh = loadMesh(files, meshPath, args);
   if (!renderMesh) return 1;
+
+  if (instance) {
+    const auto transforms = obf2::game::partTransformMap(*instance);
+    const std::size_t moved = obf2::game::applyPartTransforms(*renderMesh, transforms);
+    std::printf("  частин із трансформом: %zu, переставлено вершин: %zu з %zu\n",
+                transforms.size(), moved, renderMesh->vertices.size());
+  }
 
   obf2::gfx::WindowDesc desc;
   desc.title = "OpenBattlefield2";
