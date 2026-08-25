@@ -7,6 +7,7 @@
 // список архівів береться з ServerArchives.con самої гри.
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <map>
 #include <string>
@@ -45,7 +46,7 @@ int main(int argc, char** argv) {
               OBF2_PLATFORM_NAME, OBF2_ARCH_NAME, mounted, fs.mountCount());
   for (const auto& e : mountErrors) std::printf("  [mount] %s\n", e.c_str());
 
-  if (what != "--all") {
+  if (what != "--all" && what != "--commands") {
     long long commands = 0;
     obf2::con::Interpreter interp(
         fs,
@@ -64,6 +65,55 @@ int main(int argc, char** argv) {
     std::printf("\nкоманд: %lld, помилок: %d, попереджень: %d\n", commands, interp.errorCount(),
                 interp.warningCount());
     return ok && interp.errorCount() == 0 ? 0 : 1;
+  }
+
+  // Режим --commands: частотність команд однієї цілі. Потрібен, щоб будувати
+  // реєстр за реальними даними, а не за припущеннями.
+  if (what == "--commands") {
+    const std::string target = argc > 3 ? argv[3] : "objecttemplate";
+    std::map<std::string, long long> byCommand;
+    std::map<std::string, long long> byComponent;
+
+    std::vector<std::string> scan;
+    for (auto& path : fs.list()) {
+      const std::string_view ext = obf2::assetExtension(path);
+      if (ext == "con" || ext == "tweak") scan.push_back(std::move(path));
+    }
+    std::sort(scan.begin(), scan.end());
+    scan.erase(std::unique(scan.begin(), scan.end()), scan.end());
+
+    for (const auto& file : scan) {
+      obf2::con::Interpreter interp(fs, [&](const obf2::con::Command& cmd) {
+        if (cmd.path.empty()) return;
+        std::string head = cmd.path.front();
+        for (char& c : head) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (head != target) return;
+        ++byCommand[cmd.lowerPath];
+        // Двоскладові шляхи (ObjectTemplate.fire.x) — це звертання до компонента.
+        if (cmd.path.size() == 3) {
+          std::string component = cmd.path[1];
+          for (char& c : component) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+          ++byComponent[component];
+        }
+      });
+      interp.runFile(file);
+    }
+
+    std::vector<std::pair<std::string, long long>> sorted(byCommand.begin(), byCommand.end());
+    std::sort(sorted.begin(), sorted.end(), [](auto& a, auto& b) { return a.second > b.second; });
+    std::printf("команд %s: %zu унікальних\n\nтоп-25:\n", target.c_str(), sorted.size());
+    for (std::size_t i = 0; i < sorted.size() && i < 25; ++i) {
+      std::printf("  %-46s %lld\n", sorted[i].first.c_str(), sorted[i].second);
+    }
+
+    std::vector<std::pair<std::string, long long>> components(byComponent.begin(), byComponent.end());
+    std::sort(components.begin(), components.end(),
+              [](auto& a, auto& b) { return a.second > b.second; });
+    std::printf("\nпідоб'єкти (%zu унікальних), топ-15:\n", components.size());
+    for (std::size_t i = 0; i < components.size() && i < 15; ++i) {
+      std::printf("  %-24s %lld\n", components[i].first.c_str(), components[i].second);
+    }
+    return 0;
   }
 
   // Режим --all: регресійний прогін по всьому корпусу.

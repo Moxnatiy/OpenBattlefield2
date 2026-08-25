@@ -1,5 +1,6 @@
-test_path 6 0.000654306
-test_con 6 0.000719632
-test_mesh 2 0.00214675
-test_texture 1 0.516576
+test_path 7 0.000515518
+test_con 7 0.000616786
+test_mesh 3 0.00144078
+test_texture 2 0.00363602
+test_object_template 1 0.44637
 ---
