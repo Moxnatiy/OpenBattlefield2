@@ -1,4 +1,5 @@
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -156,6 +157,79 @@ static void testSkipBits() {
   CHECK(!reader.skipBits(1000));
 }
 
+static void testCompressedVectorRoundTrip() {
+  // Близька точка: різниця мала, отже найвищий рівень стиснення (12 біт).
+  auto data = buffer(64);
+  const obf2::Vec3f reference{100.0f, 50.0f, -20.0f};
+  const obf2::Vec3f value{100.5f, 50.25f, -20.75f};
+  const float precision = 0.01f;
+
+  BitWriter writer(data);
+  CHECK(writer.writeCompressedVector(value, reference, precision));
+
+  BitReader reader(data);
+  const auto decoded = reader.readCompressedVector(reference, precision);
+  CHECK(decoded.has_value());
+  if (decoded) {
+    // Квантування дає похибку не більшу за крок.
+    CHECK(std::abs(decoded->x - value.x) <= precision);
+    CHECK(std::abs(decoded->y - value.y) <= precision);
+    CHECK(std::abs(decoded->z - value.z) <= precision);
+  }
+
+  // 2 біти рівня + 3 * (1 біт знаку + 11 біт модуля) = 38 біт.
+  CHECK_EQ(writer.bitPosition(), std::size_t(38));
+}
+
+static void testCompressionLevelGrowsWithDistance() {
+  const obf2::Vec3f reference{0.0f, 0.0f, 0.0f};
+  const float precision = 1.0f;
+
+  struct Case {
+    float distance;
+    std::size_t expectedBits;  // 2 + 3 * біти таблиці
+  };
+  const Case cases[] = {
+      {10.0f, 2 + 3 * 12},        // рівень 3
+      {5000.0f, 2 + 3 * 16},      // рівень 2
+      {100000.0f, 2 + 3 * 20},    // рівень 1
+      {1000000.0f, 2 + 3 * 32},   // рівень 0: сирі float-и
+  };
+
+  for (const Case& c : cases) {
+    auto data = buffer(64);
+    BitWriter writer(data);
+    CHECK(writer.writeCompressedVector(obf2::Vec3f{c.distance, 0.0f, 0.0f}, reference, precision));
+    CHECK_EQ(writer.bitPosition(), c.expectedBits);
+  }
+}
+
+static void testFarVectorKeepsFullPrecision() {
+  // На рівні 0 пишеться абсолютна позиція сирими float-ами, тому
+  // значення має відновитися точно.
+  auto data = buffer(64);
+  const obf2::Vec3f reference{0.0f, 0.0f, 0.0f};
+  const obf2::Vec3f value{1234567.5f, -98765.25f, 555555.0f};
+
+  BitWriter writer(data);
+  CHECK(writer.writeCompressedVector(value, reference, 1.0f));
+
+  BitReader reader(data);
+  const auto decoded = reader.readCompressedVector(reference, 1.0f);
+  CHECK(decoded.has_value());
+  if (decoded) {
+    CHECK_EQ(decoded->x, value.x);
+    CHECK_EQ(decoded->y, value.y);
+    CHECK_EQ(decoded->z, value.z);
+  }
+}
+
+static void testCompressedVectorRefusesTruncatedBuffer() {
+  const auto data = buffer(2);
+  BitReader reader(data);
+  CHECK(!reader.readCompressedVector(obf2::Vec3f{}, 1.0f).has_value());
+}
+
 TEST_MAIN({
   testBitOrderIsLowBitsFirst();
   testSpansByteBoundary();
@@ -165,4 +239,8 @@ TEST_MAIN({
   testReaderRefusesToRunPastBuffer();
   testWriterRefusesToOverflow();
   testSkipBits();
+  testCompressedVectorRoundTrip();
+  testCompressionLevelGrowsWithDistance();
+  testFarVectorKeepsFullPrecision();
+  testCompressedVectorRefusesTruncatedBuffer();
 })

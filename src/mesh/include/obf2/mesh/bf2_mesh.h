@@ -94,6 +94,11 @@ struct DrawRange {
   std::string fxFile;
   std::string technique;
   std::vector<std::string> maps;
+
+  // Для терену другий слот — запечене освітлення, а для звичайних мешів
+  // там детейл-текстура, яку рендер поки не використовує. Прапорець
+  // розрізняє ці випадки замість здогадок за іменем файлу.
+  bool lightmapInSecondSlot = false;
 };
 
 struct RenderMesh {

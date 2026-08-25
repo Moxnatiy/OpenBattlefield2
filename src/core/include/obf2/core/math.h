@@ -2,6 +2,7 @@
 // Мінімальна математика для рендера. Матриці — 4x4, стовпцями (column-major),
 // як їх очікує Metal (float4x4) і як їх приймає SDL_GPU. Глибина в NDC — [0,1],
 // а не [-1,1]: так працюють і Metal, і D3D12, і Vulkan.
+#include <array>
 #include <cmath>
 
 namespace obf2 {
@@ -141,6 +142,73 @@ inline Mat4 perspective(float fovYRadians, float aspect, float nearZ, float farZ
   out.m[11] = -1.0f;
   out.m[14] = (farZ * nearZ) / (nearZ - farZ);
   return out;
+}
+
+// --- Відсікання невидимого -------------------------------------------------
+
+struct Plane {
+  Vec3f normal;
+  float distance = 0.0f;  // площина: dot(normal, точка) + distance = 0
+
+  float signedDistance(Vec3f point) const { return dot(normal, point) + distance; }
+};
+
+// Шість площин піраміди видимості, нормалі дивляться всередину.
+struct Frustum {
+  Plane planes[6];
+
+  // Сфера повністю за якоюсь площиною -> об'єкт не видно.
+  bool intersectsSphere(Vec3f center, float radius) const {
+    for (const Plane& plane : planes) {
+      if (plane.signedDistance(center) < -radius) return false;
+    }
+    return true;
+  }
+};
+
+// Витягує площини з матриці вигляд-проєкція (метод Gribb-Hartmann): рядки
+// матриці вже містять потрібні комбінації, лишається їх скласти й відняти.
+// Матриця у нас по стовпцях, тому m[column * 4 + row].
+inline Frustum extractFrustum(const Mat4& m) {
+  auto row = [&](int r) {
+    return std::array<float, 4>{m.m[0 * 4 + r], m.m[1 * 4 + r], m.m[2 * 4 + r], m.m[3 * 4 + r]};
+  };
+  const auto x = row(0);
+  const auto y = row(1);
+  const auto z = row(2);
+  const auto w = row(3);
+
+  auto makePlane = [](const std::array<float, 4>& a, const std::array<float, 4>& b, bool add) {
+    Plane plane;
+    const float sign = add ? 1.0f : -1.0f;
+    plane.normal = Vec3f{b[0] + sign * a[0], b[1] + sign * a[1], b[2] + sign * a[2]};
+    plane.distance = b[3] + sign * a[3];
+
+    // Нормуємо, інакше порівняння з радіусом не має сенсу.
+    const float len = length(plane.normal);
+    if (len > 0.0f) {
+      plane.normal = plane.normal * (1.0f / len);
+      plane.distance /= len;
+    }
+    return plane;
+  };
+
+  Frustum frustum;
+  frustum.planes[0] = makePlane(x, w, true);   // ліва
+  frustum.planes[1] = makePlane(x, w, false);  // права
+  frustum.planes[2] = makePlane(y, w, true);   // нижня
+  frustum.planes[3] = makePlane(y, w, false);  // верхня
+  // Глибина в NDC у нас [0,1], тому ближня площина це просто рядок z,
+  // а не z + w, як було б для діапазону [-1,1].
+  frustum.planes[4] = Plane{Vec3f{z[0], z[1], z[2]}, z[3]};
+  const float nearLength = length(frustum.planes[4].normal);
+  if (nearLength > 0.0f) {
+    frustum.planes[4].normal = frustum.planes[4].normal * (1.0f / nearLength);
+    frustum.planes[4].distance /= nearLength;
+  }
+  frustum.planes[5] = makePlane(z, w, false);  // дальня
+
+  return frustum;
 }
 
 }  // namespace obf2

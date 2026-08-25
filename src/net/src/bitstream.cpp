@@ -1,6 +1,8 @@
 #include "obf2/net/bitstream.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstring>
 
 namespace obf2::net {
 namespace {
@@ -89,6 +91,92 @@ bool BitReader::readBytes(std::span<std::byte> destination) {
     out = static_cast<std::byte>(*byte);
   }
   return true;
+}
+
+namespace {
+
+// Рівень стиснення за довжиною різниці. Пороги — це 2^(біти-1) тієї самої
+// таблиці, тобто найбільше число, яке ще влазить у поле модуля.
+std::uint32_t compressionLevelFor(float scaledDistance, const std::uint32_t (&table)[4]) {
+  auto threshold = [&](std::size_t index) {
+    return static_cast<float>(1u << ((table[index] - 1u) & 31u));
+  };
+  if (scaledDistance < threshold(3)) return 3;
+  if (scaledDistance < threshold(2)) return 2;
+  if (scaledDistance < threshold(1)) return 1;
+  return 0;
+}
+
+float bitsToFloat(std::uint32_t bits) {
+  float value = 0.0f;
+  std::memcpy(&value, &bits, sizeof(value));
+  return value;
+}
+
+std::uint32_t floatToBits(float value) {
+  std::uint32_t bits = 0;
+  std::memcpy(&bits, &value, sizeof(bits));
+  return bits;
+}
+
+}  // namespace
+
+bool BitWriter::writeCompressedVector(const Vec3f& value, const Vec3f& reference, float precision,
+                                      const std::uint32_t (&table)[4]) {
+  if (precision == 0.0f) {
+    ok_ = false;
+    return false;
+  }
+  const float inverse = 1.0f / precision;
+  const Vec3f delta = value - reference;
+  const std::uint32_t level = compressionLevelFor(length(delta) * inverse, table);
+
+  if (!writeBits(level, kCompressionLevelBits)) return false;
+
+  // Рівень 0 — це відмова від стиснення: пишеться АБСОЛЮТНА позиція
+  // сирими float-ами, а не різниця.
+  if (level == 0) {
+    return writeBits(floatToBits(value.x), 32) && writeBits(floatToBits(value.y), 32) &&
+           writeBits(floatToBits(value.z), 32);
+  }
+
+  const unsigned magnitudeBits = table[level] - 1u;
+  const float components[3] = {delta.x * inverse, delta.y * inverse, delta.z * inverse};
+  for (const float component : components) {
+    // Обрізання до нуля, як у оригіналі: (int)(-1.7f) це -1, а не -2.
+    const int quantized = static_cast<int>(component);
+    const bool negative = quantized < 0;
+    if (!writeBool(negative)) return false;
+    const auto magnitude = static_cast<std::uint32_t>(negative ? -quantized : quantized);
+    if (!writeBits(magnitude, magnitudeBits)) return false;
+  }
+  return true;
+}
+
+std::optional<Vec3f> BitReader::readCompressedVector(const Vec3f& reference, float precision,
+                                                     const std::uint32_t (&table)[4]) {
+  const auto level = readBits(kCompressionLevelBits);
+  if (!level) return std::nullopt;
+
+  if (*level == 0) {
+    const auto x = readBits(32);
+    const auto y = readBits(32);
+    const auto z = readBits(32);
+    if (!x || !y || !z) return std::nullopt;
+    return Vec3f{bitsToFloat(*x), bitsToFloat(*y), bitsToFloat(*z)};
+  }
+
+  const unsigned magnitudeBits = table[*level] - 1u;
+  float components[3] = {0.0f, 0.0f, 0.0f};
+  for (float& component : components) {
+    const auto negative = readBool();
+    const auto magnitude = readBits(magnitudeBits);
+    if (!negative || !magnitude) return std::nullopt;
+    const float value = static_cast<float>(*magnitude) * precision;
+    component = *negative ? -value : value;
+  }
+  return Vec3f{reference.x + components[0], reference.y + components[1],
+               reference.z + components[2]};
 }
 
 std::optional<BasicHeader> BitReader::readBasicHeader() {

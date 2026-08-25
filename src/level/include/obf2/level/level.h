@@ -39,6 +39,21 @@ struct TerrainInfo {
   std::string detailmapBase;
   float seaLevel = 0.0f;
   Vec3f waterColor{0.10f, 0.13f, 0.16f};  // renderer.waterColor з Water.con
+
+  // Туман: Renderer.fogColor задано в діапазоні 0..255, а не 0..1.
+  Vec3f fogColor{0.69f, 0.72f, 0.77f};
+  float fogStart = 0.0f;
+  float fogEnd = 0.0f;  // 0 = туману немає
+
+  // Lightmanager.* із Sky.con — поки лише зберігаємо.
+  Vec3f ambientColor{0.9f, 0.9f, 0.9f};
+  Vec3f sunColor{1.0f, 1.0f, 1.0f};
+
+  // LightSettings.TerrainSunColor / TerrainSkyColor — саме ними множиться
+  // запечена лайтмапа терену. Значення бувають більші за 1: вони не лише
+  // фарбують, а й підсвічують.
+  Vec3f terrainSunColor{1.0f, 1.0f, 1.0f};
+  Vec3f terrainSkyColor{0.6f, 0.7f, 0.9f};
 };
 
 // Розстановка з StaticObjects.con: `Object.create` + absolutePosition/rotation.
@@ -82,6 +97,7 @@ struct TerrainPatch {
   int row = 0;
   mesh::RenderMesh geometry;
   std::string colormap;  // шлях до .dds цього патча
+  std::string lightmap;  // запечене освітлення того ж патча, якщо є
 };
 
 // Патчі, для яких у грі немає колормапи, повністю під водою — гра їх і не

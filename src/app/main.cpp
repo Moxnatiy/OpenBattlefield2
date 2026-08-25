@@ -370,6 +370,14 @@ int main(int argc, char** argv) {
       std::printf("    без геометрії: %s (x%d)\n", name.c_str(), count);
     }
 
+    std::printf("  освітлення терену: сонце %.2f/%.2f/%.2f, небо %.2f/%.2f/%.2f\n",
+                level->terrain.terrainSunColor.x, level->terrain.terrainSunColor.y,
+                level->terrain.terrainSunColor.z, level->terrain.terrainSkyColor.x,
+                level->terrain.terrainSkyColor.y, level->terrain.terrainSkyColor.z);
+    std::printf("  туман: %.0f..%.0f, колір %.2f/%.2f/%.2f\n", level->terrain.fogStart,
+                level->terrain.fogEnd, level->terrain.fogColor.x, level->terrain.fogColor.y,
+                level->terrain.fogColor.z);
+
     const float extent = level->halfExtent() * level->primary.scale.x;
     scene.center = obf2::Vec3f{0.0f, level->terrain.seaLevel, 0.0f};
     scene.radius = extent;
@@ -528,6 +536,18 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  if (level) {
+    renderer->setFog(obf2::gfx::MeshRenderer::Fog{
+        obf2::gfx::Color{level->terrain.fogColor.x, level->terrain.fogColor.y,
+                         level->terrain.fogColor.z, 1.0f},
+        level->terrain.fogStart, level->terrain.fogEnd});
+    renderer->setTerrainLighting(
+        obf2::gfx::Color{level->terrain.terrainSunColor.x, level->terrain.terrainSunColor.y,
+                         level->terrain.terrainSunColor.z, 1.0f},
+        obf2::gfx::Color{level->terrain.terrainSkyColor.x, level->terrain.terrainSkyColor.y,
+                         level->terrain.terrainSkyColor.z, 1.0f});
+  }
+
   int texturesLoaded = 0, texturesMissing = 0;
   std::unordered_map<std::string, std::optional<obf2::texture::Texture>> textureCache;
   auto resolveTexture =
@@ -653,6 +673,11 @@ int main(int argc, char** argv) {
       }
     } else {
       device->submit(*acquired);
+    }
+
+    if (frame == 0 && !bootMode) {
+      std::printf("відсікання: намальовано %d, відсічено %d з %zu примірників\n",
+                  renderer->drawnLastFrame(), renderer->culledLastFrame(), items.size());
     }
 
     ++frame;

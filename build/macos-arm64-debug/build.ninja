@@ -2020,6 +2020,44 @@ build tests/test_font_loc: CXX_EXECUTABLE_LINKER__test_font_loc_Debug tests/CMak
   TARGET_PDB = test_font_loc.dbg
   TARGET_SUPPORT_DIR = tests/CMakeFiles/test_font_loc.dir
 
+# =============================================================================
+# Object build statements for EXECUTABLE target test_frustum
+
+
+#############################################
+# Order-only phony target for test_frustum
+
+build cmake_object_order_depends_target_test_frustum: phony || cmake_object_order_depends_target_obf2_core
+
+build tests/CMakeFiles/test_frustum.dir/test_frustum.cpp.o: CXX_COMPILER__test_frustum_unscanned_Debug /Users/miami/OpenBattlefield2/tests/test_frustum.cpp || cmake_object_order_depends_target_test_frustum
+  CONFIG = Debug
+  DEP_FILE = tests/CMakeFiles/test_frustum.dir/test_frustum.cpp.o.d
+  FLAGS = -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -I/Users/miami/OpenBattlefield2/tests -I/Users/miami/OpenBattlefield2/src/core/include
+  OBJECT_DIR = tests/CMakeFiles/test_frustum.dir
+  OBJECT_FILE_DIR = tests/CMakeFiles/test_frustum.dir
+  TARGET_SUPPORT_DIR = tests/CMakeFiles/test_frustum.dir
+
+
+# =============================================================================
+# Link build statements for EXECUTABLE target test_frustum
+
+
+#############################################
+# Link the executable tests/test_frustum
+
+build tests/test_frustum: CXX_EXECUTABLE_LINKER__test_frustum_Debug tests/CMakeFiles/test_frustum.dir/test_frustum.cpp.o | src/core/libobf2_core.a || src/core/libobf2_core.a
+  CONFIG = Debug
+  FLAGS = -g -arch arm64
+  LINK_FLAGS = -Wl,-search_paths_first -Wl,-headerpad_max_install_names
+  LINK_LIBRARIES = src/core/libobf2_core.a
+  OBJECT_DIR = tests/CMakeFiles/test_frustum.dir
+  POST_BUILD = :
+  PRE_LINK = :
+  TARGET_FILE = tests/test_frustum
+  TARGET_PDB = test_frustum.dbg
+  TARGET_SUPPORT_DIR = tests/CMakeFiles/test_frustum.dir
+
 
 #############################################
 # Utility command for test
@@ -2130,6 +2168,8 @@ build test_con: phony tests/test_con
 build test_engine: phony tests/test_engine
 
 build test_font_loc: phony tests/test_font_loc
+
+build test_frustum: phony tests/test_frustum
 
 build test_level: phony tests/test_level
 
@@ -2251,7 +2291,7 @@ build src/vfs/all: phony src/vfs/libobf2_vfs.a
 #############################################
 # Folder: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
 
-build tests/all: phony tests/test_path tests/test_con tests/test_mesh tests/test_texture tests/test_object_template tests/test_scene tests/test_level tests/test_engine tests/test_bitstream tests/test_font_loc
+build tests/all: phony tests/test_path tests/test_con tests/test_mesh tests/test_texture tests/test_object_template tests/test_scene tests/test_level tests/test_engine tests/test_bitstream tests/test_font_loc tests/test_frustum
 
 # =============================================================================
 

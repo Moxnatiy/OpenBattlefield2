@@ -220,5 +220,11 @@
   "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/tests -I/Users/miami/OpenBattlefield2/src/font/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/mesh/include -I/Users/miami/OpenBattlefield2/src/loc/include -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror -o tests/CMakeFiles/test_font_loc.dir/test_font_loc.cpp.o -c /Users/miami/OpenBattlefield2/tests/test_font_loc.cpp",
   "file": "/Users/miami/OpenBattlefield2/tests/test_font_loc.cpp",
   "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_font_loc.dir/test_font_loc.cpp.o"
+},
+{
+  "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/tests -I/Users/miami/OpenBattlefield2/src/core/include -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror -o tests/CMakeFiles/test_frustum.dir/test_frustum.cpp.o -c /Users/miami/OpenBattlefield2/tests/test_frustum.cpp",
+  "file": "/Users/miami/OpenBattlefield2/tests/test_frustum.cpp",
+  "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_frustum.dir/test_frustum.cpp.o"
 }
 ]

@@ -22,10 +22,23 @@ struct VertexOut {
     float4 position [[position]];
     float3 normal;
     float2 uv;
+    float viewDepth;
+    // Параметри кадру їдуть у фрагментний шейдер через varyings, а не
+    // власним uniform-буфером: у фрагментного вони до шейдера не доходять
+    // (читаються чужі дані), а вершинний працює надійно. Значення сталі,
+    // тому інтерполяція їм не шкодить.
+    float4 fogColor;
+    float4 fogParams;
+    float4 sunColor;
+    float4 skyColor;
 };
 
 struct Uniforms {
     float4x4 modelViewProjection;
+    float4 fogColor;   // rgb — колір туману
+    float4 fogParams;  // x: початок, y: кінець (0 = туману немає), z: режим лайтмапи
+    float4 sunColor;   // TerrainSunColor
+    float4 skyColor;   // TerrainSkyColor
 };
 
 vertex VertexOut vertex_main(VertexIn in [[stage_in]],
@@ -34,19 +47,49 @@ vertex VertexOut vertex_main(VertexIn in [[stage_in]],
     out.position = uniforms.modelViewProjection * float4(in.position, 1.0);
     out.normal = in.normal;
     out.uv = in.uv;
+    // Для перспективної проєкції w у кліп-просторі дорівнює відстані
+    // вздовж погляду — саме те, що потрібно туману.
+    out.viewDepth = out.position.w;
+    out.fogColor = uniforms.fogColor;
+    out.fogParams = uniforms.fogParams;
+    out.sunColor = uniforms.sunColor;
+    out.skyColor = uniforms.skyColor;
     return out;
 }
 
 fragment float4 fragment_main(VertexOut in [[stage_in]],
                               texture2d<float> baseColor [[texture(0)]],
-                              sampler baseSampler [[sampler(0)]]) {
+                              texture2d<float> lightmap [[texture(1)]],
+                              sampler baseSampler [[sampler(0)]],
+                              sampler lightSampler [[sampler(1)]]) {
     float4 albedo = baseColor.sample(baseSampler, in.uv);
-    float3 normal = normalize(in.normal);
-    float3 lightDirection = normalize(float3(0.4, 0.9, 0.35));
-    // Півламбертове освітлення: тіньовий бік не стає чорним, і силует
-    // геометрії видно повністю.
-    float lambert = dot(normal, lightDirection) * 0.5 + 0.5;
-    return float4(albedo.rgb * (0.35 + 0.65 * lambert), 1.0);
+
+    float3 light;
+    if (in.fogParams.z > 0.5) {
+        // Терен: у лайтмапі BF2 червоний канал — це доступ до сонця, синій —
+        // до неба. Кожен множиться на свій колір зі Sky.con, і саме тому
+        // TerrainSunColor буває більшим за одиницю: він підсвічує.
+        float3 baked = lightmap.sample(lightSampler, in.uv).rgb;
+        light = in.sunColor.rgb * baked.r + in.skyColor.rgb * baked.b;
+    } else {
+        float3 normal = normalize(in.normal);
+        float3 lightDirection = normalize(float3(0.4, 0.9, 0.35));
+        // Півламбертове освітлення: тіньовий бік не стає чорним, і силует
+        // геометрії видно повністю.
+        float lambert = dot(normal, lightDirection) * 0.5 + 0.5;
+        light = float3(0.35 + 0.65 * lambert);
+    }
+
+    float3 color = albedo.rgb * light;
+    return float4(color, 1.0);
+
+    // fogStartEnd.y == 0 означає, що туману на рівні немає.
+    if (in.fogParams.y > 0.0) {
+        float t = saturate((in.viewDepth - in.fogParams.x) /
+                           max(in.fogParams.y - in.fogParams.x, 0.001));
+        color = mix(color, in.fogColor.rgb, t);
+    }
+    return float4(color, 1.0);
 }
 )MSL";
 
@@ -101,7 +144,7 @@ SDL_GPUShader* createShader(SDL_GPUDevice* gpu, SDL_GPUShaderStage stage, const 
   info.format = SDL_GPU_SHADERFORMAT_MSL;
   info.stage = stage;
   info.num_uniform_buffers = isVertex ? 1 : 0;
-  info.num_samplers = isVertex ? 0 : 1;
+  info.num_samplers = isVertex ? 0 : 2;  // базовий колір і лайтмапа
   return SDL_CreateGPUShader(gpu, &info);
 }
 
@@ -117,6 +160,16 @@ SDL_GPUTextureFormat toGpuFormat(texture::Format format) {
   }
   return SDL_GPU_TEXTUREFORMAT_INVALID;
 }
+
+// Має точно збігатися з FrameUniforms у шейдері.
+// Дзеркало Uniforms із вершинного шейдера: матриця плюс сталі кадру.
+struct VertexUniforms {
+  float modelViewProjection[16]{};
+  float fogColor[4]{};
+  float fogParams[4]{};  // start, end, lightmapMode, 0
+  float sunColor[4]{};
+  float skyColor[4]{};
+};
 
 }  // namespace
 
@@ -394,6 +447,12 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
   gpuMesh.vertices = vertexBuffer;
   gpuMesh.indices = indexBuffer;
 
+  // Сфера навколо габаритів меша: центр посередині, радіус до кута.
+  const Vec3f minimum{source.bounds.min.x, source.bounds.min.y, source.bounds.min.z};
+  const Vec3f maximum{source.bounds.max.x, source.bounds.max.y, source.bounds.max.z};
+  gpuMesh.boundsCenter = (minimum + maximum) * 0.5f;
+  gpuMesh.boundsRadius = length(maximum - minimum) * 0.5f;
+
   // Слот 0 матеріалу — базовий колір (`_c`): це видно і з назв technique
   // ("BaseDetailNDetail"), і з розподілу суфіксів по 4524 матеріалах гри.
   for (const mesh::DrawRange& source_range : source.ranges) {
@@ -405,6 +464,15 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
       if (const auto decoded = resolve(source_range.maps.front())) {
         range.texture = uploadTexture(*decoded);
         if (range.texture != nullptr) gpuMesh.ownedTextures.push_back(range.texture);
+      }
+    }
+    // Другий слот терену — запечене освітлення. Для звичайних мешів слот 1
+    // це детейл, який ми поки не використовуємо, тому беремо лайтмапу лише
+    // там, де її явно поклали (див. level::buildTerrainPatches).
+    if (source_range.maps.size() > 1 && resolve && source_range.lightmapInSecondSlot) {
+      if (const auto decoded = resolve(source_range.maps[1])) {
+        range.lightmap = uploadTexture(*decoded);
+        if (range.lightmap != nullptr) gpuMesh.ownedTextures.push_back(range.lightmap);
       }
     }
     gpuMesh.ranges.push_back(range);
@@ -482,8 +550,39 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
 
   SDL_BindGPUGraphicsPipeline(pass, pipeline_);
 
+  // Піраміду видимості беремо з тієї самої матриці, якою малюємо, тож
+  // відсікання гарантовано узгоджене з тим, що бачить камера.
+  const Frustum frustum = extractFrustum(viewProjection);
+  drawn_ = 0;
+  culled_ = 0;
+
+  // Туман і кольори освітлення однакові для кадру; режим лайтмапи —
+  // ні, тому його доводиться штовхати перед кожним діапазоном.
+  VertexUniforms uniforms{};
+  uniforms.fogColor[0] = fog_.color.r;
+  uniforms.fogColor[1] = fog_.color.g;
+  uniforms.fogColor[2] = fog_.color.b;
+  uniforms.fogColor[3] = 1.0f;
+  uniforms.fogParams[0] = fog_.start;
+  uniforms.fogParams[1] = fog_.end;
+  uniforms.sunColor[0] = terrainSun_.r;
+  uniforms.sunColor[1] = terrainSun_.g;
+  uniforms.sunColor[2] = terrainSun_.b;
+  uniforms.skyColor[0] = terrainSky_.r;
+  uniforms.skyColor[1] = terrainSky_.g;
+  uniforms.skyColor[2] = terrainSky_.b;
+
   for (const DrawItem& item : items) {
     if (item.mesh == nullptr || item.mesh->vertices == nullptr) continue;
+
+    if (item.mesh->boundsRadius > 0.0f) {
+      const Vec3f center = transformPoint(item.transform, item.mesh->boundsCenter);
+      if (!frustum.intersectsSphere(center, item.mesh->boundsRadius)) {
+        ++culled_;
+        continue;
+      }
+    }
+    ++drawn_;
 
     const SDL_GPUBufferBinding vertexBinding{item.mesh->vertices, 0};
     SDL_BindGPUVertexBuffers(pass, 0, &vertexBinding, 1);
@@ -491,13 +590,22 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
     SDL_BindGPUIndexBuffer(pass, &indexBinding, SDL_GPU_INDEXELEMENTSIZE_32BIT);
 
     const Mat4 modelViewProjection = viewProjection * item.transform;
-    SDL_PushGPUVertexUniformData(frame.commands, 0, &modelViewProjection, sizeof(Mat4));
+    std::memcpy(uniforms.modelViewProjection, modelViewProjection.m, sizeof(Mat4));
 
     for (const GpuMesh::Range& range : item.mesh->ranges) {
       if (range.indexCount == 0) continue;
-      SDL_GPUTextureSamplerBinding binding{
-          range.texture != nullptr ? range.texture : placeholder_, sampler_};
-      SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+
+      const SDL_GPUTextureSamplerBinding bindings[2] = {
+          {range.texture != nullptr ? range.texture : placeholder_, sampler_},
+          {range.lightmap != nullptr ? range.lightmap : placeholder_, sampler_},
+      };
+      SDL_BindGPUFragmentSamplers(pass, 0, bindings, 2);
+
+      // Режим освітлення змінюється від діапазону до діапазону, тому
+      // uniform штовхаємо перед кожним викликом малювання.
+      uniforms.fogParams[2] = range.lightmap != nullptr ? 1.0f : 0.0f;
+      SDL_PushGPUVertexUniformData(frame.commands, 0, &uniforms, sizeof(uniforms));
+
       SDL_DrawGPUIndexedPrimitives(pass, range.indexCount, 1, range.indexStart, 0, 0);
     }
   }

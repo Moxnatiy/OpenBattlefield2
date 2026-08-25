@@ -18,6 +18,8 @@
 #include <string>
 #include <string_view>
 
+#include "obf2/core/math.h"
+
 namespace obf2::net {
 
 // Розмір службових полів у бітах — саме так їх читає й пише гра.
@@ -52,6 +54,27 @@ struct ExtendedHeader {
   std::uint32_t sequence = 0;  // 32 біти
 };
 
+// Стиснений вектор: замість трьох float-ів пишеться різниця до опорної
+// точки з точністю, обраною за відстанню. Таблиці бітів узяті з даних
+// лінукс-сервера (`BitStream::m_compressionVectorBitTable`), а сам алгоритм —
+// з декомпіляції `writeCompressedVector`.
+//
+// Рівень (2 біти) обирається за довжиною різниці:
+//
+//   < 2^11  -> рівень 3, 12 біт на компоненту
+//   < 2^15  -> рівень 2, 16 біт
+//   < 2^19  -> рівень 1, 20 біт
+//   інакше  -> рівень 0: три сирі float-и, і то вже АБСОЛЮТНА позиція
+//
+// У рівнях 1-3 компонента пишеться знаком і величиною: 1 біт знаку плюс
+// (біти - 1) біт модуля.
+inline constexpr std::uint32_t kCompressionVectorBitTable[4] = {32, 20, 16, 12};
+inline constexpr std::uint32_t kHighCompressionVectorBitTable[4] = {32, 12, 10, 8};
+inline constexpr std::uint32_t kCompressionVectorBitTable2[8] = {28, 24, 20, 16, 12, 10, 8, 0};
+
+// Скільки біт іде на рівень стиснення.
+inline constexpr unsigned kCompressionLevelBits = 2;
+
 class BitReader {
  public:
   explicit BitReader(std::span<const std::byte> data) : data_(data) {}
@@ -63,6 +86,11 @@ class BitReader {
   // Рядок фіксованої довжини; нульові байти обрізаються.
   std::optional<std::string> readString(std::size_t length);
   bool readBytes(std::span<std::byte> destination);
+
+  // precision — той самий крок квантування, що й при записі.
+  std::optional<Vec3f> readCompressedVector(const Vec3f& reference, float precision,
+                                            const std::uint32_t (&table)[4] =
+                                                kCompressionVectorBitTable);
 
   std::optional<BasicHeader> readBasicHeader();
   std::optional<ExtendedHeader> readExtendedHeader();
@@ -89,6 +117,9 @@ class BitWriter {
   // Рядок доповнюється нулями до length байтів або обрізається.
   bool writeString(std::string_view text, std::size_t length);
   bool writeBytes(std::span<const std::byte> bytes);
+
+  bool writeCompressedVector(const Vec3f& value, const Vec3f& reference, float precision,
+                             const std::uint32_t (&table)[4] = kCompressionVectorBitTable);
 
   bool writeBasicHeader(const BasicHeader& header);
   bool writeExtendedHeader(const ExtendedHeader& header);

@@ -1,11 +1,12 @@
-test_path 14 0.000181182
-test_con 14 0.000266333
-test_mesh 10 0.000304171
-test_texture 9 0.000671579
-test_object_template 8 0.000414125
-test_scene 7 0.000520512
-test_level 6 0.00215179
-test_engine 5 0.000709417
-test_bitstream 4 0.00139264
-test_font_loc 1 0.313125
+test_path 16 0.000158161
+test_con 16 0.000236656
+test_mesh 12 0.000270451
+test_texture 11 0.000542428
+test_object_template 10 0.0003561
+test_scene 9 0.000429722
+test_level 8 0.00143043
+test_engine 7 0.000477958
+test_bitstream 7 0.000356649
+test_font_loc 3 0.00105585
+test_frustum 1 0.313492
 ---

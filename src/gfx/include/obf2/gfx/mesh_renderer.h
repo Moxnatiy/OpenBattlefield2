@@ -18,13 +18,20 @@ struct GpuMesh {
   struct Range {
     std::uint32_t indexStart = 0;
     std::uint32_t indexCount = 0;
-    SDL_GPUTexture* texture = nullptr;  // nullptr -> береться заглушка
+    SDL_GPUTexture* texture = nullptr;   // базовий колір; nullptr -> заглушка
+    SDL_GPUTexture* lightmap = nullptr;  // запечене освітлення; nullptr -> біла
   };
 
   SDL_GPUBuffer* vertices = nullptr;
   SDL_GPUBuffer* indices = nullptr;
   std::vector<Range> ranges;
   std::vector<SDL_GPUTexture*> ownedTextures;
+
+  // Обмежувальна сфера в локальних координатах меша — для відсікання
+  // невидимого. Сфера, а не паралелепіпед: перевірка вчетверо дешевша,
+  // а зайвих об'єктів пропускає одиниці.
+  Vec3f boundsCenter;
+  float boundsRadius = 0.0f;
 };
 
 // Рендер мешів з базовою текстурою. Матеріали BF2 мають до чотирьох слотів
@@ -60,8 +67,26 @@ class MeshRenderer {
     Mat4 transform;
   };
 
+  // Туман беремо з даних рівня (Sky.con). fogEnd == 0 вимикає його.
+  struct Fog {
+    Color color;
+    float start = 0.0f;
+    float end = 0.0f;
+  };
+  void setFog(const Fog& fog) { fog_ = fog; }
+
+  // Кольори, якими множиться запечена лайтмапа терену (LightSettings.* рівня).
+  void setTerrainLighting(Color sun, Color sky) {
+    terrainSun_ = sun;
+    terrainSky_ = sky;
+  }
+
   void renderScene(const Frame& frame, const std::vector<DrawItem>& items,
                    const Mat4& viewProjection, Color clearColor);
+
+  // Скільки примірників намальовано й скільки відсічено за останній кадр.
+  int drawnLastFrame() const { return drawn_; }
+  int culledLastFrame() const { return culled_; }
 
   // Прохід для інтерфейсу: без глибини, з альфа-змішуванням і без освітлення.
   // Координати вершин уже в NDC, тому матриця не потрібна.
@@ -76,6 +101,11 @@ class MeshRenderer {
   SDL_GPUGraphicsPipeline* overlayPipeline_ = nullptr;
   SDL_GPUSampler* sampler_ = nullptr;
   SDL_GPUTexture* placeholder_ = nullptr;  // біла 1x1 для матеріалів без текстури
+  Fog fog_;
+  Color terrainSun_{1.0f, 1.0f, 1.0f, 1.0f};
+  Color terrainSky_{0.6f, 0.7f, 0.9f, 1.0f};
+  int drawn_ = 0;
+  int culled_ = 0;
 };
 
 }  // namespace obf2::gfx

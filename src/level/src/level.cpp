@@ -1,6 +1,7 @@
 #include "obf2/level/level.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "obf2/con/interpreter.h"
@@ -8,6 +9,26 @@
 
 namespace obf2::level {
 namespace {
+
+// Розбирає список чисел через слеш. У .con так записані і вектори, і
+// довші набори на кшталт fogStartEndAndBase з чотирьох значень.
+// Повертає, скільки чисел прочитано.
+std::size_t parseSlashList(std::string_view text, float* out, std::size_t capacity) {
+  std::size_t count = 0;
+  std::size_t start = 0;
+  for (std::size_t i = 0; i <= text.size() && count < capacity; ++i) {
+    if (i != text.size() && text[i] != '/') continue;
+    const std::string part(text.substr(start, i - start));
+    start = i + 1;
+    if (part.empty()) continue;
+
+    char* end = nullptr;
+    const float value = std::strtof(part.c_str(), &end);
+    if (end == part.c_str()) continue;
+    out[count++] = value;
+  }
+  return count;
+}
 
 // Збирач стану під час виконання .con рівня. Мова — потік команд, тому
 // heightmap.* застосовуються до останнього heightmapcluster.addHeightmap,
@@ -65,6 +86,49 @@ class LevelBuilder {
       level_.terrain.colormapBase = std::string(command.argStr(0));
       return;
     }
+    // --- Sky.con ---
+    if (path == "renderer.fogcolor") {
+      if (const auto color = command.argVec3(0)) {
+        // У файлі 0..255, нам потрібно 0..1.
+        level_.terrain.fogColor = Vec3f{color->x / 255.0f, color->y / 255.0f, color->z / 255.0f};
+      }
+      return;
+    }
+    if (path == "renderer.fogstartendandbase") {
+      // Тут ЧОТИРИ компоненти через слеш ("0.00/610.00/0.00/0.50"), тому
+      // argVec3 не годиться — розбираємо самі. Потрібні лише перші дві.
+      float values[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+      if (parseSlashList(command.argStr(0), values, 4) >= 2) {
+        level_.terrain.fogStart = values[0];
+        level_.terrain.fogEnd = values[1];
+      }
+      return;
+    }
+    if (path == "lightsettings.terrainsuncolor") {
+      if (const auto color = command.argVec3(0)) {
+        level_.terrain.terrainSunColor = Vec3f{color->x, color->y, color->z};
+      }
+      return;
+    }
+    if (path == "lightsettings.terrainskycolor") {
+      if (const auto color = command.argVec3(0)) {
+        level_.terrain.terrainSkyColor = Vec3f{color->x, color->y, color->z};
+      }
+      return;
+    }
+    if (path == "lightmanager.ambientcolor") {
+      if (const auto color = command.argVec3(0)) {
+        level_.terrain.ambientColor = Vec3f{color->x, color->y, color->z};
+      }
+      return;
+    }
+    if (path == "lightmanager.suncolor") {
+      if (const auto color = command.argVec3(0)) {
+        level_.terrain.sunColor = Vec3f{color->x, color->y, color->z};
+      }
+      return;
+    }
+
     if (path == "terrain.lightmapbasename") {
       level_.terrain.lightmapBase = std::string(command.argStr(0));
       return;
@@ -188,6 +252,7 @@ std::optional<Level> loadLevel(FileSystem& files, std::string_view levelName, st
   interpreter.runFile(base + "/Terrain.con", editorArgs);
   interpreter.runFile(base + "/StaticObjects.con", editorArgs);
   interpreter.runFile(base + "/Water.con");
+  interpreter.runFile(base + "/Sky.con", editorArgs);
 
   if (!loadHeights(files, level, error)) return std::nullopt;
   return level;
@@ -266,10 +331,20 @@ std::vector<TerrainPatch> buildTerrainPatches(const Level& level, const FileSyst
         }
       }
 
+      // Запечене освітлення того ж патча — другий шар текстур.
+      if (!level.terrain.lightmapBase.empty()) {
+        const std::string candidate = level.terrain.lightmapBase + name;
+        if (files.exists(candidate)) patch.lightmap = candidate;
+      }
+
       mesh::DrawRange range;
       range.indexStart = 0;
       range.indexCount = static_cast<std::uint32_t>(patch.geometry.indices.size());
       range.maps.push_back(patch.colormap);
+      if (!patch.lightmap.empty()) {
+        range.maps.push_back(patch.lightmap);
+        range.lightmapInSecondSlot = true;
+      }
       patch.geometry.ranges.push_back(std::move(range));
 
       patches.push_back(std::move(patch));
