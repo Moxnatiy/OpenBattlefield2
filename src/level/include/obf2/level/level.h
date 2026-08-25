@@ -1,0 +1,97 @@
+#pragma once
+// Завантаження рівня BF2.
+//
+// Рівень описує сам себе звичайними .con: Heightdata.con задає розмір і
+// масштаб карти висот, Terrain.con — розбиття на патчі й імена текстур,
+// StaticObjects.con — розстановку об'єктів. Тобто реверс тут не потрібен
+// узагалі, достатньо інтерпретатора, який у нас уже є.
+//
+// Одна тонкість: Init.con рівня має дві гілки. Ігрова читає скомпільований
+// terraindata.raw, редакторська — вихідні .raw карти висот. Ми йдемо
+// редакторською (`v_arg1 = BF2Editor`), бо її формат повністю описаний
+// даними, а скомпільований блоб довелося б розбирати реверсом.
+#include <cstdint>
+#include <filesystem>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "obf2/core/math.h"
+#include "obf2/mesh/bf2_mesh.h"
+#include "obf2/vfs/filesystem.h"
+
+namespace obf2::level {
+
+struct HeightmapInfo {
+  int size = 0;                  // 1025 — вузлів по стороні
+  Vec3f scale{2.0f, 1.0f, 2.0f};  // світових одиниць на вузол / на одиницю висоти
+  int bitResolution = 16;
+  std::string dataPath;
+  int clusterX = 0;
+  int clusterY = 0;
+};
+
+struct TerrainInfo {
+  int patchSize = 128;
+  std::string colormapBase;
+  std::string lightmapBase;
+  std::string detailmapBase;
+  float seaLevel = 0.0f;
+  Vec3f waterColor{0.10f, 0.13f, 0.16f};  // renderer.waterColor з Water.con
+};
+
+// Розстановка з StaticObjects.con: `Object.create` + absolutePosition/rotation.
+struct StaticObject {
+  std::string templateName;
+  Vec3f position;
+  Vec3f rotation;  // yaw/pitch/roll у градусах
+  bool hasRotation = false;
+};
+
+struct Level {
+  std::string name;
+  TerrainInfo terrain;
+  HeightmapInfo primary;
+  std::vector<StaticObject> objects;
+
+  // Висоти у світових одиницях, розмір size*size, рядки з півночі на південь.
+  std::vector<float> heights;
+
+  float heightAt(int x, int z) const {
+    if (x < 0 || z < 0 || x >= primary.size || z >= primary.size) return 0.0f;
+    return heights[static_cast<std::size_t>(z) * primary.size + x];
+  }
+
+  // Терен центрований на початку координат, як і позиції об'єктів.
+  float worldX(int x) const { return (static_cast<float>(x) - halfExtent()) * primary.scale.x; }
+  float worldZ(int z) const { return (static_cast<float>(z) - halfExtent()) * primary.scale.z; }
+  float halfExtent() const { return static_cast<float>(primary.size - 1) * 0.5f; }
+};
+
+// Монтує server.zip і client.zip рівня у точку Levels/<name>.
+bool mountLevel(FileSystem& files, const std::filesystem::path& modDir, std::string_view levelName,
+                std::string* error = nullptr);
+
+std::optional<Level> loadLevel(FileSystem& files, std::string_view levelName,
+                               std::string* error = nullptr);
+
+// Один патч терену: сітка patchSize x patchSize квадів зі своєю текстурою.
+struct TerrainPatch {
+  int column = 0;
+  int row = 0;
+  mesh::RenderMesh geometry;
+  std::string colormap;  // шлях до .dds цього патча
+};
+
+// Патчі, для яких у грі немає колормапи, повністю під водою — гра їх і не
+// малює. Тому вони пропускаються, а море закриває водна площина.
+std::vector<TerrainPatch> buildTerrainPatches(const Level& level, const FileSystem& files);
+
+// Назва, яку рушій підставляє замість файлу текстури для водної поверхні:
+// колір води задано числом у Water.con, а не картинкою.
+inline constexpr const char* kWaterColorMap = "#waterColor";
+
+mesh::RenderMesh buildWaterPlane(const Level& level);
+
+}  // namespace obf2::level

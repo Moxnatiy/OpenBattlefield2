@@ -1,21 +1,27 @@
 // openbf2 — точка входу рушія.
 //
-//   openbf2 [--mod <шлях до mods/bf2>] [--mesh <шлях у VFS>] [--frames N]
+//   openbf2 [--mod <шлях>] [--mesh <шлях у VFS>]   — один меш
+//           [--object <ім'я шаблону>]              — зібрана техніка
+//           [--level <ім'я рівня>]                 — рівень цілком
+//           [--geom N] [--lod N] [--frames N] [--screenshot file.bmp]
 //
-// Зараз: монтує дані гри так само, як fileManager у Refractor 2, читає
-// .staticmesh просто з архіву й малює його з орбітальною камерою.
+// Дані гри читаються просто з архівів, як це робить fileManager у Refractor 2.
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
-#include <algorithm>
 #include <cstdlib>
+#include <map>
 #include <string>
+#include <unordered_map>
 
 #include "obf2/core/math.h"
 #include "obf2/core/path.h"
 #include "obf2/core/platform.h"
 #include "obf2/game/scene.h"
 #include "obf2/gfx/mesh_renderer.h"
+#include "obf2/level/level.h"
 #include "obf2/mesh/bf2_mesh.h"
 #include "obf2/texture/dds.h"
 #include "obf2/vfs/filesystem.h"
@@ -28,11 +34,14 @@ constexpr const char* kDefaultMesh =
 struct Args {
   std::filesystem::path modDir = "Game Files/mods/bf2";
   std::string meshPath = kDefaultMesh;
-  std::string objectName;  // --object: зібрати за деревом ObjectTemplate
-  int geometryIndex = -1;  // -1 = вибрати найбільший lod0
+  std::string objectName;
+  std::string levelName;
+  int geometryIndex = -1;  // -1 = вибрати за кількістю lod-ів
   int lodIndex = 0;
   int frames = 0;  // 0 = крутитися, доки не закриють вікно
-  std::string screenshot;  // куди зберегти останній кадр
+  std::string screenshot;
+  std::optional<obf2::Vec3f> focus;  // куди дивиться камера
+  float distance = 0.0f;             // 0 = підібрати за габаритами
 };
 
 Args parseArgs(int argc, char** argv) {
@@ -42,25 +51,32 @@ Args parseArgs(int argc, char** argv) {
     if (flag == "--mod" && i + 1 < argc) args.modDir = argv[++i];
     else if (flag == "--mesh" && i + 1 < argc) args.meshPath = argv[++i];
     else if (flag == "--object" && i + 1 < argc) args.objectName = argv[++i];
+    else if (flag == "--level" && i + 1 < argc) args.levelName = argv[++i];
     else if (flag == "--geom" && i + 1 < argc) args.geometryIndex = std::atoi(argv[++i]);
     else if (flag == "--lod" && i + 1 < argc) args.lodIndex = std::atoi(argv[++i]);
     else if (flag == "--frames" && i + 1 < argc) args.frames = std::atoi(argv[++i]);
     else if (flag == "--screenshot" && i + 1 < argc) args.screenshot = argv[++i];
+    else if (flag == "--dist" && i + 1 < argc) args.distance = static_cast<float>(std::atof(argv[++i]));
+    else if (flag == "--focus" && i + 1 < argc) {
+      // Формат як у грі: x/y/z
+      obf2::con::Command command;
+      command.args.emplace_back(argv[++i]);
+      if (const auto point = command.argVec3(0)) {
+        args.focus = obf2::Vec3f{point->x, point->y, point->z};
+      }
+    }
   }
   return args;
+}
+
+double secondsSince(std::chrono::steady_clock::time_point start) {
+  return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 }
 
 // У .bundledmesh техніки кілька geom: вигляд із кабіни, зовнішній вигляд і
 // уламки. Явного маркера у файлі немає, але є надійна ознака: **вигляд із
 // кабіни має рівно один lod** — гравець завжди поруч, тож ланцюжок деталізації
 // йому не потрібен, тоді як зовнішній вигляд має 3-4 рівні.
-//
-//   ahe_ah1z:  geom0 = 1 lod (кабіна), geom1 = 4 (зовні), geom2 = 3 (уламки)
-//   apc_btr90: geom0 = 1 lod (кабіна), geom1 = 4 (зовні), geom2 = 4 (уламки)
-//
-// Тому обираємо geom із найдовшим ланцюжком lod, а за однакової довжини —
-// найдетальніший: у BTR обидва «не-кабінні» geom мають по 4 рівні, і від
-// уламків зовнішній вигляд відрізняє саме кількість трикутників.
 std::size_t pickGeometry(const obf2::mesh::Mesh& mesh, std::size_t lodIndex) {
   std::size_t best = 0;
   std::size_t bestLods = 0;
@@ -83,42 +99,40 @@ std::size_t pickGeometry(const obf2::mesh::Mesh& mesh, std::size_t lodIndex) {
 }
 
 std::optional<obf2::mesh::RenderMesh> loadMesh(obf2::FileSystem& files, const std::string& path,
-                                               const Args& args) {
+                                               int geometryOverride, int lodIndex, bool verbose) {
   const std::string normalized = obf2::normalizeAssetPath(path);
   const auto kind = obf2::mesh::kindFromExtension(obf2::assetExtension(normalized));
-  if (!kind) {
-    std::fprintf(stderr, "невідоме розширення меша: %s\n", normalized.c_str());
-    return std::nullopt;
-  }
+  if (!kind) return std::nullopt;
+
   const auto bytes = files.read(normalized);
   if (!bytes) {
-    std::fprintf(stderr, "меш не знайдено у VFS: %s\n", normalized.c_str());
+    if (verbose) std::fprintf(stderr, "меш не знайдено у VFS: %s\n", normalized.c_str());
     return std::nullopt;
   }
 
   std::string error;
   const auto parsed = obf2::mesh::load(*bytes, *kind, &error);
   if (!parsed) {
-    std::fprintf(stderr, "не розібрано %s: %s\n", normalized.c_str(), error.c_str());
+    if (verbose) std::fprintf(stderr, "не розібрано %s: %s\n", normalized.c_str(), error.c_str());
     return std::nullopt;
   }
 
-  const std::size_t lodIndex = static_cast<std::size_t>(std::max(0, args.lodIndex));
-  const std::size_t geometryIndex = args.geometryIndex >= 0
-                                        ? static_cast<std::size_t>(args.geometryIndex)
-                                        : pickGeometry(*parsed, lodIndex);
+  const std::size_t lod = static_cast<std::size_t>(std::max(0, lodIndex));
+  const std::size_t geometry = geometryOverride >= 0 ? static_cast<std::size_t>(geometryOverride)
+                                                     : pickGeometry(*parsed, lod);
 
-  auto render = obf2::mesh::extract(*parsed, geometryIndex, lodIndex, &error);
+  auto render = obf2::mesh::extract(*parsed, geometry, lod, &error);
   if (!render) {
-    std::fprintf(stderr, "не розпаковано %s: %s\n", normalized.c_str(), error.c_str());
+    if (verbose) std::fprintf(stderr, "не розпаковано %s: %s\n", normalized.c_str(), error.c_str());
     return std::nullopt;
   }
 
-  std::printf("меш: %s\n  версія %u, geom %zu/%zu, lod %zu, вершин %zu, трикутників %zu, "
-              "матеріалів %zu\n",
-              normalized.c_str(), parsed->header.version, geometryIndex,
-              parsed->geometries.size(), lodIndex, render->vertices.size(),
-              render->indices.size() / 3, render->ranges.size());
+  if (verbose) {
+    std::printf("меш: %s\n  версія %u, geom %zu/%zu, lod %zu, вершин %zu, трикутників %zu, "
+                "матеріалів %zu\n",
+                normalized.c_str(), parsed->header.version, geometry, parsed->geometries.size(),
+                lod, render->vertices.size(), render->indices.size() / 3, render->ranges.size());
+  }
   return render;
 }
 
@@ -126,8 +140,9 @@ std::optional<obf2::mesh::RenderMesh> loadMesh(obf2::FileSystem& files, const st
 // у підтеці meshes: objects/vehicles/land/apc_btr90/meshes/apc_btr90.bundledmesh.
 std::string resolveGeometryPath(obf2::FileSystem& files, const std::string& templateFile,
                                 const std::string& geometryName) {
+  if (geometryName.empty()) return {};
   const std::string_view dir = obf2::assetParentDir(templateFile);
-  for (const char* extension : {".bundledmesh", ".staticmesh", ".skinnedmesh"}) {
+  for (const char* extension : {".staticmesh", ".bundledmesh", ".skinnedmesh"}) {
     for (const char* subdirectory : {"meshes/", ""}) {
       const std::string candidate =
           obf2::joinAssetPath(dir, std::string(subdirectory) + geometryName + extension);
@@ -135,6 +150,54 @@ std::string resolveGeometryPath(obf2::FileSystem& files, const std::string& temp
     }
   }
   return {};
+}
+
+// Проганяє всі .con/.tweak гри через інтерпретатор і збирає реєстр шаблонів.
+obf2::game::Registry buildRegistry(obf2::FileSystem& files) {
+  obf2::game::Registry registry;
+  std::vector<std::string> configs;
+  for (auto& path : files.list()) {
+    const std::string_view extension = obf2::assetExtension(path);
+    if (extension == "con" || extension == "tweak") configs.push_back(std::move(path));
+  }
+  std::sort(configs.begin(), configs.end());
+  configs.erase(std::unique(configs.begin(), configs.end()), configs.end());
+
+  for (const auto& path : configs) {
+    obf2::con::Interpreter interpreter(
+        files, [&](const obf2::con::Command& command) { registry.feed(command); });
+    interpreter.runFile(path);
+  }
+  return registry;
+}
+
+// Шаблон -> зібрана геометрія: дерево нащадків плюс розстановка частин
+// BundledMesh за geometryPart.
+std::optional<obf2::mesh::RenderMesh> buildObjectMesh(obf2::FileSystem& files,
+                                                      const obf2::game::Registry& registry,
+                                                      const std::string& templateName,
+                                                      const Args& args, bool verbose) {
+  const auto* root = registry.find(templateName);
+  if (root == nullptr) return std::nullopt;
+
+  const auto instance = obf2::game::flattenObject(registry, templateName);
+  if (!instance) return std::nullopt;
+
+  const std::string path = resolveGeometryPath(files, root->file, instance->geometryName);
+  if (path.empty()) return std::nullopt;
+
+  auto render = loadMesh(files, path, args.geometryIndex, args.lodIndex, verbose);
+  if (!render) return std::nullopt;
+
+  const auto transforms = obf2::game::partTransformMap(*instance);
+  const std::size_t moved = obf2::game::applyPartTransforms(*render, transforms);
+  if (verbose) {
+    std::printf("  вузлів у дереві: %zu, глибина: %d, циклів: %d\n"
+                "  частин із трансформом: %zu, переставлено вершин: %zu з %zu\n",
+                instance->parts.size(), instance->maxDepth, instance->cycles, transforms.size(),
+                moved, render->vertices.size());
+  }
+  return render;
 }
 
 }  // namespace
@@ -154,54 +217,121 @@ int main(int argc, char** argv) {
   std::printf("мод: %s | архівів: %d\n", args.modDir.string().c_str(), mounted);
   for (const auto& e : mountErrors) std::printf("  [mount] %s\n", e.c_str());
 
-  // Режим --object: збираємо техніку за деревом ObjectTemplate.
-  std::string meshPath = args.meshPath;
-  std::optional<obf2::game::ObjectInstance> instance;
+  // --- підготовка сцени -------------------------------------------------
+
+  // Унікальна геометрія окремо від розстановки: на рівні той самий будинок
+  // трапляється десятками разів, і вантажити його в GPU щоразу немає сенсу.
+  struct Scene {
+    std::vector<obf2::mesh::RenderMesh> meshes;
+    std::vector<std::pair<int, obf2::Mat4>> instances;  // індекс меша + трансформ
+    obf2::Vec3f center;
+    float radius = 1.0f;
+
+    void add(obf2::mesh::RenderMesh&& geometry, const obf2::Mat4& transform) {
+      meshes.push_back(std::move(geometry));
+      instances.emplace_back(static_cast<int>(meshes.size()) - 1, transform);
+    }
+  } scene;
+
+  std::optional<obf2::level::Level> level;
   obf2::game::Registry registry;
 
-  if (!args.objectName.empty()) {
-    std::vector<std::string> configs;
-    for (auto& path : files.list()) {
-      const std::string_view extension = obf2::assetExtension(path);
-      if (extension == "con" || extension == "tweak") configs.push_back(std::move(path));
-    }
-    std::sort(configs.begin(), configs.end());
-    configs.erase(std::unique(configs.begin(), configs.end()), configs.end());
-
-    for (const auto& path : configs) {
-      obf2::con::Interpreter interpreter(
-          files, [&](const obf2::con::Command& command) { registry.feed(command); });
-      interpreter.runFile(path);
-    }
-    std::printf("реєстр: %zu шаблонів\n", registry.size());
-
-    instance = obf2::game::flattenObject(registry, args.objectName);
-    if (!instance) {
-      std::fprintf(stderr, "шаблон не знайдено: %s\n", args.objectName.c_str());
+  if (!args.levelName.empty()) {
+    std::string error;
+    if (!obf2::level::mountLevel(files, args.modDir, args.levelName, &error)) {
+      std::fprintf(stderr, "не змонтовано рівень %s: %s\n", args.levelName.c_str(), error.c_str());
       return 1;
     }
-    const auto* root = registry.find(args.objectName);
-    meshPath = resolveGeometryPath(files, root->file, instance->geometryName);
-    if (meshPath.empty()) {
-      std::fprintf(stderr, "не знайдено геометрію '%s' поруч із %s\n",
-                   instance->geometryName.c_str(), root->file.c_str());
+
+    const auto started = std::chrono::steady_clock::now();
+    level = obf2::level::loadLevel(files, args.levelName, &error);
+    if (!level) {
+      std::fprintf(stderr, "рівень не завантажено: %s\n", error.c_str());
       return 1;
     }
-    std::printf("об'єкт: %s (%s)\n  вузлів у дереві: %zu, глибина: %d, нерозв'язаних: %d, "
-                "циклів: %d\n",
-                instance->rootName.c_str(), root->className.c_str(), instance->parts.size(),
-                instance->maxDepth, instance->unresolved, instance->cycles);
+    std::printf("рівень: %s\n  карта висот %dx%d, масштаб %.4g/%.6g/%.4g, рівень моря %.1f\n",
+                level->name.c_str(), level->primary.size, level->primary.size,
+                level->primary.scale.x, level->primary.scale.y, level->primary.scale.z,
+                level->terrain.seaLevel);
+    std::printf("  статичних об'єктів: %zu\n", level->objects.size());
+
+    auto patches = obf2::level::buildTerrainPatches(*level, files);
+    std::printf("  патчів терену: %zu з %d (решта під водою, колормап немає)\n", patches.size(),
+                ((level->primary.size - 1) / level->terrain.patchSize) *
+                    ((level->primary.size - 1) / level->terrain.patchSize));
+    for (auto& patch : patches) scene.add(std::move(patch.geometry), obf2::Mat4::identity());
+    scene.add(obf2::level::buildWaterPlane(*level), obf2::Mat4::identity());
+
+    registry = buildRegistry(files);
+    std::printf("  реєстр: %zu шаблонів (%.1f с)\n", registry.size(), secondsSince(started));
+
+    std::unordered_map<std::string, int> meshIndexByTemplate;
+    std::map<std::string, int> missing;
+    int placed = 0;
+
+    for (const auto& object : level->objects) {
+      auto found = meshIndexByTemplate.find(object.templateName);
+      if (found == meshIndexByTemplate.end()) {
+        auto built = buildObjectMesh(files, registry, object.templateName, args, false);
+        int index = -1;
+        if (built) {
+          scene.meshes.push_back(std::move(*built));
+          index = static_cast<int>(scene.meshes.size()) - 1;
+        }
+        found = meshIndexByTemplate.emplace(object.templateName, index).first;
+      }
+      if (found->second < 0) {
+        ++missing[object.templateName];
+        continue;
+      }
+
+      obf2::Mat4 transform = obf2::translation(object.position);
+      if (object.hasRotation) {
+        transform = transform * obf2::rotationYawPitchRoll(object.rotation.x, object.rotation.y,
+                                                           object.rotation.z);
+      }
+      scene.instances.emplace_back(found->second, transform);
+      ++placed;
+    }
+
+    std::printf("  унікальної геометрії: %zu, розставлено: %d, без геометрії: %zu шаблонів\n",
+                scene.meshes.size() - patches.size(), placed, missing.size());
+    int shown = 0;
+    for (const auto& [name, count] : missing) {
+      if (shown++ >= 5) break;
+      std::printf("    без геометрії: %s (x%d)\n", name.c_str(), count);
+    }
+
+    const float extent = level->halfExtent() * level->primary.scale.x;
+    scene.center = obf2::Vec3f{0.0f, level->terrain.seaLevel, 0.0f};
+    scene.radius = extent;
   }
 
-  auto renderMesh = loadMesh(files, meshPath, args);
-  if (!renderMesh) return 1;
+  // --- решта режимів ----------------------------------------------------
 
-  if (instance) {
-    const auto transforms = obf2::game::partTransformMap(*instance);
-    const std::size_t moved = obf2::game::applyPartTransforms(*renderMesh, transforms);
-    std::printf("  частин із трансформом: %zu, переставлено вершин: %zu з %zu\n",
-                transforms.size(), moved, renderMesh->vertices.size());
+  if (args.levelName.empty()) {
+    std::optional<obf2::mesh::RenderMesh> single;
+    if (!args.objectName.empty()) {
+      registry = buildRegistry(files);
+      std::printf("реєстр: %zu шаблонів\n", registry.size());
+      single = buildObjectMesh(files, registry, args.objectName, args, true);
+      if (!single) {
+        std::fprintf(stderr, "не вдалося зібрати об'єкт %s\n", args.objectName.c_str());
+        return 1;
+      }
+    } else {
+      single = loadMesh(files, args.meshPath, args.geometryIndex, args.lodIndex, true);
+      if (!single) return 1;
+    }
+
+    const obf2::Vec3f boundsMin{single->bounds.min.x, single->bounds.min.y, single->bounds.min.z};
+    const obf2::Vec3f boundsMax{single->bounds.max.x, single->bounds.max.y, single->bounds.max.z};
+    scene.center = (boundsMin + boundsMax) * 0.5f;
+    scene.radius = std::max(0.001f, obf2::length(boundsMax - boundsMin) * 0.5f);
+    scene.add(std::move(*single), obf2::Mat4::identity());
   }
+
+  // --- GPU --------------------------------------------------------------
 
   obf2::gfx::WindowDesc desc;
   desc.title = "OpenBattlefield2";
@@ -218,70 +348,92 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "рендерер: %s\n", error.c_str());
     return 1;
   }
-  // Резолвер текстур: шлях із матеріалу -> байти з архіву -> розібраний DDS.
+
   int texturesLoaded = 0, texturesMissing = 0;
+  std::unordered_map<std::string, std::optional<obf2::texture::Texture>> textureCache;
   auto resolveTexture =
       [&](const std::string& mapName) -> std::optional<obf2::texture::Texture> {
-    const std::string path = obf2::normalizeAssetPath(mapName);
-    auto bytes = files.read(path);
-    if (!bytes) {
-      // Частина матеріалів посилається на текстуру без префікса точки
-      // монтування — пробуємо ще раз у "objects".
-      bytes = files.read(obf2::joinAssetPath("objects", path));
+    // Колір води задано числом у Water.con, а не файлом — рушій підставляє
+    // під цим іменем текстуру 1x1.
+    if (level && mapName == obf2::level::kWaterColorMap) {
+      const obf2::Vec3f color = level->terrain.waterColor;
+      return obf2::texture::solidColor(color.x, color.y, color.z);
     }
+
+    const std::string path = obf2::normalizeAssetPath(mapName);
+    if (const auto cached = textureCache.find(path); cached != textureCache.end()) {
+      return cached->second;
+    }
+
+    auto bytes = files.read(path);
+    if (!bytes) bytes = files.read(obf2::joinAssetPath("objects", path));
     if (!bytes) {
       ++texturesMissing;
-      std::fprintf(stderr, "  текстуру не знайдено: %s\n", path.c_str());
+      textureCache.emplace(path, std::nullopt);
       return std::nullopt;
     }
 
     std::string textureError;
     auto decoded = obf2::texture::loadDds(*bytes, &textureError);
-    if (!decoded) {
-      ++texturesMissing;
-      std::fprintf(stderr, "  %s: %s\n", path.c_str(), textureError.c_str());
-      return std::nullopt;
-    }
-    ++texturesLoaded;
-    std::printf("  текстура: %s (%ux%u, %s, рівнів %zu)\n", path.c_str(), decoded->width,
-                decoded->height, std::string(obf2::texture::formatName(decoded->format)).c_str(),
-                decoded->mips.size());
+    if (!decoded) ++texturesMissing; else ++texturesLoaded;
+    textureCache.emplace(path, decoded);
     return decoded;
   };
 
-  auto gpuMesh = renderer->upload(*renderMesh, resolveTexture, &error);
-  if (!gpuMesh) {
-    std::fprintf(stderr, "завантаження в GPU: %s\n", error.c_str());
-    return 1;
+  std::vector<obf2::gfx::GpuMesh> gpuMeshes(scene.meshes.size());
+  std::vector<bool> uploadedOk(scene.meshes.size(), false);
+
+  long long triangles = 0;
+  for (std::size_t i = 0; i < scene.meshes.size(); ++i) {
+    auto uploaded = renderer->upload(scene.meshes[i], resolveTexture, &error);
+    if (!uploaded) continue;
+    gpuMeshes[i] = *uploaded;
+    uploadedOk[i] = true;
+    triangles += static_cast<long long>(scene.meshes[i].indices.size() / 3);
   }
 
-  // Камера облітає меш, підібравшись під його bbox.
-  const obf2::Vec3f boundsMin{renderMesh->bounds.min.x, renderMesh->bounds.min.y,
-                              renderMesh->bounds.min.z};
-  const obf2::Vec3f boundsMax{renderMesh->bounds.max.x, renderMesh->bounds.max.y,
-                              renderMesh->bounds.max.z};
-  const obf2::Vec3f center = (boundsMin + boundsMax) * 0.5f;
-  const float radius = std::max(0.001f, obf2::length(boundsMax - boundsMin) * 0.5f);
-  const float distance = radius * 2.6f;
+  std::vector<obf2::gfx::MeshRenderer::DrawItem> items;
+  items.reserve(scene.instances.size());
+  long long drawnTriangles = 0;
+  for (const auto& [meshIndex, transform] : scene.instances) {
+    if (meshIndex < 0 || !uploadedOk[static_cast<std::size_t>(meshIndex)]) continue;
+    items.push_back(obf2::gfx::MeshRenderer::DrawItem{
+        &gpuMeshes[static_cast<std::size_t>(meshIndex)], transform});
+    drawnTriangles += static_cast<long long>(scene.meshes[static_cast<std::size_t>(meshIndex)]
+                                                 .indices.size() / 3);
+  }
+
+  std::printf("у GPU: %zu унікальних мешів (%lld трикутників), %zu примірників "
+              "(%lld трикутників на кадр)\n  текстур %d, не знайдено %d\n",
+              gpuMeshes.size(), triangles, items.size(), drawnTriangles, texturesLoaded,
+              texturesMissing);
+
+  // --- цикл -------------------------------------------------------------
+
+  if (args.focus) scene.center = *args.focus;
+  const float distance =
+      args.distance > 0.0f ? args.distance : scene.radius * (level ? 1.6f : 2.6f);
+  const float eyeHeight = distance * (level && !args.focus ? 0.3f : 0.35f);
 
   int frame = 0;
   while (device->pumpEvents()) {
     auto acquired = device->beginFrame();
     if (!acquired) continue;
 
-    const float time = static_cast<float>(frame) / 60.0f;
-    const float angle = time * 0.6f;
-    const obf2::Vec3f eye{center.x + std::sin(angle) * distance, center.y + radius * 0.8f,
-                          center.z + std::cos(angle) * distance};
+    const float angle = static_cast<float>(frame) / 60.0f * 0.6f;
+    const obf2::Vec3f eye{scene.center.x + std::sin(angle) * distance, scene.center.y + eyeHeight,
+                          scene.center.z + std::cos(angle) * distance};
 
     const float aspect =
-        acquired->height == 0 ? 1.0f
-                              : static_cast<float>(acquired->width) / static_cast<float>(acquired->height);
-    const obf2::Mat4 projection = obf2::perspective(1.05f, aspect, 0.05f, radius * 40.0f);
-    const obf2::Mat4 view = obf2::lookAt(eye, center, obf2::Vec3f{0.0f, 1.0f, 0.0f});
+        acquired->height == 0
+            ? 1.0f
+            : static_cast<float>(acquired->width) / static_cast<float>(acquired->height);
+    const obf2::Mat4 projection =
+        obf2::perspective(1.05f, aspect, scene.radius * 0.002f + 0.05f, scene.radius * 40.0f);
+    const obf2::Mat4 view = obf2::lookAt(eye, scene.center, obf2::Vec3f{0.0f, 1.0f, 0.0f});
 
-    renderer->render(*acquired, *gpuMesh, projection * view,
-                     obf2::gfx::Color{0.09f, 0.11f, 0.13f, 1.0f});
+    renderer->renderScene(*acquired, items, projection * view,
+                          obf2::gfx::Color{0.42f, 0.55f, 0.68f, 1.0f});
 
     const bool lastFrame = args.frames > 0 && frame + 1 >= args.frames;
     if (lastFrame && !args.screenshot.empty()) {
@@ -298,8 +450,7 @@ int main(int argc, char** argv) {
     if (args.frames > 0 && frame >= args.frames) break;
   }
 
-  renderer->release(*gpuMesh);
-  std::printf("текстур завантажено: %d, не знайдено: %d\n", texturesLoaded, texturesMissing);
+  for (auto& gpuMesh : gpuMeshes) renderer->release(gpuMesh);
   std::printf("кадрів намальовано: %d\n", frame);
   return 0;
 }

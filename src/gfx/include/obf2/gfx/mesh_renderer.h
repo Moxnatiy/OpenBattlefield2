@@ -52,6 +52,17 @@ class MeshRenderer {
   void render(const Frame& frame, const GpuMesh& gpuMesh, const Mat4& modelViewProjection,
               Color clearColor);
 
+  // Один меш, поставлений у світ власною матрицею. Однакова геометрія
+  // (а на рівні це сотні однакових будинків) вантажиться раз і малюється
+  // стільки разів, скільки її розставили.
+  struct DrawItem {
+    const GpuMesh* mesh = nullptr;
+    Mat4 transform;
+  };
+
+  void renderScene(const Frame& frame, const std::vector<DrawItem>& items,
+                   const Mat4& viewProjection, Color clearColor);
+
  private:
   MeshRenderer() = default;
   SDL_GPUTexture* uploadTexture(const texture::Texture& source);

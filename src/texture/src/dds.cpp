@@ -65,6 +65,21 @@ std::size_t levelSize(Format format, std::uint32_t width, std::uint32_t height) 
   return 0;
 }
 
+Texture solidColor(float red, float green, float blue, float alpha) {
+  auto toByte = [](float value) {
+    const float clamped = value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value);
+    return static_cast<std::byte>(static_cast<std::uint8_t>(clamped * 255.0f + 0.5f));
+  };
+
+  Texture texture;
+  texture.format = Format::Bgra8;  // порядок каналів B, G, R, A
+  texture.width = 1;
+  texture.height = 1;
+  texture.data = {toByte(blue), toByte(green), toByte(red), toByte(alpha)};
+  texture.mips.push_back(MipLevel{1, 1, 0, 4});
+  return texture;
+}
+
 std::optional<Texture> loadDds(std::span<const std::byte> bytes, std::string* error) {
   auto fail = [error](std::string why) -> std::optional<Texture> {
     if (error) *error = std::move(why);

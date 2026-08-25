@@ -29,6 +29,10 @@
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/game/CMakeFiles/test.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/game/CMakeFiles/edit_cache.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/game/CMakeFiles/rebuild_cache.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/level/CMakeFiles/obf2_level.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/level/CMakeFiles/test.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/level/CMakeFiles/edit_cache.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/level/CMakeFiles/rebuild_cache.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/gfx/CMakeFiles/obf2_gfx.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/gfx/CMakeFiles/test.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/gfx/CMakeFiles/edit_cache.dir
@@ -59,6 +63,7 @@
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_texture.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_object_template.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_scene.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_level.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/edit_cache.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/rebuild_cache.dir

@@ -56,4 +56,8 @@ std::size_t levelSize(Format format, std::uint32_t width, std::uint32_t height);
 // зберігають посилання на вхідний буфер — Texture::data самодостатній.
 std::optional<Texture> loadDds(std::span<const std::byte> bytes, std::string* error = nullptr);
 
+// Текстура 1x1 заданого кольору. Потрібна там, де гра задає колір числом,
+// а не файлом — наприклад renderer.waterColor у Water.con рівня.
+Texture solidColor(float red, float green, float blue, float alpha = 1.0f);
+
 }  // namespace obf2::texture

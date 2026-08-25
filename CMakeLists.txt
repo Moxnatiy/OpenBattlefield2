@@ -46,6 +46,7 @@ add_subdirectory(src/vfs)
 add_subdirectory(src/mesh)
 add_subdirectory(src/texture)
 add_subdirectory(src/game)
+add_subdirectory(src/level)
 add_subdirectory(src/gfx)
 add_subdirectory(src/app)
 

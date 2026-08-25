@@ -347,6 +347,12 @@ void MeshRenderer::release(GpuMesh& gpuMesh) {
 
 void MeshRenderer::render(const Frame& frame, const GpuMesh& gpuMesh,
                           const Mat4& modelViewProjection, Color clearColor) {
+  const DrawItem item{&gpuMesh, Mat4::identity()};
+  renderScene(frame, {item}, modelViewProjection, clearColor);
+}
+
+void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& items,
+                               const Mat4& viewProjection, Color clearColor) {
   SDL_GPUTexture* depth = device_->acquireDepthTarget(frame.width, frame.height);
 
   SDL_GPUColorTargetInfo colorTarget{};
@@ -367,18 +373,25 @@ void MeshRenderer::render(const Frame& frame, const GpuMesh& gpuMesh,
                                                    depth != nullptr ? &depthTarget : nullptr);
 
   SDL_BindGPUGraphicsPipeline(pass, pipeline_);
-  const SDL_GPUBufferBinding vertexBinding{gpuMesh.vertices, 0};
-  SDL_BindGPUVertexBuffers(pass, 0, &vertexBinding, 1);
-  const SDL_GPUBufferBinding indexBinding{gpuMesh.indices, 0};
-  SDL_BindGPUIndexBuffer(pass, &indexBinding, SDL_GPU_INDEXELEMENTSIZE_32BIT);
-  SDL_PushGPUVertexUniformData(frame.commands, 0, &modelViewProjection, sizeof(Mat4));
 
-  for (const GpuMesh::Range& range : gpuMesh.ranges) {
-    if (range.indexCount == 0) continue;
-    SDL_GPUTextureSamplerBinding binding{
-        range.texture != nullptr ? range.texture : placeholder_, sampler_};
-    SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
-    SDL_DrawGPUIndexedPrimitives(pass, range.indexCount, 1, range.indexStart, 0, 0);
+  for (const DrawItem& item : items) {
+    if (item.mesh == nullptr || item.mesh->vertices == nullptr) continue;
+
+    const SDL_GPUBufferBinding vertexBinding{item.mesh->vertices, 0};
+    SDL_BindGPUVertexBuffers(pass, 0, &vertexBinding, 1);
+    const SDL_GPUBufferBinding indexBinding{item.mesh->indices, 0};
+    SDL_BindGPUIndexBuffer(pass, &indexBinding, SDL_GPU_INDEXELEMENTSIZE_32BIT);
+
+    const Mat4 modelViewProjection = viewProjection * item.transform;
+    SDL_PushGPUVertexUniformData(frame.commands, 0, &modelViewProjection, sizeof(Mat4));
+
+    for (const GpuMesh::Range& range : item.mesh->ranges) {
+      if (range.indexCount == 0) continue;
+      SDL_GPUTextureSamplerBinding binding{
+          range.texture != nullptr ? range.texture : placeholder_, sampler_};
+      SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+      SDL_DrawGPUIndexedPrimitives(pass, range.indexCount, 1, range.indexStart, 0, 0);
+    }
   }
 
   SDL_EndGPURenderPass(pass);
