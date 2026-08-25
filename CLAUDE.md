@@ -1,5 +1,7 @@
 # OpenBattlefield2
 
+Ліцензія: MIT (див. `LICENSE`).
+
 Мета: clean-room реімплементація рушія Refractor 2 (Battlefield 2, 2005) —
 відкритий движок, який читає оригінальні ассети користувача.
 

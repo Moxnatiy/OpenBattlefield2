@@ -1,0 +1,555 @@
+# Офіційні описи команд .con із редактора BF2
+# Джерело: bf2editor/Help/CommandDescriptions.dat
+# Команд: 546
+Addin.SelectAnimationEditor	Activate AnimationEditor
+Addin.SelectLevelEditor	Activate LevelEditor
+Addin.SelectObjectEditor	Activate ObjectEditor
+Addin.SelectTerrainEditor	Activate TerrainEditor
+AnimationEditor.On1p	Enter first person mode
+AnimationEditor.On3p	Enter third person mode
+AnimationEditor.OnAnimationMode	Enter normal animation mode
+AnimationEditor.OnSelectViewMode1	Activate first view mode in list
+AnimationEditor.OnSelectViewMode2	Activate second view mode in list
+AnimationEditor.OnSelectViewMode3	Activate third view mode in list
+AnimationEditor.OnSelectViewMode4	Activate fourth view mode in list
+AnimationEditor.OnSelectViewMode5	Activate fifth view mode in list
+AnimationEditor.OnSelectViewMode6	Activate sixth view mode in list
+AnimationEditor.OnTestMode	Enter test mode with terrain
+AnimationEditor.OnToggleCameraMode	Toggles between 1p and 3p
+AnimationEditor.Refresh	Recreate soldier using avaible settings
+AnimationEditor.RemoveWeapon	Drop active weapon
+AnimationEditor.ZoomToSoldier	Zooms to soldier
+Backup.OnBackup	Performs a backup of level
+Camera.OnNormalMode	Normal freecamera mode
+Camera.OnSnapToTerrain	Normal freecamera that snaps to terrain
+Camera.OnSoldierMode	Moves camera to a soldier
+Camera.OnTopDownMode	Top-down camera
+ConsoleUI.ClearAll	Clears the console
+ConsoleUI.ExecuteCommand	Executes the console command
+ConsoleUI.SetConsoleUIFocus	Gives the console focus
+Global.OnCopy	Copy
+Global.OnCut	Cut
+Global.OnImport	Import in active plugin
+Global.OnLoad	Load in active plugin
+Global.OnNew	New in active plugin
+Global.OnPaste	Paste
+Global.OnSave	Save in active plugin
+Global.OnSaveAll	Save in all plugins
+Global.OnUndo	Undo
+Global.RenderNextFrame	Renders next frame (when in pause)
+Global.SubMode1	Activates submode 1 in plugin
+Global.SubMode2	Activates submode 2 in plugin
+Global.SubMode3	Activates submode 3 in plugin
+Global.SubMode4	Activates submode 4 in plugin
+Global.SubMode5	Activates submode 5 in plugin
+Global.SubMode6	Activates submode 6 in plugin
+Global.SubMode7	Activates submode 7 in plugin
+Global.SubMode8	Activates submode 8 in plugin
+Global.SubMode9	Activates submode 9 in plugin
+Global.ToggleFocus	Toggles input focus between Editor- and EngineFocus
+Global.TogglePauseRenderer	Toggles pause
+Import.ImportAll	Imports all object meshes
+Layer.OnAddToLayer	Add selected object(s) to active layer
+Layer.OnDelete	Delets active layer and moves object(s) to default layer
+Layer.OnLockLayer	Locks/Unlocks the layer
+Layer.OnNewLayer	Creates a new layer
+Layer.OnRemoveFromLayer	Remove selected object(s) to default layer
+Layer.OnSelectAllInLayer	Selects object(s) in layer
+LevelEditor.DefineLevelBrush	Creates a new brush from selected object(s)
+LevelEditor.LastOffsetCopy	Copies the 2 selected objects to clipboard for a offset copy
+LevelEditor.ToggleMove	Activates move mode
+LevelEditor.TogglePaint	Activates paint brush mode
+LevelEditor.ToggleRotate	Activates rotate mode
+LevelEditor.ToggleScale	Activates scale mode
+LevelEditor.ToggleSelect	Activates selection mode
+LevelEditor.ToggleSpline	Activates spline mode
+Movement.DecreaseSpeed	Camera speed is decreased
+Movement.IncreaseSpeed	Camera speed is increased
+Movement.ResetPosition	Position is reset to 0,0,0 (should be default position of layer)
+Movement.ResetSpeed	Camera speed is reset to 100 %
+Movement.SetPosition	Set camera position to user defined values
+ObjectEditor.ToggleEnterVehicle	Enter active object
+ObjectEditor.ToggleFocusMode	Activate focus (normal) mode
+ObjectEditor.ToggleFreeCamera	Activates free camera mode
+ObjectEditor.ToggleInputFocus	Gives input focus to active object
+ObjectEditor.TogglePhysicsMode	Turns physics on
+ObjectTemplate.abilityHud.ammoSound	峾
+ObjectTemplate.Acceleration	Acceleration time to maximum speed, in units. There will be no rotation without this.
+ObjectTemplate.Acceleration	[PLACEHOLDER]
+ObjectTemplate.Accumulate	[PLACEHOLDER]
+ObjectTemplate.AddToProjectileList	Normally unchecked
+ObjectTemplate.AirFlowEffect	For helicopter tail engine. 0 is "off", 1 is "on". When on it will prohibit the tailengine from turning the aircraft at full speed forward.
+ObjectTemplate.AiTemplate	What Ai to use for this object.
+ObjectTemplate.AlignLastEffectToHitDirection	[PLACEHOLDER]
+ObjectTemplate.AllowDucking	[PLACEHOLDER]
+ObjectTemplate.AltCrosshairIcon	Hud graphics information.
+ObjectTemplate.AltGuiIndex	Put a number here to call a crosshair to be used with this weapon in zoomed in mode.
+ObjectTemplate.AltMiniMapIcon	Hud graphics information.
+ObjectTemplate.AltSoldierExitPosition	Normally 0/0/0
+ObjectTemplate.AmmoBarBackIcon	Hud graphics information.
+ObjectTemplate.AmmoBarFrontIcon	Hud graphics information.
+ObjectTemplate.AmmoIcon	Hud graphics information.
+ObjectTemplate.AmmoType	Normally 1
+ObjectTemplate.Anchor	Normally 0/0/0
+ObjectTemplate.AngleMod	Normally set to 0.
+ObjectTemplate.AnimatedUvRotation	[PLACEHOLDER]
+ObjectTemplate.AnimatedUvRotationIndex	[PLACEHOLDER]
+ObjectTemplate.AnimatedUvRotationRadius	[PLACEHOLDER]
+ObjectTemplate.AnimatedUvRotationReverse	[PLACEHOLDER]
+ObjectTemplate.AnimatedUvRotationScale	[PLACEHOLDER]
+ObjectTemplate.AnimatedUvTranslation	[PLACEHOLDER]
+ObjectTemplate.AnimatedUvTranslationIndex	[PLACEHOLDER]
+ObjectTemplate.AnimatedUvTranslationMax	[PLACEHOLDER]
+ObjectTemplate.AnimatedUvTranslationReverse	[PLACEHOLDER]
+ObjectTemplate.AnimatedUvTranslationSize	[PLACEHOLDER]
+ObjectTemplate.animatedUVTranslationSpeed	[PLACEHOLDER]
+ObjectTemplate.AnimateOnZoom	Normally check this one. It says that there is an animation played when the weapon zooms in and out.
+ObjectTemplate.ArmingDelay	Time in seconds till projectile can detonate after being fired.
+ObjectTemplate.armor.alignLastEffectToHitDirection	[PLACEHOLDER]
+ObjectTemplate.armor.angleMod	[PLACEHOLDER]
+ObjectTemplate.armor.attackDamage	[PLACEHOLDER]
+ObjectTemplate.armor.canBeDestroyed	[PLACEHOLDER]
+ObjectTemplate.armor.canBeRepairedWhenWreck	[PLACEHOLDER]
+ObjectTemplate.armor.criticalDamage	[PLACEHOLDER]
+ObjectTemplate.armor.deepWaterDamageDelay	[PLACEHOLDER]
+ObjectTemplate.armor.deepWaterLevel	[PLACEHOLDER]
+ObjectTemplate.armor.defaultMaterial	[PLACEHOLDER]
+ObjectTemplate.armor.destroyOnSpectacularDeath	[PLACEHOLDER]
+ObjectTemplate.armor.explosionDamage	[PLACEHOLDER]
+ObjectTemplate.armor.explosionForce	[PLACEHOLDER]
+ObjectTemplate.armor.explosionForceMax	[PLACEHOLDER]
+ObjectTemplate.armor.explosionForceMod	[PLACEHOLDER]
+ObjectTemplate.armor.explosionMaterial	[PLACEHOLDER]
+ObjectTemplate.armor.explosionRadius	[PLACEHOLDER]
+ObjectTemplate.armor.hideChildrenOnSpectacularDeath	[PLACEHOLDER]
+ObjectTemplate.armor.hitPoints	[PLACEHOLDER]
+ObjectTemplate.armor.hpLostWhileCriticalDamage	[PLACEHOLDER]
+ObjectTemplate.armor.hpLostWhileInDeepWater	[PLACEHOLDER]
+ObjectTemplate.armor.hpLostWhileInWater	[PLACEHOLDER]
+ObjectTemplate.armor.hpLostWhileUpSideDown	[PLACEHOLDER]
+ObjectTemplate.armor.maxHitPoints	[PLACEHOLDER]
+ObjectTemplate.armor.showDamageAsDirt	[PLACEHOLDER]
+ObjectTemplate.armor.speedMod	[PLACEHOLDER]
+ObjectTemplate.armor.timeToStayAfterDestroyed	[PLACEHOLDER]
+ObjectTemplate.armor.timeToStayAsWreck	[PLACEHOLDER]
+ObjectTemplate.armor.useMMOnDeath	[PLACEHOLDER]
+ObjectTemplate.armor.waterDamageDelay	[PLACEHOLDER]
+ObjectTemplate.armor.waterLevel	[PLACEHOLDER]
+ObjectTemplate.armor.wreckDelay	[PLACEHOLDER]
+ObjectTemplate.armor.wreckExplosionDamage	[PLACEHOLDER]
+ObjectTemplate.armor.wreckExplosionForce	[PLACEHOLDER]
+ObjectTemplate.armor.wreckExplosionForceMax	[PLACEHOLDER]
+ObjectTemplate.armor.wreckExplosionForceMod	[PLACEHOLDER]
+ObjectTemplate.armor.wreckExplosionMaterial	[PLACEHOLDER]
+ObjectTemplate.armor.wreckExplosionRadius	[PLACEHOLDER]
+ObjectTemplate.armor.wreckHitPoints	[PLACEHOLDER]
+ObjectTemplate.ArtPos	[PLACEHOLDER]
+ObjectTemplate.AttackDamage	Normally set to 1.
+ObjectTemplate.AttackSpeed	For helicopter main engine. How fast the tilting of the rotor occurs when given input.
+ObjectTemplate.AutomaticPitchStabilization	Check to stabilize rotation in relation to parent rotational bundle.
+ObjectTemplate.AutomaticReset	Check if the rotation should return to 0 after input stops. (Airplane flaps use this.)
+ObjectTemplate.AutomaticYawStabilization	Check to stabilize rotation in relation to parent rotational bundle.
+ObjectTemplate.AutoReload	Check if weapon should autoreload itself after the magazine is spent.
+ObjectTemplate.AutoUseAbility	[PLACEHOLDER]
+ObjectTemplate.BatchSize	Set to one.
+ObjectTemplate.Bouncing	Projectile has bouncing properties. (Handgrenades.)
+ObjectTemplate.CanBeRepairedAndDestroyed	[PLACEHOLDER]
+ObjectTemplate.CastsDynamicShadow	Check for vehicles.
+ObjectTemplate.CenterOfCollisionOffset	[PLACEHOLDER]
+ObjectTemplate.CenterOfMassOffset	If you want to offset the center of mass for some reason. X, Y, Z.
+ObjectTemplate.ChangeFovInstant	Check if you do not want a smooth transition to the zoomed fied of view, but a straight cut instead.
+ObjectTemplate.ChangeMagAt	Normally 0.
+ObjectTemplate.ClipIcon	Hud graphics information.
+ObjectTemplate.CockpiSubGeom	Normally 0.
+ObjectTemplate.CockpitLod	What lod to display when entered in this position.
+ObjectTemplate.CockpitSubGeom	[PLACEHOLDER]
+ObjectTemplate.CollisionGroups	Leave blank.
+ObjectTemplate.CollisionPart	The ID number of the object part.
+ObjectTemplate.ConnectionEffect	Name of bundle to turn on when a wire guidd missile is fired. And to turn of when contact with the missile is lost.
+ObjectTemplate.ConstantRpm	[PLACEHOLDER]
+ObjectTemplate.CoolDownPerSec	How much heat to deduct per sec when weapon is not fired.
+ObjectTemplate.CoolingFactor	[PLACEHOLDER]
+ObjectTemplate.CreatedInEditor	Should be checked if object or part does not have a visible mesh.
+ObjectTemplate.CreateInvisible	Keep unchecked.
+ObjectTemplate.CreateNotInGrid	Keep unchecked.
+ObjectTemplate.CreateVisibleInEditor	Keep unchecked.
+ObjectTemplate.Creator	Last person to save the tweaks file.
+ObjectTemplate.CrewKitIndex	[PLACEHOLDER]
+ObjectTemplate.CriticalDamage	[PLACEHOLDER]
+ObjectTemplate.CrosshairIcon	Hud graphics information.
+ObjectTemplate.CrosshairIconSize	Normally set to 32
+ObjectTemplate.CullradiusScale	Is normally set to 1.
+ObjectTemplate.Damage	The damage caused to impacted target in points.
+ObjectTemplate.DamageAndAmbientSoundLimit	[PLACEHOLDER]
+ObjectTemplate.damagedAmbientSoundLimit	[PLACEHOLDER]
+ObjectTemplate.DamageForBeingOutSideWorld	Normally 999999
+ObjectTemplate.DamageFromWater	Normally unchecked.
+ObjectTemplate.DamageOwner	Projectile wont hurt the firer or firer vehicle.
+ObjectTemplate.DampHorizontalVelFactor	For helicopter main engine. At what speed in m/s the helicopter strives to reach zero speed on its own. This only kicks in while deccelerating.
+ObjectTemplate.Damping	Damping strength of the spring. Adjust until it looks good.
+ObjectTemplate.DeAcceleration	Negative acceleration option. If you want different decceleration speed than acceleration speed.
+ObjectTemplate.DebugAutoRotate	Check to test rotate the part in the editor.
+ObjectTemplate.DecreaseAngleToZero	For helicopter main engine. Helps remaining still on the ground.
+ObjectTemplate.DecreaseAngleToZeroSpeed	For helicopter main engine. Helps remaining still on the ground.
+ObjectTemplate.DecreaseAngleToZeroVerticalVel	For helicopter main engine. Helps remaining still on the ground.
+ObjectTemplate.DeepWaterLevel	[PLACEHOLDER]
+ObjectTemplate.DefaultAngleOfAttack	For helicopter main engines. Set to value that enables the vehicle to hover.
+ObjectTemplate.DefaultMaterial	Material type object uses to recieve explosion damage. 72 for "hard" objects, 71 for "soft".
+ObjectTemplate.DelayToUse	A dealy in seconds before the weapon can be fired after it's been selected.
+ObjectTemplate.DestroyableWindowsTemplate	[PLACEHOLDER]
+ObjectTemplate.DestroyOnExit	Normally unchecked.
+ObjectTemplate.DetonateDistanceToTarget	Projectile will detonate when a target enters this radius.
+ObjectTemplate.DetonateOnWaterCollision	Dont know if this works.
+ObjectTemplate.DeviationFactor	Multiplier of how much deviation will be shown in the hud compared to how much deviation there really is.
+ObjectTemplate.DevModCrouch	Multiplier for all deviation values while standing up and shooting.
+ObjectTemplate.DevModLie	Multiplier for all deviation values while standing up and shooting.
+ObjectTemplate.DevModStand	Multiplier for all deviation values while standing up and shooting.
+ObjectTemplate.DevModZoom	Multiplier for all deviation values while standing up and shooting.
+ObjectTemplate.DieAfterColl	Projectile will dissapear after coolision.
+ObjectTemplate.DieAtObjectHit	[PLACEHOLDER]
+ObjectTemplate.Differential	The length of the "gearbox". The value is in relation to the torque. A long gearbox will result in higher top speed.
+ObjectTemplate.DisableInputWhileDucking	[PLACEHOLDER]
+ObjectTemplate.DisableOnExit	[PLACEHOLDER]
+ObjectTemplate.DisableSpawnPointsOnEnter	Normally unchecked.
+ObjectTemplate.DistToMinDamage	Distance in meters till the minimum damage level is reached.
+ObjectTemplate.DistToStartLoseDamage	Distance in meters to start deducting from the damage caused.
+ObjectTemplate.dontAllowExit	[PLACEHOLDER]
+ObjectTemplate.DontAllowOnExit	[PLACEHOLDER]
+ObjectTemplate.DontClearTeamOnExit	Normally unchecked.
+ObjectTemplate.Drag	How much the drag from the body of a vehicle affects its speed. Without it, a vehicle will have an infinite top speed.
+ObjectTemplate.DragModifier	If you want different drag for the x, y or z axis of the object. Normally just 1/1/1.
+ObjectTemplate.DragOffset	If you like to offset the drag from the center of the object for some reason.
+ObjectTemplate.DropWeaponAfterFiringDelay	In seconds. If you want a weapon model to be thrown to the ground after firing.
+ObjectTemplate.DropWeaponAfterReloadDelay	In seconds. If you want a weapon model to be thrown to the ground after reloading is initiated.
+ObjectTemplate.EnableMouse	Normally unchecked.
+ObjectTemplate.EnablePostProcessing	A number that calls on a certain rendering mode to be used for this weapon.
+ObjectTemplate.EnablePostProcessingOnGuiIndex	Hud graphics information.
+ObjectTemplate.EndEffectTemplate	Normally checked
+ObjectTemplate.EngineType	What kind of vehicle the engine is for. Car, tank, plane ship or helicopter.
+ObjectTemplate.ExitOnCollision	[PLACEHOLDER]
+ObjectTemplate.ExitSpeedMod	Normally 1.
+ObjectTemplate.ExplosionDamage	Damage in points at the explosion ground zero.
+ObjectTemplate.ExplosionDamage	Max damage inflicted from explosion. Lessens over distance from center of explosion to radius maximum.
+ObjectTemplate.ExplosionForce	Physics force applied to objects in explosions damage radius. Fades linearly from explosion center.
+ObjectTemplate.ExplosionForce	The force on movable objects the explosion applies.
+ObjectTemplate.ExplosionForceMod	Normally 1
+ObjectTemplate.ExplosionMaterial	The damage material this explosion sends out.
+ObjectTemplate.ExplosionMaterial	What material the explosion radiates. Normally 70.
+ObjectTemplate.ExplosionRadius	The radius in meters the explosion damage travels.
+ObjectTemplate.ExplosionRadius	Radius in meters object will radiate damage when it explodes.
+ObjectTemplate.ExplosionYMod	Multplier for the Y-axis on the damage radius.
+ObjectTemplate.FireCameraInDof	Use for hand fire arms. Fire the projectile from the center of the crosshair as opposed to the center of the weapon model.
+ObjectTemplate.FireDevAdd	Deviation added to weapon after a projectile is fired. (That causes the next shot to deviate more.)
+ObjectTemplate.FireDevAdd	Deviation added to weapon after a projectile is fired. (That causes the next shot to deviate more.)
+ObjectTemplate.FireDevMax	Maximum deviation that can be caused by firing..
+ObjectTemplate.FireDevMax	Maximum deviation that can be caused by firing..
+ObjectTemplate.FireDevSub	Deviation subtracted from weapon as long as it is not fired.
+ObjectTemplate.FireDevSub	Deviation subtracted from weapon as long as it is not fired.
+ObjectTemplate.FireInput	What key will be used to fire the weapon. PIFire for primary fire. PIAltFire for secondary fire.
+ObjectTemplate.FireLaunchDelay	Time in seconds from when you pull a trigger to when the projectile is actually fired.
+ObjectTemplate.FireStartDelay	Time in seconds from when you pull a trigger to when the projectile is actually fired.
+ObjectTemplate.FirstShotExtraTime	For weapons that are loaded shot-by-shot. Used for adding time to first shot reload animation which is normally longer.
+ObjectTemplate.FirstWarningSound	Name of soundfile.
+ObjectTemplate.FixAxisSpring	Fix the axis to up-down movement only.
+ObjectTemplate.FloaterMod	[PLACEHOLDER]
+ObjectTemplate.follow.ChangePitch	[PLACEHOLDER]
+ObjectTemplate.follow.ChangeYaw	[PLACEHOLDER]
+ObjectTemplate.follow.MaxYaw	[PLACEHOLDER]
+ObjectTemplate.follow.MaxYaw	[PLACEHOLDER]
+ObjectTemplate.follow.MinDist	[PLACEHOLDER]
+ObjectTemplate.GearChangeTime	[PLACEHOLDER]
+ObjectTemplate.GearDown	Time it takes to shift one gear down.
+ObjectTemplate.GearUp	Time it takes to shift one gear up.
+ObjectTemplate.Geom0	1st person geometry
+ObjectTemplate.Geom1	3rd person geometry
+ObjectTemplate.Geom2	Wreck
+ObjectTemplate.Geometry	The name of the object or part.
+ObjectTemplate.GeometryPart	The ID number of the object part.
+ObjectTemplate.GravityModifier	A multiplier deciding the "fall" characteristics of the object.
+ObjectTemplate.Grip	Set only for wheels. 
+- Roll grip for wheels that are not powered.
+- Engine grip for wheels that are powered.
+- Engine dummy grip for wheel you want to make looking like they are powered, but actually arn't.
+ObjectTemplate.GroundContactVolume	[PLACEHOLDER]
+ObjectTemplate.GuiIndex	Put a number here to call a crosshair to be used with this weapon in zoomed out mode.
+ObjectTemplate.GuiIndex	Normally 0.
+ObjectTemplate.HandleCollisionSpeed	Set to 1.
+ObjectTemplate.HasCollisionEffect	Will play effect when colliding with object. For grenades.
+ObjectTemplate.HasCollisionPhysics	Check for all objects that has a collision mesh.
+ObjectTemplate.HasFireRate	Hud graphics information.
+ObjectTemplate.HasMag	Hud graphics information.
+ObjectTemplate.HasMobilePhysics	Check for objects and parts that can move.
+ObjectTemplate.HasOnTimeEffect	[PLACEHOLDER]
+ObjectTemplate.HasRangeFinder	Hud graphics information.
+ObjectTemplate.HasRecoilForce	Check if weapon is supposed to have a recoil kick.
+ObjectTemplate.HasRelativeOffset	Check for cockpit parts if you want to reposition them.
+ObjectTemplate.HasRestrictedExit	Normally unchecked.
+ObjectTemplate.HasTurretIcon	Hud graphics information.
+ObjectTemplate.HeatAddWhenFire	How much heat to add per shot fired. (Cumulative. When meter reaches 1 weapon overheats.)
+ObjectTemplate.HeatIncrement	[PLACEHOLDER]
+ObjectTemplate.helpHud.altHelpSoundKey	[PLACEHOLDER]
+ObjectTemplate.helpHud.altHelpStringKey	[PLACEHOLDER]
+ObjectTemplate.helpHud.closeToDistance	[PLACEHOLDER]
+ObjectTemplate.helpHud.closeToHelpSoundKeyEnemy	[PLACEHOLDER]
+ObjectTemplate.helpHud.closeToHelpSoundKeyFriendly	[PLACEHOLDER]
+ObjectTemplate.helpHud.closeToHelpSoundKeyNeutral	[PLACEHOLDER]
+ObjectTemplate.helpHud.closeToHelpStringKeyEnemy	[PLACEHOLDER]
+ObjectTemplate.helpHud.closeToHelpStringKeyFriendly	[PLACEHOLDER]
+ObjectTemplate.helpHud.closeToHelpStringKeyNeutral	[PLACEHOLDER]
+ObjectTemplate.helpHud.helpSoundKey	[PLACEHOLDER]
+ObjectTemplate.helpHud.helpStringKey	[PLACEHOLDER]
+ObjectTemplate.helpHud.lowAmmoHelpSoundKey	[PLACEHOLDER]
+ObjectTemplate.helpHud.lowAmmoHelpStringKey	[PLACEHOLDER]
+ObjectTemplate.helpHud.lowArmorHelpSoundKey	[PLACEHOLDER]
+ObjectTemplate.helpHud.lowArmorHelpStringKey	[PLACEHOLDER]
+ObjectTemplate.HideFirstPerson	Leave blank.
+ObjectTemplate.HideWeaponAfterFiringDelay	In seconds. If you want the 1st person weapon to dissapear after firing.
+ObjectTemplate.HideWeaponAfterReloadDelay	In seconds. If you want the weapon model to be hidden after reloading is initiated.
+ObjectTemplate.HitPoints	Number of hitpoints the object has on spawn. May not exceed MaxHitPoints.
+ObjectTemplate.HorizonDampAngle	For helicopter main engine. The maximum angle at which the vehicle strives to reach upright position.
+ObjectTemplate.HorizontalDampAngleFactor	For helicopter main engine. How strong the damping effect is.
+ObjectTemplate.HorizontalSpeedMagnifier	Multiplier for the vehicles horizontal speed.
+ObjectTemplate.HpLostWhileCriticalDamage	[PLACEHOLDER]
+ObjectTemplate.HpLostWhileDamageDeepWater	[PLACEHOLDER]
+ObjectTemplate.HpLostWhileDamageFromWater	[PLACEHOLDER]
+ObjectTemplate.HpLostWhileUpSideDown	[PLACEHOLDER]
+ObjectTemplate.HudName	What name will be displayed in the HUD when using the weapon.
+ObjectTemplate.HudName	What the vehicle will be called in the Hud.
+ObjectTemplate.InertiaModifier	Normally 1/1/1
+ObjectTemplate.InputToPitch	What control will influence the pitch axis.
+ObjectTemplate.InputToRoll	What control will influence the pitch axis.
+ObjectTemplate.InputToYaw	What control will influence the yaw axis.
+ObjectTemplate.InverseHeatBar	[PLACEHOLDER]
+ObjectTemplate.Invisible	Normally unchecked
+ObjectTemplate.InvisibleAtEndEffect	Remove projectile geometry after detonation. Normally checked.
+ObjectTemplate.IsCoDriver	Hud graphics information.
+ObjectTemplate.IsDestructable	Check only if object is destroyable static object.
+ObjectTemplate.IsNotSavable	Keep unchecked.
+ObjectTemplate.isNotSaveable	[PLACEHOLDER]
+ObjectTemplate.IsParachute	[PLACEHOLDER]
+ObjectTemplate.IsPortalPassing	Leave blank
+ObjectTemplate.IsPortalPosition	Leave blank
+ObjectTemplate.IsSelectable	Uncheck if you dont want the weapon to be selectable with the number keys.
+ObjectTemplate.IsSleeping	Leave unchecked.
+ObjectTemplate.ItemIndex	Set this number to correspond to the number key with which the weapon should be selected.
+ObjectTemplate.ItemType	Set to 0.
+ObjectTemplate.LesserYasAtSpeed	[PLACEHOLDER]
+ObjectTemplate.ListenerObstruction	[PLACEHOLDER]
+ObjectTemplate.MagLinkWeapon	If two weapon systems on the same vehicle should draw ammo from the same magazine. Type the "linked" weapon name here.
+ObjectTemplate.MagSize	Number of shots in one magazine.
+ObjectTemplate.MaintainCameraOnExit	[PLACEHOLDER]
+ObjectTemplate.MapMaterials	Normally left blank.
+ObjectTemplate.Mass	The objects wheight in kilograms.
+ObjectTemplate.Material	Leave blank
+ObjectTemplate.MaxAngleOfAttack	For helicopter main engine. What angle of the rotor gives that results in max forward speed.
+ObjectTemplate.MaxClimbSpeed	Hud graphics information.
+ObjectTemplate.MaxHitPoints	Maximum number of hitpoints the object can have.
+ObjectTemplate.MaxRotation	X, Y, Z axis positive rotation constraint. This should always be a negative value. No value results in 360 degree rotation.
+ObjectTemplate.MaxSpeed	Max rotational speed, in units. There will be no rotation without this.
+ObjectTemplate.MaxSpeed	[PLACEHOLDER]
+ObjectTemplate.MaxTracerScaler	How long the tracer effect can be depending on projectile speed.
+ObjectTemplate.MaxVertRegAngle	Up to which angle from the upright position the vertical angle stabilizer is effective.
+ObjectTemplate.MaxVisualDeviation	Upper limit for how much deviation can be show in the hud for this weapon regardless of actual deviation..
+ObjectTemplate.MinDamage	Multiplier to set the minimum damage the projectile can cause due to distance degration.
+ObjectTemplate.MinDetonationSpeed	Minimum speed for a detonation to occur.
+ObjectTemplate.MinDev	Minimum deviation for the weapon.  Deviation can never become less than this.
+ObjectTemplate.MinDev	Minimum deviation for the weapon.  Deviation can never become less than this.
+ObjectTemplate.MiniMapIcon	Hud graphics information.
+ObjectTemplate.MiniMapIconLeaderSize	Hud graphics information.
+ObjectTemplate.MiniMapIconSize	Hud graphics information.
+ObjectTemplate.MinimumTimeUntilReload	[PLACEHOLDER]
+ObjectTemplate.MinRotation	X, Y, Z axis negative rotation constraint. This should always be a negative value. No value results in 360 degree rotation.
+ObjectTemplate.MinVisualDeviation	Lower limit for how much deviation can be show in the hud for this weapon regardless of actual deviation.
+ObjectTemplate.MiscDevAddJump	Deviation added to projectiles fired while jumping.
+ObjectTemplate.MiscDevMax	Maximum deviation that can be caused by jumping.
+ObjectTemplate.MiscDevSub	Deviation subtracted per second  from the misc deviation when not jumping.
+ObjectTemplate.ModifiedByUser	[PLACEHOLDER]
+ObjectTemplate.NameTagOffset	[PLACEHOLDER]
+ObjectTemplate.NetworkableInfo	For moving parts that need to be synced over network. "Basic info" for rotational bundles. "Spring info" for wheels.
+ObjectTemplate.NeverDrawAs1p	[PLACEHOLDER]
+ObjectTemplate.NeverPenetrate	Check if projectile should not penetrate, but always detonate on impact.
+ObjectTemplate.NoEffectAtPerpSpeed	Normally 10000
+ObjectTemplate.NoPropellerEffectAtSpeed	[PLACEHOLDER]
+ObjectTemplate.NoVertRegAngle	Angle at which the vertical stabilizer is longer doing anything.
+ObjectTemplate.NrOfMags	Number of magazines in soldier or vehicle inventory when fully loaded.
+ObjectTemplate.NumberOfGears	Number of gears in the gearbox.
+ObjectTemplate.OverHeatPenalty	Penalty value added to overheatvalue if weapon ever reaches 1.
+ObjectTemplate.PcoFlags	[PLACEHOLDER]
+ObjectTemplate.PcoId	[PLACEHOLDER]
+ObjectTemplate.PhysicsFrequency	Should be 0.
+ObjectTemplate.PhysicsType	"None" if no collision.
+"Point" if projectile.
+"Mesh" if object has collision mesh.
+ObjectTemplate.PivotPosition	For cameras. Offsets the rotational point in X, Y, Z. In meters.
+ObjectTemplate.PortalPassingPosition	[PLACEHOLDER]
+ObjectTemplate.PreCacheObject	Keep unchecked.
+ObjectTemplate.ProjectileStartPosition	X, Y, Z of the origin of the projectile from the center of the firearm.
+ObjectTemplate.ProjectileTemplate	Create a new projectile or browse to use an existing one.
+ObjectTemplate.PropRotAxis	For engines with a visible rotor, this is the axis it will rotate around.
+ObjectTemplate.PureRotational	[PLACEHOLDER]
+ObjectTemplate.RecoilForce	How much backwards force is applied to the vehicle.
+ObjectTemplate.RecoilSize	How large the recoil is.
+ObjectTemplate.RecoilSpeed	How fast the barrel goes in.
+ObjectTemplate.RecoilSpeedGB	How fast the barrel comes back out.
+ObjectTemplate.RegulatePitch	This value is used to have a rotational bundle counter or enhance input on the given axis. I. e. to create an stabilizer for the main gunbarrel on a tank.
+ObjectTemplate.RegulatePitchInput	This value is used to have a rotational bundle counter or enhance input on the given axis. I. e. to create an stabilizer for the main gunbarrel on a tank.
+ObjectTemplate.RegulateRoll	This value is used to have a rotational bundle counter or enhance input on the given axis. I. e. to create an stabilizer for the main gunbarrel on a tank.
+ObjectTemplate.RegulateRollInput	This value is used to have a rotational bundle counter or enhance input on the given axis. I. e. to create an stabilizer for the main gunbarrel on a tank.
+ObjectTemplate.RegulateVerticalPos	This value is used to have a rotational bundle counter or enhance input on the given axis. I. e. to create an stabilizer for the main gunbarrel on a tank.
+ObjectTemplate.RegulateVerticalPosInput	This value is used to have a rotational bundle counter or enhance input on the given axis. I. e. to create an stabilizer for the main gunbarrel on a tank.
+ObjectTemplate.RegulateYaw	This value is used to have a rotational bundle counter or enhance input on the given axis. I. e. to create an stabilizer for the main gunbarrel on a tank.
+ObjectTemplate.RegulateYawInput	This value is used to have a rotational bundle counter or enhance input on the given axis. I. e. to create an stabilizer for the main gunbarrel on a tank.
+ObjectTemplate.RegWhenMinInput	Normally 1.
+ObjectTemplate.RelativePositionOffset	If a part has the HasRelativeOffset flag checked, this its is offset coordinates.
+ObjectTemplate.ReloadAmount	Normally 0.
+ObjectTemplate.ReloadTime	In seconds. How long after loading sequence is initiated before the weapon can be fired again. Should be synced with reload animation.
+ObjectTemplate.RememberExcessInput	[PLACEHOLDER]
+ObjectTemplate.RemoteEngineInput	[PLACEHOLDER]
+ObjectTemplate.ResetArmorOnRemove	[PLACEHOLDER]
+ObjectTemplate.RotateAsAnimatedUv	[PLACEHOLDER]
+ObjectTemplate.RotateAsAnimatedUvObject	[PLACEHOLDER]
+ObjectTemplate.RotateAsAnimatedUvReverse	[PLACEHOLDER]
+ObjectTemplate.RoundPerMinute	How fast the weapon can be fired.
+Value must be a factor of 1800.
+ObjectTemplate.SaveInSeparateFile	The root object in the hierarchy should have this checked.
+ObjectTemplate.SeatAnimationSystem	Path and name of animation system to be used in this position.
+ObjectTemplate.SeatParent	The parent PlayerControlObject of this position. (The name of the root object if this is the pilot.)
+ObjectTemplate.SeatPosition	X, Y, Z position of the seat of the player in relation to the player control object.
+ObjectTemplate.SeatRotation	X, Y, Z rotation of the seat of the player in relation to the player control object.
+ObjectTemplate.SeconWarningSound	Name of soundfile.
+ObjectTemplate.SetTargetAtMaxDistance	Check if you want no upper limit on guidance.
+ObjectTemplate.ShakeFactor	Multiplier for the camera shake.
+ObjectTemplate.ShowAmmo	Hud graphics information.
+ObjectTemplate.ShowClips	Hud graphics information.
+ObjectTemplate.ShowCrossHair	If unchecked, there will be no crosshair.
+ObjectTemplate.ShowInfo	Hud graphics information.
+ObjectTemplate.ShowWeaponAfterReloadDelay	In seconds. How long after the initiation of the reload animation you want the weapon to reappear in the players hands.
+ObjectTemplate.SoldierExitPosition	X, Y, Z position of soldier in relation to player control object on exiting vehicle.
+ObjectTemplate.SoldierExitRotation	X, Y, Z rotation of soldier in relation to player control object on exiting vehicle.
+ObjectTemplate.SoundFilter	What sound filtering to use for pre-recorded radio messages when in this vehicle.
+ObjectTemplate.SpecialToggleWeaponInput	They key you use to toggle weapons when the "weapon is selectable" switch is turned off.
+ObjectTemplate.SpeedDevAddForward	Deviation added to projectiles fired while moving forwards or backwards.
+ObjectTemplate.SpeedDevAddStrafe	Deviation added to projectiles fired while strafing sideways.
+ObjectTemplate.SpeedDevMax	Maximum deviation that can be caused by moving.
+ObjectTemplate.SpeedDevSub	Deviation subtracted per second  from the speed deviation when not moving.
+ObjectTemplate.SpeedMod	Normally set to 0.05
+ObjectTemplate.SpinWhenNoEngineInAir	[PLACEHOLDER]
+ObjectTemplate.SpottedMessage	Hud graphics information.
+ObjectTemplate.SprintDissipationTime	The time it takes in seconds to deplete the sprintbar.
+ObjectTemplate.SprintFactor	Mutliplies the engine output when sprinting by this factor.
+ObjectTemplate.SprintLimit	How many percent of the sprintbar must be reloaded before you can sprint again.
+ObjectTemplate.SprintRecoverTime	The time it takes in seconds from when you have sprinted to when you can sprint again.
+ObjectTemplate.StartAutoRotateOnEnter	Check if you want constant rotation.
+ObjectTemplate.StartDelay	Time in seconds until the engine of the projectile is ignited after firing.
+ObjectTemplate.StopAtEndEffect	Normally checked.
+ObjectTemplate.Strength	Hardness of the spring. Set this value so that the hub of the wheel lines up with the axle.
+ObjectTemplate.SubProjectileDev	For projectiles that fires clusters of shots. This is the deviation of the projectiles within the cluster.
+ObjectTemplate.SwitchGuiOnCamera	Hud graphics information.
+ObjectTemplate.TargetObjectTemplate	What kind of targeting system to use. Wireguided, laserguided or heatseeking.
+ObjectTemplate.TargetSystem	[PLACEHOLDER]
+ObjectTemplate.TemplateHasBeenUsed	Check this one.
+ObjectTemplate.TimeToLive	Y is the time in seconds this projectile will exist. Also used as time for grenades.
+ObjectTemplate.TimeToRemoveTK	Normally unchecked
+ObjectTemplate.TimeToStayAfterDestroyed	[PLACEHOLDER]
+ObjectTemplate.TimeToStayAsDestroyed	Time it takes to hit 0 wreck hp once object has become a wreck in seconds. Then the wreck too explodes.
+ObjectTemplate.ToggleWeapon	Check only if there is is no weapon in zoomed out view.
+ObjectTemplate.Torque	The power of the engine. The value is in relation to the differential. Dont enter higher values than 5000.
+ObjectTemplate.TracerConvergenceDistance	At what distance the tracers (which start from the gunbarrel) and the projectile, which start from the camera, converges. Only relevan if FireInCameraDof is checked.
+ObjectTemplate.TracerInterval	Set one for tracer on every shot, 2 for every other and so on.
+ObjectTemplate.TracerScaler	How long the tracer effect will be as default.
+ObjectTemplate.TracerSizeModifier	How fat the tracer will be.
+ObjectTemplate.TracerTemplate	Name of tracer effect to use.
+ObjectTemplate.TreeCollisionDiameter	[PLACEHOLDER]
+ObjectTemplate.TurnDevAddPitch	Deviation added to projectiles fired while moving the weapon up and down.
+ObjectTemplate.TurnDevAddYaw	Deviation added to projectiles fired while moving the weapon right and left.
+ObjectTemplate.TurnDevMax	Maximum deviation that can be caused by turning.
+ObjectTemplate.TurnDevSub	Deviation subtracted per second  from the turn deviation when not turning.
+ObjectTemplate.UpdateInterval	In seconds. How often the game updates the target information. 0 would make it update every frame.
+ObjectTemplate.UseDeAcceleration	Check if deacceleration is to be used.
+ObjectTemplate.UseDummyProjectiles	Check this one to get a visible projectile dummy. Like a bomb hanging under a plane.
+ObjectTemplate.UseMMOnEndEffect	Normally checked
+ObjectTemplate.UseProjectileCamera	Check if you want a camera to travel with the projectile.
+ObjectTemplate.VehicleCameraShake	Normally blank
+ObjectTemplate.VehicleCategory	[PLACEHOLDER]
+ObjectTemplate.VehicleFov	Normally 0
+ObjectTemplate.vehicleHud.AbilityIcon	[PLACEHOLDER]
+ObjectTemplate.vehicleHud.enablePostProcessingOnGuiIndex	[PLACEHOLDER]
+ObjectTemplate.vehicleHud.guiIndex	[PLACEHOLDER]
+ObjectTemplate.vehicleHud.hasTurretIcon	[PLACEHOLDER]
+ObjectTemplate.vehicleHud.hudName	[PLACEHOLDER]
+ObjectTemplate.vehicleHud.isCoDriver	[PLACEHOLDER]
+ObjectTemplate.vehicleHud.maxClimbSpeed	[PLACEHOLDER]
+ObjectTemplate.vehicleHud.miniMapIcon	[PLACEHOLDER]
+ObjectTemplate.vehicleHud.miniMapIconLeaderSize	[PLACEHOLDER]
+ObjectTemplate.vehicleHud.miniMapIconSize	[PLACEHOLDER]
+ObjectTemplate.vehicleHud.showCrossHair	[PLACEHOLDER]
+ObjectTemplate.vehicleHud.showInfo	[PLACEHOLDER]
+ObjectTemplate.vehicleHud.spottedMessage	[PLACEHOLDER]
+ObjectTemplate.vehicleHud.standardHelpEnabled	[PLACEHOLDER]
+ObjectTemplate.vehicleHud.typeIcon	[PLACEHOLDER]
+ObjectTemplate.vehicleHud.useChildHud	[PLACEHOLDER]
+ObjectTemplate.vehicleHud.usePlayerIcon	[PLACEHOLDER]
+ObjectTemplate.vehicleHud.useSelectionIcons	[PLACEHOLDER]
+ObjectTemplate.vehicleHud.useVehicleCommRose	[PLACEHOLDER]
+ObjectTemplate.vehicleHud.vehicleIcon	[PLACEHOLDER]
+ObjectTemplate.vehicleHud.vehicleIconPos	[PLACEHOLDER]
+ObjectTemplate.vehicleHud.vehicleType	[PLACEHOLDER]
+ObjectTemplate.VehicleIcon	Hud graphics information.
+ObjectTemplate.VehicleIconPos	Hud graphics information.
+ObjectTemplate.Velocity	Muzzle velocity in meters per second.
+ObjectTemplate.warningHud.firstWarningSound	[PLACEHOLDER]
+ObjectTemplate.warningHud.secondWarningSound	[PLACEHOLDER]
+ObjectTemplate.warningHud.warningIcon	[PLACEHOLDER]
+ObjectTemplate.warningHud.warningType	[PLACEHOLDER]
+ObjectTemplate.WarningIcon	Name of icon.
+ObjectTemplate.WarningType	Decides what warning system to use.
+ObjectTemplate.WaterDamageDelay	[PLACEHOLDER]
+ObjectTemplate.WeaponIcon	Hud graphics information.
+ObjectTemplate.WeaponType	Set to 0.
+ObjectTemplate.WreckDelay	No of second before switch to wreck occurs after destroyed.
+ObjectTemplate.WreckExplosionDamage	Max damage inflicted from explosion. Lessens over distance from center of explosion to radius maximum.
+ObjectTemplate.WreckExplosionForce	The force on movable objects the explosion applies.
+ObjectTemplate.WreckExplosionForceMax	[PLACEHOLDER]
+ObjectTemplate.WreckExplosionForceMod	Normally 1
+ObjectTemplate.WreckExplosionMaterial	What material the explosion radiates. Normally 70.
+ObjectTemplate.WreckExplosionRadius	Radius in meters object will radiate damage when it explodes.
+ObjectTemplate.WreckHitPoints	No of hitpoints the wreck has. May not exceed MaxHitPoints.
+ObjectTemplate.ZoomDelay	How long in seconds it takes to zoom in.
+ObjectTemplate.ZoomInput	Key that triggers zoom. Normally PIAltFire.
+ObjectTemplate.ZoomLod	What lod to use when zoomed in. A weapon with a special zoom geometry should use lod 1. Otherwise, set to 0.
+ObjectTemplate.ZoomModifier	Set to 1 if recoil should be turned off when zoomed in.
+OutputWindow.ClearWindow	Clears the output window
+Perforce.AddFiles	Check active level if any files need to be added to perforce
+Perforce.OpenForEdit	Opens active level for edit
+Perforce.Submit	Submits the BF2Content changelist
+Perforce.Sync	Sync to head revision
+RenderMenu.DetailTextureMode	Terrain is draw with detail texture
+RenderMenu.GridMode	Terrain is drawn as grid
+RenderMenu.GridWithTextureMode	Terrain is drawn with texture and grid
+RenderMenu.TextureMode	Terrain is drawn with texture
+ResourceTree.OnLoadResource	Show load resource dialog
+TerrainEditor.ConnectRoad	Creates road on active spline
+TerrainEditor.CreateRoadTemplate	Create a new road template
+TerrainEditor.DisconnectRoad	Removes the active road
+TerrainEditor.RefreshRoads	Refreshes all roads
+TerrainEditor.ResetMarker	Resets the marker to position in front of camera
+TerrainEditor.SetLevel	Activate level terrain mode
+TerrainEditor.SetModify	Activate modify terrain mode
+TerrainEditor.SetPlatform	Activate platform terrain mode
+TerrainEditor.SetRandom	Activate random terrain mode
+TerrainEditor.SetRoad	Activate road creation mode
+TerrainEditor.SetSmooth	Activate smooth terrain mode
+TerrainEditor.SetTexture	Activate detail texture paint mode
+TerrainEditor.UndoModifyTerrain	Undos the latest terrain modification
+Tools.FlushUndoManager	Shows the content of the UndoManager [debug]
+Tools.ListAllShortcuts	Lists all shortcuts in output window
+Tools.ShowAddinManager	Shows add-in manager
+Tools.ShowControlMapManager	Shows controlmap manager
+Tools.ShowOptions	Shows the options dialog
+Tools.ShowShortcutManager	Shows shortcut manager
+View.OnToggleEditor	Toggles visiblity for Editor window
+View.OnToggleOutput	Toggles visiblity for Output window
+View.OnToggleResource	Toggles visiblity for Resource window
+View.OnToggleTimeLine	Toggles visiblity for Timeline window
+View.OnToggleToolbar	Toggles visiblity for main toolbar
+View.OnToggleTweaker	Toggles visiblity for Tweaker
