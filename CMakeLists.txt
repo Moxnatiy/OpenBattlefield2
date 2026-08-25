@@ -35,11 +35,16 @@ if(APPLE)
   set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "")
 endif()
 
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
+include(sdl3)
+
 add_subdirectory(third_party/miniz)
 
 add_subdirectory(src/core)
 add_subdirectory(src/con)
 add_subdirectory(src/vfs)
+add_subdirectory(src/gfx)
+add_subdirectory(src/app)
 
 if(OBF2_BUILD_TOOLS)
   add_subdirectory(tools/con_dump)

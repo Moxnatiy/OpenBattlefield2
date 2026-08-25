@@ -9,3 +9,5 @@
 | `.collisionmesh` | ⬜ те саме | — |
 | `.dds` | ⬜ стандартний формат | — |
 | netcode-протокол | ⬜ потребує RE (Ghidra / BitStream Emulator) | — |
+
+Графічний бекенд: SDL3 + SDL_GPU, рішення — [../research/01-render-backend.md](../research/01-render-backend.md).

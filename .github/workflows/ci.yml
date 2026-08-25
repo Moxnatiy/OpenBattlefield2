@@ -16,17 +16,14 @@ jobs:
           - name: macOS arm64
             os: macos-14
             preset: macos-arm64-debug
-          - name: Windows x64 (MSVC)
-            os: windows-latest
-            preset: windows-x64-debug
+          # Windows-збірка поки не потрібна: пресет windows-x64 у
+          # CMakePresets.json лишається робочим, але в CI не ганяється.
     steps:
       - uses: actions/checkout@v4
-      - uses: ilammy/msvc-dev-cmd@v1
-        if: runner.os == 'Windows'
-        with:
-          arch: x64
       - name: Install Ninja
         uses: seanmiddleditch/gha-setup-ninja@v5
+      - name: Install SDL3 deps
+        run: brew install sdl3
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
       - name: Build

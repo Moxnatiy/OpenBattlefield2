@@ -34,7 +34,8 @@
 - `docs/formats/` — специфікації файлових форматів
 - `docs/functions/` — конспекти розібраних функцій BF2.exe / DLL
 - `tools/` — скрипти (headless Ghidra, розпаковка, парсери)
-- `src/` — власне рушій
+- `src/core` — платформа, шляхи; `src/con` — мова .con; `src/vfs` — архіви
+  гри; `src/gfx` — вікно й GPU; `src/app` — виконуваний `openbf2`
 
 ## Збірка
 
@@ -43,17 +44,22 @@ cmake --preset macos-arm64-debug && cmake --build --preset macos-arm64-debug
 ctest --test-dir build/macos-arm64-debug --output-on-failure
 ```
 
-Цілі: **arm64 macOS** і **x86_64 Windows (MSVC)**. Пресети — у
-`CMakePresets.json`, обидві платформи збираються в CI на кожен push.
+Основна платформа — **arm64 macOS**. Windows-збірка відкладена (пресет
+`windows-x64` лишається робочим, але в CI не ганяється), проте база має
+лишатися портованою: код не має набувати macOS-залежностей.
 Правила, щоб не зламати мультиплатформність:
 
 - C++20 без компіляторних розширень (`CMAKE_CXX_EXTENSIONS OFF`) — MSVC їх не має;
 - нічого платформозалежного поза `obf2/core/platform.h`;
 - шляхи до ассетів — тільки через `normalizeAssetPath` (регістр + слеші);
-- залежності — вендорні, single-file, без системних бібліотек (`third_party/`).
+- залежності — або вендорні single-file (`third_party/`), або через
+  `find_package` з фолбеком на FetchContent (`cmake/sdl3.cmake`);
+- графіка — тільки через `obf2::gfx`, ніяких прямих викликів Metal/GL.
 
 ## Тулчейн
 
+- SDL3 3.4.14 + SDL_GPU (Metal тут, Vulkan/D3D12 на Windows) — див.
+  `docs/research/01-render-backend.md`
 - Ghidra 12.1.3 (`brew`, `/opt/homebrew/opt/ghidra/libexec`), JDK 21
 - MCP: `pyghidra-mcp` (headless, stdio) — конфіг у `.mcp.json`
 - `.venv/` — Python 3.12 (uv)

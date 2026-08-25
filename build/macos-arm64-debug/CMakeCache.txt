@@ -240,6 +240,9 @@ OBF2_BUILD_TESTS:BOOL=ON
 //Збирати CLI-утиліти
 OBF2_BUILD_TOOLS:BOOL=ON
 
+//Версія SDL3 для FetchContent
+OBF2_SDL3_VERSION:STRING=3.4.14
+
 //Тлумачити попередження як помилки
 OBF2_WERROR:BOOL=ON
 
@@ -251,6 +254,9 @@ OpenBattlefield2_IS_TOP_LEVEL:STATIC=ON
 
 //Value Computed by CMake
 OpenBattlefield2_SOURCE_DIR:STATIC=/Users/miami/OpenBattlefield2
+
+//The directory containing a CMake configuration file for SDL3.
+SDL3_DIR:PATH=/opt/homebrew/lib/cmake/SDL3
 
 
 ########################
@@ -351,7 +357,7 @@ CMAKE_MODULE_LINKER_FLAGS_RELWITHDEBINFO-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_NM
 CMAKE_NM-ADVANCED:INTERNAL=1
 //number of local generators
-CMAKE_NUMBER_OF_MAKEFILES:INTERNAL=7
+CMAKE_NUMBER_OF_MAKEFILES:INTERNAL=9
 //ADVANCED property for variable: CMAKE_OBJCOPY
 CMAKE_OBJCOPY-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_OBJDUMP

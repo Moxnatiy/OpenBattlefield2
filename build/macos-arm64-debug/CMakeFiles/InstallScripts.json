@@ -6,6 +6,8 @@
 		"/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/core/cmake_install.cmake",
 		"/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/con/cmake_install.cmake",
 		"/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/vfs/cmake_install.cmake",
+		"/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/gfx/cmake_install.cmake",
+		"/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/app/cmake_install.cmake",
 		"/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/con_dump/cmake_install.cmake",
 		"/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/cmake_install.cmake"
 	],
