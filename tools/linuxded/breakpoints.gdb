@@ -1,26 +1,26 @@
-# Точки зупину для стенда під gdb. Кожна лише друкує рядок і йде далі,
-# щоб сервер працював як завжди.
+# Межі секцій у вихідному пакеті: три потоки пишуть один за одним, і
+# позиція запису до/після кожного каже, скільки бітів зайняв кожен.
 set pagination off
 set confirm off
 
-break dice::hfe::GameServer::handleClientInfo
+break dice::hfe::PlayerActionManager::transmit
 commands
   silent
-  printf ">> handleClientInfo\n"
+  printf ">>ДІЇ поля %d %d %d\n", *(int*)($rsi+0x10), *(int*)($rsi+0x14), *(int*)($rsi+0x18)
   continue
 end
 
-break dice::hfe::GameServer::clientLoadComplete
+break dice::hfe::GameEventManager::transmit
 commands
   silent
-  printf ">> clientLoadComplete\n"
+  printf ">>ПОДІЇ поля %d %d %d\n", *(int*)($rsi+0x10), *(int*)($rsi+0x14), *(int*)($rsi+0x18)
   continue
 end
 
-break dice::hfe::GameServer::isClientReady
+break dice::hfe::GhostManager::transmit
 commands
   silent
-  printf ">> isClientReady\n"
+  printf ">>ПРИВИДИ поля %d %d %d\n", *(int*)($rsi+0x10), *(int*)($rsi+0x14), *(int*)($rsi+0x18)
   continue
 end
 

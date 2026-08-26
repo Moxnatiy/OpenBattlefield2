@@ -30,6 +30,12 @@ from handshake import Session, ping_response
 
 STAGES = ["connect", "challenge", "player", "world"]
 
+# Блок з відомостями про рівень (`GameServer::sendClientMapInfo`).
+MAP_INFO_BLOCK = 5
+
+# Друга подія, що рухає стан з'єднання (`clientSendDatabaseComplete`).
+NET_DATABASE_COMPLETE = 4
+
 
 def post_remote(category, event):
     def fill(w):
@@ -54,6 +60,32 @@ class Capture:
     def __init__(self, host, port, name):
         self.session = Session(host, port, name)
         self.packets = []
+        self.map_info = None
+        self._block = None
+        self._block_type = 0
+        self._block_size = 0
+
+    def _handle_blocks(self, data):
+        """Складає блоки даних; повертає True, коли прийшов блок із рівнем."""
+        info = p.walk_events(data)
+        if not info:
+            return False
+        got_level = False
+        for event in info["події"]:
+            if event.get("клас") != "DataBlockEvent":
+                continue
+            if event["заголовок"]:
+                self._block_type = event["тип блока"]
+                self._block_size = event["розмір"]
+                self._block = bytearray()
+            elif self._block is not None:
+                self._block += event["дані"]
+                if len(self._block) >= self._block_size:
+                    if self._block_type == MAP_INFO_BLOCK:
+                        self.map_info = bytes(self._block)
+                        got_level = True
+                    self._block = None
+        return got_level
 
     def _drain(self, seconds):
         s = self.session
@@ -64,6 +96,7 @@ class Capture:
             except socket.timeout:
                 continue
             self.packets.append(data)
+            self._handle_blocks(data)
             r = p.Reader(data)
             kind = r.read(4)
             r.read(8)
@@ -102,8 +135,20 @@ class Capture:
             self._drain(hold)
             return
 
-        # Без цього сервер вважає клієнта неготовим і світу не шле.
+        # Спершу дочекатися блока з рівнем — саме в такому порядку працює
+        # оригінал: сервер шле рівень, клієнт його завантажує і аж тоді
+        # каже «готово». Інакше об'єкти приходять раніше за рівень.
+        waited = 0.0
+        while self.map_info is None and waited < 10.0:
+            self._drain(1.0)
+            waited += 1.0
+        if self.map_info is None:
+            print("блок із рівнем не прийшов")
         s.send_events([post_remote(p.NETWORK_CATEGORY, p.NET_LOAD_COMPLETE)])
+        self._drain(2)
+        # І «базу гравців отримано»: стан з'єднання рухають обидві події,
+        # а `GameServer::isClientReady` вимагає, щоб він перевалив за три.
+        s.send_events([post_remote(p.NETWORK_CATEGORY, NET_DATABASE_COMPLETE)])
         self._drain(hold)
 
 
