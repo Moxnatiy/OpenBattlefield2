@@ -349,6 +349,13 @@ int runCalibrate(const Args& args, obf2::FileSystem& files) {
     std::fprintf(stderr, "ігрову логіку не прочитано: %s\n", error.c_str());
     return 1;
   }
+  // Статику теж: сервер шле не лише прапори й техніку, а й руйнівні речі
+  // на кшталт бочок і цистерн — вони приходять із StaticObjects.con.
+  const auto loaded = obf2::level::loadLevel(files, args.levelName, &error);
+  if (!loaded) {
+    std::fprintf(stderr, "рівень не прочитано: %s\n", error.c_str());
+    return 1;
+  }
 
   // Усе, що ми знаємо про рівень: назва шаблона й де він стоїть.
   struct Known {
@@ -367,6 +374,9 @@ int runCalibrate(const Args& args, obf2::FileSystem& files) {
       (void)team;
       known.push_back({name, spawner.position});
     }
+  }
+  for (const auto& object : loaded->objects) {
+    known.push_back({object.templateName, object.position});
   }
   std::printf("рівень %s: відомих об'єктів %zu\n", args.levelName.c_str(), known.size());
 
