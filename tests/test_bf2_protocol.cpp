@@ -95,6 +95,7 @@ static void testChallengeEventIsDecoded() {
   writer.writeBits(0, 32);  // маска
   for (unsigned i = 0; i < kStreamFramingBits; ++i) writer.writeBits(0, 1);
 
+  writer.writeBits(0, 1);   // потік дій гравця: дій немає
   writer.writeBits(1, 1);   // події є
   writer.writeBits(1, 8);   // рівно одна
   writer.writeBits(0, 5);
@@ -128,9 +129,9 @@ static void testChallengeResponseLayout() {
   header.ackBits = 0xFFFFFFFFu;
 
   const auto packet = writeChallengeResponse(0, header, 0);
-  // 12 базового + 44 розширеного + 1 дій + 15 подій + 7 типу
-  // + 584 блоку + 32 + 32 + 32 = 759 бітів -> 95 байтів.
-  CHECK_EQ(packet.size(), std::size_t(95));
+  // 12 базового + 44 розширеного + 16 довжини + 1 дій + 15 подій + 7 типу
+  // + 584 блоку + 32 + 32 + 32 + 1 привидів = 776 бітів -> 97 байтів.
+  CHECK_EQ(packet.size(), std::size_t(97));
 
   // Читаємо назад ключові поля: тип пакета, номер, і що всередині подія.
   net::BitReader reader(packet);
@@ -139,6 +140,8 @@ static void testChallengeResponseLayout() {
   CHECK_EQ(reader.readBits(6).value_or(0), 1u);
   CHECK_EQ(reader.readBits(6).value_or(0), 2u);
   CHECK_EQ(reader.readBits(32).value_or(0), 0xFFFFFFFFu);
+  // Довжина корисної частини: увесь пакет мінус 9 байтів заголовка.
+  CHECK_EQ(reader.readBits(16).value_or(0), static_cast<std::uint32_t>(packet.size() - 9));
   CHECK_EQ(reader.readBits(1).value_or(9), 0u);  // дій гравця немає
   CHECK_EQ(reader.readBits(1).value_or(0), 1u);  // події є
   CHECK_EQ(reader.readBits(8).value_or(0), 1u);  // рівно одна

@@ -201,3 +201,99 @@ def client_info_blob(name="OpenBF2", second="", third="", number=0, value=0, fla
             w.write(c, 8)
     w.write(flag, 1)
     return w.data()
+
+
+# --- повне рукостискання ---
+#
+# Порядок такий самий, як у клієнта: запит → підтвердження → відповідь на
+# виклик → блок ClientInfo. Пінги від сервера треба віддзеркалювати, інакше
+# він рве з'єднання.
+EVENT_CHALLENGE_RESPONSE = 2
+EVENT_DATA_BLOCK = 4
+
+
+def data_packet(conn, seq, ack, events, ack_bits=0xFFFFFFFF, pad=0, batch=0):
+    """Пакет даних: заголовок і три потоки в сталому порядку.
+
+    Заголовок — 72 біти: 4 тип, 8 номер з'єднання, 6 номер пакета,
+    6 підтвердження, 32 маска, і 16 бітів — довжина корисної частини в
+    байтах. Останнє поле знайдено на живому сервері: у його пакеті на
+    26 байтів там стояло 17, а це рівно 26 − 9 байтів заголовка.
+
+    Далі йдуть потоки: дії гравця, події, привиди — саме в такому порядку
+    їх додає `ClientConnection::ClientConnection` через `addStreamManager`.
+
+    `batch` — номер пачки подій у 5 бітах. `GameEventManager` складає пачки
+    в дерево за цим номером і віддає їх грі лише поспіль, тож рахунок має
+    починатися з нуля й рости на одиницю з кожною пачкою.
+    """
+    body = Writer()
+    body.write(0, 1)               # дій гравця немає
+    if not events:
+        body.write(0, 1)           # подій немає
+    else:
+        body.write(1, 1)
+        body.write(len(events), 8)
+        body.write(batch & 0x1F, 5)
+        body.write(0, 1)
+        for event in events:
+            body.bits.extend(event)
+    body.write(0, 1)               # привидів не шлемо
+    for _ in range(pad):
+        body.write(0, 8)
+
+    size = (len(body.bits) + 7) // 8
+    w = Writer()
+    w.write(15, 4)
+    w.write(conn, 8)
+    w.write(seq & 0x3F, 6)
+    w.write(ack & 0x3F, 6)
+    w.write(ack_bits, 32)
+    w.write(size, 16)
+    w.bits.extend(body.bits)
+    return w.data()
+
+
+def _event(kind, fill):
+    w = Writer()
+    w.write(kind, EVENT_TYPE_BITS)
+    fill(w)
+    return w.bits
+
+
+def challenge_response_event():
+    def fill(w):
+        for _ in range(73):
+            w.write(0, 8)
+        w.write(0, 32)
+        w.write(GAME_VERSION, 32)
+        w.write(0, 1)
+        w.write(0x423, 31)     # номер продукту BF2
+    return _event(EVENT_CHALLENGE_RESPONSE, fill)
+
+
+def data_block_events(block_type, blob, chunk=200):
+    """Заголовок блока плюс шматки — так само, як `DataBlockEvent::serialize`."""
+    def header(w):
+        w.write(1, 1)
+        w.write(block_type, 32)
+        w.write(len(blob), 32)
+    out = [_event(EVENT_DATA_BLOCK, header)]
+    for at in range(0, len(blob), chunk):
+        part = blob[at:at + chunk]
+
+        def body(w, part=part):
+            w.write(0, 1)
+            w.write(len(part), 8)
+            for byte in part:
+                w.write(byte, 8)
+        out.append(_event(EVENT_DATA_BLOCK, body))
+    return out
+
+
+def name_hash(name):
+    """Той самий хеш, що звіряє `handleClientInfo` на ranked-серверах."""
+    value = 0x1505
+    for c in name.encode("latin-1"):
+        value = (value * 0x21 ^ (c | 0x20 if 65 <= c <= 90 else c)) & 0xFFFFFFFF
+    return value

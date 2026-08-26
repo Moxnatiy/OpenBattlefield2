@@ -58,6 +58,7 @@ struct Args {
   bool topDown = false;
   std::string connectTo;      // --connect <хост[:порт]>: справжній сервер BF2
   std::string connectPassword;
+  std::string playerName = "OpenBF2";  // --name: під яким іменем заходимо
   std::vector<std::string> animationPaths;  // --anim: можна кілька, вони змішуються
   std::string skeletonPath;    // --skeleton: .ske; типово скелет солдата
   int frame = 0;               // --frame: який кадр показати
@@ -83,6 +84,7 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--topdown") args.topDown = true;
     else if (flag == "--connect" && i + 1 < argc) args.connectTo = argv[++i];
     else if (flag == "--connect-password" && i + 1 < argc) args.connectPassword = argv[++i];
+    else if (flag == "--name" && i + 1 < argc) args.playerName = argv[++i];
     else if (flag == "--anim" && i + 1 < argc) args.animationPaths.emplace_back(argv[++i]);
     else if (flag == "--skeleton" && i + 1 < argc) args.skeletonPath = argv[++i];
     else if (flag == "--frame" && i + 1 < argc) args.frame = std::atoi(argv[++i]);
@@ -431,6 +433,34 @@ int runConnect(const Args& args) {
             socket->send(obf2::net::bf2::writeChallengeResponse(id, header, batch++));
             std::printf("  надіслано відповідь на виклик\n");
             answered = true;
+
+            // Далі рушій чекає на блок із відомостями про клієнта: без
+            // нього гравця не існує. Блок їде подіями — спершу заголовок
+            // із типом і розміром, потім шматки.
+            obf2::net::bf2::ClientInfo info;
+            info.name = args.playerName;
+            info.nameHash = obf2::net::bf2::clientInfoNameHash(info.name);
+            const auto blob = obf2::net::bf2::buildClientInfo(info);
+
+            const auto nextHeader = [&]() {
+              obf2::net::bf2::ExtendedHeader next;
+              next.sequence = sequence++ & 0x3F;
+              if (parsed->extended) next.ack = parsed->extended->sequence;
+              next.ackBits = 0xFFFFFFFFu;
+              return next;
+            };
+
+            socket->send(obf2::net::bf2::writeDataBlockHeader(
+                id, nextHeader(), batch++, obf2::net::bf2::kClientInfoBlock,
+                static_cast<std::uint32_t>(blob.size())));
+            for (std::size_t at = 0; at < blob.size(); at += 200) {
+              const auto count = std::min<std::size_t>(200, blob.size() - at);
+              socket->send(obf2::net::bf2::writeDataBlockChunk(
+                  id, nextHeader(), batch++,
+                  std::span<const std::byte>(blob.data() + at, count)));
+            }
+            std::printf("  надіслано ClientInfo: ім'я %s, %zu байтів\n",
+                        info.name.c_str(), blob.size());
           }
         }
         break;

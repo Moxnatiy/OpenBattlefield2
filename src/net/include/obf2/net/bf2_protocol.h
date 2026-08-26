@@ -95,10 +95,32 @@ struct ExtendedHeader {
 // бере тип події у N бітах, де N — найменше, при якому (1<<N)-1 вміщує
 // розмір реєстру подій; на живому сервері це 7.
 //
-// Перед усім цим у пакеті ще 17 бітів каркасу потоків — їх поки не
-// розібрано, але зміщення стале й перевірене на живих пакетах.
-inline constexpr unsigned kStreamFramingBits = 17;
+// Перед потоками в заголовку пакета даних є ще 16 бітів — довжина
+// корисної частини в байтах. Разом заголовок займає рівно 72 біти (9 байтів).
+inline constexpr unsigned kStreamFramingBits = 16;
 inline constexpr unsigned kEventTypeBits = 7;
+
+// Тип події, якою передаються блоки даних (`DataBlockEvent::getType`).
+inline constexpr std::uint32_t kDataBlockEvent = 4;
+
+// Тип блока з відомостями про клієнта (`GameServer::handleDataBlock`).
+inline constexpr std::uint32_t kClientInfoBlock = 1;
+
+// Блок, який рушій читає в `ClientInfo::setFromDataBlock`:
+//   u16 довжина + ім'я, u32 хеш імені, 1 біт знак + 31 біт номер профілю,
+//   u16 довжина + тег клану, u16 довжина + рядок автентифікації, 1 біт.
+//
+// На сервері без рейтингу (`sv.ranked 0`) хеш і рядок автентифікації не
+// перевіряються, а підсумкове ім'я гравця рушій складає як «тег + пробіл +
+// ім'я» (`GameServer::handleClientInfo`).
+struct ClientInfo {
+  std::string name;
+  std::uint32_t nameHash = 0;
+  std::int32_t profileId = 0;
+  std::string clanTag;
+  std::string auth;
+  bool flag = false;
+};
 
 // Подія-виклик: сервер шле її одразу після під'єднання
 // (`GameServer::onNewConnection`), і клієнт має відповісти.
@@ -134,6 +156,21 @@ std::vector<std::byte> writeConnectRequest(const ConnectRequest& request);
 // `BuildNrUtil::getNetVersionNumber()`, і вона повертає рівно kGameVersion.
 std::vector<std::byte> writeChallengeResponse(std::uint8_t connectionId,
                                               const ExtendedHeader& header, std::uint8_t batch);
+
+// Подія з блоком даних: спершу заголовок (тип блока й повний розмір),
+// далі шматки не більші за 255 байтів. Коли зібрано весь блок, рушій
+// віддає його в `GameServer::handleDataBlock`.
+std::vector<std::byte> writeDataBlockHeader(std::uint8_t connectionId,
+                                            const ExtendedHeader& header, std::uint8_t batch,
+                                            std::uint32_t blockType, std::uint32_t size);
+std::vector<std::byte> writeDataBlockChunk(std::uint8_t connectionId, const ExtendedHeader& header,
+                                           std::uint8_t batch, std::span<const std::byte> chunk);
+
+// Хеш імені, який рейтинговий сервер звіряє з переданим: h = 0x1505, далі
+// для кожного символу в нижньому регістрі h = h * 0x21 ^ c.
+std::uint32_t clientInfoNameHash(const std::string& name);
+
+std::vector<std::byte> buildClientInfo(const ClientInfo& info);
 
 // Відповідь на пінг. `time` — те саме число, що надіслав сервер: за
 // різницею він рахує затримку.
