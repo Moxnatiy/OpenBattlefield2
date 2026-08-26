@@ -47,6 +47,19 @@ struct ConnectionAccept {
   std::string gameMode;
 };
 
+// Ввід гравця за один такт. Клієнт шле це на кожен такт симуляції, сервер
+// застосовує і підтверджує номером — так клієнт знає, що вже враховано.
+struct PlayerInput {
+  std::uint32_t sequence = 0;
+  float moveForward = 0.0f;  // -1..1
+  float moveRight = 0.0f;    // -1..1
+  float yaw = 0.0f;          // градуси
+  float pitch = 0.0f;
+  bool fire = false;
+  bool jump = false;
+  bool sprint = false;
+};
+
 // Поява або оновлення об'єкта у світі. Позиція йде стисненим вектором —
 // тим самим, що і в оригіналі.
 struct ObjectUpdate {
@@ -70,6 +83,11 @@ inline constexpr std::size_t kTemplateNameLength = 64;
 // Точність позицій у пакетах оновлення, у світових одиницях.
 inline constexpr float kPositionPrecision = 0.01f;
 
+// Осі вводу квантуються: 8 біт на вісь вистачає з головою, бо це керування
+// аналоговим стіком або клавішами.
+inline constexpr unsigned kInputAxisBits = 8;
+inline constexpr unsigned kInputSequenceBits = 16;
+
 // --- запис ---
 bool writeConnectionRequest(BitWriter& writer, const ConnectionRequest& request);
 bool writeConnectionAccept(BitWriter& writer, const ConnectionAccept& accept);
@@ -78,6 +96,7 @@ bool writeConnectionAcknowledge(BitWriter& writer);
 bool writeDisconnect(BitWriter& writer);
 bool writeObjectUpdates(BitWriter& writer, const std::vector<ObjectUpdate>& updates,
                         const Vec3f& reference);
+bool writePlayerInput(BitWriter& writer, const PlayerInput& input);
 
 // --- читання ---
 std::optional<ConnectionRequest> readConnectionRequest(BitReader& reader);
@@ -85,5 +104,6 @@ std::optional<ConnectionAccept> readConnectionAccept(BitReader& reader);
 std::optional<DenyReason> readConnectionDenied(BitReader& reader);
 std::optional<std::vector<ObjectUpdate>> readObjectUpdates(BitReader& reader,
                                                            const Vec3f& reference);
+std::optional<PlayerInput> readPlayerInput(BitReader& reader);
 
 }  // namespace obf2::net

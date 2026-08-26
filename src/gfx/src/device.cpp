@@ -50,6 +50,10 @@ bool Device::pumpEvents() {
       case SDL_EVENT_QUIT:
         quit_ = true;
         break;
+      case SDL_EVENT_MOUSE_MOTION:
+        mouseDeltaX_ += event.motion.xrel;
+        mouseDeltaY_ += event.motion.yrel;
+        break;
       case SDL_EVENT_KEY_DOWN:
         if (event.key.key == SDLK_ESCAPE) quit_ = true;
         if (event.key.key == SDLK_SPACE || event.key.key == SDLK_RETURN) skip_ = true;
@@ -59,6 +63,34 @@ bool Device::pumpEvents() {
     }
   }
   return !quit_;
+}
+
+Device::InputState Device::readInput() {
+  InputState state;
+  const bool* keys = SDL_GetKeyboardState(nullptr);
+  if (keys != nullptr) {
+    // Розкладка як у грі: W/S — вперед-назад, A/D — вбік, Shift — біг.
+    if (keys[SDL_SCANCODE_W]) state.moveForward += 1.0f;
+    if (keys[SDL_SCANCODE_S]) state.moveForward -= 1.0f;
+    if (keys[SDL_SCANCODE_D]) state.moveRight += 1.0f;
+    if (keys[SDL_SCANCODE_A]) state.moveRight -= 1.0f;
+    state.sprint = keys[SDL_SCANCODE_LSHIFT] || keys[SDL_SCANCODE_RSHIFT];
+    state.jump = keys[SDL_SCANCODE_SPACE];
+  }
+
+  const SDL_MouseButtonFlags buttons = SDL_GetMouseState(nullptr, nullptr);
+  state.fire = (buttons & SDL_BUTTON_LMASK) != 0;
+
+  // Накопичене за кадр зміщення віддаємо один раз і обнуляємо.
+  state.mouseDeltaX = mouseDeltaX_;
+  state.mouseDeltaY = mouseDeltaY_;
+  mouseDeltaX_ = 0.0f;
+  mouseDeltaY_ = 0.0f;
+  return state;
+}
+
+void Device::setRelativeMouse(bool enabled) {
+  if (window_ != nullptr) SDL_SetWindowRelativeMouseMode(window_, enabled);
 }
 
 bool Device::consumeSkip() {

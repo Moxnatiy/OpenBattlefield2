@@ -5,6 +5,9 @@ namespace {
 
 constexpr std::size_t kPacketBytes = 1200;
 
+// Ввід шлемо з тією ж частотою, що сервер крутить симуляцію.
+constexpr float kInputInterval = 1.0f / 30.0f;
+
 }  // namespace
 
 std::string_view clientStateName(ClientState state) {
@@ -77,9 +80,17 @@ void GameClient::handlePacket(const net::Packet& packet) {
         object.id = update.objectId;
         // Ім'я шаблону приходить лише при появі; далі його не перезаписуємо.
         if (update.spawn) object.templateName = update.templateName;
+        // Попередній стан лишаємо для згладжування.
+        if (!update.spawn) {
+          object.previousPosition = object.position;
+          object.moved = true;
+        } else {
+          object.previousPosition = update.position;
+        }
         object.position = update.position;
         object.rotation = update.rotation;
       }
+      interpolation_ = 0.0f;
       if (state_ == ClientState::Accepted) {
         state_ = ClientState::InWorld;
         log_.push_back("отримано перший пакет світу");
@@ -96,9 +107,44 @@ void GameClient::handlePacket(const net::Packet& packet) {
   }
 }
 
-void GameClient::tick(float) {
+void GameClient::sendInput() {
+  if (connection_ == nullptr || state_ != ClientState::InWorld) return;
+
+  std::vector<std::byte> buffer(kPacketBytes);
+  net::BitWriter writer(buffer);
+
+  net::PlayerInput input = input_;
+  // Нумерація з одиниці: нуль у сервера означає "ще нічого не приходило".
+  input.sequence = ++inputSequence_;
+  if (inputSequence_ > 0xFFFF) inputSequence_ = 1;
+
+  if (!net::writePlayerInput(writer, input)) return;
+  if (connection_->send(std::span(buffer).first(writer.byteSize()))) ++inputsSent_;
+}
+
+Vec3f GameClient::interpolatedPosition(std::uint32_t objectId) const {
+  const auto found = objects_.find(objectId);
+  if (found == objects_.end()) return Vec3f{};
+
+  const RemoteObject& object = found->second;
+  if (!object.moved) return object.position;
+
+  const float t = interpolation_ < 0.0f ? 0.0f : (interpolation_ > 1.0f ? 1.0f : interpolation_);
+  return object.previousPosition + (object.position - object.previousPosition) * t;
+}
+
+void GameClient::tick(float deltaSeconds) {
   if (connection_ == nullptr) return;
   while (auto packet = connection_->receive()) handlePacket(*packet);
+
+  // Наближаємося до останнього отриманого стану рівно за час між пакетами.
+  interpolation_ += deltaSeconds / kInputInterval;
+
+  sendAccumulator_ += deltaSeconds;
+  while (sendAccumulator_ >= kInputInterval) {
+    sendInput();
+    sendAccumulator_ -= kInputInterval;
+  }
 }
 
 void GameClient::disconnect() {

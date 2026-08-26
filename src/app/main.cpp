@@ -307,6 +307,11 @@ int main(int argc, char** argv) {
 
   std::optional<obf2::level::Level> level;
   obf2::game::Registry registry;
+  // Сервер і клієнт живуть увесь час, а не лише під час завантаження: в
+  // одиночній грі саме вони й рухають світ.
+  std::unique_ptr<obf2::server::GameServer> hostedServer;
+  std::unique_ptr<obf2::server::GameClient> hostedClient;
+  std::uint32_t localSoldierId = 0;
 
   if (!args.levelName.empty()) {
     std::string error;
@@ -347,14 +352,19 @@ int main(int argc, char** argv) {
     if (args.hosted) {
       obf2::server::ServerSettings serverSettings;
       serverSettings.levelName = level->name;
-      obf2::server::GameServer gameServer(serverSettings);
+      // Поява — над центром карти, трохи вище рівня моря, щоб не опинитися
+      // всередині гори.
+      serverSettings.spawnPosition = obf2::Vec3f{-40.0f, level->terrain.seaLevel + 40.0f, -200.0f};
+      hostedServer = std::make_unique<obf2::server::GameServer>(serverSettings);
+      obf2::server::GameServer& gameServer = *hostedServer;
       gameServer.loadWorld(*level);
 
       auto [clientSide, serverSide] = obf2::net::LoopbackConnection::createPair();
       gameServer.accept(std::move(serverSide));
 
-      obf2::server::GameClient client(std::move(clientSide),
-                                      std::string("player"));
+      hostedClient = std::make_unique<obf2::server::GameClient>(std::move(clientSide),
+                                                               std::string("player"));
+      obf2::server::GameClient& client = *hostedClient;
       client.connect();
 
       // Світ великий і ріжеться на пакети, тому крутимо, доки надходять нові.
@@ -373,9 +383,13 @@ int main(int argc, char** argv) {
       std::printf("  клієнт отримав об'єктів: %zu з %zu\n", client.objects().size(),
                   level->objects.size());
 
+      // Солдата гравця в сцену не ставимо: ним ми граємо, а не дивимось.
+      for (const auto& player : gameServer.players()) localSoldierId = player.soldierId;
+
       placement.clear();
       placement.reserve(client.objects().size());
       for (const auto& [id, object] : client.objects()) {
+        if (id == localSoldierId) continue;
         obf2::level::StaticObject staticObject;
         staticObject.templateName = object.templateName;
         staticObject.position = object.position;
@@ -673,14 +687,58 @@ int main(int argc, char** argv) {
       args.distance > 0.0f ? args.distance : scene.radius * (level ? 1.6f : 2.6f);
   const float eyeHeight = distance * (level && !args.focus ? 0.3f : 0.35f);
 
+  // Кути огляду живуть між кадрами: миша дає лише зміщення.
+  float yaw = 0.0f;
+  float pitch = -10.0f;
+  if (hostedServer) device->setRelativeMouse(true);
+
   int frame = 0;
   while (device->pumpEvents()) {
     auto acquired = device->beginFrame();
     if (!acquired) continue;
 
-    const float angle = static_cast<float>(frame) / 60.0f * 0.6f;
-    const obf2::Vec3f eye{scene.center.x + std::sin(angle) * distance, scene.center.y + eyeHeight,
-                          scene.center.z + std::cos(angle) * distance};
+    // --- камера ---
+    obf2::Vec3f eye;
+    obf2::Vec3f lookTarget = scene.center;
+
+    if (hostedServer && hostedClient) {
+      // Гра від першої особи: ввід іде на сервер, сервер рухає солдата,
+      // а камера стоїть там, куди його поставив сервер. Тобто картинка
+      // залежить від сервера навіть в одиночній грі.
+      const auto raw = device->readInput();
+      constexpr float kMouseSensitivity = 0.15f;
+      yaw -= raw.mouseDeltaX * kMouseSensitivity;
+      pitch -= raw.mouseDeltaY * kMouseSensitivity;
+      pitch = std::max(-89.0f, std::min(89.0f, pitch));
+
+      obf2::net::PlayerInput input;
+      input.moveForward = raw.moveForward;
+      input.moveRight = raw.moveRight;
+      input.sprint = raw.sprint;
+      input.jump = raw.jump;
+      input.fire = raw.fire;
+      input.yaw = yaw;
+      input.pitch = pitch;
+      hostedClient->setInput(input);
+
+      const float step = 1.0f / 60.0f;
+      hostedClient->tick(step);
+      hostedServer->tick(step);
+
+      eye = hostedClient->interpolatedPosition(localSoldierId);
+      eye.y += 1.7f;  // зріст солдата: камера на рівні очей
+
+      constexpr float kToRadians = 3.14159265358979323846f / 180.0f;
+      const float yawRadians = yaw * kToRadians;
+      const float pitchRadians = pitch * kToRadians;
+      lookTarget = eye + obf2::Vec3f{-std::sin(yawRadians) * std::cos(pitchRadians),
+                                     std::sin(pitchRadians),
+                                     -std::cos(yawRadians) * std::cos(pitchRadians)};
+    } else {
+      const float angle = static_cast<float>(frame) / 60.0f * 0.6f;
+      eye = obf2::Vec3f{scene.center.x + std::sin(angle) * distance, scene.center.y + eyeHeight,
+                        scene.center.z + std::cos(angle) * distance};
+    }
 
     const float aspect =
         acquired->height == 0
@@ -688,7 +746,7 @@ int main(int argc, char** argv) {
             : static_cast<float>(acquired->width) / static_cast<float>(acquired->height);
     const obf2::Mat4 projection =
         obf2::perspective(1.05f, aspect, scene.radius * 0.002f + 0.05f, scene.radius * 40.0f);
-    const obf2::Mat4 view = obf2::lookAt(eye, scene.center, obf2::Vec3f{0.0f, 1.0f, 0.0f});
+    const obf2::Mat4 view = obf2::lookAt(eye, lookTarget, obf2::Vec3f{0.0f, 1.0f, 0.0f});
 
     if (bootMode) {
       engine.update(1.0f / 60.0f);

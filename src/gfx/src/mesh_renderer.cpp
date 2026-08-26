@@ -81,9 +81,8 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
     }
 
     float3 color = albedo.rgb * light;
-    return float4(color, 1.0);
 
-    // fogStartEnd.y == 0 означає, що туману на рівні немає.
+    // fogParams.y == 0 означає, що туману на рівні немає.
     if (in.fogParams.y > 0.0) {
         float t = saturate((in.viewDepth - in.fogParams.x) /
                            max(in.fogParams.y - in.fogParams.x, 0.001));
@@ -161,7 +160,6 @@ SDL_GPUTextureFormat toGpuFormat(texture::Format format) {
   return SDL_GPU_TEXTUREFORMAT_INVALID;
 }
 
-// Має точно збігатися з FrameUniforms у шейдері.
 // Дзеркало Uniforms із вершинного шейдера: матриця плюс сталі кадру.
 struct VertexUniforms {
   float modelViewProjection[16]{};

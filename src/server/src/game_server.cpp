@@ -1,6 +1,7 @@
 #include "obf2/server/game_server.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace obf2::server {
 namespace {
@@ -85,6 +86,23 @@ void GameServer::handlePacket(Player& player, const net::Packet& packet) {
       log_.push_back("підтвердження від \"" + player.name + "\"");
       return;
 
+    case net::PacketType::Data: {
+      // Від клієнта тип Data означає ввід (підтип 1 у заголовку).
+      if (header->subtype != 1) return;
+      const auto input = net::readPlayerInput(reader);
+      if (!input) return;
+
+      // Порядковий номер 16-бітний і перевертається; враховуємо це, інакше
+      // після 65535 такту гравець застряг би назавжди.
+      const std::uint32_t previous = player.lastSequence;
+      const std::uint32_t delta = (input->sequence - previous) & 0xFFFFu;
+      if (previous != 0 && (delta == 0 || delta > 0x8000u)) return;  // старий пакет
+
+      player.input = *input;
+      player.lastSequence = input->sequence;
+      return;
+    }
+
     case net::PacketType::PingRequest: {
       net::BitWriter writer(buffer);
       writer.writeBasicHeader(
@@ -133,7 +151,79 @@ void GameServer::sendWorld(Player& player) {
   log_.push_back("світ надіслано гравцеві \"" + player.name + "\"");
 }
 
-void GameServer::tick(float) {
+WorldObject* GameServer::findObject(std::uint32_t id) {
+  for (WorldObject& object : objects_) {
+    if (object.id == id) return &object;
+  }
+  return nullptr;
+}
+
+std::uint32_t GameServer::spawnSoldier(Player& player) {
+  WorldObject soldier;
+  soldier.id = nextObjectId_++;
+  soldier.templateName = settings_.soldierTemplate;
+  soldier.position = settings_.spawnPosition;
+  soldier.dynamic = true;
+  soldier.ownerPlayerId = player.id;
+  objects_.push_back(std::move(soldier));
+
+  log_.push_back("з'явився солдат гравця \"" + player.name + "\" (об'єкт " +
+                 std::to_string(objects_.back().id) + ")");
+  return objects_.back().id;
+}
+
+void GameServer::simulate(float step) {
+  ++tickCount_;
+
+  for (Player& player : players_) {
+    if (!player.acknowledged || player.soldierId == 0) continue;
+    WorldObject* soldier = findObject(player.soldierId);
+    if (soldier == nullptr) continue;
+
+    // Рух у площині: осі вводу повертаються на кут огляду, тому "вперед"
+    // означає туди, куди гравець дивиться.
+    constexpr float kToRadians = 3.14159265358979323846f / 180.0f;
+    const float yaw = player.input.yaw * kToRadians;
+    const float sin = std::sin(yaw);
+    const float cos = std::cos(yaw);
+
+    const float speed = player.input.sprint ? settings_.sprintSpeed : settings_.walkSpeed;
+    const Vec3f direction{player.input.moveRight * cos - player.input.moveForward * sin, 0.0f,
+                          -player.input.moveRight * sin - player.input.moveForward * cos};
+
+    // Нормуємо, щоб рух по діагоналі не був швидшим за рух прямо.
+    const float magnitude = length(direction);
+    soldier->velocity = magnitude > 1.0f ? direction * (speed / magnitude) : direction * speed;
+
+    soldier->position = soldier->position + soldier->velocity * step;
+    soldier->rotation = Vec3f{player.input.yaw, player.input.pitch, 0.0f};
+  }
+}
+
+void GameServer::broadcastDynamic() {
+  std::vector<net::ObjectUpdate> updates;
+  for (const WorldObject& object : objects_) {
+    if (!object.dynamic) continue;
+    net::ObjectUpdate update;
+    update.objectId = object.id;
+    update.position = object.position;
+    update.rotation = object.rotation;
+    update.spawn = false;
+    updates.push_back(std::move(update));
+  }
+  if (updates.empty()) return;
+
+  std::vector<std::byte> buffer(kPacketBytes);
+  net::BitWriter writer(buffer);
+  if (!net::writeObjectUpdates(writer, updates, Vec3f{0.0f, 0.0f, 0.0f})) return;
+
+  for (Player& player : players_) {
+    if (!player.worldSent) continue;
+    sendTo(player, std::span(buffer).first(writer.byteSize()));
+  }
+}
+
+void GameServer::tick(float deltaSeconds) {
   for (Player& player : players_) {
     if (player.connection == nullptr) continue;
 
@@ -144,8 +234,27 @@ void GameServer::tick(float) {
 
     // Стан світу йде лише після підтвердження — інакше клієнт отримав би
     // об'єкти ще до того, як дізнався свій id і рівень.
-    if (player.acknowledged && !player.worldSent) sendWorld(player);
+    if (player.acknowledged && !player.worldSent) {
+      if (player.soldierId == 0) player.soldierId = spawnSoldier(player);
+      sendWorld(player);
+    }
   }
+
+  // Фіксований крок: скільки б не тривав кадр, симуляція йде рівними
+  // тактами. Інакше на повільній машині гравець рухався б інакше.
+  const float step = tickInterval();
+  accumulator_ += deltaSeconds;
+
+  // Обмеження на випадок довгої паузи: краще відстати, ніж намотати
+  // сотні тактів за один кадр.
+  constexpr int kMaxStepsPerFrame = 8;
+  int steps = 0;
+  while (accumulator_ >= step && steps < kMaxStepsPerFrame) {
+    simulate(step);
+    accumulator_ -= step;
+    ++steps;
+  }
+  if (steps > 0) broadcastDynamic();
 
   // Прибираємо тих, хто відвалився.
   players_.erase(std::remove_if(players_.begin(), players_.end(),

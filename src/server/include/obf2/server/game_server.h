@@ -21,12 +21,18 @@
 
 namespace obf2::server {
 
-// Об'єкт у світі сервера. Поки що це розстановка з рівня плюс id.
+// Об'єкт у світі сервера.
 struct WorldObject {
   std::uint32_t id = 0;
   std::string templateName;
   Vec3f position;
   Vec3f rotation;
+  Vec3f velocity;
+
+  // Статику надсилаємо раз при появі, рухоме — щотакту. Без цього поділу
+  // 907 будинків їхали б у мережу шістдесят разів на секунду.
+  bool dynamic = false;
+  std::uint32_t ownerPlayerId = 0;  // 0 = нічий
 };
 
 struct Player {
@@ -36,12 +42,27 @@ struct Player {
   bool acknowledged = false;
   // Чи надіслали ми цьому гравцеві початковий стан світу.
   bool worldSent = false;
+
+  net::PlayerInput input;          // останній отриманий ввід
+  std::uint32_t lastSequence = 0;  // щоб не застосувати старий пакет двічі
+  std::uint32_t soldierId = 0;     // об'єкт, яким гравець керує
 };
 
 struct ServerSettings {
   std::string levelName = "Dalian_plant";
   std::string gameMode = "gpm_cq";
   int maxPlayers = 16;
+
+  // Частота симуляції. BF2 крутив сервер на 30 тактах; фіксований крок
+  // потрібен, щоб рух не залежав від навантаження машини.
+  float tickRate = 30.0f;
+
+  // Швидкості солдата у світових одиницях за секунду.
+  float walkSpeed = 4.0f;
+  float sprintSpeed = 7.0f;
+
+  Vec3f spawnPosition{0.0f, 0.0f, 0.0f};
+  std::string soldierTemplate = "player_soldier";
 };
 
 class GameServer {
@@ -55,8 +76,12 @@ class GameServer {
   // Приймає нове під'єднання. Сервер бере канал у власність.
   void accept(std::unique_ptr<net::Connection> connection);
 
-  // Один такт: розбирає вхідні пакети й розсилає оновлення.
+  // Розбирає вхідні пакети й крутить симуляцію фіксованим кроком.
+  // deltaSeconds — реальний час кадру; всередині він накопичується.
   void tick(float deltaSeconds);
+
+  std::uint64_t tickCount() const { return tickCount_; }
+  float tickInterval() const { return 1.0f / settings_.tickRate; }
 
   const std::vector<WorldObject>& objects() const { return objects_; }
   std::size_t playerCount() const { return players_.size(); }
@@ -70,6 +95,10 @@ class GameServer {
  private:
   void handlePacket(Player& player, const net::Packet& packet);
   void sendWorld(Player& player);
+  void simulate(float step);
+  void broadcastDynamic();
+  WorldObject* findObject(std::uint32_t id);
+  std::uint32_t spawnSoldier(Player& player);
   bool sendTo(Player& player, std::span<const std::byte> data);
 
   ServerSettings settings_;
@@ -77,6 +106,8 @@ class GameServer {
   std::vector<Player> players_;
   std::uint32_t nextPlayerId_ = 1;
   std::uint32_t nextObjectId_ = 1;
+  float accumulator_ = 0.0f;
+  std::uint64_t tickCount_ = 0;
   long long packetsSent_ = 0;
   long long packetsReceived_ = 0;
   std::vector<std::string> log_;

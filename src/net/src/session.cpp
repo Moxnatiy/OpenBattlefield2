@@ -76,7 +76,62 @@ bool writeObjectUpdates(BitWriter& writer, const std::vector<ObjectUpdate>& upda
   return true;
 }
 
+bool writePlayerInput(BitWriter& writer, const PlayerInput& input) {
+  // Підтип основного заголовка розрізняє напрямки: ввід іде тим самим
+  // типом Data, що й оновлення світу, але від клієнта до сервера.
+  if (!writer.writeBasicHeader(BasicHeader{static_cast<std::uint32_t>(PacketType::Data), 1})) {
+    return false;
+  }
+  if (!writer.writeBits(input.sequence & 0xFFFFu, kInputSequenceBits)) return false;
+
+  // Осі -1..1 -> 0..255. Половина діапазону відповідає нулю.
+  auto quantizeAxis = [](float value) {
+    const float clamped = value < -1.0f ? -1.0f : (value > 1.0f ? 1.0f : value);
+    return static_cast<std::uint32_t>((clamped + 1.0f) * 127.5f);
+  };
+  if (!writer.writeBits(quantizeAxis(input.moveForward), kInputAxisBits)) return false;
+  if (!writer.writeBits(quantizeAxis(input.moveRight), kInputAxisBits)) return false;
+
+  // Кути огляду: 16 біт на вісь, як і в оновленнях об'єктів.
+  const auto yaw = static_cast<std::uint32_t>((input.yaw + 360.0f) * 32.0f) & 0xFFFFu;
+  const auto pitch = static_cast<std::uint32_t>((input.pitch + 360.0f) * 32.0f) & 0xFFFFu;
+  if (!writer.writeBits(yaw, 16) || !writer.writeBits(pitch, 16)) return false;
+
+  return writer.writeBool(input.fire) && writer.writeBool(input.jump) &&
+         writer.writeBool(input.sprint);
+}
+
 // --- читання -------------------------------------------------------------
+
+std::optional<PlayerInput> readPlayerInput(BitReader& reader) {
+  PlayerInput input;
+  const auto sequence = reader.readBits(kInputSequenceBits);
+  const auto forward = reader.readBits(kInputAxisBits);
+  const auto right = reader.readBits(kInputAxisBits);
+  if (!sequence || !forward || !right) return std::nullopt;
+
+  input.sequence = *sequence;
+  auto dequantizeAxis = [](std::uint32_t value) {
+    return static_cast<float>(value) / 127.5f - 1.0f;
+  };
+  input.moveForward = dequantizeAxis(*forward);
+  input.moveRight = dequantizeAxis(*right);
+
+  const auto yaw = reader.readBits(16);
+  const auto pitch = reader.readBits(16);
+  if (!yaw || !pitch) return std::nullopt;
+  input.yaw = static_cast<float>(*yaw) / 32.0f - 360.0f;
+  input.pitch = static_cast<float>(*pitch) / 32.0f - 360.0f;
+
+  const auto fire = reader.readBool();
+  const auto jump = reader.readBool();
+  const auto sprint = reader.readBool();
+  if (!fire || !jump || !sprint) return std::nullopt;
+  input.fire = *fire;
+  input.jump = *jump;
+  input.sprint = *sprint;
+  return input;
+}
 
 std::optional<ConnectionRequest> readConnectionRequest(BitReader& reader) {
   ConnectionRequest request;

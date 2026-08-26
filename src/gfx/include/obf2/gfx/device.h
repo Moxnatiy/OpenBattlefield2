@@ -49,6 +49,22 @@ class Device {
   // раз, щоб одне натискання не пропустило кілька роликів поспіль.
   bool consumeSkip();
 
+  // Стан клавіатури й миші для керування гравцем. Рушій сам нічого з ним
+  // не робить — це сировина для ControlMap і вводу, який іде на сервер.
+  struct InputState {
+    float moveForward = 0.0f;  // -1..1
+    float moveRight = 0.0f;
+    float mouseDeltaX = 0.0f;  // пікселі за кадр
+    float mouseDeltaY = 0.0f;
+    bool sprint = false;
+    bool fire = false;
+    bool jump = false;
+  };
+  InputState readInput();
+
+  // Захоплення миші: без нього огляд упирається в межі вікна.
+  void setRelativeMouse(bool enabled);
+
   // nullopt — кадр пропущено (вікно згорнуте чи swapchain недоступний).
   std::optional<Frame> beginFrame();
   // Прохід, що лише очищає екран — коли малювати нема чого.
@@ -78,6 +94,8 @@ class Device {
   std::string driver_;
   bool quit_ = false;
   bool skip_ = false;
+  float mouseDeltaX_ = 0.0f;
+  float mouseDeltaY_ = 0.0f;
 
   SDL_GPUTexture* depth_ = nullptr;
   SDL_GPUTextureFormat depthFormat_ = SDL_GPU_TEXTUREFORMAT_INVALID;

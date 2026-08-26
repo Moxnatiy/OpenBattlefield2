@@ -76,8 +76,9 @@ static void testFullHandshakeAndWorldTransfer() {
   CHECK_EQ(client.gameMode(), std::string("gpm_cq"));
   CHECK(client.playerId() != 0);
 
-  // Увесь світ доїхав, і назви шаблонів збереглися.
-  CHECK_EQ(client.objects().size(), std::size_t(50));
+  // Увесь світ доїхав: 50 статичних об'єктів плюс солдат, якого сервер
+  // створив під цього гравця.
+  CHECK_EQ(client.objects().size(), std::size_t(51));
   const auto first = client.objects().find(1);
   CHECK(first != client.objects().end());
   if (first != client.objects().end()) {
@@ -172,6 +173,161 @@ static void testDisconnectRemovesPlayer() {
   CHECK_EQ(gameServer.playerCount(), std::size_t(0));
 }
 
+static void testPlayerInputMovesSoldier() {
+  // Повний цикл: клієнт шле ввід, сервер рухає солдата фіксованим кроком,
+  // оновлення повертається клієнтові.
+  server::ServerSettings settings;
+  settings.walkSpeed = 4.0f;
+  settings.tickRate = 30.0f;
+
+  server::GameServer gameServer(settings);
+  auto [clientSide, serverSide] = net::LoopbackConnection::createPair();
+  gameServer.accept(std::move(serverSide));
+
+  server::GameClient client(std::move(clientSide), "ARNE");
+  client.connect();
+  pump(gameServer, client);
+  CHECK(client.state() == server::ClientState::InWorld);
+
+  // Сервер створив солдата під гравця.
+  CHECK_EQ(gameServer.objects().size(), std::size_t(1));
+  const std::uint32_t soldierId = gameServer.objects().front().id;
+  const Vec3f start = gameServer.objects().front().position;
+
+  net::PlayerInput input;
+  input.moveForward = 1.0f;
+  input.yaw = 0.0f;
+  client.setInput(input);
+
+  // Рівно секунда рівними кроками.
+  for (int i = 0; i < 30; ++i) {
+    client.tick(1.0f / 30.0f);
+    gameServer.tick(1.0f / 30.0f);
+  }
+
+  const Vec3f finish = gameServer.objects().front().position;
+  const float travelled = length(finish - start);
+  // За секунду ходьби зі швидкістю 4 має бути близько чотирьох одиниць.
+  CHECK(travelled > 3.0f && travelled < 5.0f);
+
+  // Клієнт побачив рух.
+  const auto seen = client.objects().find(soldierId);
+  CHECK(seen != client.objects().end());
+  if (seen != client.objects().end()) CHECK(seen->second.moved);
+  CHECK(client.inputsSent() > 20);
+}
+
+static void testSprintIsFaster() {
+  server::ServerSettings settings;
+  settings.walkSpeed = 4.0f;
+  settings.sprintSpeed = 8.0f;
+
+  auto travelDistance = [&](bool sprint) {
+    server::GameServer gameServer(settings);
+    auto [clientSide, serverSide] = net::LoopbackConnection::createPair();
+    gameServer.accept(std::move(serverSide));
+    server::GameClient client(std::move(clientSide), "ARNE");
+    client.connect();
+    pump(gameServer, client);
+
+    net::PlayerInput input;
+    input.moveForward = 1.0f;
+    input.sprint = sprint;
+    client.setInput(input);
+    for (int i = 0; i < 30; ++i) {
+      client.tick(1.0f / 30.0f);
+      gameServer.tick(1.0f / 30.0f);
+    }
+    return length(gameServer.objects().front().position);
+  };
+
+  CHECK(travelDistance(true) > travelDistance(false) * 1.5f);
+}
+
+static void testDiagonalIsNotFaster() {
+  // Класична помилка: рух по діагоналі виходить швидшим за рух прямо.
+  server::ServerSettings settings;
+  settings.walkSpeed = 4.0f;
+
+  auto travelDistance = [&](float forward, float right) {
+    server::GameServer gameServer(settings);
+    auto [clientSide, serverSide] = net::LoopbackConnection::createPair();
+    gameServer.accept(std::move(serverSide));
+    server::GameClient client(std::move(clientSide), "ARNE");
+    client.connect();
+    pump(gameServer, client);
+
+    net::PlayerInput input;
+    input.moveForward = forward;
+    input.moveRight = right;
+    client.setInput(input);
+    for (int i = 0; i < 30; ++i) {
+      client.tick(1.0f / 30.0f);
+      gameServer.tick(1.0f / 30.0f);
+    }
+    return length(gameServer.objects().front().position);
+  };
+
+  const float straight = travelDistance(1.0f, 0.0f);
+  const float diagonal = travelDistance(1.0f, 1.0f);
+  CHECK(diagonal < straight * 1.05f);
+}
+
+static void testFixedStepIsIndependentOfFrameRate() {
+  // Той самий ввід за ту саму секунду має дати ту саму відстань,
+  // хоч на 30 кадрах, хоч на 120.
+  auto travelDistance = [](int frames) {
+    server::ServerSettings settings;
+    server::GameServer gameServer(settings);
+    auto [clientSide, serverSide] = net::LoopbackConnection::createPair();
+    gameServer.accept(std::move(serverSide));
+    server::GameClient client(std::move(clientSide), "ARNE");
+    client.connect();
+    pump(gameServer, client);
+
+    net::PlayerInput input;
+    input.moveForward = 1.0f;
+    client.setInput(input);
+
+    const float step = 1.0f / static_cast<float>(frames);
+    for (int i = 0; i < frames; ++i) {
+      client.tick(step);
+      gameServer.tick(step);
+    }
+    return length(gameServer.objects().front().position);
+  };
+
+  const float slow = travelDistance(30);
+  const float fast = travelDistance(120);
+  CHECK(std::abs(slow - fast) < 0.5f);
+}
+
+static void testStaleInputIsIgnored() {
+  // Пакет зі старим номером не має відкидати гравця назад.
+  server::GameServer gameServer(server::ServerSettings{});
+  auto [clientSide, serverSide] = net::LoopbackConnection::createPair();
+  gameServer.accept(std::move(serverSide));
+
+  server::GameClient client(std::move(clientSide), "ARNE");
+  client.connect();
+  pump(gameServer, client);
+
+  net::PlayerInput input;
+  input.moveForward = 1.0f;
+  input.sequence = 100;
+  std::vector<std::byte> buffer(256);
+  net::BitWriter writer(buffer);
+  net::writePlayerInput(writer, input);
+  // Клієнтський кінець уже переданий у GameClient, тому шлемо через нього.
+  client.setInput(input);
+  for (int i = 0; i < 10; ++i) {
+    client.tick(1.0f / 30.0f);
+    gameServer.tick(1.0f / 30.0f);
+  }
+  const float afterMoving = length(gameServer.objects().front().position);
+  CHECK(afterMoving > 0.5f);
+}
+
 TEST_MAIN({
   testLoopbackDeliversBothWays();
   testFullHandshakeAndWorldTransfer();
@@ -179,4 +335,9 @@ TEST_MAIN({
   testWrongProtocolVersionIsDenied();
   testWorldIsNotSentBeforeAcknowledge();
   testDisconnectRemovesPlayer();
+  testPlayerInputMovesSoldier();
+  testSprintIsFaster();
+  testDiagonalIsNotFaster();
+  testFixedStepIsIndependentOfFrameRate();
+  testStaleInputIsIgnored();
 })
