@@ -62,8 +62,9 @@ uFirstEndGame -> uEndGame        (підсумки, наступна карта)
 
 ### S3. Команди, набори, поява
 - [ ] Команди 1 і 2 з назвами (`setTeamName`, `getTeamName`), автобаланс.
-- [ ] `SpawnPoint`/`SpawnGroup` із `GamePlayObjects.con` — реальні точки появи
-      замість центру контрольної точки.
+- [x] `SpawnPoint` із `GamePlayObjects.con` — реальні точки появи (24 на
+      Dalian) із `setSpawnPositionOffset`, по колу, лише на своїх точках.
+- [ ] `SpawnGroup` і поява біля командира/загону.
 - [ ] Набори (kits): `menuTeamManager.addKit/addTeam/addWeapon` (зараз без
       обробника), вибір набору при появі.
 - [ ] Хвилі появи: `getDefaultTimeToNextAIWave`, черга `uPlayingSpawning`.
@@ -76,7 +77,8 @@ uFirstEndGame -> uEndGame        (підсумки, наступна карта)
 - [ ] Матеріали й множники шкоди (потребує `materialManager`).
 
 ### S5. Техніка й спавнери
-- [ ] Поява техніки зі спавнерів: шаблон за командою (`setObjectTemplate`).
+- [x] Поява техніки зі спавнерів: шаблон за командою-власником точки
+      (`setObjectTemplate`), переставляння при зміні власника. 18 машин.
 - [ ] Таймер повернення знищеної техніки.
 - [ ] Вхід/вихід із техніки (`PlayerControlObject`, entry points).
 
@@ -107,6 +109,15 @@ uFirstEndGame -> uEndGame        (підсумки, наступна карта)
 - [x] Квитки обох команд (`FriendlyTicketsString`, `EnemyTicketsString`):
       підпис перебудовується лише коли змінився рядок.
 - [ ] Решта значень: здоров'я, набій, назва точки, час.
+- [ ] **Якорі кутових шарів.** `GeneralHudSettings.con` оголошує окремі
+      кореневі групи `BottomLeftStatic`, `BottomLeftAnimate`,
+      `BottomRightStatic`, `BottomRightAnimate`, `TopLayer`, але ніде не
+      задає їхніх координат: усередині них числа відлічуються від якоря,
+      який ставить сам рушій. Через це смуги здоров'я, витривалості й
+      набоїв поки не малюються. Якорі треба дістати з BF2.exe (група
+      `hudManager`/`hudBuilder`).
+- [ ] Смуги (`Bar`) із заповненням: у даних це `setBarNodeValueVariable`
+      (напр. `PlayerHealth`), а в нас смуга малюється цілою.
 - [ ] Логічні змінні показу (`AND`/`EQUAL` у даних) — зараз вважаються
       вимкненими, тож частина інтерфейсу не показується.
 - [ ] Смуги (`Bar`): здоров'я, набій, захоплення точки.

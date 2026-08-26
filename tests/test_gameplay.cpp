@@ -63,6 +63,38 @@ static void testSpawnUsesOwnedControlPoint() {
   CHECK(std::abs(gameServer.objects().front().position.x - 100.0f) < 1.0f);
 }
 
+static void testSpawnUsesRealSpawnPoint() {
+  // Є справжня точка появи, прив'язана до нашої контрольної, — солдат має
+  // стати саме на неї, а не в центр прапора.
+  server::ServerSettings settings;
+  settings.spawnPosition = Vec3f{-999.0f, 0.0f, -999.0f};
+
+  server::GameServer gameServer(settings);
+  level::GameplayObjects gameplay = makeGameplay();
+  level::SpawnPoint spawn;
+  spawn.templateName = "base_1";
+  spawn.position = Vec3f{123.0f, 10.0f, 45.0f};
+  spawn.offset = Vec3f{0.0f, 1.25f, 0.0f};
+  spawn.controlPointId = 401;  // точка команди 1
+  gameplay.spawnPoints.push_back(spawn);
+  gameServer.setGameplay(std::move(gameplay));
+
+  auto [clientSide, serverSide] = net::LoopbackConnection::createPair();
+  gameServer.accept(std::move(serverSide));
+  server::GameClient client(std::move(clientSide), "ARNE");
+  client.connect();
+  pump(gameServer, client);
+
+  CHECK_EQ(gameServer.objects().size(), std::size_t(1));
+  if (gameServer.objects().empty()) return;
+  const Vec3f position = gameServer.objects().front().position;
+  CHECK(std::abs(position.x - 123.0f) < 0.01f);
+  CHECK(std::abs(position.z - 45.0f) < 0.01f);
+  // Зсув появи (setSpawnPositionOffset) додається до позиції точки: без
+  // нього солдат стартував би з 10.0 і за ці такти вже впав би нижче.
+  CHECK(position.y > 10.5f);
+}
+
 static void testControlPointsAreLoaded() {
   server::GameServer gameServer(server::ServerSettings{});
   gameServer.setGameplay(makeGameplay());
@@ -292,6 +324,7 @@ TEST_MAIN({
   testTicketsBleedForTeamWithoutArea();
   testRoundEndsWhenTicketsRunOut();
   testSpawnUsesOwnedControlPoint();
+  testSpawnUsesRealSpawnPoint();
   testControlPointsAreLoaded();
   testStandingOnNeutralPointCapturesIt();
   testPointIsNotCapturedFromAfar();

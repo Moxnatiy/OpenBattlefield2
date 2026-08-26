@@ -214,6 +214,7 @@ class GameServer {
   void endGame(int winner);
   // Де з'явитися гравцеві: найближча точка своєї команди, інакше стартова.
   Vec3f chooseSpawn(int team) const;
+  mutable std::size_t spawnCursor_ = 0;
   bool sendTo(Player& player, std::span<const std::byte> data);
 
   ServerSettings settings_;

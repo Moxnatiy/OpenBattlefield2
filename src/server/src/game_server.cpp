@@ -203,7 +203,23 @@ void GameServer::setGameplay(level::GameplayObjects gameplay) {
 }
 
 Vec3f GameServer::chooseSpawn(int team) const {
-  // Точка своєї команди — як в оригіналі: з'являємося там, що вже наше.
+  // Справжні точки появи з GamePlayObjects.con: з'явитися можна лише на
+  // тій, чия контрольна точка вже наша. Перебираємо по колу, щоб гравці
+  // не з'являлися один в одному.
+  std::vector<const level::SpawnPoint*> usable;
+  for (const level::SpawnPoint& spawn : gameplay_.spawnPoints) {
+    for (const ControlPointState& point : controlPoints_) {
+      if (point.id != spawn.controlPointId) continue;
+      if (point.team == team) usable.push_back(&spawn);
+      break;
+    }
+  }
+  if (!usable.empty()) {
+    const level::SpawnPoint& spawn = *usable[spawnCursor_++ % usable.size()];
+    return spawn.position + spawn.offset;
+  }
+
+  // Точок появи немає — стаємо просто на прапор.
   for (const ControlPointState& point : controlPoints_) {
     if (point.team == team) return point.position;
   }

@@ -422,8 +422,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       std::string gameplayError;
       if (auto gameplay = obf2::level::loadGameplayObjects(files, level->name, "gpm_cq", 16,
                                                            &gameplayError)) {
-        std::printf("  ігрова логіка: %zu контрольних точок, %zu спавнерів техніки\n",
-                    gameplay->controlPoints.size(), gameplay->spawners.size());
+        std::printf("  ігрова логіка: %zu контрольних точок, %zu спавнерів техніки, "
+                    "%zu точок появи\n",
+                    gameplay->controlPoints.size(), gameplay->spawners.size(),
+                    gameplay->spawnPoints.size());
         for (const auto& point : gameplay->controlPoints) {
           std::printf("    точка %d \"%s\" радіус %.0f @ %.0f/%.0f/%.0f\n", point.id,
                       point.nameKey.c_str(), point.radius, point.position.x, point.position.y,
@@ -946,7 +948,14 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
 
     hudScreen.width = 1280;
     hudScreen.height = 720;
-    auto pieces = obf2::hud::buildTree(ingameHud, "IngameHud", hudFont.font, hudFont.atlasPath,
+    // Корінь — група Global (Global -> GlobalHud -> IngameHud і далі). Її
+    // вузли задані в абсолютних 800x600, тож лягають правильно.
+    //
+    // Кутові шари (BottomLeftStatic, BottomRightAnimate, TopLayer ...) поки
+    // не малюємо: у `.con` вони ніде не позиціонуються, координати всередині
+    // них відлічуються від якоря, який задає сам рушій. Якір треба дістати з
+    // BF2.exe — інакше смуга здоров'я їде на середину екрана.
+    auto pieces = obf2::hud::buildTree(ingameHud, "Global", hudFont.font, hudFont.atlasPath,
                                        hudScreen, hudContext);
     for (auto& piece : pieces) {
       scene.meshes.push_back(std::move(piece.geometry));

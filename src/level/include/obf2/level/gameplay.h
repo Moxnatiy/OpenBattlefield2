@@ -53,11 +53,22 @@ struct ObjectSpawner {
   int teamOnVehicle = 0;
 };
 
+// Точка появи солдата. Прив'язана до контрольної точки: з'явитися можна
+// лише там, де прапор уже твій.
+struct SpawnPoint {
+  std::string templateName;
+  Vec3f position;
+  Vec3f rotation;
+  int controlPointId = 0;
+  Vec3f offset;  // setSpawnPositionOffset: солдат стає трохи вище землі
+};
+
 struct GameplayObjects {
   std::string gameMode;
   int size = 0;
   std::vector<ControlPoint> controlPoints;
   std::vector<ObjectSpawner> spawners;
+  std::vector<SpawnPoint> spawnPoints;
 
   const ControlPoint* controlPoint(int id) const;
 };
