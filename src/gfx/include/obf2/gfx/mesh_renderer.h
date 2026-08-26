@@ -94,7 +94,9 @@ class MeshRenderer {
 
   // Прохід для інтерфейсу: без глибини, з альфа-змішуванням і без освітлення.
   // Координати вершин уже в NDC, тому матриця не потрібна.
-  void renderOverlay(const Frame& frame, const std::vector<DrawItem>& items, Color clearColor);
+  // clear = false лишає те, що вже намальовано: так HUD лягає поверх сцени.
+  void renderOverlay(const Frame& frame, const std::vector<DrawItem>& items, Color clearColor,
+                     bool clear = true);
 
  private:
   MeshRenderer() = default;

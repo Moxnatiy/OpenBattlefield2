@@ -40,10 +40,23 @@ struct Context {
   std::function<std::string_view(std::string_view variable)> variableText;
 };
 
+// Геометрія одного вузла — картинка, смуга і/або підпис.
+std::vector<DrawPiece> buildNode(const Node& node, const font::Font& font,
+                                 const std::string& fontAtlas, const Screen& screen,
+                                 const Context& context);
+
 // Будує геометрію для однієї групи вузлів.
 std::vector<DrawPiece> buildGroup(const Builder& builder, std::string_view group,
                                   const font::Font& font, const std::string& fontAtlas,
                                   const Screen& screen, const Context& context);
+
+// Те саме, але з розкриттям вузлів типу `split`: у HUD гри вони не малюються
+// самі, а підставляють цілу групу з такою ж назвою
+// (`hudBuilder.createSplitNode GlobalHud IngameHud`). Так увесь інтерфейс і
+// зібраний: Global -> GlobalHud -> IngameHud -> десятки під-груп.
+std::vector<DrawPiece> buildTree(const Builder& builder, std::string_view rootGroup,
+                                 const font::Font& font, const std::string& fontAtlas,
+                                 const Screen& screen, const Context& context, int maxDepth = 8);
 
 // Прямокутник вузла в пікселях екрана — потрібен для влучання мишею.
 struct ScreenRect {

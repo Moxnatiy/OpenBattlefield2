@@ -856,6 +856,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
 
     auto bytes = files.read(path);
     if (!bytes) bytes = files.read(obf2::joinAssetPath("objects", path));
+    // Шляхи в HUD відлічуються від теки текстур інтерфейсу — так само, як
+    // це видно в `nametags.setTexture Menu/HUD/Texture/...`.
+    if (!bytes) bytes = files.read(obf2::joinAssetPath("menu/hud/texture", path));
     if (!bytes) {
       ++texturesMissing;
       textureCache.emplace(path, std::nullopt);
@@ -864,10 +867,87 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
 
     std::string textureError;
     auto decoded = obf2::texture::loadImage(*bytes, &textureError);
-    if (!decoded) ++texturesMissing; else ++texturesLoaded;
+    if (!decoded) {
+      ++texturesMissing;
+      if (texturesMissing <= 6) {
+        std::printf("    текстура не читається: %s (%s)\n", path.c_str(), textureError.c_str());
+      }
+    } else {
+      ++texturesLoaded;
+    }
     textureCache.emplace(path, decoded);
     return decoded;
   };
+
+  // --- ігровий HUD ---------------------------------------------------
+  //
+  // Той самий hudBuilder, що й меню, але дерево береться з файлів гри:
+  // Global -> GlobalHud -> IngameHud -> десятки під-груп через `split`.
+  obf2::hud::Builder ingameHud;
+  std::vector<int> hudQuads;
+  std::map<std::string, bool> hudVariables;
+  std::map<std::string, std::string> hudStrings;
+  // Вузли, підпис яких змінюється в грі: геометрію для них перебудовуємо,
+  // але лише коли справді змінився рядок.
+  struct DynamicText {
+    const obf2::hud::Node* node = nullptr;
+    std::string variable;
+    std::string shown;
+    obf2::gfx::GpuMesh mesh;
+    bool valid = false;
+  };
+  std::vector<DynamicText> hudDynamic;
+  const LoadedFont hudFont = bootMode ? LoadedFont{} : loadFont(files, "Fonts/800/dynamicText_13");
+  obf2::hud::Screen hudScreen;
+  if (!bootMode && hudFont.valid) {
+    obf2::con::Interpreter hudInterpreter(
+        files, [&](const obf2::con::Command& command) { ingameHud.feed(command); });
+    hudInterpreter.runFile("Menu/HUD/HudSetup/HudSetupMain.con");
+
+    // Змінні показу: у даних це або стала 1/0, або назва стану інтерфейсу.
+    // Невідому назву вважаємо вимкненою — інакше на екран одразу виїхали б
+    // інтерфейс командира, табло й кабіни всієї техніки.
+    // ReferenceCross — це вирівнювальний хрест розробників, у грі він
+    // вимкнений; решта — базовий набір, який видно в бою.
+    for (const char* on : {"ShowIngameHud", "PlayerHealthShow", "PlayerStaminaShow",
+                           "PrimaryAmmoShow", "PrimaryAmmoBarShow", "MapShow", "MapMinSize",
+                           "CPInterfaceEnabled"}) {
+      hudVariables[on] = true;
+    }
+
+    obf2::hud::Context hudContext;
+    hudContext.localize = [&](std::string_view key) { return engine.lexicon().text(key); };
+    hudContext.isVisible = [&](std::string_view variable) {
+      if (variable == "1") return true;
+      const auto found = hudVariables.find(std::string(variable));
+      return found != hudVariables.end() && found->second;
+    };
+    hudContext.variableText = [&](std::string_view variable) -> std::string_view {
+      const auto found = hudStrings.find(std::string(variable));
+      return found == hudStrings.end() ? std::string_view{} : std::string_view(found->second);
+    };
+
+    hudScreen.width = 1280;
+    hudScreen.height = 720;
+    auto pieces = obf2::hud::buildTree(ingameHud, "IngameHud", hudFont.font, hudFont.atlasPath,
+                                       hudScreen, hudContext);
+    for (auto& piece : pieces) {
+      scene.meshes.push_back(std::move(piece.geometry));
+      hudQuads.push_back(static_cast<int>(scene.meshes.size()) - 1);
+    }
+    // Живі значення: квитки обох команд. Далі сюди підуть здоров'я й набій.
+    for (const auto& node : ingameHud.nodes()) {
+      if (node.textVariable != "FriendlyTicketsString" &&
+          node.textVariable != "EnemyTicketsString") {
+        continue;
+      }
+      if (node.group != "TicketInfo") continue;  // той самий підпис є і в командира
+      hudDynamic.push_back(DynamicText{&node, node.textVariable, {}, {}, false});
+    }
+
+    std::printf("  HUD: %zu вузлів у дереві, шматків до малювання %zu, живих підписів %zu\n",
+                ingameHud.nodes().size(), pieces.size(), hudDynamic.size());
+  }
 
   std::vector<obf2::gfx::GpuMesh> gpuMeshes(scene.meshes.size());
   std::vector<bool> uploadedOk(scene.meshes.size(), false);
@@ -1048,6 +1128,56 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     } else {
       renderer->renderScene(*acquired, items, projection * view,
                             obf2::gfx::Color{0.42f, 0.55f, 0.68f, 1.0f});
+
+      // HUD іде другим проходом поверх готового кадру — без очищення цілі.
+      if (!hudQuads.empty() || !hudDynamic.empty()) {
+        // Живі значення: квитки беремо просто з сервера, бо в одиночній грі
+        // він тут-таки, поруч. Клієнту вони приїдуть окремим пакетом, коли
+        // з'явиться стан раунду в мережі.
+        if (hostedServer != nullptr) {
+          const int own = 1, enemy = 2;
+          hudStrings["FriendlyTicketsString"] = std::to_string(hostedServer->tickets(own));
+          hudStrings["EnemyTicketsString"] = std::to_string(hostedServer->tickets(enemy));
+        }
+
+        std::vector<obf2::gfx::MeshRenderer::DrawItem> hudItems;
+        hudItems.reserve(hudQuads.size() + hudDynamic.size());
+        for (const int index : hudQuads) {
+          if (index < 0 || !uploadedOk[static_cast<std::size_t>(index)]) continue;
+          hudItems.push_back(obf2::gfx::MeshRenderer::DrawItem{
+              &gpuMeshes[static_cast<std::size_t>(index)], obf2::Mat4::identity()});
+        }
+
+        for (DynamicText& dynamic : hudDynamic) {
+          const auto found = hudStrings.find(dynamic.variable);
+          const std::string value = found == hudStrings.end() ? std::string() : found->second;
+          if (value != dynamic.shown) {
+            // Рядок змінився — перебудовуємо тільки цей підпис.
+            if (dynamic.valid) renderer->release(dynamic.mesh);
+            dynamic.valid = false;
+            dynamic.shown = value;
+            if (!value.empty()) {
+              obf2::hud::Node copy = *dynamic.node;
+              copy.text = value;
+              copy.textVariable.clear();
+              auto built = obf2::hud::buildNode(copy, hudFont.font, hudFont.atlasPath, hudScreen,
+                                                obf2::hud::Context{});
+              if (!built.empty()) {
+                if (auto uploaded = renderer->upload(built.front().geometry, resolveTexture)) {
+                  dynamic.mesh = *uploaded;
+                  dynamic.valid = true;
+                }
+              }
+            }
+          }
+          if (dynamic.valid) {
+            hudItems.push_back(
+                obf2::gfx::MeshRenderer::DrawItem{&dynamic.mesh, obf2::Mat4::identity()});
+          }
+        }
+
+        renderer->renderOverlay(*acquired, hudItems, obf2::gfx::Color{}, false);
+      }
     }
 
     const bool lastFrame = args.frames > 0 && frame + 1 >= args.frames;
@@ -1074,6 +1204,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     if (args.frames > 0 && frame >= args.frames) break;
   }
 
+  for (auto& dynamic : hudDynamic) {
+    if (dynamic.valid) renderer->release(dynamic.mesh);
+  }
   for (auto& gpuMesh : gpuMeshes) renderer->release(gpuMesh);
   std::printf("кадрів намальовано: %d\n", frame);
   if (nextLevel != nullptr) *nextLevel = requestedLevel;

@@ -1,4 +1,5 @@
 #include <cstring>
+#include <string>
 
 #include "obf2/texture/dds.h"
 #include "stb_image.h"
@@ -16,7 +17,10 @@ std::optional<Texture> loadPng(std::span<const std::byte> bytes, std::string* er
                                           static_cast<int>(bytes.size()), &width, &height,
                                           &channels, 4);
   if (pixels == nullptr) {
-    if (error) *error = "не вдалося розібрати PNG";
+    if (error) {
+      const char* reason = stbi_failure_reason();
+      *error = std::string("stb_image: ") + (reason != nullptr ? reason : "невідома помилка");
+    }
     return std::nullopt;
   }
 
@@ -41,12 +45,14 @@ std::optional<Texture> loadPng(std::span<const std::byte> bytes, std::string* er
 }
 
 std::optional<Texture> loadImage(std::span<const std::byte> bytes, std::string* error) {
-  static constexpr std::byte kPng[4] = {std::byte{0x89}, std::byte{'P'}, std::byte{'N'},
-                                        std::byte{'G'}};
-  if (bytes.size() >= 4 && std::memcmp(bytes.data(), kPng, 4) == 0) {
-    return loadPng(bytes, error);
+  // DDS впізнаємо за підписом, усе інше віддаємо stb_image: гра тримає в
+  // інтерфейсі ще й .tga (напр. Ingame/Crosshair/ReferenceCross.tga) і .png.
+  static constexpr std::byte kDds[4] = {std::byte{'D'}, std::byte{'D'}, std::byte{'S'},
+                                        std::byte{' '}};
+  if (bytes.size() >= 4 && std::memcmp(bytes.data(), kDds, 4) == 0) {
+    return loadDds(bytes, error);
   }
-  return loadDds(bytes, error);
+  return loadPng(bytes, error);
 }
 
 }  // namespace obf2::texture

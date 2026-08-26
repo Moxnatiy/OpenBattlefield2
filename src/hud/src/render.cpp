@@ -55,57 +55,101 @@ ScreenRect nodeRect(const Node& node, const Screen& screen) {
   return ScreenRect{node.x * scaleX, node.y * scaleY, node.width * scaleX, node.height * scaleY};
 }
 
+std::vector<DrawPiece> buildNode(const Node& node, const font::Font& font,
+                                 const std::string& fontAtlas, const Screen& screen,
+                                 const Context& context) {
+  std::vector<DrawPiece> pieces;
+  if (node.width <= 0.0f || node.height <= 0.0f) return pieces;
+
+  const float scaleY = static_cast<float>(screen.height) / kReferenceHeight;
+  const ScreenRect rect = nodeRect(node, screen);
+
+  // Картинки, кнопки й смуги — прямокутник із текстурою.
+  if (node.type == NodeType::Picture || node.type == NodeType::Button ||
+      node.type == NodeType::Bar) {
+    std::string texture = node.texture;
+    if (texture.empty() && !node.textureVariable.empty() && context.variableText) {
+      texture = std::string(context.variableText(node.textureVariable));
+    }
+    if (!texture.empty()) {
+      pieces.push_back(DrawPiece{quad(rect, screen, texture), texture, &node});
+    }
+  }
+
+  // Текст: спершу пряме значення, потім змінна, потім ключ локалізації.
+  if (node.type == NodeType::Text || node.type == NodeType::Button) {
+    std::string text = node.text;
+    if (text.empty() && !node.textVariable.empty() && context.variableText) {
+      text = std::string(context.variableText(node.textVariable));
+    }
+    if (text.empty()) return pieces;
+    if (context.localize) text = std::string(context.localize(text));
+    if (text.empty()) return pieces;
+
+    font::TextLayout layout;
+    layout.screenWidth = screen.width;
+    layout.screenHeight = screen.height;
+    layout.x = rect.x;
+    layout.y = rect.y;
+    // Кегль підганяємо під висоту вузла: у даних вона і є розміром рядка.
+    layout.scale = font.size > 0.0f ? (node.height * scaleY) / font.size : 1.0f;
+
+    auto geometry = font::buildText(font, text, layout, fontAtlas);
+    if (!geometry.indices.empty()) {
+      pieces.push_back(DrawPiece{std::move(geometry), fontAtlas, &node});
+    }
+  }
+  return pieces;
+}
+
 std::vector<DrawPiece> buildGroup(const Builder& builder, std::string_view group,
                                   const font::Font& font, const std::string& fontAtlas,
                                   const Screen& screen, const Context& context) {
   std::vector<DrawPiece> pieces;
-  const float scaleY = static_cast<float>(screen.height) / kReferenceHeight;
-
   for (const Node* node : builder.group(group)) {
     // Вузол зі змінною показу малюємо лише тоді, коли вона ввімкнена.
     if (!node->showVariable.empty() && context.isVisible && !context.isVisible(node->showVariable)) {
       continue;
     }
-    if (node->width <= 0.0f || node->height <= 0.0f) continue;
-
-    const ScreenRect rect = nodeRect(*node, screen);
-
-    // Картинки й кнопки — прямокутник із текстурою.
-    if (node->type == NodeType::Picture || node->type == NodeType::Button ||
-        node->type == NodeType::Bar) {
-      std::string texture = node->texture;
-      if (texture.empty() && !node->textureVariable.empty() && context.variableText) {
-        texture = std::string(context.variableText(node->textureVariable));
-      }
-      if (!texture.empty()) {
-        pieces.push_back(DrawPiece{quad(rect, screen, texture), texture, node});
-      }
-    }
-
-    // Текст: спершу пряме значення, потім змінна, потім ключ локалізації.
-    if (node->type == NodeType::Text || node->type == NodeType::Button) {
-      std::string text = node->text;
-      if (text.empty() && !node->textVariable.empty() && context.variableText) {
-        text = std::string(context.variableText(node->textVariable));
-      }
-      if (text.empty()) continue;
-      if (context.localize) text = std::string(context.localize(text));
-      if (text.empty()) continue;
-
-      font::TextLayout layout;
-      layout.screenWidth = screen.width;
-      layout.screenHeight = screen.height;
-      layout.x = rect.x;
-      layout.y = rect.y;
-      // Кегль підганяємо під висоту вузла: у даних вона і є розміром рядка.
-      layout.scale = font.size > 0.0f ? (node->height * scaleY) / font.size : 1.0f;
-
-      auto geometry = font::buildText(font, text, layout, fontAtlas);
-      if (!geometry.indices.empty()) {
-        pieces.push_back(DrawPiece{std::move(geometry), fontAtlas, node});
-      }
+    for (auto& piece : buildNode(*node, font, fontAtlas, screen, context)) {
+      pieces.push_back(std::move(piece));
     }
   }
+  return pieces;
+}
+
+std::vector<DrawPiece> buildTree(const Builder& builder, std::string_view rootGroup,
+                                 const font::Font& font, const std::string& fontAtlas,
+                                 const Screen& screen, const Context& context, int maxDepth) {
+  std::vector<DrawPiece> pieces;
+  std::vector<std::string> visited;
+
+  // Обхід у глибину в порядку оголошення: пізніші вузли лягають зверху,
+  // тож порядок обходу і є порядком малювання.
+  const auto walk = [&](auto&& self, std::string_view group, int depth) -> void {
+    if (depth > maxDepth) return;
+    for (const std::string& seen : visited) {
+      if (seen == group) return;  // захист від кільця у даних
+    }
+    visited.emplace_back(group);
+
+    for (const Node* node : builder.group(group)) {
+      if (!node->showVariable.empty() && context.isVisible &&
+          !context.isVisible(node->showVariable)) {
+        continue;
+      }
+      if (node->type == NodeType::Split) {
+        // Вузол-«розгалуження» сам нічого не малює: він підставляє групу,
+        // назва якої збігається з його іменем.
+        self(self, node->name, depth + 1);
+        continue;
+      }
+      for (auto& piece : buildNode(*node, font, fontAtlas, screen, context)) {
+        pieces.push_back(std::move(piece));
+      }
+    }
+  };
+  walk(walk, rootGroup, 0);
   return pieces;
 }
 

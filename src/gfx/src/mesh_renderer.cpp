@@ -515,11 +515,11 @@ void MeshRenderer::release(GpuMesh& gpuMesh) {
 }
 
 void MeshRenderer::renderOverlay(const Frame& frame, const std::vector<DrawItem>& items,
-                                 Color clearColor) {
+                                 Color clearColor, bool clear) {
   SDL_GPUColorTargetInfo colorTarget{};
   colorTarget.texture = frame.swapchain;
   colorTarget.clear_color = SDL_FColor{clearColor.r, clearColor.g, clearColor.b, clearColor.a};
-  colorTarget.load_op = SDL_GPU_LOADOP_CLEAR;
+  colorTarget.load_op = clear ? SDL_GPU_LOADOP_CLEAR : SDL_GPU_LOADOP_LOAD;
   colorTarget.store_op = SDL_GPU_STOREOP_STORE;
 
   SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(frame.commands, &colorTarget, 1, nullptr);
@@ -541,8 +541,10 @@ void MeshRenderer::renderOverlay(const Frame& frame, const std::vector<DrawItem>
 
     for (const GpuMesh::Range& range : item.mesh->ranges) {
       if (range.indexCount == 0) continue;
-      SDL_GPUTextureSamplerBinding binding{
-          range.texture != nullptr ? range.texture : placeholder_, sampler_};
+      // В інтерфейсі заглушка не годиться: біла текстура на весь екран
+      // просто сховала б кадр. Немає картинки — нічого не малюємо.
+      if (range.texture == nullptr) continue;
+      SDL_GPUTextureSamplerBinding binding{range.texture, sampler_};
       SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
       SDL_DrawGPUIndexedPrimitives(pass, range.indexCount, 1, range.indexStart, 0, 0);
     }

@@ -40,20 +40,24 @@ uFirstEndGame -> uEndGame        (підсумки, наступна карта)
 ## Етапи
 
 ### S1. Стан гри та квитки
-- [ ] `GameStatus` і машина станів у `GameServer::tick` (PreGame → Playing → EndGame).
-- [ ] Квитки на команду: `gamelogic.setDefaultNumberOfTickets <team> <n>` (у грі
-      2 виклики, зараз без обробника), `ticketLimit`, `ticketState`.
-- [ ] Витік квитків: `defaultTicketLossPerMin`, `defaultTicketLossAtEndPerMin`,
-      `ticketChangePerSecond`; більшість точок → противник втрачає квитки.
-- [ ] `enemyTicketLossWhenCaptured` — разова втрата при захопленні точки.
-- [ ] Умова перемоги: квитки ≤ 0 або час; `uPlayingWinner` → EndGame.
+- [x] `GameStatus` і машина станів у `GameServer::tick` (PreGame → Playing → EndGame).
+- [x] Квитки на команду: `gamelogic.setDefaultNumberOfTickets` читається з
+      `GameLogicInit.con`, множник — `sv.ticketRatio` із `ServerSettings.con`.
+- [x] Витік квитків за вагою площі + окремий «кінцевий» темп.
+- [x] `enemyTicketLossWhenCaptured` — разова втрата при захопленні точки.
+- [x] Умова перемоги за квитками (`endGame`).
+- [ ] Пороги попереджень `setTicketLimit`/`ticketState` (10, 10 %, 20 %).
+- [ ] Ліміт часу раунду.
+- [ ] Смерть гравця — мінус квиток (потрібна система смерті, S4).
 
 ### S2. Контрольні точки 1:1
-- [ ] Параметри шаблону замість наших сталих: `timeToGetControl`,
-      `timeToLoseControl`, `radiusOffset`, `areaValueTeam1/2`,
-      `unableToChangeTeam`, `onlyTakeableByTeam`.
-- [ ] Нейтралізація перед захопленням (спершу до 0, потім до себе).
-- [ ] Вплив кількості гравців у радіусі на швидкість.
+- [x] Параметри шаблону замість наших сталих: `timeToGetControl`,
+      `timeToLoseControl`, `areaValueTeam1/2`, `unableToChangeTeam`,
+      `onlyTakeableByTeam`, `enemyTicketLossWhenCaptured`.
+- [x] Нейтралізація перед захопленням (прапор донизу, потім угору).
+- [x] Вплив кількості гравців у радіусі на швидкість.
+- [ ] `radiusOffset` і півсферичний радіус (`isHemisphere`).
+- [ ] Гравець у техніці рахується лише як перший пасажир.
 - [ ] Зв'язок точки зі спавнером техніки (`teamOnVehicle`, `teamFromClosestCP`).
 
 ### S3. Команди, набори, поява
@@ -92,14 +96,19 @@ uFirstEndGame -> uEndGame        (підсумки, наступна карта)
 вузли типу `split`, тобто посилання на інші групи.
 
 ### H1. Каркас
-- [ ] Розкриття `split`-вузлів: група всередині групи, з власною видимістю.
-- [ ] Малювання HUD в ігровій сесії (зараз малюється лише меню).
-- [ ] Порядок і z: `IngameHud` малюється поверх сцени тим самим накладним
-      пайплайном.
+- [x] Розкриття `split`-вузлів: `hud::buildTree` іде деревом
+      `IngameHud -> під-групи` з захистом від кільця.
+- [x] Малювання HUD в ігровій сесії — другим проходом поверх кадру
+      (`renderOverlay(..., clear=false)`).
+- [x] Текстури інтерфейсу: шлях від `Menu/HUD/Texture/`, підтримка `.tga`
+      (у stb лишалися тільки PNG — саме тому HUD був порожній).
 
 ### H2. Живі дані
-- [ ] Джерело значень для `setNodeShowVariable` / текстових змінних: здоров'я,
-      набій, квитки, назва точки, час.
+- [x] Квитки обох команд (`FriendlyTicketsString`, `EnemyTicketsString`):
+      підпис перебудовується лише коли змінився рядок.
+- [ ] Решта значень: здоров'я, набій, назва точки, час.
+- [ ] Логічні змінні показу (`AND`/`EQUAL` у даних) — зараз вважаються
+      вимкненими, тож частина інтерфейсу не показується.
 - [ ] Смуги (`Bar`): здоров'я, набій, захоплення точки.
 - [ ] `ObjectMarker` і компас — потрібні позиції об'єктів від сервера.
 - [ ] Мінімапа: текстура рівня + значки точок і гравців.
