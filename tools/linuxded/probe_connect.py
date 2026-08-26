@@ -14,6 +14,7 @@ sendConnectAccept / sendConnectDenied у Linux-сервері):
 Біти пакуються молодшими вперед — так само, як у нашому BitStream.
 """
 import socket
+import struct
 import sys
 
 
@@ -297,3 +298,139 @@ def name_hash(name):
     for c in name.encode("latin-1"):
         value = (value * 0x21 ^ (c | 0x20 if 65 <= c <= 90 else c)) & 0xFFFFFFFF
     return value
+
+
+# --- розбір подій, які шле сервер ---
+#
+# Розкладку кожної події знято з коду сервера через
+# `tools/linuxded/bitfields.py <Клас>::deSerialize`: там видно точну
+# послідовність викликів readBits із кількістю бітів.
+def read_create_player(r):
+    """CreatePlayerEvent (тип 5): 3,4,1,8,16,16,1 бітів і 32 байти імені."""
+    out = {
+        "команда": r.read(3),
+        "загін": r.read(4),
+        "прапорець1": r.read(1),
+        "номер": r.read(8),
+        "поле16a": r.read(16),
+        "поле16b": r.read(16),
+        "прапорець2": r.read(1),
+    }
+    out["ім'я"] = r.read_bytes(32).split(b"\0")[0].decode("latin-1")
+    return out
+
+
+def read_data_block(r):
+    """DataBlockEvent (тип 4): заголовок блока або шматок даних."""
+    if r.read(1) == 1:
+        return {"заголовок": True, "тип блока": r.read(32), "розмір": r.read(32)}
+    length = r.read(8)
+    return {"заголовок": False, "байтів": length, "дані": r.read_bytes(length)}
+
+
+def _float(r):
+    return struct.unpack("<f", struct.pack("<I", r.read(32)))[0]
+
+
+def read_create_object(r):
+    """CreateObjectEvent (тип 6): 32,16,2,1,8,1,1 бітів і шість чисел."""
+    out = {
+        "шаблон": r.read(32),
+        "мережевий номер": r.read(16),
+        "поле2": r.read(2),
+        "прапорець1": r.read(1),
+        "поле8": r.read(8),
+        "прапорець2": r.read(1),
+        "прапорець3": r.read(1),
+    }
+    out["позиція"] = tuple(round(_float(r), 2) for _ in range(3))
+    out["поворот"] = tuple(round(_float(r), 2) for _ in range(3))
+    return out
+
+
+def read_create_spawn_group(r):
+    """CreateSpawnGroupEvent (тип 57)."""
+    return {
+        "номер": r.read(8),
+        "поле4": r.read(4),
+        "прапорець1": r.read(1),
+        "прапорець2": r.read(1),
+        "прапорець3": r.read(1),
+        "поле8a": r.read(8),
+        "поле8b": r.read(8),
+        "поле16": r.read(16),
+    }
+
+
+def read_begin_round(r):
+    """BeginRoundEvent (тип 56): два 32-бітних числа."""
+    return {"поле1": r.read(32), "поле2": r.read(32)}
+
+
+def read_voip_session(r):
+    """VoipSessionEvent (тип 54): номер сеансу голосового зв'язку."""
+    return {"сеанс": r.read(16)}
+
+
+def read_unlock(r):
+    """UnlockEvent (тип 42): що саме відкрито гравцеві."""
+    return {"вид": r.read(2), "гравець": r.read(8), "номер": r.read(4)}
+
+
+def read_connection_type(r):
+    """ConnectionTypeEvent (тип 3)."""
+    return {"вид": r.read(3)}
+
+
+def read_destroy_player(r):
+    """DestroyPlayerEvent (тип 8)."""
+    return {"гравець": r.read(8)}
+
+
+def read_string_manager(r):
+    """StringManagerEvent (тип 0): службова подія рядкового словника.
+
+    Перший біт вирішує, чи є далі щось іще: у пакетах, які сервер шле
+    одразу після реєстрації, він нульовий і подія займає рівно один біт.
+    """
+    if r.read(1) == 0:
+        return {"порожня": True}
+    return {"поле6": r.read(6), "решта": "ще не розібрано"}
+
+
+EVENT_READERS = {
+    0: ("StringManagerEvent", read_string_manager),
+    3: ("ConnectionTypeEvent", read_connection_type),
+    4: ("DataBlockEvent", read_data_block),
+    8: ("DestroyPlayerEvent", read_destroy_player),
+    42: ("UnlockEvent", read_unlock),
+    5: ("CreatePlayerEvent", read_create_player),
+    6: ("CreateObjectEvent", read_create_object),
+    54: ("VoipSessionEvent", read_voip_session),
+    56: ("BeginRoundEvent", read_begin_round),
+    57: ("CreateSpawnGroupEvent", read_create_spawn_group),
+}
+
+
+def walk_events(data):
+    """Проходить пакет даних і розбирає стільки подій, скільки вміємо."""
+    r = Reader(data)
+    if r.read(4) != 15:
+        return None
+    r.read(8)
+    seq, ack, bits = r.read(6), r.read(6), r.read(32)
+    size = r.read(16)
+    r.read(1)                      # потік дій гравця
+    if r.read(1) != 1:
+        return {"seq": seq, "події": []}
+    count, batch, repeat = r.read(8), r.read(5), r.read(1)
+
+    events = []
+    for _ in range(count):
+        kind = r.read(EVENT_TYPE_BITS)
+        name, reader = EVENT_READERS.get(kind, (None, None))
+        if reader is None:
+            events.append({"тип": kind, "невідома": True})
+            break
+        events.append({"тип": kind, "клас": name, **reader(r)})
+    return {"seq": seq, "розмір": size, "пачка": batch, "події": events}
