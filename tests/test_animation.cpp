@@ -4,6 +4,8 @@
 
 #include "check.h"
 #include "obf2/mesh/animation.h"
+#include "obf2/mesh/skeleton.h"
+#include "obf2/mesh/skinning.h"
 
 using namespace obf2;
 
@@ -151,7 +153,118 @@ static void testTruncatedFileDoesNotCrash() {
   }
 }
 
+namespace {
+
+// Скелет із двох кісток: корінь і дитина на метр вище.
+mesh::Skeleton makeTwoBoneSkeleton() {
+  mesh::Skeleton skeleton;
+  skeleton.version = 2;
+
+  mesh::SkeletonBone root;
+  root.name = "root";
+  root.parent = -1;
+  root.rotation[3] = 1.0f;
+  skeleton.bones.push_back(root);
+
+  mesh::SkeletonBone child;
+  child.name = "child";
+  child.parent = 0;
+  child.rotation[3] = 1.0f;
+  child.position = mesh::Vec3{0.0f, 1.0f, 0.0f};
+  skeleton.bones.push_back(child);
+  return skeleton;
+}
+
+}  // namespace
+
+static void testPoseWithoutClipIsRestPose() {
+  const mesh::Skeleton skeleton = makeTwoBoneSkeleton();
+  const auto pose = mesh::poseSkeleton(skeleton, nullptr, 0);
+  CHECK_EQ(pose.size(), std::size_t(2));
+  if (pose.size() < 2) return;
+
+  // Дитина стоїть рівно на метр вище кореня.
+  CHECK(std::abs(pose[1].m[13] - 1.0f) < 0.001f);
+  CHECK(std::abs(pose[1].m[12]) < 0.001f);
+}
+
+static void testClipMovesOnlyItsOwnBones() {
+  // Кліп рухає лише кістку 1, кістка 0 лишається в позі спокою.
+  AnimationBuilder builder(1, 1, 15);
+  builder.constantChannel(1, 0);      // кватерніон x
+  auto qx = builder.channel();
+  builder.constantChannel(1, 0);      // y
+  auto qy = builder.channel();
+  builder.constantChannel(1, 0);      // z
+  auto qz = builder.channel();
+  builder.constantChannel(1, 32767);  // w = 1, тобто без повороту
+  auto qw = builder.channel();
+  builder.constantChannel(1, 0);      // зсув x
+  auto px = builder.channel();
+  builder.constantChannel(1, static_cast<std::int16_t>((1 << 15) - 1));  // зсув y = 1
+  auto py = builder.channel();
+  builder.constantChannel(1, 0);      // зсув z
+  auto pz = builder.channel();
+  builder.flushBone({qx, qy, qz, qw, px, py, pz});
+
+  auto bytes = builder.bytes();
+  // Номер кістки в кліпі — 1 (у збирачі перший id це 40, підміняємо).
+  bytes[6] = static_cast<std::byte>(1);
+  bytes[7] = static_cast<std::byte>(0);
+
+  const auto animation = mesh::loadBoneAnimation(bytes);
+  CHECK(animation.has_value());
+  if (!animation) return;
+
+  const mesh::Skeleton skeleton = makeTwoBoneSkeleton();
+  const auto pose = mesh::poseSkeleton(skeleton, &*animation, 0);
+  CHECK_EQ(pose.size(), std::size_t(2));
+  if (pose.size() < 2) return;
+  // Кліп задав дитині зсув 1 по Y — той самий, що й у позі спокою.
+  CHECK(std::abs(pose[1].m[13] - 1.0f) < 0.01f);
+}
+
+static void testSkinMovesVertexWithItsBone() {
+  mesh::RenderMesh bind;
+  bind.vertices.resize(1);
+  bind.vertices[0].position = mesh::Vec3{0.0f, 0.0f, 0.0f};
+  bind.vertices[0].normal = mesh::Vec3{0.0f, 1.0f, 0.0f};
+  bind.indices = {0};
+  bind.skin.resize(1);
+  bind.skin[0].boneA = 0;
+  bind.skin[0].boneB = 0;
+  bind.skin[0].weight = 1.0f;
+
+  // Один риґ з однією кісткою, обернена прив'язка — одинична.
+  mesh::Rig rig;
+  mesh::Bone entry;
+  entry.id = 0;
+  entry.transform.m[0] = entry.transform.m[5] = entry.transform.m[10] = entry.transform.m[15] = 1.0f;
+  rig.bones.push_back(entry);
+  bind.rigs.push_back(rig);
+
+  mesh::DrawRange range;
+  range.indexStart = 0;
+  range.indexCount = 1;
+  range.rig = 0;
+  bind.ranges.push_back(range);
+
+  // Кістка зсунута на 2 по X.
+  std::vector<mesh::Mat4> pose(1);
+  pose[0].m[0] = pose[0].m[5] = pose[0].m[10] = pose[0].m[15] = 1.0f;
+  pose[0].m[12] = 2.0f;
+
+  mesh::RenderMesh posed = bind;
+  mesh::skinMesh(bind, pose, posed);
+  CHECK(std::abs(posed.vertices[0].position.x - 2.0f) < 0.001f);
+  // Нормаль зсув не чіпає.
+  CHECK(std::abs(posed.vertices[0].normal.y - 1.0f) < 0.001f);
+}
+
 TEST_MAIN({
+  testPoseWithoutClipIsRestPose();
+  testClipMovesOnlyItsOwnBones();
+  testSkinMovesVertexWithItsBone();
   testConstantRunGivesSameValueEveryFrame();
   testFrameRunGivesValuePerFrame();
   testPositionUsesPrecisionAndQuaternionDoesNot();

@@ -67,6 +67,47 @@ void printOne(obf2::FileSystem& files, const std::string& path, std::size_t geom
   std::printf("  geom %zu lod %zu: вершин %zu, індексів %zu (%zu трикутників), діапазонів %zu\n",
               geometryIndex, lodIndex, render->vertices.size(), render->indices.size(),
               render->indices.size() / 3, render->ranges.size());
+  // Сирі дані прив'язки вершин: вага й пара номерів кісток. Потрібні, щоб
+  // зрозуміти, як саме BLENDINDICES пакує пару в один D3DCOLOR.
+  if (mesh->kind == obf2::mesh::Kind::Skinned) {
+    std::size_t weightOffset = 0, indexOffset = 0;
+    bool hasWeight = false, hasIndex = false;
+    for (const auto& attribute : mesh->attributes) {
+      if (attribute.flag != 0) continue;
+      if (attribute.usage == 1) { weightOffset = attribute.offset / 4; hasWeight = true; }
+      if (attribute.usage == 2) { indexOffset = attribute.offset / 4; hasIndex = true; }
+    }
+    if (hasWeight && hasIndex) {
+      const std::size_t stride = mesh->floatsPerVertex();
+      std::printf("  прив'язка вершин (вага, байти BLENDINDICES):\n");
+      for (std::size_t v = 0; v < mesh->vertexCount && v < 8; ++v) {
+        const float weight = mesh->vertexData[v * stride + weightOffset];
+        float raw = mesh->vertexData[v * stride + indexOffset];
+        std::uint32_t bits = 0;
+        std::memcpy(&bits, &raw, 4);
+        std::printf("    %zu: вага %.3f  байти %u %u %u %u\n", v, weight, bits & 0xff,
+                    (bits >> 8) & 0xff, (bits >> 16) & 0xff, (bits >> 24) & 0xff);
+      }
+    }
+  }
+
+  // Риґи скінінгу: які кістки бере кожен матеріал.
+  if (mesh->kind == obf2::mesh::Kind::Skinned) {
+    for (std::size_t g = 0; g < mesh->geometries.size(); ++g) {
+      for (std::size_t l = 0; l < mesh->geometries[g].lods.size(); ++l) {
+        const auto& lod = mesh->geometries[g].lods[l];
+        for (std::size_t r = 0; r < lod.rigs.size(); ++r) {
+          std::printf("  geom %zu lod %zu риґ %zu (матеріалів %zu): кісток %zu, номери:", g, l, r,
+                      lod.materials.size(), lod.rigs[r].bones.size());
+          for (std::size_t b = 0; b < lod.rigs[r].bones.size() && b < 16; ++b) {
+            std::printf(" %u", lod.rigs[r].bones[b].id);
+          }
+          std::printf("\n");
+        }
+      }
+    }
+  }
+
   std::printf("  bbox: %.2f/%.2f/%.2f .. %.2f/%.2f/%.2f\n", render->bounds.min.x,
               render->bounds.min.y, render->bounds.min.z, render->bounds.max.x,
               render->bounds.max.y, render->bounds.max.z);

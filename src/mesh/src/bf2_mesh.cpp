@@ -259,6 +259,8 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
   // (база, детейл, лайтмапа), і для геометрії досить нульового.
   bool hasPosition = false, hasNormal = false, hasUv = false, hasPart = false;
   std::size_t positionFloat = 0, normalFloat = 0, uvFloat = 0, partFloat = 0;
+  std::size_t weightFloat = 0;
+  bool hasWeight = false;
   for (const VertexAttribute& attribute : mesh.attributes) {
     if (attribute.flag != 0) continue;  // 255 = канал вимкнено
     const std::size_t index = attribute.offset / sizeof(float);
@@ -266,6 +268,7 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
     // це 0x105, а TEXCOORD2 (лайтмапа) — 0x205. Нам треба нульовий.
     switch (attribute.usage) {
       case 0: positionFloat = index; hasPosition = true; break;
+      case 1: weightFloat = index; hasWeight = true; break;
       case 2: partFloat = index; hasPart = true; break;
       case 3: normalFloat = index; hasNormal = true; break;
       case 5:
@@ -280,6 +283,12 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
   out.bounds = Aabb{lod.min, lod.max};
   out.vertices.resize(mesh.vertexCount);
   if (hasPart && mesh.kind == Kind::Bundled) out.vertexPart.resize(mesh.vertexCount);
+  // Скінінг: пара кісток і вага. Риґи копіюємо як є — вони прив'язують
+  // номери в риґу до номерів кісток скелета.
+  if (mesh.kind == Kind::Skinned && hasPart && hasWeight) {
+    out.skin.resize(mesh.vertexCount);
+    out.rigs = lod.rigs;
+  }
 
   for (std::uint32_t i = 0; i < mesh.vertexCount; ++i) {
     const std::size_t base = static_cast<std::size_t>(i) * stride;
@@ -291,6 +300,15 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
       std::uint32_t packed = 0;
       std::memcpy(&packed, &mesh.vertexData[base + partFloat], sizeof(packed));
       out.vertexPart[i] = static_cast<std::uint8_t>(packed & 0xFFu);
+    }
+
+    if (!out.skin.empty() && base + partFloat < mesh.vertexData.size() &&
+        base + weightFloat < mesh.vertexData.size()) {
+      std::uint32_t packed = 0;
+      std::memcpy(&packed, &mesh.vertexData[base + partFloat], sizeof(packed));
+      out.skin[i].boneA = static_cast<std::uint8_t>(packed & 0xFFu);
+      out.skin[i].boneB = static_cast<std::uint8_t>((packed >> 8) & 0xFFu);
+      out.skin[i].weight = mesh.vertexData[base + weightFloat];
     }
 
     if (base + positionFloat + 2 < mesh.vertexData.size()) {
@@ -311,7 +329,8 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
 
   // Індекси в матеріалі відлічуються від його vertexStart, тому зводимо все
   // до одного плоского буфера з абсолютними індексами.
-  for (const Material& material : lod.materials) {
+  for (std::size_t materialIndex = 0; materialIndex < lod.materials.size(); ++materialIndex) {
+    const Material& material = lod.materials[materialIndex];
     if (material.indexCount == 0) continue;
     if (material.indexStart > mesh.indices.size() ||
         mesh.indices.size() - material.indexStart < material.indexCount) {
@@ -321,6 +340,11 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
     DrawRange range;
     range.indexStart = static_cast<std::uint32_t>(out.indices.size());
     range.indexCount = material.indexCount;
+    // Риґи йдуть по одному на матеріал — це видно на всіх скелетних мешах
+    // гри: кількість риґів у lod завжди дорівнює кількості матеріалів.
+    if (!out.rigs.empty() && materialIndex < out.rigs.size()) {
+      range.rig = static_cast<int>(materialIndex);
+    }
     range.fxFile = material.fxFile;
     range.technique = material.technique;
     range.maps = material.maps;

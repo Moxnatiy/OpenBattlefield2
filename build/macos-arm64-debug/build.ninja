@@ -525,6 +525,15 @@ build src/mesh/CMakeFiles/obf2_mesh.dir/src/animation.cpp.o: CXX_COMPILER__obf2_
   OBJECT_FILE_DIR = src/mesh/CMakeFiles/obf2_mesh.dir/src
   TARGET_SUPPORT_DIR = src/mesh/CMakeFiles/obf2_mesh.dir
 
+build src/mesh/CMakeFiles/obf2_mesh.dir/src/skinning.cpp.o: CXX_COMPILER__obf2_mesh_unscanned_Debug /Users/miami/OpenBattlefield2/src/mesh/src/skinning.cpp || cmake_object_order_depends_target_obf2_mesh
+  CONFIG = Debug
+  DEP_FILE = src/mesh/CMakeFiles/obf2_mesh.dir/src/skinning.cpp.o.d
+  FLAGS = -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -I/Users/miami/OpenBattlefield2/src/mesh/include -I/Users/miami/OpenBattlefield2/src/core/include
+  OBJECT_DIR = src/mesh/CMakeFiles/obf2_mesh.dir
+  OBJECT_FILE_DIR = src/mesh/CMakeFiles/obf2_mesh.dir/src
+  TARGET_SUPPORT_DIR = src/mesh/CMakeFiles/obf2_mesh.dir
+
 
 # =============================================================================
 # Link build statements for STATIC_LIBRARY target obf2_mesh
@@ -533,7 +542,7 @@ build src/mesh/CMakeFiles/obf2_mesh.dir/src/animation.cpp.o: CXX_COMPILER__obf2_
 #############################################
 # Link the static library src/mesh/libobf2_mesh.a
 
-build src/mesh/libobf2_mesh.a: CXX_STATIC_LIBRARY_LINKER__obf2_mesh_Debug src/mesh/CMakeFiles/obf2_mesh.dir/src/bf2_mesh.cpp.o src/mesh/CMakeFiles/obf2_mesh.dir/src/collision.cpp.o src/mesh/CMakeFiles/obf2_mesh.dir/src/skeleton.cpp.o src/mesh/CMakeFiles/obf2_mesh.dir/src/animation.cpp.o || src/core/libobf2_core.a
+build src/mesh/libobf2_mesh.a: CXX_STATIC_LIBRARY_LINKER__obf2_mesh_Debug src/mesh/CMakeFiles/obf2_mesh.dir/src/bf2_mesh.cpp.o src/mesh/CMakeFiles/obf2_mesh.dir/src/collision.cpp.o src/mesh/CMakeFiles/obf2_mesh.dir/src/skeleton.cpp.o src/mesh/CMakeFiles/obf2_mesh.dir/src/animation.cpp.o src/mesh/CMakeFiles/obf2_mesh.dir/src/skinning.cpp.o || src/core/libobf2_core.a
   ARCH_FLAGS = -arch arm64
   CONFIG = Debug
   LANGUAGE_COMPILE_FLAGS = -g

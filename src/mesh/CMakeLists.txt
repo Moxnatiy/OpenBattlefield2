@@ -3,6 +3,7 @@ add_library(obf2_mesh
   src/collision.cpp
   src/skeleton.cpp
   src/animation.cpp
+  src/skinning.cpp
 )
 add_library(obf2::mesh ALIAS obf2_mesh)
 

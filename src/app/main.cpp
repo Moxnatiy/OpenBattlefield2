@@ -30,6 +30,7 @@
 #include "obf2/server/game_server.h"
 #include "obf2/mesh/bf2_mesh.h"
 #include "obf2/mesh/collision.h"
+#include "obf2/mesh/skinning.h"
 #include "obf2/server/collision_world.h"
 #include "obf2/texture/dds.h"
 #include "obf2/vfs/filesystem.h"
@@ -53,6 +54,9 @@ struct Args {
   // --topdown: строго згори, +X праворуч, -Z вгору. Потрібно, щоб звіряти
   // орієнтацію світу з власною мінімапою рівня.
   bool topDown = false;
+  std::string animationPath;   // --anim: .baf для скелетної анімації
+  std::string skeletonPath;    // --skeleton: .ske; типово скелет солдата
+  int frame = 0;               // --frame: який кадр показати
   bool click = false;  // --click: одне натискання в позиції --mouse
   float distance = 0.0f;             // 0 = підібрати за габаритами
 };
@@ -73,6 +77,9 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--hosted") args.hosted = true;
     else if (flag == "--verbose-menu") args.verboseMenu = true;
     else if (flag == "--topdown") args.topDown = true;
+    else if (flag == "--anim" && i + 1 < argc) args.animationPath = argv[++i];
+    else if (flag == "--skeleton" && i + 1 < argc) args.skeletonPath = argv[++i];
+    else if (flag == "--frame" && i + 1 < argc) args.frame = std::atoi(argv[++i]);
     else if (flag == "--click") args.click = true;
     else if (flag == "--mouse" && i + 2 < argc) {
       args.mouseX = static_cast<float>(std::atof(argv[++i]));
@@ -827,6 +834,36 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       if (!single) {
         std::fprintf(stderr, "не вдалося зібрати об'єкт %s\n", args.objectName.c_str());
         return 1;
+      }
+
+      // Скелетна анімація: ставимо меш у позу з кліпу.
+      if (!args.animationPath.empty() && !single->skin.empty()) {
+        const std::string skeletonPath =
+            args.skeletonPath.empty()
+                ? std::string("objects/soldiers/Common/Animations/3p_setup.ske")
+                : args.skeletonPath;
+
+        const auto skeletonBytes = files.read(skeletonPath);
+        const auto animationBytes = files.read(args.animationPath);
+        if (!skeletonBytes || !animationBytes) {
+          std::fprintf(stderr, "немає скелета або анімації\n");
+        } else {
+          std::string skinError;
+          const auto skeleton = obf2::mesh::loadSkeleton(*skeletonBytes, &skinError);
+          const auto animation = obf2::mesh::loadBoneAnimation(*animationBytes, &skinError);
+          if (!skeleton || !animation) {
+            std::fprintf(stderr, "скелет/анімація: %s\n", skinError.c_str());
+          } else {
+            const auto frameIndex = static_cast<std::uint32_t>(args.frame < 0 ? 0 : args.frame);
+            const auto pose = obf2::mesh::poseSkeleton(*skeleton, &*animation, frameIndex);
+            obf2::mesh::RenderMesh posed = *single;
+            obf2::mesh::skinMesh(*single, pose, posed);
+            std::printf("  поза: скелет %zu кісток, кліп %zu доріжок, кадр %u з %u\n",
+                        skeleton->bones.size(), animation->boneIds.size(), frameIndex,
+                        animation->frameCount);
+            single = std::move(posed);
+          }
+        }
       }
     } else {
       single = loadMesh(files, args.meshPath, args.geometryIndex, args.lodIndex, true);
