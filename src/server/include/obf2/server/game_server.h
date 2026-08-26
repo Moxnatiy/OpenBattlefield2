@@ -73,6 +73,8 @@ struct Player {
 
   int team = 1;
   bool alive = false;
+  // Здоров'я з даних солдата (`ObjectTemplate.armor.maxHitPoints 100`).
+  float health = 100.0f;
   float respawnTimer = 0.0f;  // скільки лишилося чекати до появи
 };
 
@@ -92,6 +94,8 @@ struct ServerSettings {
   // Радіус солдата для зіткнень. У BF2 це капсула; сфера трохи грубіша,
   // але вже не пускає крізь стіни.
   float soldierRadius = 0.4f;
+  // Здоров'я солдата: у всіх наборах BF2 це рівно 100.
+  float soldierMaxHealth = 100.0f;
   Vec3f spawnPosition{0.0f, 0.0f, 0.0f};
   std::string soldierTemplate = "player_soldier";
 
@@ -173,6 +177,10 @@ class GameServer {
   // 0 — раунд триває, інакше номер команди-переможця.
   int winner() const { return winner_; }
   float groundHeightAt(const Vec3f& position) const;
+
+  // Вбиває гравця: команда втрачає квиток, далі чекання й нова поява.
+  // Так само, як onPlayerDeath у gpm_cq.py.
+  void killPlayer(std::uint32_t playerId, std::string_view reason);
 
   // Приймає нове під'єднання. Сервер бере канал у власність.
   void accept(std::unique_ptr<net::Connection> connection);

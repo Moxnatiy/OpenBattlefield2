@@ -318,7 +318,43 @@ static void testRoundEndsWhenTicketsRunOut() {
   CHECK(gameServer.status() == server::GameStatus::EndGame);
 }
 
+static void testDeathCostsTicketAndRespawns() {
+  server::ServerSettings settings;
+  settings.defaultTickets[1] = 100;
+  settings.defaultTickets[2] = 100;
+  settings.respawnDelay = 0.5f;
+  settings.spawnPosition = Vec3f{0.0f, 0.0f, 0.0f};
+
+  server::GameServer gameServer(settings);
+  gameServer.setGameplay(makeGameplay());
+
+  auto [clientSide, serverSide] = net::LoopbackConnection::createPair();
+  gameServer.accept(std::move(serverSide));
+  server::GameClient client(std::move(clientSide), "ARNE");
+  client.connect();
+  pump(gameServer, client);
+
+  CHECK_EQ(gameServer.tickets(1), 100);
+  CHECK_EQ(gameServer.players().size(), std::size_t(1));
+  if (gameServer.players().empty()) return;
+  CHECK(gameServer.players().front().alive);
+
+  gameServer.killPlayer(gameServer.players().front().id, "тест");
+  CHECK_EQ(gameServer.tickets(1), 99);
+  CHECK(!gameServer.players().front().alive);
+
+  // Через півсекунди гравець має з'явитися знову з повним здоров'ям.
+  for (int i = 0; i < 30; ++i) {
+    gameServer.tick(1.0f / 30.0f);
+    client.tick(1.0f / 30.0f);
+  }
+  CHECK(gameServer.players().front().alive);
+  CHECK(gameServer.players().front().health > 99.0f);
+  CHECK_EQ(gameServer.tickets(1), 99);
+}
+
 TEST_MAIN({
+  testDeathCostsTicketAndRespawns();
   testEnemyFlagIsNeutralizedBeforeCapture();
   testTicketsStartFromDefaults();
   testTicketsBleedForTeamWithoutArea();

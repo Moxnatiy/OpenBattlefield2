@@ -366,6 +366,24 @@ void GameServer::updateControlPoints(float step) {
   }
 }
 
+void GameServer::killPlayer(std::uint32_t playerId, std::string_view reason) {
+  for (Player& player : players_) {
+    if (player.id != playerId || !player.alive) continue;
+
+    player.alive = false;
+    player.health = 0.0f;
+    player.respawnTimer = settings_.respawnDelay;
+
+    // Смерть коштує команді один квиток — правило режиму, не рушія.
+    if (player.team == 1 || player.team == 2) --teams_[player.team].tickets;
+
+    log_.push_back("гравець \"" + player.name + "\" загинув: " + std::string(reason));
+    // Востаннє живий у команді без точок — вмикається кінцевий витік.
+    updateTicketLoss();
+    return;
+  }
+}
+
 void GameServer::updateTicketLoss() {
   for (int team = 1; team <= 2; ++team) {
     teams_[team].areaValue = 0.0f;
@@ -475,6 +493,18 @@ void GameServer::simulate(float step) {
     updateTickets(step);
   }
 
+  // Провалився крізь світ — це смерть, інакше гравець падає вічно.
+  if (terrain_ != nullptr) {
+    const float floorHeight = terrain_->terrain.seaLevel - 100.0f;
+    for (Player& player : players_) {
+      if (!player.alive) continue;
+      const WorldObject* soldier = findObject(player.soldierId);
+      if (soldier != nullptr && soldier->position.y < floorHeight) {
+        killPlayer(player.id, "провалився за межі світу");
+      }
+    }
+  }
+
   // Поява після смерті: чекаємо затримку, потім ставимо на точку.
   for (Player& player : players_) {
     if (player.alive || !player.acknowledged) continue;
@@ -485,6 +515,7 @@ void GameServer::simulate(float step) {
         soldier->position = chooseSpawn(player.team);
         soldier->velocity = Vec3f{};
         player.alive = true;
+        player.health = settings_.soldierMaxHealth;
         log_.push_back("гравець \"" + player.name + "\" з'явився знову");
       }
     }

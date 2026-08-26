@@ -407,13 +407,16 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         settingsConsole.bind("sv.ticketRatio", [&](const obf2::con::Command& command) {
           serverSettings.ticketRatio = command.argFloat(0).value_or(serverSettings.ticketRatio);
         });
+        settingsConsole.bind("sv.spawnTime", [&](const obf2::con::Command& command) {
+          serverSettings.respawnDelay = command.argFloat(0).value_or(serverSettings.respawnDelay);
+        });
         obf2::con::Interpreter settingsInterpreter(
             files, [&](const obf2::con::Command& c) { settingsConsole.execute(c); });
         settingsInterpreter.runFile("GameLogicInit.con");
         settingsInterpreter.runFile("Settings/ServerSettings.con");
-        std::printf("  квитки: %d проти %d (ticketRatio %.0f%%)\n",
+        std::printf("  квитки: %d проти %d (ticketRatio %.0f%%), поява через %.0f с\n",
                     serverSettings.defaultTickets[1], serverSettings.defaultTickets[2],
-                    serverSettings.ticketRatio);
+                    serverSettings.ticketRatio, serverSettings.respawnDelay);
       }
 
       hostedServer = std::make_unique<obf2::server::GameServer>(serverSettings);
