@@ -211,6 +211,13 @@ def client_info_blob(name="OpenBF2", second="", third="", number=0, value=0, fla
 # він рве з'єднання.
 EVENT_CHALLENGE_RESPONSE = 2
 EVENT_DATA_BLOCK = 4
+EVENT_POST_REMOTE = 11
+
+# `PostRemoteEvent` піднімає подію на тому боці. Категорію 6
+# `GameServer::handleEvent` віддає в `handleNetworkEvent`, а номер 2 у
+# його таблиці переходів — це `clientLoadComplete`.
+NETWORK_CATEGORY = 6
+NET_LOAD_COMPLETE = 2
 
 
 def data_packet(conn, seq, ack, events, ack_bits=0xFFFFFFFF, pad=0, batch=0):
@@ -407,8 +414,33 @@ def read_voip_on_off(r):
     return {"гравець": r.read(8), "увімкнено": r.read(1)}
 
 
+def read_post_remote(r):
+    """PostRemoteEvent (тип 11): «підніми в себе оцю подію»."""
+    out = {
+        "категорія": r.read(4),
+        "подія": r.read(32),
+        "затримка": r.read(32),
+    }
+    length = r.read(8)
+    out["дані"] = r.read_bytes(length)
+    return out
+
+
+def read_invite(r):
+    """InviteEvent (тип 25): запрошення до загону."""
+    return {"від": r.read(8), "кому": r.read(8), "загін": r.read(8), "прапорець": r.read(1)}
+
+
+def read_rank(r):
+    """RankEvent (тип 26): звання гравця."""
+    return {"вид": r.read(2), "звання": r.read(6), "поле32": r.read(32), "гравець": r.read(8)}
+
+
 EVENT_READERS = {
     0: ("StringManagerEvent", read_string_manager),
+    11: ("PostRemoteEvent", read_post_remote),
+    25: ("InviteEvent", read_invite),
+    26: ("RankEvent", read_rank),
     35: ("VoipOnOffEvent", read_voip_on_off),
     3: ("ConnectionTypeEvent", read_connection_type),
     4: ("DataBlockEvent", read_data_block),
@@ -444,7 +476,8 @@ def walk_events(data):
             events.append({"тип": kind, "невідома": True})
             complete = False
             break
-        events.append({"тип": kind, "клас": name, **reader(r)})
+        before = r.at
+        events.append({"тип": kind, "клас": name, "біт": before, **reader(r)})
 
     out = {"seq": seq, "розмір": size, "пачка": batch, "події": events}
     if complete:
