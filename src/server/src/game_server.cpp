@@ -534,8 +534,11 @@ void GameServer::simulate(float step) {
     const float cos = std::cos(yaw);
 
     const float speed = player.input.sprint ? settings_.sprintSpeed : settings_.walkSpeed;
-    Vec3f wish{player.input.moveRight * cos - player.input.moveForward * sin, 0.0f,
-               -player.input.moveRight * sin - player.input.moveForward * cos};
+    // У BF2 нульовий кут повороту дивиться вздовж **+Z** (це видно з
+    // самих даних: у авіаносця носова частина стоїть на більшому Z при
+    // нульовому повороті). Вправо в лівій системі — cross(up, forward).
+    Vec3f wish{player.input.moveForward * sin + player.input.moveRight * cos, 0.0f,
+               player.input.moveForward * cos - player.input.moveRight * sin};
 
     // Нормуємо, щоб рух по діагоналі не був швидшим за рух прямо.
     const float magnitude = length(wish);

@@ -240,7 +240,10 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   // (2.2 млн трикутників) геометрична нормаль збігається з нормалями вершин
   // у 99.66% випадків. Тому відсікання задніх граней увімкнене.
   info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_BACK;
-  info.rasterizer_state.front_face = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+  // У лівій системі напрям обходу на екрані протилежний до правої, тож
+  // лицьовими стають трикутники за годинниковою стрілкою. Дані мешів при
+  // цьому не змінилися — змінився бік, з якого ми на них дивимось.
+  info.rasterizer_state.front_face = SDL_GPU_FRONTFACE_CLOCKWISE;
   info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
   info.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS;
   info.depth_stencil_state.enable_depth_test = true;

@@ -117,30 +117,42 @@ inline Vec3f transformDirection(const Mat4& m, Vec3f v) {
           m.m[2] * v.x + m.m[6] * v.y + m.m[10] * v.z};
 }
 
-// Права система координат, камера дивиться вздовж -Z.
+// Ліва система координат, камера дивиться вздовж +Z — те саме, що робить
+// `D3DXMatrixLookAtLH`: вправо йде cross(up, forward), а не навпаки.
 inline Mat4 lookAt(Vec3f eye, Vec3f target, Vec3f up) {
   const Vec3f f = normalize(target - eye);
-  const Vec3f s = normalize(cross(f, up));
-  const Vec3f u = cross(s, f);
+  const Vec3f s = normalize(cross(up, f));
+  const Vec3f u = cross(f, s);
 
   Mat4 out = Mat4::identity();
   out.m[0] = s.x;  out.m[4] = s.y;  out.m[8]  = s.z;
   out.m[1] = u.x;  out.m[5] = u.y;  out.m[9]  = u.z;
-  out.m[2] = -f.x; out.m[6] = -f.y; out.m[10] = -f.z;
+  out.m[2] = f.x;  out.m[6] = f.y;  out.m[10] = f.z;
   out.m[12] = -dot(s, eye);
   out.m[13] = -dot(u, eye);
-  out.m[14] = dot(f, eye);
+  out.m[14] = -dot(f, eye);
   return out;
 }
 
+// Ліва система координат — як у рушія гри.
+//
+// Це не припущення: `RendDX9.dll` імпортує саме `D3DXMatrixPerspectiveFovLH`,
+// `D3DXMatrixLookAtLH` і `D3DXMatrixOrthoLH`. Refractor 2 — рушій під
+// DirectX 9, де X праворуч, Y вгору, Z **у глибину екрана**.
+//
+// Різниця важлива не для глибини, а для лівого й правого: у `LookAtLH`
+// вісь екрана вправо — це `cross(up, forward)`, а в правій системі —
+// `cross(forward, up)`, тобто рівно навпаки. Якщо взяти дані гри й
+// намалювати їх правостороннім конвеєром, увесь світ виходить
+// дзеркальним. Саме це в нас і було.
 inline Mat4 perspective(float fovYRadians, float aspect, float nearZ, float farZ) {
   const float f = 1.0f / std::tan(fovYRadians * 0.5f);
   Mat4 out;
   out.m[0] = f / aspect;
   out.m[5] = f;
-  out.m[10] = farZ / (nearZ - farZ);
-  out.m[11] = -1.0f;
-  out.m[14] = (farZ * nearZ) / (nearZ - farZ);
+  out.m[10] = farZ / (farZ - nearZ);
+  out.m[11] = 1.0f;
+  out.m[14] = -(farZ * nearZ) / (farZ - nearZ);
   return out;
 }
 

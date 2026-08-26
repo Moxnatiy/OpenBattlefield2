@@ -50,6 +50,9 @@ struct Args {
   std::optional<obf2::Vec3f> focus;  // куди дивиться камера
   float mouseX = -1.0f, mouseY = -1.0f;  // --mouse: поставити курсор для знімка
   bool verboseMenu = false;
+  // --topdown: строго згори, +X праворуч, -Z вгору. Потрібно, щоб звіряти
+  // орієнтацію світу з власною мінімапою рівня.
+  bool topDown = false;
   bool click = false;  // --click: одне натискання в позиції --mouse
   float distance = 0.0f;             // 0 = підібрати за габаритами
 };
@@ -69,6 +72,7 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--screen" && i + 1 < argc) args.screen = argv[++i];
     else if (flag == "--hosted") args.hosted = true;
     else if (flag == "--verbose-menu") args.verboseMenu = true;
+    else if (flag == "--topdown") args.topDown = true;
     else if (flag == "--click") args.click = true;
     else if (flag == "--mouse" && i + 2 < argc) {
       args.mouseX = static_cast<float>(std::atof(argv[++i]));
@@ -842,10 +846,12 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   }
 
   if (level) {
+    // У режимі мапи туман тільки заважає: з висоти він з'їдає весь рівень.
+    const float fogEnd = args.topDown ? 0.0f : level->terrain.fogEnd;
     renderer->setFog(obf2::gfx::MeshRenderer::Fog{
         obf2::gfx::Color{level->terrain.fogColor.x, level->terrain.fogColor.y,
                          level->terrain.fogColor.z, 1.0f},
-        level->terrain.fogStart, level->terrain.fogEnd});
+        level->terrain.fogStart, fogEnd});
     renderer->setTerrainLighting(
         obf2::gfx::Color{level->terrain.terrainSunColor.x, level->terrain.terrainSunColor.y,
                          level->terrain.terrainSunColor.z, 1.0f},
@@ -1068,13 +1074,18 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       constexpr float kToRadians = 3.14159265358979323846f / 180.0f;
       const float yawRadians = yaw * kToRadians;
       const float pitchRadians = pitch * kToRadians;
-      lookTarget = eye + obf2::Vec3f{-std::sin(yawRadians) * std::cos(pitchRadians),
+      // Нульовий кут дивиться вздовж +Z — так само, як рахує сервер.
+      lookTarget = eye + obf2::Vec3f{std::sin(yawRadians) * std::cos(pitchRadians),
                                      std::sin(pitchRadians),
-                                     -std::cos(yawRadians) * std::cos(pitchRadians)};
+                                     std::cos(yawRadians) * std::cos(pitchRadians)};
     } else {
-      const float angle = static_cast<float>(frame) / 60.0f * 0.6f;
-      eye = obf2::Vec3f{scene.center.x + std::sin(angle) * distance, scene.center.y + eyeHeight,
-                        scene.center.z + std::cos(angle) * distance};
+      if (args.topDown) {
+        eye = obf2::Vec3f{scene.center.x, scene.center.y + distance, scene.center.z};
+      } else {
+        const float angle = static_cast<float>(frame) / 60.0f * 0.6f;
+        eye = obf2::Vec3f{scene.center.x + std::sin(angle) * distance, scene.center.y + eyeHeight,
+                          scene.center.z + std::cos(angle) * distance};
+      }
     }
 
     const float aspect =
@@ -1083,7 +1094,12 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
             : static_cast<float>(acquired->width) / static_cast<float>(acquired->height);
     const obf2::Mat4 projection =
         obf2::perspective(1.05f, aspect, scene.radius * 0.002f + 0.05f, scene.radius * 40.0f);
-    const obf2::Mat4 view = obf2::lookAt(eye, lookTarget, obf2::Vec3f{0.0f, 1.0f, 0.0f});
+    // Згори «вгору екрана» має бути не Y (він збігся б із поглядом), а Z.
+    // У лівій системі вправо йде cross(up, forward), тож із up = +Z
+    // праворуч опиняється +X — рівно як на власній мінімапі рівня.
+    const obf2::Vec3f up =
+        args.topDown && !bootMode ? obf2::Vec3f{0.0f, 0.0f, 1.0f} : obf2::Vec3f{0.0f, 1.0f, 0.0f};
+    const obf2::Mat4 view = obf2::lookAt(eye, lookTarget, up);
 
     if (bootMode) {
       engine.update(1.0f / 60.0f);
