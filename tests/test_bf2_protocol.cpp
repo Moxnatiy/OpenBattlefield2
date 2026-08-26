@@ -121,7 +121,39 @@ static void testChallengeEventIsDecoded() {
   CHECK_EQ(parsed->challenge->modDirectory, mod);
 }
 
+static void testChallengeResponseLayout() {
+  net::bf2::ExtendedHeader header;
+  header.sequence = 1;
+  header.ack = 2;
+  header.ackBits = 0xFFFFFFFFu;
+
+  const auto packet = writeChallengeResponse(0, header, 0);
+  // 12 базового + 44 розширеного + 1 дій + 15 подій + 7 типу
+  // + 584 блоку + 32 + 32 + 32 = 759 бітів -> 95 байтів.
+  CHECK_EQ(packet.size(), std::size_t(95));
+
+  // Читаємо назад ключові поля: тип пакета, номер, і що всередині подія.
+  net::BitReader reader(packet);
+  CHECK_EQ(reader.readBits(4).value_or(0), static_cast<std::uint32_t>(PacketKind::Data));
+  CHECK_EQ(reader.readBits(8).value_or(0), 0u);
+  CHECK_EQ(reader.readBits(6).value_or(0), 1u);
+  CHECK_EQ(reader.readBits(6).value_or(0), 2u);
+  CHECK_EQ(reader.readBits(32).value_or(0), 0xFFFFFFFFu);
+  CHECK_EQ(reader.readBits(1).value_or(9), 0u);  // дій гравця немає
+  CHECK_EQ(reader.readBits(1).value_or(0), 1u);  // події є
+  CHECK_EQ(reader.readBits(8).value_or(0), 1u);  // рівно одна
+  reader.readBits(5);
+  reader.readBits(1);
+  CHECK_EQ(reader.readBits(kEventTypeBits).value_or(0), 2u);  // тип 2
+
+  // Пропускаємо блок і перевіряємо, що далі йде мережева версія.
+  for (int i = 0; i < 73; ++i) reader.readBits(8);
+  reader.readBits(32);
+  CHECK_EQ(reader.readBits(32).value_or(0), kGameVersion);
+}
+
 TEST_MAIN({
+  testChallengeResponseLayout();
   testChallengeEventIsDecoded();
   testHeaderIsTwelveBits();
   testConnectRequestLayout();

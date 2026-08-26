@@ -127,6 +127,14 @@ struct Incoming {
 // Збирає запит на під'єднання (тип 1).
 std::vector<std::byte> writeConnectRequest(const ConnectRequest& request);
 
+// Відповідь на виклик (подія типу 2). Сервер без автентифікатора
+// (`sv.internet 0`) перевіряє лише мережеву версію — решту блоку не читає.
+//
+// Мережева версія — та сама, що й у запиті на під'єднання: у рушії це
+// `BuildNrUtil::getNetVersionNumber()`, і вона повертає рівно kGameVersion.
+std::vector<std::byte> writeChallengeResponse(std::uint8_t connectionId,
+                                              const ExtendedHeader& header, std::uint8_t batch);
+
 // Відповідь на пінг. `time` — те саме число, що надіслав сервер: за
 // різницею він рахує затримку.
 std::vector<std::byte> writePingResponse(std::uint8_t connectionId, const ExtendedHeader& header,

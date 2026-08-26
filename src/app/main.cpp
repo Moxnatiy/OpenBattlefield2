@@ -390,9 +390,11 @@ int runConnect(const Args& args) {
   // Далі тримаємо зв'язок: сервер шле пінги, і без відповіді він нас
   // відключить. Заразом рахуємо, що саме приходить.
   const std::uint8_t id = packet->accept->connectionId;
-  int pings = 0, dataPackets = 0, other = 0;
+  int pings = 0, dataPackets = 0, other = 0, challenges = 0;
   std::size_t dataBytes = 0;
   std::uint8_t sequence = 0;
+  std::uint8_t batch = 0;
+  bool answered = false;
 
   for (int i = 0; i < 60; ++i) {
     const auto more = socket->receive(500);
@@ -405,10 +407,8 @@ int runConnect(const Args& args) {
         ++pings;
         obf2::net::bf2::ExtendedHeader header;
         header.sequence = sequence++ & 0x3F;
-        if (parsed->extended) {
-          header.ack = parsed->extended->sequence;
-          header.ackBits = parsed->extended->ackBits;
-        }
+        if (parsed->extended) header.ack = parsed->extended->sequence;
+        header.ackBits = 0xFFFFFFFFu;
         socket->send(obf2::net::bf2::writePingResponse(id, header,
                                                        parsed->pingTime.value_or(0)));
         break;
@@ -416,9 +416,22 @@ int runConnect(const Args& args) {
       case obf2::net::bf2::PacketKind::Data:
         ++dataPackets;
         dataBytes += more->size();
-        if (parsed->challenge && dataPackets <= 1) {
-          std::printf("  подія-виклик: %s, мод %s\n", parsed->challenge->challenge.c_str(),
-                      parsed->challenge->modDirectory.c_str());
+        if (parsed->challenge) {
+          ++challenges;
+          if (!answered) {
+            std::printf("  подія-виклик: %s, мод %s\n", parsed->challenge->challenge.c_str(),
+                        parsed->challenge->modDirectory.c_str());
+
+            obf2::net::bf2::ExtendedHeader header;
+            header.sequence = sequence++ & 0x3F;
+            if (parsed->extended) header.ack = parsed->extended->sequence;
+            // Одиниці в масці означають «усе попереднє дійшло». Без цього
+            // сервер вважає подію непідтвердженою й шле її знову й знову.
+            header.ackBits = 0xFFFFFFFFu;
+            socket->send(obf2::net::bf2::writeChallengeResponse(id, header, batch++));
+            std::printf("  надіслано відповідь на виклик\n");
+            answered = true;
+          }
         }
         break;
       default:
@@ -430,6 +443,10 @@ int runConnect(const Args& args) {
   std::printf("  за 30 секунд: пінгів %d (на всі відповіли), пакетів даних %d (%zu байтів), "
               "інших %d\n",
               pings, dataPackets, dataBytes, other);
+  // Якщо виклик прийшов один раз — сервер прийняв нашу відповідь. Поки
+  // вона його не влаштовує, він шле виклик знову й знову.
+  std::printf("  викликів отримано: %d %s\n", challenges,
+              challenges == 1 ? "(відповідь прийнято)" : "(відповідь не прийнято)");
 
   socket->send(obf2::net::bf2::writeShortPacket(obf2::net::bf2::PacketKind::Disconnect,
                                                 packet->accept->connectionId));

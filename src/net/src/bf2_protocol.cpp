@@ -90,6 +90,38 @@ std::vector<std::byte> writePingResponse(std::uint8_t connectionId, const Extend
   return buffer;
 }
 
+std::vector<std::byte> writeChallengeResponse(std::uint8_t connectionId,
+                                              const ExtendedHeader& header, std::uint8_t batch) {
+  std::vector<std::byte> buffer(128);
+  BitWriter writer(buffer);
+  writer.writeBits(static_cast<std::uint32_t>(PacketKind::Data), 4);
+  writer.writeBits(connectionId, 8);
+  writer.writeBits(header.sequence & 0x3F, 6);
+  writer.writeBits(header.ack & 0x3F, 6);
+  writer.writeBits(header.ackBits, 32);
+
+  // Перший потік — дії гравця. Нуль означає «дій немає», і це рівно один
+  // біт (`PlayerActionManager::processReceivedPacket`).
+  writer.writeBits(0, 1);
+
+  // Далі потік подій: є події, скільки їх, номер пачки й ознака повтору.
+  writer.writeBits(1, 1);
+  writer.writeBits(1, 8);
+  writer.writeBits(batch & 0x1F, 5);
+  writer.writeBits(0, 1);
+
+  writer.writeBits(2, kEventTypeBits);  // тип 2 — відповідь на виклик
+  // Блок відповіді на 73 байти: без автентифікатора сервер його не читає.
+  for (int i = 0; i < 73; ++i) writer.writeBits(0, 8);
+  writer.writeBits(0, 32);
+  writer.writeBits(kGameVersion, 32);
+  writer.writeBits(0, 1);       // знак
+  writer.writeBits(0x423, 31);  // номер продукту BF2
+
+  buffer.resize(writer.byteSize());
+  return buffer;
+}
+
 std::optional<Incoming> readPacket(std::span<const std::byte> data) {
   if (data.size() * 8 < 12) return std::nullopt;
   BitReader reader(data);
