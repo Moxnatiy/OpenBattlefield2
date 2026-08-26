@@ -476,10 +476,14 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
           continue;
         }
 
-        obf2::Mat4 transform = obf2::translation(object.position);
-        if (object.hasRotation) {
-          transform = transform * obf2::rotationYawPitchRoll(object.rotation.x, object.rotation.y,
-                                                             object.rotation.z);
+        // Рослинність приходить готовою матрицею, решта — позиція з кутами.
+        obf2::Mat4 transform = object.transform;
+        if (!object.hasTransform) {
+          transform = obf2::translation(object.position);
+          if (object.hasRotation) {
+            transform = transform * obf2::rotationYawPitchRoll(object.rotation.x, object.rotation.y,
+                                                               object.rotation.z);
+          }
         }
         collisionWorld->addLayer(*layer, transform);
         ++withCollision;
@@ -528,6 +532,16 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         staticObject.hasRotation = true;
         placement.push_back(std::move(staticObject));
       }
+
+      // Рослинність мережею не ходить — клієнт малює її сам за даними
+      // рівня, як і оригінал. Матриця з .con несе і поворот, і масштаб.
+      int overgrowth = 0;
+      for (const obf2::level::StaticObject& object : level->objects) {
+        if (!object.isOvergrowth) continue;
+        placement.push_back(object);
+        ++overgrowth;
+      }
+      std::printf("  рослинність із даних рівня: %d примірників\n", overgrowth);
     }
 
     std::unordered_map<std::string, int> meshIndexByTemplate;
@@ -550,10 +564,13 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         continue;
       }
 
-      obf2::Mat4 transform = obf2::translation(object.position);
-      if (object.hasRotation) {
-        transform = transform * obf2::rotationYawPitchRoll(object.rotation.x, object.rotation.y,
-                                                           object.rotation.z);
+      obf2::Mat4 transform = object.transform;
+      if (!object.hasTransform) {
+        transform = obf2::translation(object.position);
+        if (object.hasRotation) {
+          transform = transform * obf2::rotationYawPitchRoll(object.rotation.x, object.rotation.y,
+                                                             object.rotation.z);
+        }
       }
       scene.instances.emplace_back(found->second, transform);
       ++placed;

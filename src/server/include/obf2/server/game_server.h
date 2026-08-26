@@ -55,6 +55,8 @@ struct WorldObject {
   // 907 будинків їхали б у мережу шістдесят разів на секунду.
   bool dynamic = false;
   std::uint32_t ownerPlayerId = 0;  // 0 = нічий
+  // Техніка зі спавнера: щоб знати, що переставляти при зміні власника точки.
+  int spawnerIndex = -1;
 };
 
 struct Player {
@@ -198,6 +200,9 @@ class GameServer {
   void broadcastDynamic();
   WorldObject* findObject(std::uint32_t id);
   std::uint32_t spawnSoldier(Player& player);
+  // Ставить техніку зі спавнерів: шаблон залежить від того, чия точка,
+  // до якої спавнер прив'язаний.
+  void spawnVehicles();
   void updateControlPoints(float step);
   // Перерахунок швидкості підйому прапора однієї точки.
   void refreshTakeOver(ControlPointState& point);

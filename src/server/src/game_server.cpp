@@ -23,6 +23,9 @@ void GameServer::loadWorld(const level::Level& level, std::size_t limit) {
   objects_.clear();
   for (const level::StaticObject& object : level.objects) {
     if (limit != 0 && objects_.size() >= limit) break;
+    // Рослинність мережею не ходить: в оригіналі її малює клієнт сам за
+    // даними рівня, а серверу вона потрібна тільки для зіткнень.
+    if (object.isOvergrowth) continue;
     WorldObject world;
     world.id = nextObjectId_++;
     world.templateName = object.templateName;
@@ -32,6 +35,8 @@ void GameServer::loadWorld(const level::Level& level, std::size_t limit) {
   }
   log_.push_back("світ завантажено: " + std::to_string(objects_.size()) + " об'єктів з рівня " +
                  level.name);
+  // Статику щойно перезаписали — техніку зі спавнерів треба поставити знову.
+  spawnVehicles();
 }
 
 void GameServer::accept(std::unique_ptr<net::Connection> connection) {
@@ -191,6 +196,7 @@ void GameServer::setGameplay(level::GameplayObjects gameplay) {
   status_ = GameStatus::Playing;
   winner_ = 0;
   updateTicketLoss();
+  spawnVehicles();
   log_.push_back("логіка режиму: " + std::to_string(controlPoints_.size()) +
                  " контрольних точок, " + std::to_string(gameplay_.spawners.size()) +
                  " спавнерів");
@@ -202,6 +208,37 @@ Vec3f GameServer::chooseSpawn(int team) const {
     if (point.team == team) return point.position;
   }
   return settings_.spawnPosition;
+}
+
+void GameServer::spawnVehicles() {
+  // Прибираємо те, що вже стоїть від спавнерів: власник точки міг змінитися.
+  objects_.erase(std::remove_if(objects_.begin(), objects_.end(),
+                                [](const WorldObject& object) { return object.spawnerIndex >= 0; }),
+                 objects_.end());
+
+  int placed = 0;
+  for (std::size_t i = 0; i < gameplay_.spawners.size(); ++i) {
+    const level::ObjectSpawner& spawner = gameplay_.spawners[i];
+
+    // Яку саме машину видати, вирішує команда — власник прив'язаної точки.
+    int team = spawner.teamOnVehicle;
+    for (const ControlPointState& point : controlPoints_) {
+      if (point.id == spawner.controlPointId) { team = point.team; break; }
+    }
+    const auto found = spawner.templateByTeam.find(team);
+    if (found == spawner.templateByTeam.end() || found->second.empty()) continue;
+
+    WorldObject vehicle;
+    vehicle.id = nextObjectId_++;
+    vehicle.templateName = found->second;
+    vehicle.position = spawner.position;
+    vehicle.rotation = spawner.rotation;
+    vehicle.spawnerIndex = static_cast<int>(i);
+    objects_.push_back(std::move(vehicle));
+    ++placed;
+  }
+  log_.push_back("техніка зі спавнерів: " + std::to_string(placed) + " з " +
+                 std::to_string(gameplay_.spawners.size()));
 }
 
 void GameServer::refreshTakeOver(ControlPointState& point) {
@@ -271,6 +308,7 @@ void GameServer::onFlagReachedEnd(ControlPointState& point, bool top) {
                              std::to_string(newTeam));
   }
   updateTicketLoss();
+  spawnVehicles();
 }
 
 void GameServer::updateControlPoints(float step) {

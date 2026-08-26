@@ -87,6 +87,15 @@ struct StaticObject {
   Vec3f position;
   Vec3f rotation;  // yaw/pitch/roll у градусах
   bool hasRotation = false;
+
+  // Рослинність задається не кутами, а готовою матрицею
+  // (`Object.absoluteTransformation`) — з поворотом і масштабом одразу.
+  bool hasTransform = false;
+  Mat4 transform = Mat4::identity();
+
+  // `Object.isOvergrowth 1`: такі об'єкти в оригіналі малює окрема система
+  // рослинності, а у файлі вони лежать заради зіткнень.
+  bool isOvergrowth = false;
 };
 
 struct Level {

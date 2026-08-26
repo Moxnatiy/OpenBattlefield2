@@ -201,6 +201,35 @@ class LevelBuilder {
       }
       return;
     }
+    if (path == "object.absolutetransformation") {
+      // Чотири групи по чотири числа: три рядки повороту з масштабом і
+      // рядок переносу. Формат той самий, що в редакторі: [x/y/z/w].
+      float values[16] = {};
+      int count = 0;
+      for (const std::string& argument : command.args) {
+        // Числа розділені скісними, а вся група взята в дужки — беремо
+        // просто всі числа підряд.
+        const char* cursor = argument.c_str();
+        while (*cursor != '\0' && count < 16) {
+          if (*cursor == '[' || *cursor == ']' || *cursor == '/') { ++cursor; continue; }
+          char* end = nullptr;
+          const float value = std::strtof(cursor, &end);
+          if (end == cursor) { ++cursor; continue; }
+          values[count++] = value;
+          cursor = end;
+        }
+      }
+      if (count >= 16) {
+        for (int i = 0; i < 16; ++i) current.transform.m[i] = values[i];
+        current.hasTransform = true;
+        current.position = Vec3f{values[12], values[13], values[14]};
+      }
+      return;
+    }
+    if (path == "object.isovergrowth") {
+      current.isOvergrowth = command.argBool(0).value_or(false);
+      return;
+    }
     if (path == "object.rotation") {
       if (const auto rotation = command.argVec3(0)) {
         current.rotation = Vec3f{rotation->x, rotation->y, rotation->z};
@@ -295,6 +324,9 @@ std::optional<Level> loadLevel(FileSystem& files, std::string_view levelName, st
   interpreter.runFile(base + "/Water.con");
   interpreter.runFile(base + "/Sky.con", editorArgs);
   interpreter.runFile(base + "/CompiledRoads.con", editorArgs);
+  // Рослинність із зіткненнями: справжні примірники з точними матрицями.
+  // Оригінал малює її окремою системою, але моделі й місця — ті самі.
+  interpreter.runFile(base + "/Overgrowth/OvergrowthCollision.con", editorArgs);
 
   // Шаблони доріг: у них лежать текстури, і вони живуть в об'єктах гри,
   // а не в рівні.
