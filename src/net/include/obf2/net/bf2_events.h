@@ -37,11 +37,19 @@ bool eventIsBranchy(std::uint32_t type);
 // прапорець після перших трьох полів розводить дві **взаємно виключні**
 // гілки, а полярність видно в коді (`cmpl $0x1; jne`).
 struct CreateObject {
+  // Номер шаблона — це порядок його створення, а не хеш назви:
+  // `ObjectTemplateManager::createTemplate` робить `setId(лічильник)` і
+  // одразу `лічильник++`. Отже щоб зіставити номер із назвою, треба
+  // читати ті самі файли в тому самому порядку, що й гра. Перевірено:
+  // між запусками номери збігаються повністю (27 з 27).
   std::uint32_t templateId = 0;
   std::uint16_t networkId = 0;
   std::uint32_t field2 = 0;
   std::optional<std::uint8_t> field8;
   std::optional<Vec3f> position;
+  // Кути Ейлера ZXY у градусах — той самий вигляд, що й у `.con`
+  // (`getRotationZXY` поруч у `clientSendDatabase`, і три числа там
+  // додатково міняють знак).
   std::optional<Vec3f> rotation;
 };
 
