@@ -491,7 +491,9 @@ def walk_events(data):
     size = r.read(16)
     r.read(1)                      # потік дій гравця
     if r.read(1) != 1:
-        return {"seq": seq, "події": []}
+        # Подій немає — але привиди після них є, і саме в таких пакетах
+        # сервер їх переважно й шле. Раніше ми тут поверталися одразу.
+        return {"seq": seq, "розмір": size, "події": [], "привиди": read_ghosts(r)}
     count, batch, repeat = r.read(8), r.read(5), r.read(1)
 
     events = []

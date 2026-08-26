@@ -1,15 +1,9 @@
 set pagination off
 set confirm off
-break dice::hfe::GameServer::handleNetworkEvent
+break dice::hfe::GhostManager::transmit
 commands
   silent
-  printf ">>мережева %d\n", (int)$rsi
-  continue
-end
-break dice::hfe::ServerGameLogic::spawnPlayer
-commands
-  silent
-  printf ">>spawnPlayer\n"
+  printf ">>межа %d\n", *(int*)($rsi+0x18)
   continue
 end
 run
