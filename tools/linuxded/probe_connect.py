@@ -340,22 +340,33 @@ def _float(r):
 
 
 def read_create_object(r):
-    """CreateObjectEvent (тип 6): 32,16,2,1,8,1,1 бітів і шість чисел."""
+    """CreateObjectEvent (тип 6): дві взаємно виключні гілки.
+
+    Будову знято через `bitfields.py --blocks CreateObjectEvent::deSerialize`,
+    а полярність переходу — з самого коду (`jne` після читання прапорця):
+
+        32  шаблон
+        16  мережевий номер
+         2  поле
+         1  прапорець
+             якщо 1: 8 бітів, і на цьому все
+             якщо 0: 1 біт -> [позиція 3x32], 1 біт -> [поворот 3x32]
+
+    Плаский список читань показував усі поля поспіль, ніби вони завжди
+    є, — через це розбір збивався на наступній події в пакеті.
+    """
     out = {
         "шаблон": r.read(32),
         "мережевий номер": r.read(16),
         "поле2": r.read(2),
-        "прапорець1": r.read(1),
-        "поле8": r.read(8),
-        "прапорець2": r.read(1),
-        "прапорець3": r.read(1),
     }
-    out["позиція"] = tuple(round(_float(r), 2) for _ in range(3))
-    # `serialize` кладе між позицією і поворотом ще три біти —
-    # у списку читань `deSerialize` їх не видно, але без них подія
-    # коротша на три біти й наступна в пакеті з'їжджає.
-    out["прапорці"] = tuple(r.read(1) for _ in range(3))
-    out["поворот"] = tuple(round(_float(r), 2) for _ in range(3))
+    if r.read(1) == 1:
+        out["поле8"] = r.read(8)
+        return out
+    if r.read(1):
+        out["позиція"] = tuple(round(_float(r), 2) for _ in range(3))
+    if r.read(1):
+        out["поворот"] = tuple(round(_float(r), 2) for _ in range(3))
     return out
 
 
@@ -401,12 +412,14 @@ def read_destroy_player(r):
 def read_string_manager(r):
     """StringManagerEvent (тип 0): службова подія рядкового словника.
 
-    Перший біт вирішує, чи є далі щось іще: у пакетах, які сервер шле
-    одразу після реєстрації, він нульовий і подія займає рівно один біт.
+    Будова з `--blocks`: 1 біт, 6 бітів, рядок; далі ще прапорець, за
+    яким може йти 8-бітне поле, і два біти в кінці.
     """
-    if r.read(1) == 0:
+    out = {"прапорець1": r.read(1), "поле6": r.read(6)}
+    if out["прапорець1"] == 0 and out["поле6"] == 0:
         return {"порожня": True}
-    return {"поле6": r.read(6), "решта": "ще не розібрано"}
+    out["решта"] = "ще не розібрано"
+    return out
 
 
 def read_voip_on_off(r):
@@ -416,13 +429,8 @@ def read_voip_on_off(r):
 
 def read_post_remote(r):
     """PostRemoteEvent (тип 11): «підніми в себе оцю подію»."""
-    out = {
-        "категорія": r.read(4),
-        "подія": r.read(32),
-        "затримка": r.read(32),
-    }
-    length = r.read(8)
-    out["дані"] = r.read_bytes(length)
+    out = {"категорія": r.read(4), "подія": r.read(32), "затримка": r.read(32)}
+    out["дані"] = r.read_bytes(r.read(8))
     return out
 
 
@@ -436,7 +444,14 @@ def read_rank(r):
     return {"вид": r.read(2), "звання": r.read(6), "поле32": r.read(32), "гравець": r.read(8)}
 
 
+def read_commander(r):
+    """CommanderEvent (тип 19): 4, 8, 1 біт і 15 бітів в обох гілках."""
+    return {"вид": r.read(4), "гравець": r.read(8), "прапорець": r.read(1),
+            "поле15": r.read(15)}
+
+
 EVENT_READERS = {
+    19: ("CommanderEvent", read_commander),
     0: ("StringManagerEvent", read_string_manager),
     11: ("PostRemoteEvent", read_post_remote),
     25: ("InviteEvent", read_invite),
