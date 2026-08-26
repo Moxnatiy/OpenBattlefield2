@@ -527,3 +527,38 @@ def read_ghosts(r):
         "записів": r.read(8),
         "керований об'єкт": r.read(1),
     }
+
+
+# --- перевірка вмісту ---
+#
+# `ContentCheckEvent` (тип 46) везе три хеші по 128 бітів. Сервер звіряє
+# їх у `GameServer::onContentCheckEvent` з таблицями, які прочитав із
+# файлів std_archive.md5, std_archive_mod.md5, bst_archive.md5 і
+# bst_archive_mod.md5, беручи рядок за номером із
+# `MapInfo::getChallengeOrdinal()`.
+#
+# Файли — прості пари «номер + md5», і в клієнта вони ті самі, тож ми
+# просто читаємо потрібний рядок.
+EVENT_CONTENT_CHECK = 46
+
+
+def read_fingerprints(path):
+    """Номер -> md5 із файлу відбитків."""
+    out = {}
+    with open(path) as handle:
+        for line in handle:
+            parts = line.split()
+            if len(parts) == 2 and parts[0].isdigit():
+                out[int(parts[0])] = parts[1]
+    return out
+
+
+def content_check_event(first, second, third):
+    """Три хеші, кожен — 16 байтів."""
+    def fill(w):
+        for value in (first, second, third):
+            raw = bytes.fromhex(value) if isinstance(value, str) else value
+            assert len(raw) == 16, "хеш має бути 16 байтів"
+            for byte in raw:
+                w.write(byte, 8)
+    return _event(EVENT_CONTENT_CHECK, fill)
