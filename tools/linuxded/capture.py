@@ -28,21 +28,34 @@ import time
 import probe_connect as p
 from handshake import Session, ping_response
 
-STAGES = ["connect", "challenge", "player", "world"]
+STAGES = ["connect", "challenge", "player", "world", "spawn"]
 
 # Блок з відомостями про рівень (`GameServer::sendClientMapInfo`).
 MAP_INFO_BLOCK = 5
 
 # Друга подія, що рухає стан з'єднання (`clientSendDatabaseComplete`).
-NET_DATABASE_COMPLETE = 4
+# Ланцюжок появи гравця. Номери з таблиці, яку BF2.exe реєструє сам
+# (див. docs/functions/network-events.md).
+NET_SELECT_SPAWN_GROUP = 6
+NET_SELECT_TEAM = 7
+NET_SELECT_KIT = 8
+
+# NEDatabaseComplete (4) навмисно не шлемо: після неї сервер замовкає —
+# перестає слати пінги й наші наступні пакети до нього вже не доходять.
+# Справжній клієнт шле її в іншому місці розмови.
 
 
-def post_remote(category, event):
+def post_remote(category, event, value=None):
+    """Мережева подія. Ті, що несуть значення, чекають 32-бітне число."""
+    payload = b"" if value is None else struct.pack("<i", value)
+
     def fill(w):
         w.write(category, 4)
         w.write(event, 32)
         w.write(0, 32)   # затримка, float 0.0
-        w.write(0, 8)    # даних немає
+        w.write(len(payload), 8)
+        for byte in payload:
+            w.write(byte, 8)
     return p._event(p.EVENT_POST_REMOTE, fill)
 
 
@@ -57,7 +70,10 @@ def wait_for_server(host, port, attempts=60, delay=5):
 
 
 class Capture:
-    def __init__(self, host, port, name):
+    def __init__(self, host, port, name, team=1, kit=0, group=1):
+        self.team = team
+        self.kit = kit
+        self.group = group
         self.session = Session(host, port, name)
         self.packets = []
         self.map_info = None
@@ -145,10 +161,18 @@ class Capture:
         if self.map_info is None:
             print("блок із рівнем не прийшов")
         s.send_events([post_remote(p.NETWORK_CATEGORY, p.NET_LOAD_COMPLETE)])
-        self._drain(2)
-        # І «базу гравців отримано»: стан з'єднання рухають обидві події,
-        # а `GameServer::isClientReady` вимагає, щоб він перевалив за три.
-        s.send_events([post_remote(p.NETWORK_CATEGORY, NET_DATABASE_COMPLETE)])
+        if stage == "world":
+            self._drain(hold)
+            return
+
+        # Поява: команда, набір, місце. Саме в такому порядку і саме
+        # цими подіями — перевірено, `ServerGameLogic::spawnPlayer`
+        # після них викликається.
+        self._drain(3)
+        for event, value in ((NET_SELECT_TEAM, self.team), (NET_SELECT_KIT, self.kit),
+                             (NET_SELECT_SPAWN_GROUP, self.group)):
+            s.send_events([post_remote(p.NETWORK_CATEGORY, event, value)])
+            self._drain(3)
         self._drain(hold)
 
 
@@ -207,6 +231,9 @@ def main():
     parser.add_argument("--show", action="store_true", help="розібрати й показати вміст")
     parser.add_argument("--wait", action="store_true", help="лише дочекатися сервера")
     parser.add_argument("--replay", help="розібрати раніше спіймані пакети з файлу")
+    parser.add_argument("--team", type=int, default=1, help="команда для етапу spawn")
+    parser.add_argument("--kit", type=int, default=0, help="набір для етапу spawn")
+    parser.add_argument("--group", type=int, default=1, help="місце появи для етапу spawn")
     args = parser.parse_args()
 
     if args.replay:
@@ -218,7 +245,7 @@ def main():
         print("сервер готовий" if ok else "сервер не відповідає")
         return 0 if ok else 1
 
-    capture = Capture(args.host, args.port, args.name)
+    capture = Capture(args.host, args.port, args.name, args.team, args.kit, args.group)
     capture.run(args.stage, args.hold)
 
     if args.out:
