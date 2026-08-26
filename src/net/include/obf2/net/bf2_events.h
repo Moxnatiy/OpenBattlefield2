@@ -75,6 +75,10 @@ bool skipEvent(BitReader& reader, std::uint32_t type);
 // Розбирає одну подію: що вміємо — заповнює, решту просто пропускає.
 std::optional<Event> readEvent(BitReader& reader);
 
+// Читає файл зі спійманими пакетами (`tools/linuxded/capture.py --out`):
+// для кожного пакета u32 довжина, далі байти.
+std::vector<std::vector<std::byte>> loadCapture(const std::string& path);
+
 // Проходить пакет даних і повертає всі події з нього.
 // Порожньо — це не пакет даних або він обірвався на першій же події.
 std::vector<Event> readEvents(std::span<const std::byte> packet);

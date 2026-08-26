@@ -1,5 +1,6 @@
 #include "obf2/net/bf2_events.h"
 
+#include <cstdio>
 #include <cstring>
 
 #include "obf2/net/bf2_protocol.h"
@@ -198,6 +199,25 @@ std::optional<Event> readEvent(BitReader& reader) {
 
   if (!skipEvent(reader, *type)) return std::nullopt;
   return event;
+}
+
+std::vector<std::vector<std::byte>> loadCapture(const std::string& path) {
+  std::vector<std::vector<std::byte>> packets;
+  std::FILE* file = std::fopen(path.c_str(), "rb");
+  if (!file) return packets;
+
+  while (true) {
+    std::uint32_t length = 0;
+    if (std::fread(&length, sizeof(length), 1, file) != 1) break;
+    // Пакет BF2 не буває більшим за кілька кілобайтів: більше число
+    // означає, що файл не той або обірваний.
+    if (length == 0 || length > 4096) break;
+    std::vector<std::byte> packet(length);
+    if (std::fread(packet.data(), 1, length, file) != length) break;
+    packets.push_back(std::move(packet));
+  }
+  std::fclose(file);
+  return packets;
 }
 
 std::vector<Event> readEvents(std::span<const std::byte> packet) {

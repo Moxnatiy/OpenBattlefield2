@@ -60,6 +60,7 @@ struct Args {
   std::string connectTo;      // --connect <хост[:порт]>: справжній сервер BF2
   std::string connectPassword;
   std::string playerName = "OpenBF2";  // --name: під яким іменем заходимо
+  std::string calibrate;               // --calibrate <файл>: зіставити номери шаблонів
   std::vector<std::string> animationPaths;  // --anim: можна кілька, вони змішуються
   std::string skeletonPath;    // --skeleton: .ske; типово скелет солдата
   int frame = 0;               // --frame: який кадр показати
@@ -86,6 +87,7 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--connect" && i + 1 < argc) args.connectTo = argv[++i];
     else if (flag == "--connect-password" && i + 1 < argc) args.connectPassword = argv[++i];
     else if (flag == "--name" && i + 1 < argc) args.playerName = argv[++i];
+    else if (flag == "--calibrate" && i + 1 < argc) args.calibrate = argv[++i];
     else if (flag == "--anim" && i + 1 < argc) args.animationPaths.emplace_back(argv[++i]);
     else if (flag == "--skeleton" && i + 1 < argc) args.skeletonPath = argv[++i];
     else if (flag == "--frame" && i + 1 < argc) args.frame = std::atoi(argv[++i]);
@@ -323,6 +325,99 @@ std::string findMenuBackground(obf2::FileSystem& files) {
 // Одна сесія: меню або гра. Повертається код виходу; якщо з меню обрали
 // рівень, його назва лягає в nextLevel і головний цикл заводить сесію
 // наново — вже у грі.
+// Зіставляє номери шаблонів із назвами.
+//
+// Сервер шле об'єкти номером шаблона, а номер — це порядок створення
+// (`ObjectTemplateManager::createTemplate`), тож із самого числа назви не
+// дістати. Але позиції збігаються: рівень ми читаємо самі й знаємо, що і
+// де стоїть, а сервер каже номери для тих самих місць. Звідси й таблиця.
+//
+// Файл із пакетами робить `tools/linuxded/capture.py --stage world --out`.
+int runCalibrate(const Args& args, obf2::FileSystem& files) {
+  if (args.levelName.empty()) {
+    std::fprintf(stderr, "вкажіть рівень: --level <назва>\n");
+    return 1;
+  }
+  std::string error;
+  if (!obf2::level::mountLevel(files, args.modDir, args.levelName, &error)) {
+    std::fprintf(stderr, "рівень не змонтовано: %s\n", error.c_str());
+    return 1;
+  }
+  const auto gameplay =
+      obf2::level::loadGameplayObjects(files, args.levelName, "gpm_cq", 16, &error);
+  if (!gameplay) {
+    std::fprintf(stderr, "ігрову логіку не прочитано: %s\n", error.c_str());
+    return 1;
+  }
+
+  // Усе, що ми знаємо про рівень: назва шаблона й де він стоїть.
+  struct Known {
+    std::string name;
+    obf2::Vec3f position;
+  };
+  std::vector<Known> known;
+  for (const auto& point : gameplay->controlPoints) {
+    known.push_back({point.templateName, point.position});
+  }
+  for (const auto& spawner : gameplay->spawners) {
+    known.push_back({spawner.templateName, spawner.position});
+    // Спавнер видає різну техніку залежно від команди — усі варіанти
+    // стоять на тому самому місці.
+    for (const auto& [team, name] : spawner.templateByTeam) {
+      (void)team;
+      known.push_back({name, spawner.position});
+    }
+  }
+  std::printf("рівень %s: відомих об'єктів %zu\n", args.levelName.c_str(), known.size());
+
+  const auto packets = obf2::net::bf2::loadCapture(args.calibrate);
+  if (packets.empty()) {
+    std::fprintf(stderr, "у %s немає пакетів\n", args.calibrate.c_str());
+    return 1;
+  }
+
+  std::map<std::uint32_t, std::string> mapping;
+  std::map<std::uint32_t, obf2::Vec3f> unmatched;
+  int fromServer = 0, matched = 0;
+  for (const auto& packet : packets) {
+    for (const auto& event : obf2::net::bf2::readEvents(packet)) {
+      if (!event.object || !event.object->position) continue;
+      ++fromServer;
+      const auto& at = *event.object->position;
+
+      const Known* best = nullptr;
+      float bestDistance = 0.0f;
+      for (const auto& candidate : known) {
+        const float d = length(candidate.position - at);
+        if (!best || d < bestDistance) {
+          best = &candidate;
+          bestDistance = d;
+        }
+      }
+      // Два метри: рівень і сервер беруть позицію з тих самих даних, тож
+      // збіг має бути точним. Ширший допуск почав би вигадувати.
+      if (best && bestDistance < 2.0f) {
+        ++matched;
+        mapping[event.object->templateId] = best->name;
+      } else {
+        unmatched[event.object->templateId] = at;
+      }
+    }
+  }
+
+  std::printf("об'єктів від сервера: %d, зіставлено: %d\n", fromServer, matched);
+  for (const auto& [id, name] : mapping) {
+    std::printf("  %6u  %s\n", id, name.c_str());
+  }
+  if (!unmatched.empty()) {
+    std::printf("не впізнано %zu номерів:\n", unmatched.size());
+    for (const auto& [id, at] : unmatched) {
+      std::printf("  %6u  @ %.1f %.1f %.1f\n", id, at.x, at.y, at.z);
+    }
+  }
+  return 0;
+}
+
 // Під'єднання до справжнього сервера BF2. Поки що це саме рукостискання:
 // запит, відповідь, підтвердження. Далі має йти потік даних, який ще не
 // розібрано — але вже видно, чи сервер нас узагалі приймає.
@@ -1610,6 +1705,8 @@ int main(int argc, char** argv) {
   std::printf("OpenBattlefield2 | %s/%s\n", OBF2_PLATFORM_NAME, OBF2_ARCH_NAME);
   std::printf("мод: %s | архівів: %d\n", args.modDir.string().c_str(), mounted);
   for (const auto& e : mountErrors) std::printf("  [mount] %s\n", e.c_str());
+
+  if (!args.calibrate.empty()) return runCalibrate(args, files);
 
   // Під'єднання до справжнього сервера — окремий режим: тут не потрібні
   // ні вікно, ні рівень.
