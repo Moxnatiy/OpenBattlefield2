@@ -168,3 +168,36 @@ def decode_events(data):
             out.append("  подія типу %d (ще не розібрано)" % kind)
             break
     return "\n".join(out)
+
+
+# --- блок відомостей про клієнта ---
+#
+# `ClientInfo::setFromDataBlock` читає з блока:
+#   u16 довжина + рядок 1 (ім'я гравця)
+#   u32 число
+#   1 біт знак + 31 біт значення
+#   u16 довжина + рядок 2
+#   u16 довжина + рядок 3
+#   1 біт прапорець
+#
+# Сам блок їде подією типу 4 (`DataBlockEvent`): спершу заголовок
+# (1 біт = 1, потім u32 тип блока і u32 розмір), далі шматки
+# (1 біт = 0, u8 довжина, байти). Тип блока 1 — це саме ClientInfo
+# (`GameServer::handleDataBlock`).
+CLIENT_INFO_BLOCK = 1
+
+
+def client_info_blob(name="OpenBF2", second="", third="", number=0, value=0, flag=0):
+    w = Writer()
+    w.write(len(name), 16)
+    for c in name.encode("latin-1"):
+        w.write(c, 8)
+    w.write(number, 32)
+    w.write(1 if value < 0 else 0, 1)
+    w.write(abs(value), 31)
+    for text in (second, third):
+        w.write(len(text), 16)
+        for c in text.encode("latin-1"):
+            w.write(c, 8)
+    w.write(flag, 1)
+    return w.data()
