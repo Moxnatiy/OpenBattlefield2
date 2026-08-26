@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "obf2/game/object_template.h"
+#include "obf2/level/gameplay.h"
 #include "obf2/level/level.h"
 #include "obf2/net/connection.h"
 #include "obf2/net/session.h"
@@ -49,6 +50,10 @@ struct Player {
   net::PlayerInput input;          // останній отриманий ввід
   std::uint32_t lastSequence = 0;  // щоб не застосувати старий пакет двічі
   std::uint32_t soldierId = 0;     // об'єкт, яким гравець керує
+
+  int team = 1;
+  bool alive = false;
+  float respawnTimer = 0.0f;  // скільки лишилося чекати до появи
 };
 
 struct ServerSettings {
@@ -72,6 +77,12 @@ struct ServerSettings {
 
   // Константи руху з даних гри (Vars.Set phy-soldier-*).
   PhysicsConstants physics;
+
+  // Скільки секунд гравець чекає до появи. В оригіналі це залежить від
+  // режиму й квитків; поки що стала.
+  float respawnDelay = 3.0f;
+  // За скільки секунд нейтральна точка переходить до команди, яка її тримає.
+  float captureSeconds = 10.0f;
 };
 
 class GameServer {
@@ -89,6 +100,21 @@ class GameServer {
   // а володіє сервер — бо саме він вирішує, куди гравець дійшов.
   void setCollision(std::unique_ptr<CollisionWorld> world) { collision_ = std::move(world); }
   const CollisionWorld* collision() const { return collision_.get(); }
+
+  // Логіка режиму: контрольні точки й спавнери техніки.
+  void setGameplay(level::GameplayObjects gameplay);
+
+  // Стан захоплення однієї точки.
+  struct ControlPointState {
+    int id = 0;
+    std::string nameKey;
+    Vec3f position;
+    float radius = 10.0f;
+    int team = 0;
+    float progress = 0.0f;   // 0..1 у бік команди, що захоплює
+    int capturingTeam = 0;
+  };
+  const std::vector<ControlPointState>& controlPoints() const { return controlPoints_; }
   float groundHeightAt(const Vec3f& position) const;
 
   // Приймає нове під'єднання. Сервер бере канал у власність.
@@ -117,11 +143,16 @@ class GameServer {
   void broadcastDynamic();
   WorldObject* findObject(std::uint32_t id);
   std::uint32_t spawnSoldier(Player& player);
+  void updateControlPoints(float step);
+  // Де з'явитися гравцеві: найближча точка своєї команди, інакше стартова.
+  Vec3f chooseSpawn(int team) const;
   bool sendTo(Player& player, std::span<const std::byte> data);
 
   ServerSettings settings_;
   const level::Level* terrain_ = nullptr;
   std::unique_ptr<CollisionWorld> collision_;
+  level::GameplayObjects gameplay_;
+  std::vector<ControlPointState> controlPoints_;
   std::vector<WorldObject> objects_;
   std::vector<Player> players_;
   std::uint32_t nextPlayerId_ = 1;

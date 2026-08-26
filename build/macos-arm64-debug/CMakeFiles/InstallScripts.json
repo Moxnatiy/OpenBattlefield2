@@ -24,6 +24,7 @@
 		"/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/texture_info/cmake_install.cmake",
 		"/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/object_info/cmake_install.cmake",
 		"/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/hud_dump/cmake_install.cmake",
+		"/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/command_audit/cmake_install.cmake",
 		"/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/cmake_install.cmake"
 	],
 	"Parallel" : false

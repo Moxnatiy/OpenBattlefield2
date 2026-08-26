@@ -23,6 +23,7 @@
 #include "obf2/font/text.h"
 #include "obf2/game/scene.h"
 #include "obf2/gfx/mesh_renderer.h"
+#include "obf2/level/gameplay.h"
 #include "obf2/level/level.h"
 #include "obf2/server/game_client.h"
 #include "obf2/server/game_server.h"
@@ -394,6 +395,22 @@ int main(int argc, char** argv) {
                   serverSettings.physics.airMovementFactor);
       hostedServer = std::make_unique<obf2::server::GameServer>(serverSettings);
       obf2::server::GameServer& gameServer = *hostedServer;
+      // Ігрова логіка режиму: контрольні точки й спавнери техніки.
+      std::string gameplayError;
+      if (auto gameplay = obf2::level::loadGameplayObjects(files, level->name, "gpm_cq", 16,
+                                                           &gameplayError)) {
+        std::printf("  ігрова логіка: %zu контрольних точок, %zu спавнерів техніки\n",
+                    gameplay->controlPoints.size(), gameplay->spawners.size());
+        for (const auto& point : gameplay->controlPoints) {
+          std::printf("    точка %d \"%s\" радіус %.0f @ %.0f/%.0f/%.0f\n", point.id,
+                      point.nameKey.c_str(), point.radius, point.position.x, point.position.y,
+                      point.position.z);
+        }
+        gameServer.setGameplay(std::move(*gameplay));
+      } else {
+        std::printf("  ігрова логіка: %s\n", gameplayError.c_str());
+      }
+
       gameServer.loadWorld(*level);
       // Рельєф для зіткнення з землею: без нього солдат падає без кінця.
       gameServer.setTerrain(&*level);

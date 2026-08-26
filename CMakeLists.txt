@@ -63,6 +63,7 @@ if(OBF2_BUILD_TOOLS)
   add_subdirectory(tools/texture_info)
   add_subdirectory(tools/object_info)
   add_subdirectory(tools/hud_dump)
+  add_subdirectory(tools/command_audit)
 endif()
 
 if(OBF2_BUILD_TESTS)

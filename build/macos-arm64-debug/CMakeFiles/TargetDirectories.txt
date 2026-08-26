@@ -89,6 +89,10 @@
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/hud_dump/CMakeFiles/test.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/hud_dump/CMakeFiles/edit_cache.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/hud_dump/CMakeFiles/rebuild_cache.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/command_audit/CMakeFiles/command_audit.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/command_audit/CMakeFiles/test.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/command_audit/CMakeFiles/edit_cache.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/command_audit/CMakeFiles/rebuild_cache.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_path.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_con.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_mesh.dir
@@ -103,6 +107,7 @@
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_server.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_hud.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_collision.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_gameplay.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/edit_cache.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/rebuild_cache.dir

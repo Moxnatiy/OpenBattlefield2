@@ -158,15 +158,84 @@ WorldObject* GameServer::findObject(std::uint32_t id) {
   return nullptr;
 }
 
+void GameServer::setGameplay(level::GameplayObjects gameplay) {
+  gameplay_ = std::move(gameplay);
+  controlPoints_.clear();
+  for (const level::ControlPoint& point : gameplay_.controlPoints) {
+    ControlPointState state;
+    state.id = point.id;
+    state.nameKey = point.nameKey;
+    state.position = point.position;
+    state.radius = point.radius;
+    state.team = point.team;
+    controlPoints_.push_back(std::move(state));
+  }
+  log_.push_back("логіка режиму: " + std::to_string(controlPoints_.size()) +
+                 " контрольних точок, " + std::to_string(gameplay_.spawners.size()) +
+                 " спавнерів");
+}
+
+Vec3f GameServer::chooseSpawn(int team) const {
+  // Точка своєї команди — як в оригіналі: з'являємося там, що вже наше.
+  for (const ControlPointState& point : controlPoints_) {
+    if (point.team == team) return point.position;
+  }
+  return settings_.spawnPosition;
+}
+
+void GameServer::updateControlPoints(float step) {
+  for (ControlPointState& point : controlPoints_) {
+    // Хто стоїть у радіусі. Точка захоплюється, лише коли поруч нікого
+    // з протилежної команди — саме так це працює в BF2.
+    int insideTeam = 0;
+    bool contested = false;
+
+    for (const Player& player : players_) {
+      if (!player.alive || player.soldierId == 0) continue;
+      const WorldObject* soldier = nullptr;
+      for (const WorldObject& object : objects_) {
+        if (object.id == player.soldierId) { soldier = &object; break; }
+      }
+      if (soldier == nullptr) continue;
+
+      const Vec3f delta = soldier->position - point.position;
+      // Радіус горизонтальний: висота не має заважати захопленню.
+      const float distance = std::sqrt(delta.x * delta.x + delta.z * delta.z);
+      if (distance > point.radius) continue;
+
+      if (insideTeam == 0) insideTeam = player.team;
+      else if (insideTeam != player.team) contested = true;
+    }
+
+    if (contested || insideTeam == 0 || insideTeam == point.team) {
+      // Ніхто не захоплює — прогрес відкочується.
+      point.capturingTeam = 0;
+      point.progress = std::max(0.0f, point.progress - step / settings_.captureSeconds);
+      continue;
+    }
+
+    point.capturingTeam = insideTeam;
+    point.progress += step / settings_.captureSeconds;
+    if (point.progress >= 1.0f) {
+      point.progress = 0.0f;
+      point.team = insideTeam;
+      point.capturingTeam = 0;
+      log_.push_back("точку " + std::to_string(point.id) + " захопила команда " +
+                     std::to_string(insideTeam));
+    }
+  }
+}
+
 std::uint32_t GameServer::spawnSoldier(Player& player) {
   WorldObject soldier;
   soldier.id = nextObjectId_++;
   soldier.templateName = settings_.soldierTemplate;
-  soldier.position = settings_.spawnPosition;
+  soldier.position = chooseSpawn(player.team);
   soldier.dynamic = true;
   soldier.ownerPlayerId = player.id;
   objects_.push_back(std::move(soldier));
 
+  player.alive = true;
   log_.push_back("з'явився солдат гравця \"" + player.name + "\" (об'єкт " +
                  std::to_string(objects_.back().id) + ")");
   return objects_.back().id;
@@ -198,6 +267,22 @@ float GameServer::groundHeightAt(const Vec3f& position) const {
 
 void GameServer::simulate(float step) {
   ++tickCount_;
+  updateControlPoints(step);
+
+  // Поява після смерті: чекаємо затримку, потім ставимо на точку.
+  for (Player& player : players_) {
+    if (player.alive || !player.acknowledged) continue;
+    player.respawnTimer -= step;
+    if (player.respawnTimer <= 0.0f) {
+      WorldObject* soldier = findObject(player.soldierId);
+      if (soldier != nullptr) {
+        soldier->position = chooseSpawn(player.team);
+        soldier->velocity = Vec3f{};
+        player.alive = true;
+        log_.push_back("гравець \"" + player.name + "\" з'явився знову");
+      }
+    }
+  }
 
   for (Player& player : players_) {
     if (!player.acknowledged || player.soldierId == 0) continue;

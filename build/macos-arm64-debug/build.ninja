@@ -759,6 +759,15 @@ build src/level/CMakeFiles/obf2_level.dir/src/level.cpp.o: CXX_COMPILER__obf2_le
   OBJECT_FILE_DIR = src/level/CMakeFiles/obf2_level.dir/src
   TARGET_SUPPORT_DIR = src/level/CMakeFiles/obf2_level.dir
 
+build src/level/CMakeFiles/obf2_level.dir/src/gameplay.cpp.o: CXX_COMPILER__obf2_level_unscanned_Debug /Users/miami/OpenBattlefield2/src/level/src/gameplay.cpp || cmake_object_order_depends_target_obf2_level
+  CONFIG = Debug
+  DEP_FILE = src/level/CMakeFiles/obf2_level.dir/src/gameplay.cpp.o.d
+  FLAGS = -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -I/Users/miami/OpenBattlefield2/src/level/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/mesh/include -I/Users/miami/OpenBattlefield2/src/vfs/include
+  OBJECT_DIR = src/level/CMakeFiles/obf2_level.dir
+  OBJECT_FILE_DIR = src/level/CMakeFiles/obf2_level.dir/src
+  TARGET_SUPPORT_DIR = src/level/CMakeFiles/obf2_level.dir
+
 
 # =============================================================================
 # Link build statements for STATIC_LIBRARY target obf2_level
@@ -767,7 +776,7 @@ build src/level/CMakeFiles/obf2_level.dir/src/level.cpp.o: CXX_COMPILER__obf2_le
 #############################################
 # Link the static library src/level/libobf2_level.a
 
-build src/level/libobf2_level.a: CXX_STATIC_LIBRARY_LINKER__obf2_level_Debug src/level/CMakeFiles/obf2_level.dir/src/level.cpp.o || src/con/libobf2_con.a src/core/libobf2_core.a src/mesh/libobf2_mesh.a src/vfs/libobf2_vfs.a third_party/miniz/libminiz.a
+build src/level/libobf2_level.a: CXX_STATIC_LIBRARY_LINKER__obf2_level_Debug src/level/CMakeFiles/obf2_level.dir/src/level.cpp.o src/level/CMakeFiles/obf2_level.dir/src/gameplay.cpp.o || src/con/libobf2_con.a src/core/libobf2_core.a src/mesh/libobf2_mesh.a src/vfs/libobf2_vfs.a third_party/miniz/libminiz.a
   ARCH_FLAGS = -arch arm64
   CONFIG = Debug
   LANGUAGE_COMPILE_FLAGS = -g
@@ -1930,6 +1939,85 @@ build tools/hud_dump/rebuild_cache: phony tools/hud_dump/CMakeFiles/rebuild_cach
 # =============================================================================
 
 # =============================================================================
+# Object build statements for EXECUTABLE target command_audit
+
+
+#############################################
+# Order-only phony target for command_audit
+
+build cmake_object_order_depends_target_command_audit: phony || cmake_object_order_depends_target_miniz cmake_object_order_depends_target_obf2_con cmake_object_order_depends_target_obf2_core cmake_object_order_depends_target_obf2_engine cmake_object_order_depends_target_obf2_game cmake_object_order_depends_target_obf2_hud cmake_object_order_depends_target_obf2_level cmake_object_order_depends_target_obf2_loc cmake_object_order_depends_target_obf2_mesh cmake_object_order_depends_target_obf2_vfs
+
+build tools/command_audit/CMakeFiles/command_audit.dir/main.cpp.o: CXX_COMPILER__command_audit_unscanned_Debug /Users/miami/OpenBattlefield2/tools/command_audit/main.cpp || cmake_object_order_depends_target_command_audit
+  CONFIG = Debug
+  DEP_FILE = tools/command_audit/CMakeFiles/command_audit.dir/main.cpp.o.d
+  FLAGS = -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -I/Users/miami/OpenBattlefield2/src/engine/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/vfs/include -I/Users/miami/OpenBattlefield2/src/loc/include -I/Users/miami/OpenBattlefield2/src/game/include -I/Users/miami/OpenBattlefield2/src/mesh/include -I/Users/miami/OpenBattlefield2/src/hud/include -I/Users/miami/OpenBattlefield2/src/level/include
+  OBJECT_DIR = tools/command_audit/CMakeFiles/command_audit.dir
+  OBJECT_FILE_DIR = tools/command_audit/CMakeFiles/command_audit.dir
+  TARGET_SUPPORT_DIR = tools/command_audit/CMakeFiles/command_audit.dir
+
+
+# =============================================================================
+# Link build statements for EXECUTABLE target command_audit
+
+
+#############################################
+# Link the executable tools/command_audit/command_audit
+
+build tools/command_audit/command_audit: CXX_EXECUTABLE_LINKER__command_audit_Debug tools/command_audit/CMakeFiles/command_audit.dir/main.cpp.o | src/engine/libobf2_engine.a src/game/libobf2_game.a src/hud/libobf2_hud.a src/level/libobf2_level.a src/vfs/libobf2_vfs.a src/loc/libobf2_loc.a third_party/miniz/libminiz.a src/con/libobf2_con.a src/mesh/libobf2_mesh.a src/core/libobf2_core.a || src/con/libobf2_con.a src/core/libobf2_core.a src/engine/libobf2_engine.a src/game/libobf2_game.a src/hud/libobf2_hud.a src/level/libobf2_level.a src/loc/libobf2_loc.a src/mesh/libobf2_mesh.a src/vfs/libobf2_vfs.a third_party/miniz/libminiz.a
+  CONFIG = Debug
+  FLAGS = -g -arch arm64
+  LINK_FLAGS = -Wl,-search_paths_first -Wl,-headerpad_max_install_names
+  LINK_LIBRARIES = src/engine/libobf2_engine.a  src/game/libobf2_game.a  src/hud/libobf2_hud.a  src/level/libobf2_level.a  src/vfs/libobf2_vfs.a  src/loc/libobf2_loc.a  third_party/miniz/libminiz.a  src/con/libobf2_con.a  src/mesh/libobf2_mesh.a  src/core/libobf2_core.a
+  OBJECT_DIR = tools/command_audit/CMakeFiles/command_audit.dir
+  POST_BUILD = :
+  PRE_LINK = :
+  TARGET_FILE = tools/command_audit/command_audit
+  TARGET_PDB = command_audit.dbg
+  TARGET_SUPPORT_DIR = tools/command_audit/CMakeFiles/command_audit.dir
+
+
+#############################################
+# Utility command for test
+
+build tools/command_audit/CMakeFiles/test.util: CUSTOM_COMMAND
+  COMMAND = cd /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/command_audit && /opt/homebrew/bin/ctest
+  DESC = Running tests...
+  pool = console
+  restat = 1
+
+build tools/command_audit/test: phony tools/command_audit/CMakeFiles/test.util
+
+
+#############################################
+# Utility command for edit_cache
+
+build tools/command_audit/CMakeFiles/edit_cache.util: CUSTOM_COMMAND
+  COMMAND = cd /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/command_audit && /opt/homebrew/bin/ccmake -S/Users/miami/OpenBattlefield2 -B/Users/miami/OpenBattlefield2/build/macos-arm64-debug
+  DESC = Running CMake cache editor...
+  pool = console
+  restat = 1
+
+build tools/command_audit/edit_cache: phony tools/command_audit/CMakeFiles/edit_cache.util
+
+
+#############################################
+# Utility command for rebuild_cache
+
+build tools/command_audit/CMakeFiles/rebuild_cache.util: CUSTOM_COMMAND
+  COMMAND = cd /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/command_audit && /opt/homebrew/bin/cmake --regenerate-during-build -S/Users/miami/OpenBattlefield2 -B/Users/miami/OpenBattlefield2/build/macos-arm64-debug
+  DESC = Running CMake to regenerate build system...
+  pool = console
+  restat = 1
+
+build tools/command_audit/rebuild_cache: phony tools/command_audit/CMakeFiles/rebuild_cache.util
+
+# =============================================================================
+# Write statements declared in CMakeLists.txt:
+# /Users/miami/OpenBattlefield2/CMakeLists.txt
+# =============================================================================
+
+# =============================================================================
 # Object build statements for EXECUTABLE target test_path
 
 
@@ -2461,6 +2549,44 @@ build tests/test_collision: CXX_EXECUTABLE_LINKER__test_collision_Debug tests/CM
   TARGET_PDB = test_collision.dbg
   TARGET_SUPPORT_DIR = tests/CMakeFiles/test_collision.dir
 
+# =============================================================================
+# Object build statements for EXECUTABLE target test_gameplay
+
+
+#############################################
+# Order-only phony target for test_gameplay
+
+build cmake_object_order_depends_target_test_gameplay: phony || cmake_object_order_depends_target_miniz cmake_object_order_depends_target_obf2_con cmake_object_order_depends_target_obf2_core cmake_object_order_depends_target_obf2_engine cmake_object_order_depends_target_obf2_game cmake_object_order_depends_target_obf2_level cmake_object_order_depends_target_obf2_loc cmake_object_order_depends_target_obf2_mesh cmake_object_order_depends_target_obf2_net cmake_object_order_depends_target_obf2_server cmake_object_order_depends_target_obf2_vfs
+
+build tests/CMakeFiles/test_gameplay.dir/test_gameplay.cpp.o: CXX_COMPILER__test_gameplay_unscanned_Debug /Users/miami/OpenBattlefield2/tests/test_gameplay.cpp || cmake_object_order_depends_target_test_gameplay
+  CONFIG = Debug
+  DEP_FILE = tests/CMakeFiles/test_gameplay.dir/test_gameplay.cpp.o.d
+  FLAGS = -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -I/Users/miami/OpenBattlefield2/tests -I/Users/miami/OpenBattlefield2/src/server/include -I/Users/miami/OpenBattlefield2/src/net/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/game/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/mesh/include -I/Users/miami/OpenBattlefield2/src/level/include -I/Users/miami/OpenBattlefield2/src/vfs/include -I/Users/miami/OpenBattlefield2/src/engine/include -I/Users/miami/OpenBattlefield2/src/loc/include
+  OBJECT_DIR = tests/CMakeFiles/test_gameplay.dir
+  OBJECT_FILE_DIR = tests/CMakeFiles/test_gameplay.dir
+  TARGET_SUPPORT_DIR = tests/CMakeFiles/test_gameplay.dir
+
+
+# =============================================================================
+# Link build statements for EXECUTABLE target test_gameplay
+
+
+#############################################
+# Link the executable tests/test_gameplay
+
+build tests/test_gameplay: CXX_EXECUTABLE_LINKER__test_gameplay_Debug tests/CMakeFiles/test_gameplay.dir/test_gameplay.cpp.o | src/server/libobf2_server.a src/net/libobf2_net.a src/game/libobf2_game.a src/level/libobf2_level.a src/mesh/libobf2_mesh.a src/engine/libobf2_engine.a src/vfs/libobf2_vfs.a src/con/libobf2_con.a third_party/miniz/libminiz.a src/loc/libobf2_loc.a src/core/libobf2_core.a || src/con/libobf2_con.a src/core/libobf2_core.a src/engine/libobf2_engine.a src/game/libobf2_game.a src/level/libobf2_level.a src/loc/libobf2_loc.a src/mesh/libobf2_mesh.a src/net/libobf2_net.a src/server/libobf2_server.a src/vfs/libobf2_vfs.a third_party/miniz/libminiz.a
+  CONFIG = Debug
+  FLAGS = -g -arch arm64
+  LINK_FLAGS = -Wl,-search_paths_first -Wl,-headerpad_max_install_names
+  LINK_LIBRARIES = src/server/libobf2_server.a  src/net/libobf2_net.a  src/game/libobf2_game.a  src/level/libobf2_level.a  src/mesh/libobf2_mesh.a  src/engine/libobf2_engine.a  src/vfs/libobf2_vfs.a  src/con/libobf2_con.a  third_party/miniz/libminiz.a  src/loc/libobf2_loc.a  src/core/libobf2_core.a
+  OBJECT_DIR = tests/CMakeFiles/test_gameplay.dir
+  POST_BUILD = :
+  PRE_LINK = :
+  TARGET_FILE = tests/test_gameplay
+  TARGET_PDB = test_gameplay.dbg
+  TARGET_SUPPORT_DIR = tests/CMakeFiles/test_gameplay.dir
+
 
 #############################################
 # Utility command for test
@@ -2499,6 +2625,8 @@ build tests/rebuild_cache: phony tests/CMakeFiles/rebuild_cache.util
 
 # =============================================================================
 # Target aliases.
+
+build command_audit: phony tools/command_audit/command_audit
 
 build con_dump: phony tools/con_dump/con_dump
 
@@ -2586,6 +2714,8 @@ build test_font_loc: phony tests/test_font_loc
 
 build test_frustum: phony tests/test_frustum
 
+build test_gameplay: phony tests/test_gameplay
+
 build test_hud: phony tests/test_hud
 
 build test_level: phony tests/test_level
@@ -2612,7 +2742,7 @@ build texture_info: phony tools/texture_info/texture_info
 #############################################
 # Folder: /Users/miami/OpenBattlefield2/build/macos-arm64-debug
 
-build all: phony third_party/miniz/all third_party/stb/all src/core/all src/con/all src/vfs/all src/mesh/all src/texture/all src/game/all src/level/all src/engine/all src/net/all src/hud/all src/server/all src/font/all src/loc/all src/gfx/all src/app/all tools/con_dump/all tools/mesh_info/all tools/texture_info/all tools/object_info/all tools/hud_dump/all tests/all
+build all: phony third_party/miniz/all third_party/stb/all src/core/all src/con/all src/vfs/all src/mesh/all src/texture/all src/game/all src/level/all src/engine/all src/net/all src/hud/all src/server/all src/font/all src/loc/all src/gfx/all src/app/all tools/con_dump/all tools/mesh_info/all tools/texture_info/all tools/object_info/all tools/hud_dump/all tools/command_audit/all tests/all
 
 # =============================================================================
 
@@ -2724,7 +2854,7 @@ build src/vfs/all: phony src/vfs/libobf2_vfs.a
 #############################################
 # Folder: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
 
-build tests/all: phony tests/test_path tests/test_con tests/test_mesh tests/test_texture tests/test_object_template tests/test_scene tests/test_level tests/test_engine tests/test_bitstream tests/test_font_loc tests/test_frustum tests/test_server tests/test_hud tests/test_collision
+build tests/all: phony tests/test_path tests/test_con tests/test_mesh tests/test_texture tests/test_object_template tests/test_scene tests/test_level tests/test_engine tests/test_bitstream tests/test_font_loc tests/test_frustum tests/test_server tests/test_hud tests/test_collision tests/test_gameplay
 
 # =============================================================================
 
@@ -2739,6 +2869,13 @@ build third_party/miniz/all: phony third_party/miniz/libminiz.a
 # Folder: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/third_party/stb
 
 build third_party/stb/all: phony third_party/stb/libstb_image.a
+
+# =============================================================================
+
+#############################################
+# Folder: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/command_audit
+
+build tools/command_audit/all: phony tools/command_audit/command_audit
 
 # =============================================================================
 
@@ -2782,14 +2919,14 @@ build tools/texture_info/all: phony tools/texture_info/texture_info
 #############################################
 # Re-run CMake if any of its inputs changed.
 
-build build.ninja /Users/miami/OpenBattlefield2/build/macos-arm64-debug/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/third_party/miniz/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/third_party/stb/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/core/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/con/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/vfs/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/mesh/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/texture/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/game/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/level/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/engine/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/net/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/hud/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/server/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/font/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/loc/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/gfx/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/app/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/con_dump/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/mesh_info/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/texture_info/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/object_info/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/hud_dump/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/CTestTestfile.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CTestTestfile.cmake: RERUN_CMAKE | /Users/miami/OpenBattlefield2/CMakeLists.txt /Users/miami/OpenBattlefield2/cmake/sdl3.cmake /Users/miami/OpenBattlefield2/src/app/CMakeLists.txt /Users/miami/OpenBattlefield2/src/con/CMakeLists.txt /Users/miami/OpenBattlefield2/src/core/CMakeLists.txt /Users/miami/OpenBattlefield2/src/engine/CMakeLists.txt /Users/miami/OpenBattlefield2/src/font/CMakeLists.txt /Users/miami/OpenBattlefield2/src/game/CMakeLists.txt /Users/miami/OpenBattlefield2/src/gfx/CMakeLists.txt /Users/miami/OpenBattlefield2/src/hud/CMakeLists.txt /Users/miami/OpenBattlefield2/src/level/CMakeLists.txt /Users/miami/OpenBattlefield2/src/loc/CMakeLists.txt /Users/miami/OpenBattlefield2/src/mesh/CMakeLists.txt /Users/miami/OpenBattlefield2/src/net/CMakeLists.txt /Users/miami/OpenBattlefield2/src/server/CMakeLists.txt /Users/miami/OpenBattlefield2/src/texture/CMakeLists.txt /Users/miami/OpenBattlefield2/src/vfs/CMakeLists.txt /Users/miami/OpenBattlefield2/tests/CMakeLists.txt /Users/miami/OpenBattlefield2/third_party/miniz/CMakeLists.txt /Users/miami/OpenBattlefield2/third_party/stb/CMakeLists.txt /Users/miami/OpenBattlefield2/tools/con_dump/CMakeLists.txt /Users/miami/OpenBattlefield2/tools/hud_dump/CMakeLists.txt /Users/miami/OpenBattlefield2/tools/mesh_info/CMakeLists.txt /Users/miami/OpenBattlefield2/tools/object_info/CMakeLists.txt /Users/miami/OpenBattlefield2/tools/texture_info/CMakeLists.txt /opt/homebrew/lib/cmake/SDL3/SDL3Config.cmake /opt/homebrew/lib/cmake/SDL3/SDL3ConfigVersion.cmake /opt/homebrew/lib/cmake/SDL3/SDL3headersTargets.cmake /opt/homebrew/lib/cmake/SDL3/SDL3sharedTargets-release.cmake /opt/homebrew/lib/cmake/SDL3/SDL3sharedTargets.cmake /opt/homebrew/lib/cmake/SDL3/SDL3testTargets-release.cmake /opt/homebrew/lib/cmake/SDL3/SDL3testTargets.cmake /opt/homebrew/share/cmake/Modules/CMakeCInformation.cmake /opt/homebrew/share/cmake/Modules/CMakeCXXInformation.cmake /opt/homebrew/share/cmake/Modules/CMakeCommonLanguageInclude.cmake /opt/homebrew/share/cmake/Modules/CMakeGenericSystem.cmake /opt/homebrew/share/cmake/Modules/CMakeInitializeConfigs.cmake /opt/homebrew/share/cmake/Modules/CMakeLanguageInformation.cmake /opt/homebrew/share/cmake/Modules/CMakeSystemSpecificInformation.cmake /opt/homebrew/share/cmake/Modules/CMakeSystemSpecificInitialize.cmake /opt/homebrew/share/cmake/Modules/Compiler/AppleClang-C.cmake /opt/homebrew/share/cmake/Modules/Compiler/AppleClang-CXX.cmake /opt/homebrew/share/cmake/Modules/Compiler/CMakeCommonCompilerMacros.cmake /opt/homebrew/share/cmake/Modules/Compiler/Clang.cmake /opt/homebrew/share/cmake/Modules/Compiler/GNU.cmake /opt/homebrew/share/cmake/Modules/FeatureSummary.cmake /opt/homebrew/share/cmake/Modules/Internal/CMakeCLinkerInformation.cmake /opt/homebrew/share/cmake/Modules/Internal/CMakeCXXLinkerInformation.cmake /opt/homebrew/share/cmake/Modules/Internal/CMakeCommonLinkerInformation.cmake /opt/homebrew/share/cmake/Modules/Linker/AppleClang-C.cmake /opt/homebrew/share/cmake/Modules/Linker/AppleClang-CXX.cmake /opt/homebrew/share/cmake/Modules/Linker/AppleClang.cmake /opt/homebrew/share/cmake/Modules/Platform/Apple-AppleClang-C.cmake /opt/homebrew/share/cmake/Modules/Platform/Apple-AppleClang-CXX.cmake /opt/homebrew/share/cmake/Modules/Platform/Apple-Clang-C.cmake /opt/homebrew/share/cmake/Modules/Platform/Apple-Clang-CXX.cmake /opt/homebrew/share/cmake/Modules/Platform/Apple-Clang.cmake /opt/homebrew/share/cmake/Modules/Platform/Darwin-Initialize.cmake /opt/homebrew/share/cmake/Modules/Platform/Darwin.cmake /opt/homebrew/share/cmake/Modules/Platform/Linker/Apple-AppleClang-C.cmake /opt/homebrew/share/cmake/Modules/Platform/Linker/Apple-AppleClang-CXX.cmake /opt/homebrew/share/cmake/Modules/Platform/Linker/Apple-AppleClang.cmake /opt/homebrew/share/cmake/Modules/Platform/UnixPaths.cmake CMakeCache.txt CMakeFiles/4.3.4/CMakeCCompiler.cmake CMakeFiles/4.3.4/CMakeCXXCompiler.cmake CMakeFiles/4.3.4/CMakeSystem.cmake
+build build.ninja /Users/miami/OpenBattlefield2/build/macos-arm64-debug/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/third_party/miniz/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/third_party/stb/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/core/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/con/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/vfs/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/mesh/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/texture/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/game/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/level/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/engine/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/net/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/hud/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/server/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/font/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/loc/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/gfx/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/app/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/con_dump/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/mesh_info/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/texture_info/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/object_info/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/hud_dump/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/command_audit/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/cmake_install.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/CTestTestfile.cmake /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CTestTestfile.cmake: RERUN_CMAKE | /Users/miami/OpenBattlefield2/CMakeLists.txt /Users/miami/OpenBattlefield2/cmake/sdl3.cmake /Users/miami/OpenBattlefield2/src/app/CMakeLists.txt /Users/miami/OpenBattlefield2/src/con/CMakeLists.txt /Users/miami/OpenBattlefield2/src/core/CMakeLists.txt /Users/miami/OpenBattlefield2/src/engine/CMakeLists.txt /Users/miami/OpenBattlefield2/src/font/CMakeLists.txt /Users/miami/OpenBattlefield2/src/game/CMakeLists.txt /Users/miami/OpenBattlefield2/src/gfx/CMakeLists.txt /Users/miami/OpenBattlefield2/src/hud/CMakeLists.txt /Users/miami/OpenBattlefield2/src/level/CMakeLists.txt /Users/miami/OpenBattlefield2/src/loc/CMakeLists.txt /Users/miami/OpenBattlefield2/src/mesh/CMakeLists.txt /Users/miami/OpenBattlefield2/src/net/CMakeLists.txt /Users/miami/OpenBattlefield2/src/server/CMakeLists.txt /Users/miami/OpenBattlefield2/src/texture/CMakeLists.txt /Users/miami/OpenBattlefield2/src/vfs/CMakeLists.txt /Users/miami/OpenBattlefield2/tests/CMakeLists.txt /Users/miami/OpenBattlefield2/third_party/miniz/CMakeLists.txt /Users/miami/OpenBattlefield2/third_party/stb/CMakeLists.txt /Users/miami/OpenBattlefield2/tools/command_audit/CMakeLists.txt /Users/miami/OpenBattlefield2/tools/con_dump/CMakeLists.txt /Users/miami/OpenBattlefield2/tools/hud_dump/CMakeLists.txt /Users/miami/OpenBattlefield2/tools/mesh_info/CMakeLists.txt /Users/miami/OpenBattlefield2/tools/object_info/CMakeLists.txt /Users/miami/OpenBattlefield2/tools/texture_info/CMakeLists.txt /opt/homebrew/lib/cmake/SDL3/SDL3Config.cmake /opt/homebrew/lib/cmake/SDL3/SDL3ConfigVersion.cmake /opt/homebrew/lib/cmake/SDL3/SDL3headersTargets.cmake /opt/homebrew/lib/cmake/SDL3/SDL3sharedTargets-release.cmake /opt/homebrew/lib/cmake/SDL3/SDL3sharedTargets.cmake /opt/homebrew/lib/cmake/SDL3/SDL3testTargets-release.cmake /opt/homebrew/lib/cmake/SDL3/SDL3testTargets.cmake /opt/homebrew/share/cmake/Modules/CMakeCInformation.cmake /opt/homebrew/share/cmake/Modules/CMakeCXXInformation.cmake /opt/homebrew/share/cmake/Modules/CMakeCommonLanguageInclude.cmake /opt/homebrew/share/cmake/Modules/CMakeGenericSystem.cmake /opt/homebrew/share/cmake/Modules/CMakeInitializeConfigs.cmake /opt/homebrew/share/cmake/Modules/CMakeLanguageInformation.cmake /opt/homebrew/share/cmake/Modules/CMakeSystemSpecificInformation.cmake /opt/homebrew/share/cmake/Modules/CMakeSystemSpecificInitialize.cmake /opt/homebrew/share/cmake/Modules/Compiler/AppleClang-C.cmake /opt/homebrew/share/cmake/Modules/Compiler/AppleClang-CXX.cmake /opt/homebrew/share/cmake/Modules/Compiler/CMakeCommonCompilerMacros.cmake /opt/homebrew/share/cmake/Modules/Compiler/Clang.cmake /opt/homebrew/share/cmake/Modules/Compiler/GNU.cmake /opt/homebrew/share/cmake/Modules/FeatureSummary.cmake /opt/homebrew/share/cmake/Modules/Internal/CMakeCLinkerInformation.cmake /opt/homebrew/share/cmake/Modules/Internal/CMakeCXXLinkerInformation.cmake /opt/homebrew/share/cmake/Modules/Internal/CMakeCommonLinkerInformation.cmake /opt/homebrew/share/cmake/Modules/Linker/AppleClang-C.cmake /opt/homebrew/share/cmake/Modules/Linker/AppleClang-CXX.cmake /opt/homebrew/share/cmake/Modules/Linker/AppleClang.cmake /opt/homebrew/share/cmake/Modules/Platform/Apple-AppleClang-C.cmake /opt/homebrew/share/cmake/Modules/Platform/Apple-AppleClang-CXX.cmake /opt/homebrew/share/cmake/Modules/Platform/Apple-Clang-C.cmake /opt/homebrew/share/cmake/Modules/Platform/Apple-Clang-CXX.cmake /opt/homebrew/share/cmake/Modules/Platform/Apple-Clang.cmake /opt/homebrew/share/cmake/Modules/Platform/Darwin-Initialize.cmake /opt/homebrew/share/cmake/Modules/Platform/Darwin.cmake /opt/homebrew/share/cmake/Modules/Platform/Linker/Apple-AppleClang-C.cmake /opt/homebrew/share/cmake/Modules/Platform/Linker/Apple-AppleClang-CXX.cmake /opt/homebrew/share/cmake/Modules/Platform/Linker/Apple-AppleClang.cmake /opt/homebrew/share/cmake/Modules/Platform/UnixPaths.cmake CMakeCache.txt CMakeFiles/4.3.4/CMakeCCompiler.cmake CMakeFiles/4.3.4/CMakeCXXCompiler.cmake CMakeFiles/4.3.4/CMakeSystem.cmake
   pool = console
 
 
 #############################################
 # A missing CMake input file is not an error.
 
-build /Users/miami/OpenBattlefield2/CMakeLists.txt /Users/miami/OpenBattlefield2/cmake/sdl3.cmake /Users/miami/OpenBattlefield2/src/app/CMakeLists.txt /Users/miami/OpenBattlefield2/src/con/CMakeLists.txt /Users/miami/OpenBattlefield2/src/core/CMakeLists.txt /Users/miami/OpenBattlefield2/src/engine/CMakeLists.txt /Users/miami/OpenBattlefield2/src/font/CMakeLists.txt /Users/miami/OpenBattlefield2/src/game/CMakeLists.txt /Users/miami/OpenBattlefield2/src/gfx/CMakeLists.txt /Users/miami/OpenBattlefield2/src/hud/CMakeLists.txt /Users/miami/OpenBattlefield2/src/level/CMakeLists.txt /Users/miami/OpenBattlefield2/src/loc/CMakeLists.txt /Users/miami/OpenBattlefield2/src/mesh/CMakeLists.txt /Users/miami/OpenBattlefield2/src/net/CMakeLists.txt /Users/miami/OpenBattlefield2/src/server/CMakeLists.txt /Users/miami/OpenBattlefield2/src/texture/CMakeLists.txt /Users/miami/OpenBattlefield2/src/vfs/CMakeLists.txt /Users/miami/OpenBattlefield2/tests/CMakeLists.txt /Users/miami/OpenBattlefield2/third_party/miniz/CMakeLists.txt /Users/miami/OpenBattlefield2/third_party/stb/CMakeLists.txt /Users/miami/OpenBattlefield2/tools/con_dump/CMakeLists.txt /Users/miami/OpenBattlefield2/tools/hud_dump/CMakeLists.txt /Users/miami/OpenBattlefield2/tools/mesh_info/CMakeLists.txt /Users/miami/OpenBattlefield2/tools/object_info/CMakeLists.txt /Users/miami/OpenBattlefield2/tools/texture_info/CMakeLists.txt /opt/homebrew/lib/cmake/SDL3/SDL3Config.cmake /opt/homebrew/lib/cmake/SDL3/SDL3ConfigVersion.cmake /opt/homebrew/lib/cmake/SDL3/SDL3headersTargets.cmake /opt/homebrew/lib/cmake/SDL3/SDL3sharedTargets-release.cmake /opt/homebrew/lib/cmake/SDL3/SDL3sharedTargets.cmake /opt/homebrew/lib/cmake/SDL3/SDL3testTargets-release.cmake /opt/homebrew/lib/cmake/SDL3/SDL3testTargets.cmake /opt/homebrew/share/cmake/Modules/CMakeCInformation.cmake /opt/homebrew/share/cmake/Modules/CMakeCXXInformation.cmake /opt/homebrew/share/cmake/Modules/CMakeCommonLanguageInclude.cmake /opt/homebrew/share/cmake/Modules/CMakeGenericSystem.cmake /opt/homebrew/share/cmake/Modules/CMakeInitializeConfigs.cmake /opt/homebrew/share/cmake/Modules/CMakeLanguageInformation.cmake /opt/homebrew/share/cmake/Modules/CMakeSystemSpecificInformation.cmake /opt/homebrew/share/cmake/Modules/CMakeSystemSpecificInitialize.cmake /opt/homebrew/share/cmake/Modules/Compiler/AppleClang-C.cmake /opt/homebrew/share/cmake/Modules/Compiler/AppleClang-CXX.cmake /opt/homebrew/share/cmake/Modules/Compiler/CMakeCommonCompilerMacros.cmake /opt/homebrew/share/cmake/Modules/Compiler/Clang.cmake /opt/homebrew/share/cmake/Modules/Compiler/GNU.cmake /opt/homebrew/share/cmake/Modules/FeatureSummary.cmake /opt/homebrew/share/cmake/Modules/Internal/CMakeCLinkerInformation.cmake /opt/homebrew/share/cmake/Modules/Internal/CMakeCXXLinkerInformation.cmake /opt/homebrew/share/cmake/Modules/Internal/CMakeCommonLinkerInformation.cmake /opt/homebrew/share/cmake/Modules/Linker/AppleClang-C.cmake /opt/homebrew/share/cmake/Modules/Linker/AppleClang-CXX.cmake /opt/homebrew/share/cmake/Modules/Linker/AppleClang.cmake /opt/homebrew/share/cmake/Modules/Platform/Apple-AppleClang-C.cmake /opt/homebrew/share/cmake/Modules/Platform/Apple-AppleClang-CXX.cmake /opt/homebrew/share/cmake/Modules/Platform/Apple-Clang-C.cmake /opt/homebrew/share/cmake/Modules/Platform/Apple-Clang-CXX.cmake /opt/homebrew/share/cmake/Modules/Platform/Apple-Clang.cmake /opt/homebrew/share/cmake/Modules/Platform/Darwin-Initialize.cmake /opt/homebrew/share/cmake/Modules/Platform/Darwin.cmake /opt/homebrew/share/cmake/Modules/Platform/Linker/Apple-AppleClang-C.cmake /opt/homebrew/share/cmake/Modules/Platform/Linker/Apple-AppleClang-CXX.cmake /opt/homebrew/share/cmake/Modules/Platform/Linker/Apple-AppleClang.cmake /opt/homebrew/share/cmake/Modules/Platform/UnixPaths.cmake CMakeCache.txt CMakeFiles/4.3.4/CMakeCCompiler.cmake CMakeFiles/4.3.4/CMakeCXXCompiler.cmake CMakeFiles/4.3.4/CMakeSystem.cmake: phony
+build /Users/miami/OpenBattlefield2/CMakeLists.txt /Users/miami/OpenBattlefield2/cmake/sdl3.cmake /Users/miami/OpenBattlefield2/src/app/CMakeLists.txt /Users/miami/OpenBattlefield2/src/con/CMakeLists.txt /Users/miami/OpenBattlefield2/src/core/CMakeLists.txt /Users/miami/OpenBattlefield2/src/engine/CMakeLists.txt /Users/miami/OpenBattlefield2/src/font/CMakeLists.txt /Users/miami/OpenBattlefield2/src/game/CMakeLists.txt /Users/miami/OpenBattlefield2/src/gfx/CMakeLists.txt /Users/miami/OpenBattlefield2/src/hud/CMakeLists.txt /Users/miami/OpenBattlefield2/src/level/CMakeLists.txt /Users/miami/OpenBattlefield2/src/loc/CMakeLists.txt /Users/miami/OpenBattlefield2/src/mesh/CMakeLists.txt /Users/miami/OpenBattlefield2/src/net/CMakeLists.txt /Users/miami/OpenBattlefield2/src/server/CMakeLists.txt /Users/miami/OpenBattlefield2/src/texture/CMakeLists.txt /Users/miami/OpenBattlefield2/src/vfs/CMakeLists.txt /Users/miami/OpenBattlefield2/tests/CMakeLists.txt /Users/miami/OpenBattlefield2/third_party/miniz/CMakeLists.txt /Users/miami/OpenBattlefield2/third_party/stb/CMakeLists.txt /Users/miami/OpenBattlefield2/tools/command_audit/CMakeLists.txt /Users/miami/OpenBattlefield2/tools/con_dump/CMakeLists.txt /Users/miami/OpenBattlefield2/tools/hud_dump/CMakeLists.txt /Users/miami/OpenBattlefield2/tools/mesh_info/CMakeLists.txt /Users/miami/OpenBattlefield2/tools/object_info/CMakeLists.txt /Users/miami/OpenBattlefield2/tools/texture_info/CMakeLists.txt /opt/homebrew/lib/cmake/SDL3/SDL3Config.cmake /opt/homebrew/lib/cmake/SDL3/SDL3ConfigVersion.cmake /opt/homebrew/lib/cmake/SDL3/SDL3headersTargets.cmake /opt/homebrew/lib/cmake/SDL3/SDL3sharedTargets-release.cmake /opt/homebrew/lib/cmake/SDL3/SDL3sharedTargets.cmake /opt/homebrew/lib/cmake/SDL3/SDL3testTargets-release.cmake /opt/homebrew/lib/cmake/SDL3/SDL3testTargets.cmake /opt/homebrew/share/cmake/Modules/CMakeCInformation.cmake /opt/homebrew/share/cmake/Modules/CMakeCXXInformation.cmake /opt/homebrew/share/cmake/Modules/CMakeCommonLanguageInclude.cmake /opt/homebrew/share/cmake/Modules/CMakeGenericSystem.cmake /opt/homebrew/share/cmake/Modules/CMakeInitializeConfigs.cmake /opt/homebrew/share/cmake/Modules/CMakeLanguageInformation.cmake /opt/homebrew/share/cmake/Modules/CMakeSystemSpecificInformation.cmake /opt/homebrew/share/cmake/Modules/CMakeSystemSpecificInitialize.cmake /opt/homebrew/share/cmake/Modules/Compiler/AppleClang-C.cmake /opt/homebrew/share/cmake/Modules/Compiler/AppleClang-CXX.cmake /opt/homebrew/share/cmake/Modules/Compiler/CMakeCommonCompilerMacros.cmake /opt/homebrew/share/cmake/Modules/Compiler/Clang.cmake /opt/homebrew/share/cmake/Modules/Compiler/GNU.cmake /opt/homebrew/share/cmake/Modules/FeatureSummary.cmake /opt/homebrew/share/cmake/Modules/Internal/CMakeCLinkerInformation.cmake /opt/homebrew/share/cmake/Modules/Internal/CMakeCXXLinkerInformation.cmake /opt/homebrew/share/cmake/Modules/Internal/CMakeCommonLinkerInformation.cmake /opt/homebrew/share/cmake/Modules/Linker/AppleClang-C.cmake /opt/homebrew/share/cmake/Modules/Linker/AppleClang-CXX.cmake /opt/homebrew/share/cmake/Modules/Linker/AppleClang.cmake /opt/homebrew/share/cmake/Modules/Platform/Apple-AppleClang-C.cmake /opt/homebrew/share/cmake/Modules/Platform/Apple-AppleClang-CXX.cmake /opt/homebrew/share/cmake/Modules/Platform/Apple-Clang-C.cmake /opt/homebrew/share/cmake/Modules/Platform/Apple-Clang-CXX.cmake /opt/homebrew/share/cmake/Modules/Platform/Apple-Clang.cmake /opt/homebrew/share/cmake/Modules/Platform/Darwin-Initialize.cmake /opt/homebrew/share/cmake/Modules/Platform/Darwin.cmake /opt/homebrew/share/cmake/Modules/Platform/Linker/Apple-AppleClang-C.cmake /opt/homebrew/share/cmake/Modules/Platform/Linker/Apple-AppleClang-CXX.cmake /opt/homebrew/share/cmake/Modules/Platform/Linker/Apple-AppleClang.cmake /opt/homebrew/share/cmake/Modules/Platform/UnixPaths.cmake CMakeCache.txt CMakeFiles/4.3.4/CMakeCCompiler.cmake CMakeFiles/4.3.4/CMakeCXXCompiler.cmake CMakeFiles/4.3.4/CMakeSystem.cmake: phony
 
 
 #############################################

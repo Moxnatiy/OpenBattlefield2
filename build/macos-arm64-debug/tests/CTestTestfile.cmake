@@ -32,3 +32,5 @@ add_test([=[test_hud]=] "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/t
 set_tests_properties([=[test_hud]=] PROPERTIES  _BACKTRACE_TRIPLES "/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;5;add_test;/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;20;obf2_add_test;/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;0;")
 add_test([=[test_collision]=] "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_collision")
 set_tests_properties([=[test_collision]=] PROPERTIES  _BACKTRACE_TRIPLES "/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;5;add_test;/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;21;obf2_add_test;/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;0;")
+add_test([=[test_gameplay]=] "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_gameplay")
+set_tests_properties([=[test_gameplay]=] PROPERTIES  _BACKTRACE_TRIPLES "/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;5;add_test;/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;22;obf2_add_test;/Users/miami/OpenBattlefield2/tests/CMakeLists.txt;0;")

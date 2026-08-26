@@ -1,5 +1,6 @@
 add_library(obf2_level
   src/level.cpp
+  src/gameplay.cpp
 )
 add_library(obf2::level ALIAS obf2_level)
 
