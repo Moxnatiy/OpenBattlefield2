@@ -1,6 +1,7 @@
 #include "obf2/net/bf2_events.h"
 
 #include <cstdio>
+#include <utility>
 #include <cstring>
 
 #include "obf2/net/bf2_protocol.h"
@@ -169,6 +170,26 @@ std::optional<Event> readEvent(BitReader& reader) {
     event.object = object;
     return event;
   }
+  if (*type == 4) {
+    DataBlockPiece piece;
+    const auto isHeader = reader.readBits(1);
+    if (!isHeader) return std::nullopt;
+    piece.header = *isHeader == 1;
+    if (piece.header) {
+      const auto blockType = reader.readBits(32);
+      const auto size = reader.readBits(32);
+      if (!blockType || !size) return std::nullopt;
+      piece.blockType = *blockType;
+      piece.size = *size;
+    } else {
+      const auto length = reader.readBits(8);
+      if (!length) return std::nullopt;
+      piece.chunk.resize(*length);
+      if (!reader.readBytes(piece.chunk)) return std::nullopt;
+    }
+    event.block = std::move(piece);
+    return event;
+  }
   if (*type == 5) {
     CreatePlayer player;
     const auto team = reader.readBits(3);
@@ -199,6 +220,54 @@ std::optional<Event> readEvent(BitReader& reader) {
 
   if (!skipEvent(reader, *type)) return std::nullopt;
   return event;
+}
+
+std::optional<std::pair<std::uint32_t, std::vector<std::byte>>> DataBlockAssembler::feed(
+    const DataBlockPiece& piece) {
+  if (piece.header) {
+    type_ = piece.blockType;
+    expected_ = piece.size;
+    data_.clear();
+    data_.reserve(expected_);
+    return std::nullopt;
+  }
+  if (expected_ == 0) return std::nullopt;  // шматок без заголовка
+  data_.insert(data_.end(), piece.chunk.begin(), piece.chunk.end());
+  if (data_.size() < expected_) return std::nullopt;
+
+  auto done = std::make_pair(type_, std::move(data_));
+  data_.clear();
+  expected_ = 0;
+  return done;
+}
+
+std::optional<MapInfo> parseMapInfo(std::span<const std::byte> block) {
+  // Розкладка знята з живого блока: u32, далі три рядки з довжиною u16
+  // попереду — назва рівня, режим гри і розмір.
+  BitReader reader(block);
+  if (!reader.skipBits(32)) return std::nullopt;
+
+  const auto text = [&reader]() -> std::optional<std::string> {
+    const auto length = reader.readBits(16);
+    if (!length || *length > 256) return std::nullopt;
+    std::string out;
+    for (std::uint32_t i = 0; i < *length; ++i) {
+      const auto byte = reader.readByte();
+      if (!byte) return std::nullopt;
+      out.push_back(static_cast<char>(*byte));
+    }
+    return out;
+  };
+
+  MapInfo info;
+  const auto level = text();
+  const auto mode = text();
+  const auto size = reader.readBits(16);
+  if (!level || !mode || !size) return std::nullopt;
+  info.levelName = *level;
+  info.gameMode = *mode;
+  info.size = static_cast<int>(*size);
+  return info;
 }
 
 std::vector<std::vector<std::byte>> loadCapture(const std::string& path) {

@@ -325,6 +325,111 @@ std::string findMenuBackground(obf2::FileSystem& files) {
 // Одна сесія: меню або гра. Повертається код виходу; якщо з меню обрали
 // рівень, його назва лягає в nextLevel і головний цикл заводить сесію
 // наново — вже у грі.
+// Усе, що ми знаємо про рівень: назва шаблона й де він стоїть.
+// Сервер шле об'єкти без назв, лише номерами, тож впізнаємо їх за місцем.
+struct KnownObject {
+  std::string name;
+  obf2::Vec3f position;
+};
+
+std::vector<KnownObject> buildKnownObjects(obf2::FileSystem& files, const std::string& levelName,
+                                           std::string* error) {
+  std::vector<KnownObject> known;
+  if (const auto gameplay =
+          obf2::level::loadGameplayObjects(files, levelName, "gpm_cq", 16, error)) {
+    for (const auto& point : gameplay->controlPoints) {
+      known.push_back({point.templateName, point.position});
+    }
+    for (const auto& spawner : gameplay->spawners) {
+      known.push_back({spawner.templateName, spawner.position});
+      // Спавнер видає різну техніку залежно від команди — усі варіанти
+      // стоять на тому самому місці.
+      for (const auto& [team, name] : spawner.templateByTeam) {
+        (void)team;
+        known.push_back({name, spawner.position});
+      }
+    }
+  }
+  // Статику теж: сервер шле й руйнівні речі на кшталт бочок і цистерн.
+  if (const auto loaded = obf2::level::loadLevel(files, levelName, error)) {
+    for (const auto& object : loaded->objects) {
+      known.push_back({object.templateName, object.position});
+    }
+  }
+  return known;
+}
+
+// Хто з відомих об'єктів стоїть на цьому місці. Допуск навмисно вузький:
+// обидва боки беруть позицію з тих самих даних, тож збіг має бути точним,
+// а ширший допуск почав би вигадувати відповідності.
+const KnownObject* nearestKnown(const std::vector<KnownObject>& known, const obf2::Vec3f& at,
+                               float tolerance = 2.0f) {
+  const KnownObject* best = nullptr;
+  float bestDistance = 0.0f;
+  for (const auto& candidate : known) {
+    const float d = length(candidate.position - at);
+    if (!best || d < bestDistance) {
+      best = &candidate;
+      bestDistance = d;
+    }
+  }
+  return best && bestDistance < tolerance ? best : nullptr;
+}
+
+// На якому кроці об'єкт губиться дорогою до екрана.
+enum class DrawStage {
+  Drawn,            // дійшов: геометрію зібрано
+  NoTemplate,       // шаблона немає в реєстрі
+  NoTree,           // дерево нащадків не зібралося
+  NoGeometryName,   // ні в корені, ні в нащадках немає геометрії
+  GeometryInChild,  // геометрія є, але в нащадка — ми беремо лише кореневу
+  NoGeometryFile,   // назва є, а файла не знайшли
+  NoMesh,           // файл є, а меш не прочитався
+};
+
+std::string_view drawStageName(DrawStage stage) {
+  switch (stage) {
+    case DrawStage::Drawn: return "намальовано";
+    case DrawStage::NoTemplate: return "немає шаблона";
+    case DrawStage::NoTree: return "не зібралося дерево";
+    case DrawStage::NoGeometryName: return "геометрії немає ніде";
+    case DrawStage::GeometryInChild: return "геометрія в нащадка";
+    case DrawStage::NoGeometryFile: return "не знайдено файл";
+    case DrawStage::NoMesh: return "меш не прочитався";
+  }
+  return "?";
+}
+
+// Проходить той самий шлях, що й `buildObjectMesh`, але каже, де саме
+// зупинився. Без цього «об'єкта не видно» нічого не пояснює.
+DrawStage checkDrawable(obf2::FileSystem& files, const obf2::game::Registry& registry,
+                        const std::string& templateName, const Args& args) {
+  const auto* root = registry.find(templateName);
+  if (root == nullptr) return DrawStage::NoTemplate;
+
+  const auto instance = obf2::game::flattenObject(registry, templateName);
+  if (!instance) return DrawStage::NoTree;
+  if (instance->geometryName.empty()) {
+    // Дерево може нести геометрію не в корені: контрольна точка, скажімо,
+    // сама без меша, а прапор приходить від `addTemplate flagpole`. Ми
+    // беремо лише кореневу, тож такі об'єкти й пропадають — але це вже
+    // зовсім інша хиба, ніж «геометрії немає взагалі».
+    for (const auto& part : instance->parts) {
+      const auto* child = registry.find(part.templateName);
+      if (child != nullptr && !child->text("geometry").empty()) {
+        return DrawStage::GeometryInChild;
+      }
+    }
+    return DrawStage::NoGeometryName;
+  }
+
+  const std::string path = resolveGeometryPath(files, root->file, instance->geometryName);
+  if (path.empty()) return DrawStage::NoGeometryFile;
+
+  if (!loadMesh(files, path, args.geometryIndex, args.lodIndex, false)) return DrawStage::NoMesh;
+  return DrawStage::Drawn;
+}
+
 // Зіставляє номери шаблонів із назвами.
 //
 // Сервер шле об'єкти номером шаблона, а номер — це порядок створення
@@ -343,41 +448,8 @@ int runCalibrate(const Args& args, obf2::FileSystem& files) {
     std::fprintf(stderr, "рівень не змонтовано: %s\n", error.c_str());
     return 1;
   }
-  const auto gameplay =
-      obf2::level::loadGameplayObjects(files, args.levelName, "gpm_cq", 16, &error);
-  if (!gameplay) {
-    std::fprintf(stderr, "ігрову логіку не прочитано: %s\n", error.c_str());
-    return 1;
-  }
-  // Статику теж: сервер шле не лише прапори й техніку, а й руйнівні речі
-  // на кшталт бочок і цистерн — вони приходять із StaticObjects.con.
-  const auto loaded = obf2::level::loadLevel(files, args.levelName, &error);
-  if (!loaded) {
-    std::fprintf(stderr, "рівень не прочитано: %s\n", error.c_str());
-    return 1;
-  }
 
-  // Усе, що ми знаємо про рівень: назва шаблона й де він стоїть.
-  struct Known {
-    std::string name;
-    obf2::Vec3f position;
-  };
-  std::vector<Known> known;
-  for (const auto& point : gameplay->controlPoints) {
-    known.push_back({point.templateName, point.position});
-  }
-  for (const auto& spawner : gameplay->spawners) {
-    known.push_back({spawner.templateName, spawner.position});
-    // Спавнер видає різну техніку залежно від команди — усі варіанти
-    // стоять на тому самому місці.
-    for (const auto& [team, name] : spawner.templateByTeam) {
-      (void)team;
-      known.push_back({name, spawner.position});
-    }
-  }
-  for (const auto& object : loaded->objects) {
-    known.push_back({object.templateName, object.position});
-  }
+  auto known = buildKnownObjects(files, args.levelName, &error);
   std::printf("рівень %s: відомих об'єктів %zu\n", args.levelName.c_str(), known.size());
 
   const auto packets = obf2::net::bf2::loadCapture(args.calibrate);
@@ -395,18 +467,8 @@ int runCalibrate(const Args& args, obf2::FileSystem& files) {
       ++fromServer;
       const auto& at = *event.object->position;
 
-      const Known* best = nullptr;
-      float bestDistance = 0.0f;
-      for (const auto& candidate : known) {
-        const float d = length(candidate.position - at);
-        if (!best || d < bestDistance) {
-          best = &candidate;
-          bestDistance = d;
-        }
-      }
-      // Два метри: рівень і сервер беруть позицію з тих самих даних, тож
-      // збіг має бути точним. Ширший допуск почав би вигадувати.
-      if (best && bestDistance < 2.0f) {
+      const KnownObject* best = nearestKnown(known, at);
+      if (best) {
         ++matched;
         mapping[event.object->templateId] = best->name;
       } else {
@@ -431,7 +493,7 @@ int runCalibrate(const Args& args, obf2::FileSystem& files) {
 // Під'єднання до справжнього сервера BF2. Поки що це саме рукостискання:
 // запит, відповідь, підтвердження. Далі має йти потік даних, який ще не
 // розібрано — але вже видно, чи сервер нас узагалі приймає.
-int runConnect(const Args& args) {
+int runConnect(const Args& args, obf2::FileSystem& files) {
   std::string host = args.connectTo;
   std::uint16_t port = 16567;  // типовий ігровий порт BF2
   if (const std::size_t colon = host.rfind(':'); colon != std::string::npos) {
@@ -498,6 +560,17 @@ int runConnect(const Args& args) {
   // Далі тримаємо зв'язок: сервер шле пінги, і без відповіді він нас
   // відключить. Заразом рахуємо, що саме приходить.
   const std::uint8_t id = packet->accept->connectionId;
+
+  // Рівень беремо від сервера, як в оригіналі: він шле його блоком даних
+  // типу 5 одразу після реєстрації. Далі стежимо, що з отриманих
+  // об'єктів доходить до екрана — сервер каже номер і місце, місце дає
+  // назву шаблона, а потім той самий шлях, що й у грі.
+  std::vector<KnownObject> known;
+  obf2::game::Registry registry;
+  std::map<std::string, DrawStage> checked;
+  std::map<DrawStage, int> stageCounts;
+  obf2::net::bf2::DataBlockAssembler blocks;
+  bool levelReady = false;
   int pings = 0, dataPackets = 0, other = 0, challenges = 0;
   int eventCount = 0, objectCount = 0;
   std::size_t dataBytes = 0;
@@ -531,13 +604,64 @@ int runConnect(const Args& args) {
         // збивають розбір наступних.
         for (const auto& event : obf2::net::bf2::readEvents(*more)) {
           ++eventCount;
+          if (event.block) {
+            const auto done = blocks.feed(*event.block);
+            if (done && done->first == obf2::net::bf2::kMapInfoBlock && !levelReady) {
+              if (const auto info = obf2::net::bf2::parseMapInfo(done->second)) {
+                std::printf("  сервер грає %s, режим %s, розмір %d\n", info->levelName.c_str(),
+                            info->gameMode.c_str(), info->size);
+                std::string levelError;
+                if (!obf2::level::mountLevel(files, args.modDir, info->levelName, &levelError)) {
+                  std::printf("  рівень не змонтовано: %s\n", levelError.c_str());
+                } else {
+                  known = buildKnownObjects(files, info->levelName, &levelError);
+                  registry = buildRegistry(files);
+                  std::printf("  рівень прочитано: відомих об'єктів %zu\n", known.size());
+                }
+                levelReady = true;
+
+                // Аж тепер кажемо «рівень завантажено». Саме в такому
+                // порядку працює оригінал: доти сервер вважає клієнта
+                // неготовим і світу не шле, а нам і нема куди його класти.
+                obf2::net::bf2::ExtendedHeader ready;
+                ready.sequence = sequence++ & 0x3F;
+                if (parsed->extended) ready.ack = parsed->extended->sequence;
+                ready.ackBits = 0xFFFFFFFFu;
+                socket->send(obf2::net::bf2::writePostRemoteEvent(
+                    id, ready, batch++, obf2::net::bf2::kNetworkCategory,
+                    obf2::net::bf2::kNetLoadComplete));
+                std::printf("  надіслано «рівень завантажено»\n");
+              }
+            }
+            continue;
+          }
           if (event.object) {
             ++objectCount;
-            if (event.object->position && objectCount <= 3) {
-              const auto& at = *event.object->position;
-              std::printf("  об'єкт: шаблон %u, номер %u, позиція %.1f %.1f %.1f\n",
-                          event.object->templateId, event.object->networkId, at.x, at.y,
-                          at.z);
+            if (!event.object->position) continue;
+            const auto& at = *event.object->position;
+            if (known.empty()) {
+              if (objectCount <= 3) {
+                std::printf("  об'єкт: шаблон %u, номер %u, позиція %.1f %.1f %.1f\n",
+                            event.object->templateId, event.object->networkId, at.x, at.y, at.z);
+              }
+              continue;
+            }
+            const KnownObject* match = nearestKnown(known, at);
+            if (match == nullptr) {
+              std::printf("  не впізнано: шаблон %u @ %.1f %.1f %.1f\n",
+                          event.object->templateId, at.x, at.y, at.z);
+              continue;
+            }
+
+            auto found = checked.find(match->name);
+            if (found == checked.end()) {
+              const DrawStage stage = checkDrawable(files, registry, match->name, args);
+              found = checked.emplace(match->name, stage).first;
+              ++stageCounts[stage];
+            }
+            if (found->second != DrawStage::Drawn) {
+              std::printf("  НЕ ВИДНО: %-44s %s\n", match->name.c_str(),
+                          std::string(drawStageName(found->second)).c_str());
             }
           }
           if (event.player) {
@@ -589,12 +713,6 @@ int runConnect(const Args& args) {
             std::printf("  надіслано ClientInfo: ім'я %s, %zu байтів\n",
                         info.name.c_str(), blob.size());
 
-            // І одразу — «рівень завантажено». Без цього сервер вважає
-            // клієнта неготовим і не шле ні об'єктів світу, ні привидів.
-            socket->send(obf2::net::bf2::writePostRemoteEvent(
-                id, nextHeader(), batch++, obf2::net::bf2::kNetworkCategory,
-                obf2::net::bf2::kNetLoadComplete));
-            std::printf("  надіслано «рівень завантажено»\n");
           }
         }
         break;
@@ -611,6 +729,12 @@ int runConnect(const Args& args) {
   // Якщо виклик прийшов один раз — сервер прийняв нашу відповідь. Поки
   // вона його не влаштовує, він шле виклик знову й знову.
   std::printf("  подій розібрано: %d, з них об'єктів світу: %d\n", eventCount, objectCount);
+  if (!checked.empty()) {
+    std::printf("  різних шаблонів: %zu\n", checked.size());
+    for (const auto& [stage, count] : stageCounts) {
+      std::printf("    %-24s %d\n", std::string(drawStageName(stage)).c_str(), count);
+    }
+  }
   std::printf("  викликів отримано: %d %s\n", challenges,
               challenges == 1 ? "(відповідь прийнято)" : "(відповідь не прийнято)");
 
@@ -1720,7 +1844,7 @@ int main(int argc, char** argv) {
 
   // Під'єднання до справжнього сервера — окремий режим: тут не потрібні
   // ні вікно, ні рівень.
-  if (!args.connectTo.empty()) return runConnect(args);
+  if (!args.connectTo.empty()) return runConnect(args, files);
 
   // Меню й гра — це дві сесії поспіль: обраний у меню рівень просто
   // заводить наступну з іншими аргументами.

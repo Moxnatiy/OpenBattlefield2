@@ -61,11 +61,45 @@ struct CreatePlayer {
   std::string name;
 };
 
+// Шматок блока даних із `DataBlockEvent` (тип 4). Блок їде двома видами
+// подій: спершу заголовок із типом і повним розміром, далі шматки.
+struct DataBlockPiece {
+  bool header = false;
+  std::uint32_t blockType = 0;  // лише в заголовку
+  std::uint32_t size = 0;       // лише в заголовку
+  std::vector<std::byte> chunk;
+};
+
+// Відомості про рівень — блок типу 5, який сервер шле одразу після
+// реєстрації (`GameServer::sendClientMapInfo` віддає `MapInfo`).
+struct MapInfo {
+  std::string levelName;
+  std::string gameMode;
+  int size = 0;
+};
+
+inline constexpr std::uint32_t kMapInfoBlock = 5;
+
+std::optional<MapInfo> parseMapInfo(std::span<const std::byte> block);
+
 // Одна подія з пакета: номер типу і те з неї, що ми вже розбираємо.
 struct Event {
   std::uint32_t type = 0;
   std::optional<CreateObject> object;
   std::optional<CreatePlayer> player;
+  std::optional<DataBlockPiece> block;
+};
+
+// Складає блоки з шматків, які приходять подіями.
+class DataBlockAssembler {
+ public:
+  // Повертає зібраний блок, коли його дочитано до кінця.
+  std::optional<std::pair<std::uint32_t, std::vector<std::byte>>> feed(const DataBlockPiece& piece);
+
+ private:
+  std::uint32_t type_ = 0;
+  std::uint32_t expected_ = 0;
+  std::vector<std::byte> data_;
 };
 
 // Пересуває читача рівно на довжину події вказаного типу.
