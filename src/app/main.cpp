@@ -226,6 +226,38 @@ obf2::game::Registry buildRegistry(obf2::FileSystem& files) {
 
 // Шаблон -> зібрана геометрія: дерево нащадків плюс розстановка частин
 // BundledMesh за geometryPart.
+// Додає до цілі меш, перетворений матрицею. Індекси зсуваються на вже
+// наявні вершини, діапазони матеріалів — на вже наявні індекси.
+void appendMesh(obf2::mesh::RenderMesh& target, const obf2::mesh::RenderMesh& source,
+                const obf2::Mat4& transform) {
+  const auto vertexBase = static_cast<std::uint32_t>(target.vertices.size());
+  const auto indexBase = static_cast<std::uint32_t>(target.indices.size());
+
+  for (const auto& vertex : source.vertices) {
+    obf2::mesh::Vertex moved = vertex;
+    const obf2::Vec3f at = transformPoint(
+        transform, obf2::Vec3f{vertex.position.x, vertex.position.y, vertex.position.z});
+    moved.position = {at.x, at.y, at.z};
+    // Нормалі повертаємо без переносу: масштабу в цих трансформах немає,
+    // тож звичайного множення на верхній блок 3x3 досить.
+    const obf2::Vec3f n = transformDirection(
+        transform, obf2::Vec3f{vertex.normal.x, vertex.normal.y, vertex.normal.z});
+    moved.normal = {n.x, n.y, n.z};
+    target.vertices.push_back(moved);
+  }
+  for (const auto index : source.indices) target.indices.push_back(index + vertexBase);
+  for (auto range : source.ranges) {
+    range.indexStart += indexBase;
+    target.ranges.push_back(std::move(range));
+  }
+}
+
+// Шаблон -> зібрана геометрія: дерево нащадків плюс розстановка частин
+// BundledMesh за geometryPart.
+//
+// Якщо в кореня власного меша немає, збираємо об'єкт із мешів нащадків.
+// Так влаштовані, скажімо, контрольні точки: сам шаблон без геометрії, а
+// прапор приходить через `ObjectTemplate.addTemplate flagpole`.
 std::optional<obf2::mesh::RenderMesh> buildObjectMesh(obf2::FileSystem& files,
                                                       const obf2::game::Registry& registry,
                                                       const std::string& templateName,
@@ -235,6 +267,39 @@ std::optional<obf2::mesh::RenderMesh> buildObjectMesh(obf2::FileSystem& files,
 
   const auto instance = obf2::game::flattenObject(registry, templateName);
   if (!instance) return std::nullopt;
+
+  if (instance->geometryName.empty()) {
+    obf2::mesh::RenderMesh merged;
+    int added = 0;
+    for (const auto& part : instance->parts) {
+      if (part.geometryName.empty()) continue;
+      const std::string path = resolveGeometryPath(files, part.file, part.geometryName);
+      if (path.empty()) continue;
+      const auto piece = loadMesh(files, path, args.geometryIndex, args.lodIndex, false);
+      if (!piece) continue;
+      appendMesh(merged, *piece, part.transform);
+      ++added;
+    }
+    if (added == 0) return std::nullopt;
+    // Межі рахуємо самі: меші прийшли з різних файлів, і кожен приніс
+    // власні, у своїх координатах.
+    if (!merged.vertices.empty()) {
+      merged.bounds.min = merged.bounds.max = merged.vertices.front().position;
+      for (const auto& vertex : merged.vertices) {
+        merged.bounds.min.x = std::min(merged.bounds.min.x, vertex.position.x);
+        merged.bounds.min.y = std::min(merged.bounds.min.y, vertex.position.y);
+        merged.bounds.min.z = std::min(merged.bounds.min.z, vertex.position.z);
+        merged.bounds.max.x = std::max(merged.bounds.max.x, vertex.position.x);
+        merged.bounds.max.y = std::max(merged.bounds.max.y, vertex.position.y);
+        merged.bounds.max.z = std::max(merged.bounds.max.z, vertex.position.z);
+      }
+    }
+    if (verbose) {
+      std::printf("  корінь без геометрії: зібрано з %d мешів нащадків, вершин %zu\n", added,
+                  merged.vertices.size());
+    }
+    return merged;
+  }
 
   const std::string path = resolveGeometryPath(files, root->file, instance->geometryName);
   if (path.empty()) return std::nullopt;
@@ -393,7 +458,7 @@ std::string_view drawStageName(DrawStage stage) {
     case DrawStage::NoTemplate: return "немає шаблона";
     case DrawStage::NoTree: return "не зібралося дерево";
     case DrawStage::NoGeometryName: return "геометрії немає ніде";
-    case DrawStage::GeometryInChild: return "геометрія в нащадка";
+    case DrawStage::GeometryInChild: return "зібрано з нащадків";
     case DrawStage::NoGeometryFile: return "не знайдено файл";
     case DrawStage::NoMesh: return "меш не прочитався";
   }
@@ -410,16 +475,13 @@ DrawStage checkDrawable(obf2::FileSystem& files, const obf2::game::Registry& reg
   const auto instance = obf2::game::flattenObject(registry, templateName);
   if (!instance) return DrawStage::NoTree;
   if (instance->geometryName.empty()) {
-    // Дерево може нести геометрію не в корені: контрольна точка, скажімо,
-    // сама без меша, а прапор приходить від `addTemplate flagpole`. Ми
-    // беремо лише кореневу, тож такі об'єкти й пропадають — але це вже
-    // зовсім інша хиба, ніж «геометрії немає взагалі».
-    for (const auto& part : instance->parts) {
-      const auto* child = registry.find(part.templateName);
-      if (child != nullptr && !child->text("geometry").empty()) {
-        return DrawStage::GeometryInChild;
-      }
-    }
+    // Дерево може нести геометрію не в корені: контрольна точка сама без
+    // меша, а прапор приходить від `addTemplate flagpole`. Такі об'єкти
+    // збираються з мешів нащадків.
+    // Не просто шукаємо файл, а справді збираємо меш: інакше «зібрано»
+    // означало б лише «схоже, мало б зібратися».
+    const auto merged = buildObjectMesh(files, registry, templateName, args, false);
+    if (merged && !merged->vertices.empty()) return DrawStage::GeometryInChild;
     return DrawStage::NoGeometryName;
   }
 
@@ -861,6 +923,12 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
 
       hostedServer = std::make_unique<obf2::server::GameServer>(serverSettings);
       obf2::server::GameServer& gameServer = *hostedServer;
+
+      // Спершу статика рівня, потім ігрова логіка — саме в такому порядку
+      // це робить рушій. Навпаки не можна: `loadWorld` починає з чистого
+      // списку об'єктів і змела б прапори, які ставить `setGameplay`.
+      gameServer.loadWorld(*level);
+
       // Ігрова логіка режиму: контрольні точки й спавнери техніки.
       std::string gameplayError;
       if (auto gameplay = obf2::level::loadGameplayObjects(files, level->name, "gpm_cq", 16,
@@ -879,7 +947,6 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         std::printf("  ігрова логіка: %s\n", gameplayError.c_str());
       }
 
-      gameServer.loadWorld(*level);
       // Рельєф для зіткнення з землею: без нього солдат падає без кінця.
       gameServer.setTerrain(&*level);
 
@@ -973,6 +1040,12 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
                   std::string(obf2::server::clientStateName(client.state())).c_str(),
                   gameServer.playerCount(), gameServer.packetsSent(),
                   gameServer.packetsReceived());
+      int flags = 0;
+      for (const auto& [id, object] : client.objects()) {
+        (void)id;
+        if (object.templateName.rfind("CPNAME", 0) == 0) ++flags;
+      }
+      std::printf("  контрольних точок дійшло до клієнта: %d\n", flags);
       std::printf("  клієнт отримав об'єктів: %zu з %zu\n", client.objects().size(),
                   level->objects.size());
 

@@ -184,6 +184,19 @@ void GameServer::setGameplay(level::GameplayObjects gameplay) {
     state.onlyTakeableByTeam = point.onlyTakeableByTeam;
     state.enemyTicketLossWhenCaptured = point.enemyTicketLossWhenCaptured;
     controlPoints_.push_back(std::move(state));
+
+    // Прапор має бути видимим, тож контрольна точка їде клієнтові ще й
+    // звичайним об'єктом — так само робить оригінал: у його потоці світу
+    // ці шаблони приходять `CreateObjectEvent`-ами нарівні з технікою.
+    // Геометрії в самому шаблоні немає, вона в нащадка (`addTemplate
+    // flagpole`), і збирання об'єкта це враховує.
+    if (!point.templateName.empty()) {
+      WorldObject flag;
+      flag.id = nextObjectId_++;
+      flag.templateName = point.templateName;
+      flag.position = point.position;
+      objects_.push_back(std::move(flag));
+    }
   }
 
   // Квитки заводяться на початку раунду — так само, як це робить
