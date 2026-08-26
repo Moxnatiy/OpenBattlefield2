@@ -1,0 +1,75 @@
+rem *** Налаштування для локального еталонного сервера OpenBF2.
+rem *** Це копія типових налаштувань гри з трьома змінами: ім'я,
+rem *** один гравець для старту раунду й 16 місць. PunkBuster
+rem *** лишається вимкненим, як і в оригіналі за замовчуванням.
+
+sv.serverName "OpenBF2 reference"
+sv.password ""
+sv.internet 0
+sv.serverIP ""
+sv.serverPort 16567
+sv.welcomeMessage ""
+sv.punkBuster 0
+sv.allowFreeCam 0
+sv.allowExternalViews 1
+sv.allowNoseCam 1
+sv.hitIndicator 1
+sv.maxPlayers 16
+sv.numPlayersNeededToStart 1
+sv.notEnoughPlayersRestartDelay 15
+sv.startDelay 5
+sv.endDelay 15
+sv.spawnTime 15
+sv.manDownTime 15
+sv.endOfRoundDelay 15
+sv.ticketRatio 100
+sv.roundsPerMap 3
+sv.timeLimit 0
+sv.scoreLimit 0
+sv.soldierFriendlyFire 100
+sv.vehicleFriendlyFire 100
+sv.soldierSplashFriendlyFire 100
+sv.vehicleSplashFriendlyFire 100
+sv.tkPunishEnabled 1
+sv.tkNumPunishToKick 3
+sv.tkPunishByDefault 0
+sv.votingEnabled 1
+sv.voteTime 90
+sv.minPlayersForVoting 2
+sv.teamVoteOnly 1
+sv.gameSpyPort 29900
+sv.allowNATNegotiation 0
+sv.interfaceIP ""
+sv.autoRecord 0
+sv.demoIndexURL http://
+sv.demoDownloadURL http://
+sv.autoDemoHook "adminutils/demo/rotate_demo.py"
+sv.demoQuality 1
+sv.adminScript "default"
+sv.timeBeforeRestartMap 30
+sv.autoBalanceTeam 0
+sv.teamRatioPercent 100
+sv.coopBotRatio	50
+sv.coopBotCount	16
+sv.coopBotDifficulty 50
+sv.voipEnabled 1
+sv.voipQuality 3
+sv.voipServerRemote 0
+sv.voipServerRemoteIP ""
+sv.voipServerPort 55125
+sv.voipBFClientPort 55123
+sv.voipBFServerPort 55124
+sv.voipSharedPassword ""
+sv.useGlobalRank 1
+sv.useGlobalUnlocks 1
+sv.sponsorText ""
+sv.sponsorLogoURL ""
+sv.communityLogoURL ""
+sv.radioSpamInterval 6
+sv.radioMaxSpamFlagCount 6
+sv.radioBlockedDurationTime 30
+sv.friendlyFireWithMines 0
+
+rem *** Віддалена консоль: через неї видно, які команди виконує рушій.
+sv.rconPassword "openbf2"
+sv.adminScript "default"

@@ -1060,6 +1060,21 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
 
     std::printf("  HUD: %zu вузлів у дереві, шматків до малювання %zu, живих підписів %zu\n",
                 ingameHud.nodes().size(), pieces.size(), hudDynamic.size());
+
+    // Команди, яких ми ще не вміємо. Гра — це потік команд, тож найкорисніше
+    // бачити саме те, що прийшло й лишилося без обробника.
+    if (ingameHud.unknownCommands() > 0) {
+      std::printf("  HUD: без реалізації %lld команд, унікальних %zu\n",
+                  ingameHud.unknownCommands(), ingameHud.unknownByName().size());
+      int shown = 0;
+      for (const auto& [name, count] : ingameHud.unknownByName()) {
+        if (shown++ >= 8) break;
+        std::printf("    немає обробника: %-40s x%d\n", name.c_str(), count);
+      }
+      if (ingameHud.unknownByName().size() > 8) {
+        std::printf("    ... решта — command_audit\n");
+      }
+    }
   }
 
   std::vector<obf2::gfx::GpuMesh> gpuMeshes(scene.meshes.size());
