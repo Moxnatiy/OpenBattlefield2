@@ -4,7 +4,9 @@
 //   hud_dump <modDir> <група>    — вузли однієї групи
 
 #include <cstdio>
+#include <algorithm>
 #include <map>
+#include <vector>
 #include <string>
 
 #include "obf2/hud/hud.h"
@@ -29,6 +31,16 @@ int main(int argc, char** argv) {
 
   std::printf("вузлів: %zu, невідомих команд: %lld\n", builder.nodes().size(),
               builder.unknownCommands());
+  if (argc > 2 && std::string(argv[2]) == "--unknown") {
+    std::puts("\nбез обробника (топ-30):");
+    std::vector<std::pair<std::string, int>> sorted(builder.unknownByName().begin(),
+                                                    builder.unknownByName().end());
+    std::sort(sorted.begin(), sorted.end(), [](auto& a, auto& b) { return a.second > b.second; });
+    for (std::size_t i = 0; i < sorted.size() && i < 30; ++i) {
+      std::printf("  %-44s %d\n", sorted[i].first.c_str(), sorted[i].second);
+    }
+    return 0;
+  }
 
   if (argc < 3) {
     std::puts("\nгрупи:");

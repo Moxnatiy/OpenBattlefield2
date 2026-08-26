@@ -17,6 +17,7 @@
 // самий принцип, що й у ObjectTemplate.
 #include <cstdint>
 #include <optional>
+#include <map>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -32,7 +33,16 @@ enum class NodeType {
   Split,
   Bar,
   ObjectMarker,
+  Compass,
+  TransformList,
   Other,
+};
+
+// Ефект появи й зникнення вузла.
+enum class ShowEffect {
+  Alpha,  // проявляється прозорістю
+  Move,   // виїжджає
+  Blend,
 };
 
 std::string_view nodeTypeName(NodeType type);
@@ -61,6 +71,32 @@ struct Node {
   Color color;
   float inTime = 0.0f;
   float outTime = 0.0f;
+
+  std::string altCommand;      // setButtonNodeAltConCmd — дія правою кнопкою
+  std::string valueVariable;   // setBarNodeValueVariable — заповнення смуги
+  std::string positionVariable;  // setNodePosVariable
+  std::string rotateVariable;    // setPictureNodeRotateVariable
+  std::vector<std::string> rgbVariables;  // setNodeRGBVariables
+
+  float offsetX = 0.0f, offsetY = 0.0f;        // setNodeOffset
+  float centerX = 0.0f, centerY = 0.0f;        // setPictureNodeCenterPoint
+  float textureWidth = 0.0f, textureHeight = 0.0f;  // setObjectMarkerNodeTextureSize
+
+  // Прямокутник, у якому кнопка ловить мишу; якщо не заданий — весь вузол.
+  bool hasMouseArea = false;
+  float mouseX = 0.0f, mouseY = 0.0f, mouseWidth = 0.0f, mouseHeight = 0.0f;
+
+  std::string font;              // setListNodeFont / setTextNodeFont
+  Color borderColor;             // setPictureNodeBorderColor
+  float borderSize = 0.0f;       // setCompassNodeBorder / setBarNodeBorder
+  bool snap = false;             // setBarNodeSnap
+  // Об'єкти, які позначає маркер, і вузол підпису до нього.
+  std::vector<std::string> markerObjects;
+  std::string lockTextNode;
+
+  std::vector<ShowEffect> showEffects;
+  // Імена вузлів, доданих до цього списку трансформацій.
+  std::vector<std::string> children;
 };
 
 // HUD BF2 розкладений у координатах 640x480 і розтягується на екран.
@@ -78,11 +114,14 @@ class Builder {
   std::vector<std::string> groups() const;
 
   long long unknownCommands() const { return unknown_; }
+  const std::map<std::string, int>& unknownByName() const { return unknownByName_; }
 
  private:
-  Node* active() { return nodes_.empty() ? nullptr : &nodes_.back(); }
+  Node* active();
 
   std::vector<Node> nodes_;
+  std::map<std::string, int> unknownByName_;
+  int activeIndex_ = -1;  // -1 = останній створений
   long long unknown_ = 0;
 };
 

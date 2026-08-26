@@ -13,8 +13,10 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "obf2/core/math.h"
@@ -56,6 +58,29 @@ struct TerrainInfo {
   Vec3f terrainSkyColor{0.6f, 0.7f, 0.9f};
 };
 
+// Дорога з CompiledRoads.con. Формат `.mesh` окремий від решти мешів:
+// вершини лежать відносно точки `start`, а разом із позицією йдуть дві
+// пари координат текстур і альфа для згасання на краях.
+//
+// Розкладка (за Project Dalian, engine/formats/mesh/bf2_road_mesh.cpp):
+//   0  u32   версія
+//   4  float3 start
+//   16 float  довжина
+//   20 float3 end
+//   32 float3 misc
+//   48 u32   кількість вершин   (заголовок — 52 байти)
+//   далі   вершини по 32 байти: позиція, u/v, u1/v1, альфа
+//   потім  u32 кількість індексів і самі індекси по 16 біт
+struct Road {
+  std::string templateName;
+  std::string meshPath;
+  Vec3f position;
+  mesh::RenderMesh geometry;
+};
+
+std::optional<mesh::RenderMesh> loadRoadMesh(std::span<const std::byte> bytes,
+                                             std::string* error = nullptr);
+
 // Розстановка з StaticObjects.con: `Object.create` + absolutePosition/rotation.
 struct StaticObject {
   std::string templateName;
@@ -69,6 +94,9 @@ struct Level {
   TerrainInfo terrain;
   HeightmapInfo primary;
   std::vector<StaticObject> objects;
+  std::vector<Road> roads;
+  // Ім'я шаблону дороги -> шлях до текстури (з RoadTemplateTexture).
+  std::unordered_map<std::string, std::string> roadTextures;
 
   // Висоти у світових одиницях, розмір size*size, рядки з півночі на південь.
   std::vector<float> heights;

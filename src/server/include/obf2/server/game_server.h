@@ -18,6 +18,7 @@
 #include "obf2/level/level.h"
 #include "obf2/net/connection.h"
 #include "obf2/net/session.h"
+#include "obf2/server/physics.h"
 
 namespace obf2::server {
 
@@ -28,6 +29,7 @@ struct WorldObject {
   Vec3f position;
   Vec3f rotation;
   Vec3f velocity;
+  bool onGround = false;
 
   // Статику надсилаємо раз при появі, рухоме — щотакту. Без цього поділу
   // 907 будинків їхали б у мережу шістдесят разів на секунду.
@@ -63,6 +65,9 @@ struct ServerSettings {
 
   Vec3f spawnPosition{0.0f, 0.0f, 0.0f};
   std::string soldierTemplate = "player_soldier";
+
+  // Константи руху з даних гри (Vars.Set phy-soldier-*).
+  PhysicsConstants physics;
 };
 
 class GameServer {
@@ -72,6 +77,10 @@ class GameServer {
   // Наповнює світ статичними об'єктами рівня. Саме сервер вирішує, що у
   // світі є, — клієнт про це дізнається лише з мережі.
   void loadWorld(const level::Level& level, std::size_t limit = 0);
+
+  // Рельєф для зіткнення з землею. Без нього солдат падає без кінця.
+  void setTerrain(const level::Level* level) { terrain_ = level; }
+  float groundHeightAt(const Vec3f& position) const;
 
   // Приймає нове під'єднання. Сервер бере канал у власність.
   void accept(std::unique_ptr<net::Connection> connection);
@@ -102,6 +111,7 @@ class GameServer {
   bool sendTo(Player& player, std::span<const std::byte> data);
 
   ServerSettings settings_;
+  const level::Level* terrain_ = nullptr;
   std::vector<WorldObject> objects_;
   std::vector<Player> players_;
   std::uint32_t nextPlayerId_ = 1;

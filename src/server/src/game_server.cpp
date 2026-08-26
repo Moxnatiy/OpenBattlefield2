@@ -172,6 +172,30 @@ std::uint32_t GameServer::spawnSoldier(Player& player) {
   return objects_.back().id;
 }
 
+float GameServer::groundHeightAt(const Vec3f& position) const {
+  if (terrain_ == nullptr || terrain_->heights.empty()) return 0.0f;
+
+  // Білінійна вибірка з карти висот: без неї солдат стрибав би сходинками
+  // по вузлах сітки.
+  const float half = terrain_->halfExtent();
+  const float gx = position.x / terrain_->primary.scale.x + half;
+  const float gz = position.z / terrain_->primary.scale.z + half;
+
+  const int x0 = static_cast<int>(std::floor(gx));
+  const int z0 = static_cast<int>(std::floor(gz));
+  const float tx = gx - static_cast<float>(x0);
+  const float tz = gz - static_cast<float>(z0);
+
+  const float h00 = terrain_->heightAt(x0, z0);
+  const float h10 = terrain_->heightAt(x0 + 1, z0);
+  const float h01 = terrain_->heightAt(x0, z0 + 1);
+  const float h11 = terrain_->heightAt(x0 + 1, z0 + 1);
+
+  const float top = h00 + (h10 - h00) * tx;
+  const float bottom = h01 + (h11 - h01) * tx;
+  return top + (bottom - top) * tz;
+}
+
 void GameServer::simulate(float step) {
   ++tickCount_;
 
@@ -188,14 +212,24 @@ void GameServer::simulate(float step) {
     const float cos = std::cos(yaw);
 
     const float speed = player.input.sprint ? settings_.sprintSpeed : settings_.walkSpeed;
-    const Vec3f direction{player.input.moveRight * cos - player.input.moveForward * sin, 0.0f,
-                          -player.input.moveRight * sin - player.input.moveForward * cos};
+    Vec3f wish{player.input.moveRight * cos - player.input.moveForward * sin, 0.0f,
+               -player.input.moveRight * sin - player.input.moveForward * cos};
 
     // Нормуємо, щоб рух по діагоналі не був швидшим за рух прямо.
-    const float magnitude = length(direction);
-    soldier->velocity = magnitude > 1.0f ? direction * (speed / magnitude) : direction * speed;
+    const float magnitude = length(wish);
+    if (magnitude > 1.0f) wish = wish * (1.0f / magnitude);
 
-    soldier->position = soldier->position + soldier->velocity * step;
+    BodyState body;
+    body.position = soldier->position;
+    body.velocity = soldier->velocity;
+    body.onGround = soldier->onGround;
+
+    stepSoldier(body, wish, speed, player.input.jump, settings_.physics,
+                groundHeightAt(soldier->position), step);
+
+    soldier->position = body.position;
+    soldier->velocity = body.velocity;
+    soldier->onGround = body.onGround;
     soldier->rotation = Vec3f{player.input.yaw, player.input.pitch, 0.0f};
   }
 }

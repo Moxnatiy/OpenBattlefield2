@@ -1,6 +1,7 @@
 #include "obf2/level/level.h"
 
 #include <cstdio>
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 
@@ -146,19 +147,57 @@ class LevelBuilder {
       return;
     }
 
+    // --- RoadTemplate: текстури доріг ---
+    // Визначення лежать у Roads/Splines/*.con за редакторською гілкою.
+    if (path == "roadtemplate.setname") {
+      roadTemplateName_ = std::string(command.argStr(0));
+      return;
+    }
+    if (path == "roadtemplatetexture.settexturefile" && !roadTemplateName_.empty()) {
+      // Перша текстура шаблону — основна; наступні це шари змішування.
+      if (level_.roadTextures.find(roadTemplateName_) == level_.roadTextures.end()) {
+        level_.roadTextures.emplace(roadTemplateName_, std::string(command.argStr(0)) + ".dds");
+      }
+      return;
+    }
+
+    // --- CompiledRoads.con ---
+    // Дороги теж починаються з object.create, але далі йде loadMesh —
+    // саме він і відрізняє їх від звичайної розстановки.
+    if (path == "object.geometry.loadmesh") {
+      if (!level_.objects.empty()) {
+        Road road;
+        road.templateName = level_.objects.back().templateName;
+        road.meshPath = std::string(command.argStr(0));
+        level_.roads.push_back(std::move(road));
+        // Прибираємо з розстановки: це дорога, а не статичний об'єкт.
+        level_.objects.pop_back();
+        pendingRoad_ = true;
+      }
+      return;
+    }
+
     // --- StaticObjects.con ---
     if (path == "object.create") {
+      pendingRoad_ = false;
       StaticObject object;
       object.templateName = std::string(command.argStr(0));
       level_.objects.push_back(std::move(object));
       return;
     }
-    if (level_.objects.empty()) return;
-    StaticObject& current = level_.objects.back();
+    // Дорога вже забрала свій object.create, тому далі працюємо або з нею,
+    // або з останнім статичним об'єктом.
+    if (level_.objects.empty() && !pendingRoad_) return;
+    static StaticObject dummy;
+    StaticObject& current = level_.objects.empty() ? dummy : level_.objects.back();
 
     if (path == "object.absoluteposition") {
       if (const auto position = command.argVec3(0)) {
-        current.position = Vec3f{position->x, position->y, position->z};
+        if (pendingRoad_ && !level_.roads.empty()) {
+          level_.roads.back().position = Vec3f{position->x, position->y, position->z};
+        } else {
+          current.position = Vec3f{position->x, position->y, position->z};
+        }
       }
       return;
     }
@@ -176,6 +215,8 @@ class LevelBuilder {
 
   Level& level_;
   bool pendingCluster_ = false;
+  bool pendingRoad_ = false;
+  std::string roadTemplateName_;
   int clusterX_ = 0;
   int clusterY_ = 0;
 };
@@ -253,9 +294,106 @@ std::optional<Level> loadLevel(FileSystem& files, std::string_view levelName, st
   interpreter.runFile(base + "/StaticObjects.con", editorArgs);
   interpreter.runFile(base + "/Water.con");
   interpreter.runFile(base + "/Sky.con", editorArgs);
+  interpreter.runFile(base + "/CompiledRoads.con", editorArgs);
+
+  // Шаблони доріг: у них лежать текстури, і вони живуть в об'єктах гри,
+  // а не в рівні.
+  for (const std::string& path : files.list("objects/roads/splines")) {
+    if (assetExtension(path) == "con") interpreter.runFile(path, editorArgs);
+  }
+
+  // Геометрію доріг читаємо окремо: у .con лежать лише шляхи до файлів.
+  for (Road& road : level.roads) {
+    const auto bytes = files.read(road.meshPath);
+    if (!bytes) continue;
+    if (auto geometry = loadRoadMesh(*bytes)) {
+      road.geometry = std::move(*geometry);
+      // Текстуру беремо за іменем шаблону з CompiledRoads.con.
+      const auto texture = level.roadTextures.find(road.templateName);
+      if (texture != level.roadTextures.end() && !road.geometry.ranges.empty()) {
+        road.geometry.ranges[0].maps.push_back(texture->second);
+      }
+    }
+  }
 
   if (!loadHeights(files, level, error)) return std::nullopt;
   return level;
+}
+
+std::optional<mesh::RenderMesh> loadRoadMesh(std::span<const std::byte> bytes,
+                                             std::string* error) {
+  auto fail = [error](const char* why) -> std::optional<mesh::RenderMesh> {
+    if (error) *error = why;
+    return std::nullopt;
+  };
+
+  constexpr std::size_t kHeaderBytes = 52;
+  constexpr std::size_t kVertexStride = 32;
+  if (bytes.size() < kHeaderBytes + 4) return fail("файл замалий для дороги");
+
+  auto readU32 = [&](std::size_t at) {
+    std::uint32_t value = 0;
+    std::memcpy(&value, bytes.data() + at, sizeof(value));
+    return value;
+  };
+  auto readFloat = [&](std::size_t at) {
+    float value = 0.0f;
+    std::memcpy(&value, bytes.data() + at, sizeof(value));
+    return value;
+  };
+
+  const std::uint32_t vertexCount = readU32(48);
+  const std::size_t vertexBytes = static_cast<std::size_t>(vertexCount) * kVertexStride;
+  if (vertexCount == 0 || kHeaderBytes + vertexBytes + 4 > bytes.size()) {
+    return fail("вершини дороги обірвано");
+  }
+
+  // Позиції у файлі відносні до start; зсув додає вже той, хто ставить
+  // дорогу у світ, разом із absolutePosition.
+  mesh::RenderMesh out;
+  out.vertices.resize(vertexCount);
+  for (std::uint32_t i = 0; i < vertexCount; ++i) {
+    const std::size_t at = kHeaderBytes + static_cast<std::size_t>(i) * kVertexStride;
+    mesh::Vertex& vertex = out.vertices[i];
+    vertex.position = {readFloat(at), readFloat(at + 4), readFloat(at + 8)};
+    // Дорога лежить на землі, тож нормаль угору — окремої в файлі немає.
+    vertex.normal = {0.0f, 1.0f, 0.0f};
+    vertex.uv[0] = readFloat(at + 12);
+    vertex.uv[1] = readFloat(at + 16);
+  }
+
+  const std::size_t indexOffset = kHeaderBytes + vertexBytes;
+  const std::uint32_t indexCount = readU32(indexOffset);
+  if (indexOffset + 4 + static_cast<std::size_t>(indexCount) * 2 > bytes.size()) {
+    return fail("індекси дороги обірвано");
+  }
+
+  out.indices.resize(indexCount);
+  for (std::uint32_t i = 0; i < indexCount; ++i) {
+    std::uint16_t index = 0;
+    std::memcpy(&index, bytes.data() + indexOffset + 4 + i * 2, sizeof(index));
+    if (index >= vertexCount) return fail("індекс дороги за межами буфера");
+    out.indices[i] = index;
+  }
+
+  mesh::Aabb bounds{};
+  for (std::size_t i = 0; i < out.vertices.size(); ++i) {
+    const auto& p = out.vertices[i].position;
+    if (i == 0) {
+      bounds.min = bounds.max = p;
+    } else {
+      bounds.min = {std::min(bounds.min.x, p.x), std::min(bounds.min.y, p.y),
+                    std::min(bounds.min.z, p.z)};
+      bounds.max = {std::max(bounds.max.x, p.x), std::max(bounds.max.y, p.y),
+                    std::max(bounds.max.z, p.z)};
+    }
+  }
+  out.bounds = bounds;
+
+  mesh::DrawRange range;
+  range.indexCount = indexCount;
+  out.ranges.push_back(std::move(range));
+  return out;
 }
 
 std::vector<TerrainPatch> buildTerrainPatches(const Level& level, const FileSystem& files) {

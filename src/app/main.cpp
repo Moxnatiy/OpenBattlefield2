@@ -330,13 +330,24 @@ int main(int argc, char** argv) {
                 level->name.c_str(), level->primary.size, level->primary.size,
                 level->primary.scale.x, level->primary.scale.y, level->primary.scale.z,
                 level->terrain.seaLevel);
-    std::printf("  статичних об'єктів: %zu\n", level->objects.size());
+    std::printf("  статичних об'єктів: %zu, доріг: %zu\n", level->objects.size(),
+                level->roads.size());
 
     auto patches = obf2::level::buildTerrainPatches(*level, files);
     std::printf("  патчів терену: %zu з %d (решта під водою, колормап немає)\n", patches.size(),
                 ((level->primary.size - 1) / level->terrain.patchSize) *
                     ((level->primary.size - 1) / level->terrain.patchSize));
     for (auto& patch : patches) scene.add(std::move(patch.geometry), obf2::Mat4::identity());
+
+    // Дороги: вершини лежать відносно точки початку, тому ставимо їх
+    // абсолютною позицією з .con.
+    int roadsPlaced = 0;
+    for (auto& road : level->roads) {
+      if (road.geometry.indices.empty()) continue;
+      scene.add(std::move(road.geometry), obf2::translation(road.position));
+      ++roadsPlaced;
+    }
+    std::printf("  доріг у сцені: %d\n", roadsPlaced);
     scene.add(obf2::level::buildWaterPlane(*level), obf2::Mat4::identity());
 
     registry = buildRegistry(files);
@@ -355,9 +366,22 @@ int main(int argc, char** argv) {
       // Поява — над центром карти, трохи вище рівня моря, щоб не опинитися
       // всередині гори.
       serverSettings.spawnPosition = obf2::Vec3f{-40.0f, level->terrain.seaLevel + 40.0f, -200.0f};
+
+      // Константи руху беремо з даних гри, а не з голови: той самий файл,
+      // який читає оригінал.
+      obf2::engine::Console physicsConsole;
+      serverSettings.physics.bind(physicsConsole);
+      obf2::con::Interpreter physicsInterpreter(
+          files, [&](const obf2::con::Command& c) { physicsConsole.execute(c); });
+      physicsInterpreter.runFile("objects/soldiers/common/common.con");
+      std::printf("  фізика: прискорення %.2f, гальмування %.2f, керування в повітрі %.2f\n",
+                  serverSettings.physics.acceleration, serverSettings.physics.deceleration,
+                  serverSettings.physics.airMovementFactor);
       hostedServer = std::make_unique<obf2::server::GameServer>(serverSettings);
       obf2::server::GameServer& gameServer = *hostedServer;
       gameServer.loadWorld(*level);
+      // Рельєф для зіткнення з землею: без нього солдат падає без кінця.
+      gameServer.setTerrain(&*level);
 
       auto [clientSide, serverSide] = obf2::net::LoopbackConnection::createPair();
       gameServer.accept(std::move(serverSide));
