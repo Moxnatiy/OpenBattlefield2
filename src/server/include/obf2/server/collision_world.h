@@ -36,7 +36,19 @@ class CollisionWorld {
   // виштовхувати — нуль означає, що шлях вільний.
   int resolveSphere(Vec3f& position, float radius) const;
 
+  // Найвища поверхня під точкою, на яку солдат може стати. Потрібна, щоб
+  // стояти **на об'єктах**, а не завжди на терені: рушій рахує землю не
+  // тільки з карти висот.
+  //
+  // minNormalY — наскільки полога має бути поверхня (`phy-soldier-
+  // feet-contact-normal` = 0.5, тобто нахил до 60°). Повертає false, якщо
+  // під ногами в межах maxDrop нічого немає.
+  bool groundHeight(const Vec3f& from, float maxDrop, float minNormalY, float* outHeight) const;
+
   std::size_t triangleCount() const { return triangles_.size(); }
+  // Скільки трикутників дивиться нормаллю вгору й скільки вниз — щоб
+  // перевірити орієнтацію даних, а не вгадувати її.
+  void normalStats(std::size_t* up, std::size_t* down) const;
   std::size_t cellCount() const { return cells_.size(); }
 
  private:

@@ -79,7 +79,11 @@ void CollisionWorld::addLayer(const mesh::CollisionLayer& layer, const Mat4& tra
 
     const Vec3f edge1 = triangle.b - triangle.a;
     const Vec3f edge2 = triangle.c - triangle.a;
-    const Vec3f normal = cross(edge1, edge2);
+    // Нормаль — за лівосторонньою домовленістю рушія, тобто протилежна до
+    // звичного правостороннього векторного добутку. Це видно й на самих
+    // даних Dalian Plant: із таким знаком угору дивиться 12081 трикутник
+    // проти 5999 донизу, що й очікуєш від світу з доріг, дахів і сходів.
+    const Vec3f normal = cross(edge2, edge1);
     const float area = length(normal);
     if (area < 1e-6f) continue;  // вироджений трикутник
     triangle.normal = normal * (1.0f / area);
@@ -160,6 +164,59 @@ int CollisionWorld::resolveSphere(Vec3f& position, float radius) const {
     if (!moved) break;
   }
   return pushes;
+}
+
+void CollisionWorld::normalStats(std::size_t* up, std::size_t* down) const {
+  std::size_t upCount = 0, downCount = 0;
+  for (const CollisionTriangle& triangle : triangles_) {
+    if (triangle.normal.y > 0.5f) ++upCount;
+    else if (triangle.normal.y < -0.5f) ++downCount;
+  }
+  if (up != nullptr) *up = upCount;
+  if (down != nullptr) *down = downCount;
+}
+
+bool CollisionWorld::groundHeight(const Vec3f& from, float maxDrop, float minNormalY,
+                                  float* outHeight) const {
+  // Промінь суворо вниз. Комірки обходимо тим самим індексом, що й для
+  // сфери: беремо все, що поруч по горизонталі на всю глибину пошуку.
+  const float bottom = from.y - maxDrop;
+  bool found = false;
+  float best = bottom;
+
+  const Vec3f middle{from.x, (from.y + bottom) * 0.5f, from.z};
+  forEachNearby(middle, maxDrop * 0.5f + 0.5f, [&](const CollisionTriangle& triangle) {
+    if (triangle.normal.y < minNormalY) return;  // стіна, а не підлога
+
+    // Перетин вертикального променя з площиною трикутника.
+    if (std::abs(triangle.normal.y) < 1e-6f) return;
+    const float distance = dot(triangle.normal, triangle.a - from);
+    const float t = distance / (-triangle.normal.y);
+    if (t < 0.0f || t > maxDrop) return;
+
+    const Vec3f hit{from.x, from.y - t, from.z};
+
+    // Чи всередині трикутника: рахуємо в площині XZ через знаки векторних
+    // добутків. Для похилої поверхні цього достатньо, бо нормаль не
+    // горизонтальна.
+    const auto side = [](const Vec3f& p, const Vec3f& a, const Vec3f& b) {
+      return (b.x - a.x) * (p.z - a.z) - (b.z - a.z) * (p.x - a.x);
+    };
+    const float s1 = side(hit, triangle.a, triangle.b);
+    const float s2 = side(hit, triangle.b, triangle.c);
+    const float s3 = side(hit, triangle.c, triangle.a);
+    const bool negative = s1 < 0.0f || s2 < 0.0f || s3 < 0.0f;
+    const bool positive = s1 > 0.0f || s2 > 0.0f || s3 > 0.0f;
+    if (negative && positive) return;
+
+    if (!found || hit.y > best) {
+      best = hit.y;
+      found = true;
+    }
+  });
+
+  if (found && outHeight != nullptr) *outHeight = best;
+  return found;
 }
 
 }  // namespace obf2::server

@@ -77,6 +77,9 @@ struct Player {
   bool alive = false;
   // Здоров'я з даних солдата (`ObjectTemplate.armor.maxHitPoints 100`).
   float health = 100.0f;
+  // Пливе. Перемикається з гістерезисом: пороги входу й виходу різні
+  // (`phy-soldier-start-float` / `stop-float`), інакше на межі смикається.
+  bool swimming = false;
   float respawnTimer = 0.0f;  // скільки лишилося чекати до появи
 };
 
@@ -89,13 +92,15 @@ struct ServerSettings {
   // потрібен, щоб рух не залежав від навантаження машини.
   float tickRate = 30.0f;
 
-  // Швидкості солдата у світових одиницях за секунду.
-  float walkSpeed = 4.0f;
-  float sprintSpeed = 7.0f;
+  // Швидкості солдата беруться з констант рушія (`phy-soldier-run-speed`
+  // 3.9 і `phy-soldier-sprint-speed` 7), але лишаються тут, щоб тест міг
+  // задати свої. Нуль означає «взяти з фізики».
+  float walkSpeed = 0.0f;
+  float sprintSpeed = 0.0f;
 
-  // Радіус солдата для зіткнень. У BF2 це капсула; сфера трохи грубіша,
-  // але вже не пускає крізь стіни.
-  float soldierRadius = 0.4f;
+  // Радіус солдата для зіткнень — з `coll-soldier-radius` (0.25).
+  // Лишається тут лише для сумісності; форму задає PhysicsConstants.
+  float soldierRadius = 0.25f;
   // Здоров'я солдата: у всіх наборах BF2 це рівно 100.
   float soldierMaxHealth = 100.0f;
   Vec3f spawnPosition{0.0f, 0.0f, 0.0f};

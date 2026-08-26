@@ -580,7 +580,10 @@ void GameServer::simulate(float step) {
     const float sin = std::sin(yaw);
     const float cos = std::cos(yaw);
 
-    const float speed = player.input.sprint ? settings_.sprintSpeed : settings_.walkSpeed;
+    const float sprint = settings_.sprintSpeed > 0.0f ? settings_.sprintSpeed
+                                                      : settings_.physics.sprintSpeed;
+    const float run = settings_.walkSpeed > 0.0f ? settings_.walkSpeed : settings_.physics.runSpeed;
+    const float speed = player.input.sprint ? sprint : run;
     // У BF2 нульовий кут повороту дивиться вздовж **+Z** (це видно з
     // самих даних: у авіаносця носова частина стоїть на більшому Z при
     // нульовому повороті). Вправо в лівій системі — cross(up, forward).
@@ -596,27 +599,68 @@ void GameServer::simulate(float step) {
     body.velocity = soldier->velocity;
     body.onGround = soldier->onGround;
 
-    stepSoldier(body, wish, speed, player.input.jump, settings_.physics,
-                groundHeightAt(soldier->position), step);
-
-    // Зіткнення з геометрією рівня: сервер вирішує, куди гравець дійшов
-    // насправді. Швидкість гасимо в напрямку виштовхування, інакше гравець
-    // «тремтів» би, впираючись у стіну.
+    // Земля — це не тільки рельєф. Рушій шукає опору й на об'єктах, інакше
+    // на дах чи сходи не зійти. Беремо вищу з двох.
+    const PhysicsConstants& physics = settings_.physics;
+    float ground = groundHeightAt(body.position);
     if (collision_ != nullptr) {
-      const Vec3f before = body.position;
-      // Перевіряємо на висоті грудей, а не біля ніг: інакше сфера чіплялася б
-      // за землю й гравець не міг би рухатися взагалі.
-      Vec3f probe = body.position;
-      probe.y += settings_.soldierRadius + 0.5f;
-      if (collision_->resolveSphere(probe, settings_.soldierRadius) > 0) {
-        body.position.x = probe.x;
-        body.position.z = probe.z;
-        const Vec3f pushed = body.position - before;
-        if (length(pushed) > 1e-4f) {
-          const Vec3f direction = normalize(pushed);
-          const float into = dot(body.velocity, direction);
-          if (into < 0.0f) body.velocity = body.velocity - direction * into;
+      // Починаємо трохи вище ніг, щоб знайти й сходинку перед собою.
+      Vec3f from = body.position;
+      from.y += physics.stepHeight();
+      float surface = 0.0f;
+      if (collision_->groundHeight(from, physics.stepHeight() + 2.0f,
+                                   physics.feetContactNormal, &surface)) {
+        if (surface > ground) ground = surface;
+      }
+    }
+
+    // Вода. Рушій міряє, наскільки солдат занурений, і з певної частки
+    // висоти той спливає (`phy-soldier-start-float`), а назад стає на дно
+    // вже з іншої (`stop-float`) — щоб не смикався на межі.
+    const float waterLevel = terrain_ != nullptr ? terrain_->terrain.seaLevel : 0.0f;
+    const float submersion =
+        physics.standHeight > 0.0f ? (waterLevel - body.position.y) / physics.standHeight : 0.0f;
+    if (player.swimming) {
+      if (submersion <= physics.stopFloat) player.swimming = false;
+    } else if (submersion >= physics.startFloat) {
+      player.swimming = true;
+    }
+
+    if (player.swimming) {
+      // Пливемо: тяжіння не діє, солдат тримається біля поверхні, а
+      // швидкість своя (`phy-soldier-swim-speed`).
+      const float surface = waterLevel - physics.standHeight * physics.startFloat;
+      body.position = body.position + wish * (physics.swimSpeed * step);
+      body.position.y += (surface - body.position.y) * std::min(1.0f, step * 4.0f);
+      body.velocity = Vec3f{};
+      body.onGround = false;
+    } else {
+      stepSoldier(body, wish, speed, player.input.jump, physics, ground, step);
+    }
+
+    // Зіткнення зі стінами: солдат у BF2 це стовпчик сфер, а не одна сфера
+    // на рівні грудей (SoldierResponsePhysics::getSoldierHeight). Саме
+    // тому він може зійти на сходинку: нижче за stepHeight ми не
+    // штовхаємо взагалі, а вище перевіряємо кожну сферу.
+    if (collision_ != nullptr) {
+      const std::vector<float> centers = soldierSphereHeights(physics);
+      Vec3f offset{};
+      for (const float center : centers) {
+        if (center < physics.stepHeight()) continue;
+        Vec3f probe = body.position + offset;
+        probe.y += center;
+        const Vec3f before = probe;
+        if (collision_->resolveSphere(probe, physics.radius) > 0) {
+          offset.x += probe.x - before.x;
+          offset.z += probe.z - before.z;
         }
+      }
+      if (length(offset) > 1e-4f) {
+        body.position.x += offset.x;
+        body.position.z += offset.z;
+        const Vec3f direction = normalize(offset);
+        const float into = dot(body.velocity, direction);
+        if (into < 0.0f) body.velocity = body.velocity - direction * into;
       }
     }
 

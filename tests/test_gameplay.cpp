@@ -403,8 +403,6 @@ static void testCollisionStillWorksAfterRespawn() {
   pushForward();
   CHECK(!gameServer.objects().empty());
   if (gameServer.objects().empty()) return;
-  std::printf("  діаг: після руху %.2f %.2f %.2f\n", gameServer.objects().front().position.x,
-              gameServer.objects().front().position.y, gameServer.objects().front().position.z);
   // До появи стіна тримає.
   CHECK(gameServer.objects().front().position.x < 0.2f);
 
@@ -420,7 +418,96 @@ static void testCollisionStillWorksAfterRespawn() {
   CHECK(gameServer.objects().front().position.x < 0.2f);
 }
 
+static void testSoldierStandsOnObject() {
+  // Була помилка: зайшовши на об'єкт, гравець лишався на висоті терену.
+  // Земля має рахуватися й по геометрії зіткнень.
+  server::ServerSettings settings;
+  settings.spawnPosition = Vec3f{0.0f, 5.0f, 0.0f};
+
+  server::GameServer gameServer(settings);
+  gameServer.setGameplay(level::GameplayObjects{});
+
+  // Пласка «підлога» на висоті 2 метри під точкою появи.
+  mesh::CollisionLayer floorLayer;
+  floorLayer.type = mesh::ColType::Soldier;
+  floorLayer.vertices = {
+      mesh::Vec3{-5.0f, 2.0f, -5.0f}, mesh::Vec3{5.0f, 2.0f, -5.0f},
+      mesh::Vec3{5.0f, 2.0f, 5.0f},   mesh::Vec3{-5.0f, 2.0f, 5.0f},
+  };
+  // Обхід такий, щоб нормаль дивилася вгору за домовленістю рушія.
+  floorLayer.faces = {mesh::CollisionFace{0, 1, 2, 0}, mesh::CollisionFace{0, 2, 3, 0}};
+  floorLayer.bounds.min = mesh::Vec3{-5.0f, 1.9f, -5.0f};
+  floorLayer.bounds.max = mesh::Vec3{5.0f, 2.1f, 5.0f};
+
+  auto world = std::make_unique<server::CollisionWorld>();
+  world->addLayer(floorLayer, Mat4::identity());
+  gameServer.setCollision(std::move(world));
+
+  auto [clientSide, serverSide] = net::LoopbackConnection::createPair();
+  gameServer.accept(std::move(serverSide));
+  server::GameClient client(std::move(clientSide), "ARNE");
+  client.connect();
+
+  for (int i = 0; i < 90; ++i) {
+    gameServer.tick(1.0f / 30.0f);
+    client.tick(1.0f / 30.0f);
+  }
+
+  CHECK(!gameServer.objects().empty());
+  if (gameServer.objects().empty()) return;
+  // Має стояти на об'єкті (y = 2), а не провалитися до нуля.
+  CHECK(std::abs(gameServer.objects().front().position.y - 2.0f) < 0.2f);
+}
+
+static void testSoldierWalksUpStep() {
+  // Сходинка нижча за нижню сферу солдата має прохо­дитися, а не спиняти.
+  server::ServerSettings settings;
+  settings.spawnPosition = Vec3f{-2.0f, 0.0f, 0.0f};
+
+  server::GameServer gameServer(settings);
+  gameServer.setGameplay(level::GameplayObjects{});
+
+  // Верхня площина сходинки заввишки 0.3 м, починається на x = 0.
+  mesh::CollisionLayer step;
+  step.type = mesh::ColType::Soldier;
+  step.vertices = {
+      mesh::Vec3{0.0f, 0.3f, -5.0f}, mesh::Vec3{5.0f, 0.3f, -5.0f},
+      mesh::Vec3{5.0f, 0.3f, 5.0f},  mesh::Vec3{0.0f, 0.3f, 5.0f},
+  };
+  step.faces = {mesh::CollisionFace{0, 1, 2, 0}, mesh::CollisionFace{0, 2, 3, 0}};
+  step.bounds.min = mesh::Vec3{0.0f, 0.2f, -5.0f};
+  step.bounds.max = mesh::Vec3{5.0f, 0.4f, 5.0f};
+
+  auto world = std::make_unique<server::CollisionWorld>();
+  world->addLayer(step, Mat4::identity());
+  gameServer.setCollision(std::move(world));
+
+  auto [clientSide, serverSide] = net::LoopbackConnection::createPair();
+  gameServer.accept(std::move(serverSide));
+  server::GameClient client(std::move(clientSide), "ARNE");
+  client.connect();
+  pump(gameServer, client);
+
+  net::PlayerInput input;
+  input.moveRight = 1.0f;  // на схід, у сходинку
+  // Один такт бігу це 3.9 м/с, тож за секунду солдат саме зійде на
+  // майданчик і лишиться на ньому, а не пробіжить його наскрізь.
+  for (int i = 0; i < 30; ++i) {
+    client.setInput(input);
+    gameServer.tick(1.0f / 30.0f);
+    client.tick(1.0f / 30.0f);
+  }
+
+  CHECK(!gameServer.objects().empty());
+  if (gameServer.objects().empty()) return;
+  const Vec3f position = gameServer.objects().front().position;
+  CHECK(position.x > 0.5f);                     // зійшов, а не вперся
+  CHECK(std::abs(position.y - 0.3f) < 0.15f);   // і стоїть на сходинці
+}
+
 TEST_MAIN({
+  testSoldierStandsOnObject();
+  testSoldierWalksUpStep();
   testCollisionStillWorksAfterRespawn();
   testDeathCostsTicketAndRespawns();
   testEnemyFlagIsNeutralizedBeforeCapture();

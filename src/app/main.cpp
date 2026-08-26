@@ -453,7 +453,20 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       int withCollision = 0, withoutCollision = 0;
       std::unordered_map<std::string, std::shared_ptr<obf2::mesh::CollisionMesh>> collisionCache;
 
-      for (const auto& object : level->objects) {
+      // Техніка теж має зупиняти солдата: вона стоїть у світі сервера, а
+      // не в статиці рівня, тому додаємо її окремо.
+      std::vector<obf2::level::StaticObject> collisionObjects = level->objects;
+      for (const auto& object : gameServer.objects()) {
+        if (object.spawnerIndex < 0) continue;
+        obf2::level::StaticObject vehicle;
+        vehicle.templateName = object.templateName;
+        vehicle.position = object.position;
+        vehicle.rotation = object.rotation;
+        vehicle.hasRotation = true;
+        collisionObjects.push_back(std::move(vehicle));
+      }
+
+      for (const auto& object : collisionObjects) {
         auto cached = collisionCache.find(object.templateName);
         if (cached == collisionCache.end()) {
           std::shared_ptr<obf2::mesh::CollisionMesh> loaded;

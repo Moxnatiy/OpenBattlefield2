@@ -11,7 +11,22 @@ void PhysicsConstants::bind(engine::Console& console) {
     const auto value = command.argFloat(1);
     if (!value) return;
 
-    if (name == "phy-soldier-acceleration") acceleration = *value;
+    if (name == "coll-soldier-radius") radius = *value;
+    else if (name == "coll-soldier-stand-height") standHeight = *value;
+    else if (name == "coll-soldier-crouch-height") crouchHeight = *value;
+    else if (name == "coll-soldier-prone-height") proneHeight = *value;
+    else if (name == "phy-soldier-walk-speed") walkSpeed = *value;
+    else if (name == "phy-soldier-run-speed") runSpeed = *value;
+    else if (name == "phy-soldier-sprint-speed") sprintSpeed = *value;
+    else if (name == "phy-soldier-crouch-speed") crouchSpeed = *value;
+    else if (name == "phy-soldier-crawl-speed") crawlSpeed = *value;
+    else if (name == "phy-soldier-swim-speed") swimSpeed = *value;
+    else if (name == "phy-soldier-inair-speed") inAirSpeed = *value;
+    else if (name == "phy-soldier-feet-contact-normal") feetContactNormal = *value;
+    else if (name == "phy-soldier-feet-level") feetLevel = *value;
+    else if (name == "phy-soldier-start-float") startFloat = *value;
+    else if (name == "phy-soldier-stop-float") stopFloat = *value;
+    else if (name == "phy-soldier-acceleration") acceleration = *value;
     else if (name == "phy-soldier-deceleration") deceleration = *value;
     else if (name == "phy-soldier-air-movement-factor") airMovementFactor = *value;
     else if (name == "phy-soldier-speed-factor") speedFactor = *value;
@@ -60,6 +75,22 @@ void stepSoldier(BodyState& body, const Vec3f& wish, float maxSpeed, bool jump,
   } else {
     body.onGround = false;
   }
+}
+
+std::vector<float> soldierSphereHeights(const PhysicsConstants& constants) {
+  // Поки що солдат завжди стоїть: присідання й лежання ще немає.
+  const int count = constants.standSpheres;
+  const float height = constants.standHeight;
+  std::vector<float> centers;
+  if (count <= 0) return centers;
+
+  const float spacing =
+      count > 1 ? (height - 2.0f * constants.radius) / static_cast<float>(count - 1) : 0.0f;
+  centers.reserve(static_cast<std::size_t>(count));
+  for (int i = 0; i < count; ++i) {
+    centers.push_back(constants.radius + spacing * static_cast<float>(i));
+  }
+  return centers;
 }
 
 }  // namespace obf2::server
