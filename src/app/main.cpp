@@ -21,6 +21,7 @@
 #include "obf2/core/platform.h"
 #include "obf2/engine/engine.h"
 #include "obf2/font/text.h"
+#include "obf2/hud/render.h"
 #include "obf2/game/scene.h"
 #include "obf2/gfx/mesh_renderer.h"
 #include "obf2/level/gameplay.h"
@@ -47,6 +48,9 @@ struct Args {
   std::string screen;  // menu | loading — для детермінованих знімків
   bool hosted = false; // --hosted: світ приходить від локального сервера
   std::optional<obf2::Vec3f> focus;  // куди дивиться камера
+  float mouseX = -1.0f, mouseY = -1.0f;  // --mouse: поставити курсор для знімка
+  bool verboseMenu = false;
+  bool click = false;  // --click: одне натискання в позиції --mouse
   float distance = 0.0f;             // 0 = підібрати за габаритами
 };
 
@@ -64,6 +68,12 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--screenshot" && i + 1 < argc) args.screenshot = argv[++i];
     else if (flag == "--screen" && i + 1 < argc) args.screen = argv[++i];
     else if (flag == "--hosted") args.hosted = true;
+    else if (flag == "--verbose-menu") args.verboseMenu = true;
+    else if (flag == "--click") args.click = true;
+    else if (flag == "--mouse" && i + 2 < argc) {
+      args.mouseX = static_cast<float>(std::atof(argv[++i]));
+      args.mouseY = static_cast<float>(std::atof(argv[++i]));
+    }
     else if (flag == "--dist" && i + 1 < argc) args.distance = static_cast<float>(std::atof(argv[++i]));
     else if (flag == "--focus" && i + 1 < argc) {
       // Формат як у грі: x/y/z
@@ -290,21 +300,10 @@ std::string findMenuBackground(obf2::FileSystem& files) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-  const Args args = parseArgs(argc, argv);
-
-  obf2::FileSystem files;
-  std::vector<std::string> mountErrors;
-  int mounted = 0;
-  for (const char* list : {"ServerArchives.con", "ClientArchives.con"}) {
-    mounted += obf2::mountArchivesFromCon(files, args.modDir, args.modDir / list, &mountErrors);
-  }
-  files.mountDirectory(args.modDir);
-
-  std::printf("OpenBattlefield2 | %s/%s\n", OBF2_PLATFORM_NAME, OBF2_ARCH_NAME);
-  std::printf("мод: %s | архівів: %d\n", args.modDir.string().c_str(), mounted);
-  for (const auto& e : mountErrors) std::printf("  [mount] %s\n", e.c_str());
-
+// Одна сесія: меню або гра. Повертається код виходу; якщо з меню обрали
+// рівень, його назва лягає в nextLevel і головний цикл заводить сесію
+// наново — вже у грі.
+int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel) {
   // --- підготовка сцени -------------------------------------------------
 
   // Унікальна геометрія окремо від розстановки: на рівні той самий будинок
@@ -561,6 +560,14 @@ int main(int argc, char** argv) {
 
   obf2::engine::Engine engine;
   const bool bootMode = args.levelName.empty() && args.objectName.empty() && args.meshPath.empty();
+  obf2::hud::Builder menuHud;
+  obf2::hud::Screen menuScreen;
+  std::string requestedLevel;
+  bool menuQuit = false;
+  // Підсвітка кнопки: для кожної кнопки заздалегідь спечений прямокутник.
+  std::unordered_map<const obf2::hud::Node*, int> hoverQuads;
+  std::vector<const obf2::hud::Node*> menuQuadNodes;
+  const obf2::hud::Node* lastHovered = nullptr;
   int introQuad = -1;
   int menuQuad = -1;
   int loadingQuad = -1;
@@ -592,6 +599,28 @@ int main(int argc, char** argv) {
       std::printf("    без обробника: %s (x%d)\n", name.c_str(), count);
     }
 
+    // Команди, які виконують кнопки меню. Інтерфейс керує грою через
+    // консоль — так само, як в оригіналі.
+    engine.console().bind("openbf2.startLevel", [&](const obf2::con::Command& command) {
+      const std::string_view level = command.argStr(0);
+      requestedLevel = level.empty() && !engine.levels().empty()
+                           ? engine.levels().front().directory
+                           : std::string(level);
+      std::printf("меню: запуск рівня %s\n", requestedLevel.c_str());
+    });
+    engine.console().bind("openbf2.quit", [&](const obf2::con::Command&) {
+      std::printf("меню: вихід\n");
+      menuQuit = true;
+    });
+    for (const char* stub : {"openbf2.multiplayer", "openbf2.options", "openbf2.bfhq",
+                             "openbf2.community"}) {
+      const std::string name = stub;
+      engine.console().bind(name, [name](const obf2::con::Command&) {
+        // Ці екрани ще не зроблені; кажемо про це прямо, а не мовчимо.
+        std::printf("меню: \"%s\" ще не реалізовано\n", name.c_str());
+      });
+    }
+
     const std::string background = findMenuBackground(files);
     std::printf("  стан: %s, тло меню: %s\n",
                 std::string(obf2::engine::stateName(engine.state())).c_str(),
@@ -599,8 +628,53 @@ int main(int argc, char** argv) {
 
     scene.meshes.push_back(buildScreenQuad("#000000"));
     introQuad = static_cast<int>(scene.meshes.size()) - 1;
-    scene.meshes.push_back(buildScreenQuad(background));
-    menuQuad = static_cast<int>(scene.meshes.size()) - 1;
+    // Тло меню малює сам HUD (вузол Background у MainMenu.con), тож
+    // окремий екранний прямокутник лишається тільки для заставок.
+    (void)background;
+    menuQuad = -1;
+
+    // --- меню: описане тим самим hudBuilder, що й інтерфейс гри ---
+    //
+    // Наші власні ассети монтуємо поруч із ігровими: так меню лишається
+    // даними, а не кодом, і його можна правити без перезбирання.
+    files.mountDirectory("assets", "openbf2");
+
+    obf2::con::Interpreter menuInterpreter(
+        files, [&](const obf2::con::Command& command) { menuHud.feed(command); });
+    menuInterpreter.runFile("openbf2/menu/MainMenu.con");
+
+    // Список карт додаємо тими самими командами: кожна карта — кнопка,
+    // яка запускає рівень.
+    {
+      float y = 308.0f;
+      int index = 0;
+      for (const auto& entry : engine.levels()) {
+        if (y > 560.0f) break;
+        obf2::con::Command create;
+        create.path = {"hudBuilder", "createButtonNode"};
+        create.lowerPath = "hudbuilder.createbuttonnode";
+        create.args = {"MainMenu", "Level" + std::to_string(index), "40",
+                       std::to_string(static_cast<int>(y)), "260", "13"};
+        menuHud.feed(create);
+
+        obf2::con::Command label;
+        label.path = {"hudBuilder", "setTextNodeString"};
+        label.lowerPath = "hudbuilder.settextnodestring";
+        label.args = {entry.displayName};
+        menuHud.feed(label);
+
+        obf2::con::Command command;
+        command.path = {"hudBuilder", "setButtonNodeConCmd"};
+        command.lowerPath = "hudbuilder.setbuttonnodeconcmd";
+        command.args = {"openbf2.startLevel", entry.directory};
+        menuHud.feed(command);
+
+        y += 15.0f;
+        ++index;
+      }
+    }
+    std::printf("  меню: %zu вузлів у групі MainMenu\n",
+                menuHud.group("MainMenu").size());
 
     // --- шрифт, локалізація, список карт ---
     const LoadedFont menuFont = loadFont(files, "Fonts/800/dynamicText_13");
@@ -626,19 +700,30 @@ int main(int argc, char** argv) {
         return static_cast<int>(scene.meshes.size()) - 1;
       };
 
-      menuTextQuads.push_back(addText("OpenBattlefield2", 64.0f, 48.0f, 2.5f));
-      // Підпис беремо з лексикону гри — так само, як це робить меню.
-      menuTextQuads.push_back(
-          addText(engine.lexicon().text("HUD_SINGLEPLAYER_STARTGAME"), 64.0f, 110.0f, 1.4f));
+      // Меню малюється з дерева вузлів — тим самим шляхом, що й увесь
+      // інтерфейс гри. Підписи проходять через лексикон BF2.
+      obf2::hud::Context hudContext;
+      hudContext.localize = [&](std::string_view key) { return engine.lexicon().text(key); };
 
-      float y = 160.0f;
-      for (const auto& entry : engine.levels()) {
-        if (y > 660.0f) break;
-        menuTextQuads.push_back(addText(entry.displayName, 80.0f, y, 1.2f));
-        y += 24.0f;
+      menuScreen.width = 1280;
+      menuScreen.height = 720;
+      for (auto& piece : obf2::hud::buildGroup(menuHud, "MainMenu", menuFont.font,
+                                               menuFont.atlasPath, menuScreen, hudContext)) {
+        scene.meshes.push_back(std::move(piece.geometry));
+        menuTextQuads.push_back(static_cast<int>(scene.meshes.size()) - 1);
+        // Запам'ятовуємо, якому вузлу належить шматок: підсвітку треба
+        // покласти саме під його підпис, а не поверх усього меню.
+        menuQuadNodes.push_back(piece.node);
       }
-      menuTextQuads.erase(std::remove(menuTextQuads.begin(), menuTextQuads.end(), -1),
-                          menuTextQuads.end());
+
+      // Підсвітка кнопки під курсором. Геометрію печемо наперед на кожну
+      // кнопку — так само, як текст: накладний пайплайн малює її як є.
+      for (const obf2::hud::Node* node : menuHud.group("MainMenu")) {
+        if (node->type != obf2::hud::NodeType::Button || node->command.empty()) continue;
+        const obf2::hud::ScreenRect rect = obf2::hud::nodeRect(*node, menuScreen);
+        scene.meshes.push_back(obf2::hud::buildRect(rect, menuScreen, "#20344a"));
+        hoverQuads[node] = static_cast<int>(scene.meshes.size()) - 1;
+      }
 
       // --- екран завантаження ---
       const auto* first = engine.levels().empty() ? nullptr : &engine.levels().front();
@@ -798,7 +883,12 @@ int main(int argc, char** argv) {
   // Кути огляду живуть між кадрами: миша дає лише зміщення.
   float yaw = 0.0f;
   float pitch = -10.0f;
+  // У меню миша не захоплюється — інакше курсором не потрапиш у кнопку.
   if (hostedServer) device->setRelativeMouse(true);
+  // Детермінований знімок меню: ставимо курсор туди, куди попросили.
+  if (args.mouseX >= 0.0f) {
+    SDL_WarpMouseInWindow(device->window(), args.mouseX, args.mouseY);
+  }
 
   int frame = 0;
   while (device->pumpEvents()) {
@@ -860,6 +950,47 @@ int main(int argc, char** argv) {
       engine.update(1.0f / 60.0f);
       if (device->consumeSkip()) engine.skipMovie();
 
+      // --- взаємодія з меню ---
+      obf2::gfx::Device::InputState menuInput = device->readInput();
+      // --mouse задає курсор напряму: у знімку вікно може не мати фокуса,
+      // і SDL тоді не віддає реальної позиції.
+      if (args.mouseX >= 0.0f) {
+        menuInput.mouseX = args.mouseX;
+        menuInput.mouseY = args.mouseY;
+        if (args.click && frame == 1) menuInput.clicked = true;
+      }
+      const obf2::hud::Node* hovered = nullptr;
+
+      if (engine.state() == obf2::engine::State::MainMenu) {
+        menuScreen.width = static_cast<int>(acquired->width);
+        menuScreen.height = static_cast<int>(acquired->height);
+
+        // Курсор SDL віддає в координатах вікна, а кадр може бути більшим
+        // через масштаб екрана — переводимо.
+        int windowWidth = 0, windowHeight = 0;
+        SDL_GetWindowSize(device->window(), &windowWidth, &windowHeight);
+        const float scaleX = windowWidth > 0
+                                 ? static_cast<float>(acquired->width) / static_cast<float>(windowWidth)
+                                 : 1.0f;
+        const float scaleY = windowHeight > 0
+                                 ? static_cast<float>(acquired->height) / static_cast<float>(windowHeight)
+                                 : 1.0f;
+
+        hovered = obf2::hud::buttonAt(menuHud, "MainMenu", menuScreen, menuInput.mouseX * scaleX,
+                                      menuInput.mouseY * scaleY);
+        if (args.verboseMenu && hovered != nullptr && hovered != lastHovered) {
+          std::printf("  меню: курсор на %s -> %s\n", hovered->name.c_str(),
+                      hovered->command.c_str());
+        }
+        lastHovered = hovered;
+        if (hovered != nullptr && menuInput.clicked) {
+          // Кнопка виконує консольну команду — той самий шлях, що й у грі.
+          if (!engine.console().executeLine(hovered->command)) {
+            std::printf("меню: команда без обробника — %s\n", hovered->command.c_str());
+          }
+        }
+      }
+
       const bool loading = engine.state() == obf2::engine::State::Loading;
       const int quad = engine.state() == obf2::engine::State::Intro ? introQuad
                        : loading                                    ? loadingQuad
@@ -874,7 +1005,20 @@ int main(int argc, char** argv) {
       };
       push(quad);
       if (engine.state() != obf2::engine::State::Intro) {
-        for (const int index : overlay) push(index);
+        // Підсвітка лягає під підпис кнопки, під якою курсор: у групі є
+        // й повноекранне тло, тож малювати її просто першою не можна.
+        const int highlight = [&]() {
+          if (hovered == nullptr) return -1;
+          const auto found = hoverQuads.find(hovered);
+          return found == hoverQuads.end() ? -1 : found->second;
+        }();
+        for (std::size_t i = 0; i < overlay.size(); ++i) {
+          if (highlight >= 0 && !loading && i < menuQuadNodes.size() &&
+              menuQuadNodes[i] == hovered) {
+            push(highlight);
+          }
+          push(overlay[i]);
+        }
       }
       renderer->renderOverlay(*acquired, screen, obf2::gfx::Color{0.0f, 0.0f, 0.0f, 1.0f});
     } else {
@@ -898,11 +1042,45 @@ int main(int argc, char** argv) {
                   renderer->drawnLastFrame(), renderer->culledLastFrame(), items.size());
     }
 
+    if (menuQuit) break;
+    // Рівень з меню: закінчуємо сесію меню й повертаємо вибір нагору.
+    if (!requestedLevel.empty()) break;
+
     ++frame;
     if (args.frames > 0 && frame >= args.frames) break;
   }
 
   for (auto& gpuMesh : gpuMeshes) renderer->release(gpuMesh);
   std::printf("кадрів намальовано: %d\n", frame);
+  if (nextLevel != nullptr) *nextLevel = requestedLevel;
   return 0;
+}
+
+int main(int argc, char** argv) {
+  Args args = parseArgs(argc, argv);
+
+  obf2::FileSystem files;
+  std::vector<std::string> mountErrors;
+  int mounted = 0;
+  for (const char* list : {"ServerArchives.con", "ClientArchives.con"}) {
+    mounted += obf2::mountArchivesFromCon(files, args.modDir, args.modDir / list, &mountErrors);
+  }
+  files.mountDirectory(args.modDir);
+
+  std::printf("OpenBattlefield2 | %s/%s\n", OBF2_PLATFORM_NAME, OBF2_ARCH_NAME);
+  std::printf("мод: %s | архівів: %d\n", args.modDir.string().c_str(), mounted);
+  for (const auto& e : mountErrors) std::printf("  [mount] %s\n", e.c_str());
+
+  // Меню й гра — це дві сесії поспіль: обраний у меню рівень просто
+  // заводить наступну з іншими аргументами.
+  while (true) {
+    std::string nextLevel;
+    const int code = runSession(args, files, &nextLevel);
+    if (code != 0 || nextLevel.empty()) return code;
+
+    std::printf("меню -> гра: %s\n", nextLevel.c_str());
+    args.levelName = nextLevel;
+    args.hosted = true;
+    args.screen.clear();
+  }
 }

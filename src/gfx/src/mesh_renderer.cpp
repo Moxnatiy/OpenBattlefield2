@@ -118,9 +118,18 @@ struct VertexOut {
     float2 uv;
 };
 
-vertex VertexOut overlay_vertex(VertexIn in [[stage_in]]) {
+struct OverlayUniforms {
+    // Перетворення прямо в NDC: xy — зсув, zw — масштаб. Потрібне, щоб
+    // один готовий прямокутник можна було ставити в різні місця, не
+    // перезбираючи геометрію щокадру.
+    float4 offsetScale;
+};
+
+vertex VertexOut overlay_vertex(VertexIn in [[stage_in]],
+                                constant OverlayUniforms& uniforms [[buffer(0)]]) {
     VertexOut out;
-    out.position = float4(in.position, 1.0);
+    float2 placed = in.position.xy * uniforms.offsetScale.zw + uniforms.offsetScale.xy;
+    out.position = float4(placed, in.position.z, 1.0);
     out.uv = in.uv;
     return out;
 }
@@ -141,6 +150,7 @@ SDL_GPUShader* createOverlayShader(SDL_GPUDevice* gpu, SDL_GPUShaderStage stage,
   info.format = SDL_GPU_SHADERFORMAT_MSL;
   info.stage = stage;
   info.num_samplers = stage == SDL_GPU_SHADERSTAGE_FRAGMENT ? 1 : 0;
+  info.num_uniform_buffers = stage == SDL_GPU_SHADERSTAGE_VERTEX ? 1 : 0;
   return SDL_CreateGPUShader(gpu, &info);
 }
 
@@ -518,6 +528,11 @@ void MeshRenderer::renderOverlay(const Frame& frame, const std::vector<DrawItem>
   // Порядок малювання і є порядком накладання: спершу тло, далі текст.
   for (const DrawItem& item : items) {
     if (item.mesh == nullptr || item.mesh->vertices == nullptr) continue;
+
+    // Зсув і масштаб беремо з матриці: перенос у xy, масштаб на діагоналі.
+    const float offsetScale[4] = {item.transform.m[12], item.transform.m[13],
+                                  item.transform.m[0], item.transform.m[5]};
+    SDL_PushGPUVertexUniformData(frame.commands, 0, offsetScale, sizeof(offsetScale));
 
     const SDL_GPUBufferBinding vertexBinding{item.mesh->vertices, 0};
     SDL_BindGPUVertexBuffers(pass, 0, &vertexBinding, 1);

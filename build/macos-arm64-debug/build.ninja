@@ -1036,13 +1036,22 @@ build src/net/rebuild_cache: phony src/net/CMakeFiles/rebuild_cache.util
 #############################################
 # Order-only phony target for obf2_hud
 
-build cmake_object_order_depends_target_obf2_hud: phony || cmake_object_order_depends_target_obf2_con cmake_object_order_depends_target_obf2_core
+build cmake_object_order_depends_target_obf2_hud: phony || cmake_object_order_depends_target_obf2_con cmake_object_order_depends_target_obf2_core cmake_object_order_depends_target_obf2_font cmake_object_order_depends_target_obf2_mesh
 
 build src/hud/CMakeFiles/obf2_hud.dir/src/hud.cpp.o: CXX_COMPILER__obf2_hud_unscanned_Debug /Users/miami/OpenBattlefield2/src/hud/src/hud.cpp || cmake_object_order_depends_target_obf2_hud
   CONFIG = Debug
   DEP_FILE = src/hud/CMakeFiles/obf2_hud.dir/src/hud.cpp.o.d
   FLAGS = -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror
-  INCLUDES = -I/Users/miami/OpenBattlefield2/src/hud/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include
+  INCLUDES = -I/Users/miami/OpenBattlefield2/src/hud/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/font/include -I/Users/miami/OpenBattlefield2/src/mesh/include
+  OBJECT_DIR = src/hud/CMakeFiles/obf2_hud.dir
+  OBJECT_FILE_DIR = src/hud/CMakeFiles/obf2_hud.dir/src
+  TARGET_SUPPORT_DIR = src/hud/CMakeFiles/obf2_hud.dir
+
+build src/hud/CMakeFiles/obf2_hud.dir/src/render.cpp.o: CXX_COMPILER__obf2_hud_unscanned_Debug /Users/miami/OpenBattlefield2/src/hud/src/render.cpp || cmake_object_order_depends_target_obf2_hud
+  CONFIG = Debug
+  DEP_FILE = src/hud/CMakeFiles/obf2_hud.dir/src/render.cpp.o.d
+  FLAGS = -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -I/Users/miami/OpenBattlefield2/src/hud/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/font/include -I/Users/miami/OpenBattlefield2/src/mesh/include
   OBJECT_DIR = src/hud/CMakeFiles/obf2_hud.dir
   OBJECT_FILE_DIR = src/hud/CMakeFiles/obf2_hud.dir/src
   TARGET_SUPPORT_DIR = src/hud/CMakeFiles/obf2_hud.dir
@@ -1055,7 +1064,7 @@ build src/hud/CMakeFiles/obf2_hud.dir/src/hud.cpp.o: CXX_COMPILER__obf2_hud_unsc
 #############################################
 # Link the static library src/hud/libobf2_hud.a
 
-build src/hud/libobf2_hud.a: CXX_STATIC_LIBRARY_LINKER__obf2_hud_Debug src/hud/CMakeFiles/obf2_hud.dir/src/hud.cpp.o || src/con/libobf2_con.a src/core/libobf2_core.a
+build src/hud/libobf2_hud.a: CXX_STATIC_LIBRARY_LINKER__obf2_hud_Debug src/hud/CMakeFiles/obf2_hud.dir/src/hud.cpp.o src/hud/CMakeFiles/obf2_hud.dir/src/render.cpp.o || src/con/libobf2_con.a src/core/libobf2_core.a src/font/libobf2_font.a src/mesh/libobf2_mesh.a
   ARCH_FLAGS = -arch arm64
   CONFIG = Debug
   LANGUAGE_COMPILE_FLAGS = -g
@@ -1471,13 +1480,13 @@ build src/gfx/rebuild_cache: phony src/gfx/CMakeFiles/rebuild_cache.util
 #############################################
 # Order-only phony target for openbf2
 
-build cmake_object_order_depends_target_openbf2: phony || cmake_object_order_depends_target_miniz cmake_object_order_depends_target_obf2_con cmake_object_order_depends_target_obf2_core cmake_object_order_depends_target_obf2_engine cmake_object_order_depends_target_obf2_font cmake_object_order_depends_target_obf2_game cmake_object_order_depends_target_obf2_gfx cmake_object_order_depends_target_obf2_level cmake_object_order_depends_target_obf2_loc cmake_object_order_depends_target_obf2_mesh cmake_object_order_depends_target_obf2_net cmake_object_order_depends_target_obf2_server cmake_object_order_depends_target_obf2_texture cmake_object_order_depends_target_obf2_vfs cmake_object_order_depends_target_stb_image
+build cmake_object_order_depends_target_openbf2: phony || cmake_object_order_depends_target_miniz cmake_object_order_depends_target_obf2_con cmake_object_order_depends_target_obf2_core cmake_object_order_depends_target_obf2_engine cmake_object_order_depends_target_obf2_font cmake_object_order_depends_target_obf2_game cmake_object_order_depends_target_obf2_gfx cmake_object_order_depends_target_obf2_hud cmake_object_order_depends_target_obf2_level cmake_object_order_depends_target_obf2_loc cmake_object_order_depends_target_obf2_mesh cmake_object_order_depends_target_obf2_net cmake_object_order_depends_target_obf2_server cmake_object_order_depends_target_obf2_texture cmake_object_order_depends_target_obf2_vfs cmake_object_order_depends_target_stb_image
 
 build src/app/CMakeFiles/openbf2.dir/main.cpp.o: CXX_COMPILER__openbf2_unscanned_Debug /Users/miami/OpenBattlefield2/src/app/main.cpp || cmake_object_order_depends_target_openbf2
   CONFIG = Debug
   DEP_FILE = src/app/CMakeFiles/openbf2.dir/main.cpp.o.d
   FLAGS = -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror
-  INCLUDES = -I/Users/miami/OpenBattlefield2/src/gfx/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/mesh/include -I/Users/miami/OpenBattlefield2/src/texture/include -I/opt/homebrew/include -I/Users/miami/OpenBattlefield2/src/vfs/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/game/include -I/Users/miami/OpenBattlefield2/src/level/include -I/Users/miami/OpenBattlefield2/src/engine/include -I/Users/miami/OpenBattlefield2/src/loc/include -I/Users/miami/OpenBattlefield2/src/font/include -I/Users/miami/OpenBattlefield2/src/server/include -I/Users/miami/OpenBattlefield2/src/net/include
+  INCLUDES = -I/Users/miami/OpenBattlefield2/src/gfx/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/mesh/include -I/Users/miami/OpenBattlefield2/src/texture/include -I/opt/homebrew/include -I/Users/miami/OpenBattlefield2/src/vfs/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/game/include -I/Users/miami/OpenBattlefield2/src/level/include -I/Users/miami/OpenBattlefield2/src/engine/include -I/Users/miami/OpenBattlefield2/src/loc/include -I/Users/miami/OpenBattlefield2/src/font/include -I/Users/miami/OpenBattlefield2/src/server/include -I/Users/miami/OpenBattlefield2/src/net/include -I/Users/miami/OpenBattlefield2/src/hud/include
   OBJECT_DIR = src/app/CMakeFiles/openbf2.dir
   OBJECT_FILE_DIR = src/app/CMakeFiles/openbf2.dir
   TARGET_SUPPORT_DIR = src/app/CMakeFiles/openbf2.dir
@@ -1490,11 +1499,11 @@ build src/app/CMakeFiles/openbf2.dir/main.cpp.o: CXX_COMPILER__openbf2_unscanned
 #############################################
 # Link the executable src/app/openbf2
 
-build src/app/openbf2: CXX_EXECUTABLE_LINKER__openbf2_Debug src/app/CMakeFiles/openbf2.dir/main.cpp.o | src/gfx/libobf2_gfx.a src/vfs/libobf2_vfs.a src/game/libobf2_game.a src/level/libobf2_level.a src/engine/libobf2_engine.a src/font/libobf2_font.a src/loc/libobf2_loc.a src/server/libobf2_server.a src/texture/libobf2_texture.a third_party/stb/libstb_image.a /opt/homebrew/lib/libSDL3.0.dylib src/game/libobf2_game.a src/level/libobf2_level.a src/mesh/libobf2_mesh.a src/engine/libobf2_engine.a src/vfs/libobf2_vfs.a third_party/miniz/libminiz.a src/loc/libobf2_loc.a src/con/libobf2_con.a src/net/libobf2_net.a src/core/libobf2_core.a || src/con/libobf2_con.a src/core/libobf2_core.a src/engine/libobf2_engine.a src/font/libobf2_font.a src/game/libobf2_game.a src/gfx/libobf2_gfx.a src/level/libobf2_level.a src/loc/libobf2_loc.a src/mesh/libobf2_mesh.a src/net/libobf2_net.a src/server/libobf2_server.a src/texture/libobf2_texture.a src/vfs/libobf2_vfs.a third_party/miniz/libminiz.a third_party/stb/libstb_image.a
+build src/app/openbf2: CXX_EXECUTABLE_LINKER__openbf2_Debug src/app/CMakeFiles/openbf2.dir/main.cpp.o | src/gfx/libobf2_gfx.a src/vfs/libobf2_vfs.a src/game/libobf2_game.a src/level/libobf2_level.a src/engine/libobf2_engine.a src/font/libobf2_font.a src/loc/libobf2_loc.a src/server/libobf2_server.a src/hud/libobf2_hud.a src/texture/libobf2_texture.a third_party/stb/libstb_image.a /opt/homebrew/lib/libSDL3.0.dylib src/game/libobf2_game.a src/level/libobf2_level.a src/engine/libobf2_engine.a src/vfs/libobf2_vfs.a third_party/miniz/libminiz.a src/loc/libobf2_loc.a src/net/libobf2_net.a src/font/libobf2_font.a src/mesh/libobf2_mesh.a src/con/libobf2_con.a src/core/libobf2_core.a || src/con/libobf2_con.a src/core/libobf2_core.a src/engine/libobf2_engine.a src/font/libobf2_font.a src/game/libobf2_game.a src/gfx/libobf2_gfx.a src/hud/libobf2_hud.a src/level/libobf2_level.a src/loc/libobf2_loc.a src/mesh/libobf2_mesh.a src/net/libobf2_net.a src/server/libobf2_server.a src/texture/libobf2_texture.a src/vfs/libobf2_vfs.a third_party/miniz/libminiz.a third_party/stb/libstb_image.a
   CONFIG = Debug
   FLAGS = -g -arch arm64
   LINK_FLAGS = -Wl,-search_paths_first -Wl,-headerpad_max_install_names
-  LINK_LIBRARIES = -Wl,-rpath,/opt/homebrew/lib  src/gfx/libobf2_gfx.a  src/vfs/libobf2_vfs.a  src/game/libobf2_game.a  src/level/libobf2_level.a  src/engine/libobf2_engine.a  src/font/libobf2_font.a  src/loc/libobf2_loc.a  src/server/libobf2_server.a  src/texture/libobf2_texture.a  third_party/stb/libstb_image.a  /opt/homebrew/lib/libSDL3.0.dylib  src/game/libobf2_game.a  src/level/libobf2_level.a  src/mesh/libobf2_mesh.a  src/engine/libobf2_engine.a  src/vfs/libobf2_vfs.a  third_party/miniz/libminiz.a  src/loc/libobf2_loc.a  src/con/libobf2_con.a  src/net/libobf2_net.a  src/core/libobf2_core.a
+  LINK_LIBRARIES = -Wl,-rpath,/opt/homebrew/lib  src/gfx/libobf2_gfx.a  src/vfs/libobf2_vfs.a  src/game/libobf2_game.a  src/level/libobf2_level.a  src/engine/libobf2_engine.a  src/font/libobf2_font.a  src/loc/libobf2_loc.a  src/server/libobf2_server.a  src/hud/libobf2_hud.a  src/texture/libobf2_texture.a  third_party/stb/libstb_image.a  /opt/homebrew/lib/libSDL3.0.dylib  src/game/libobf2_game.a  src/level/libobf2_level.a  src/engine/libobf2_engine.a  src/vfs/libobf2_vfs.a  third_party/miniz/libminiz.a  src/loc/libobf2_loc.a  src/net/libobf2_net.a  src/font/libobf2_font.a  src/mesh/libobf2_mesh.a  src/con/libobf2_con.a  src/core/libobf2_core.a
   OBJECT_DIR = src/app/CMakeFiles/openbf2.dir
   POST_BUILD = :
   PRE_LINK = :
@@ -1866,13 +1875,13 @@ build tools/object_info/rebuild_cache: phony tools/object_info/CMakeFiles/rebuil
 #############################################
 # Order-only phony target for hud_dump
 
-build cmake_object_order_depends_target_hud_dump: phony || cmake_object_order_depends_target_miniz cmake_object_order_depends_target_obf2_con cmake_object_order_depends_target_obf2_core cmake_object_order_depends_target_obf2_hud cmake_object_order_depends_target_obf2_vfs
+build cmake_object_order_depends_target_hud_dump: phony || cmake_object_order_depends_target_miniz cmake_object_order_depends_target_obf2_con cmake_object_order_depends_target_obf2_core cmake_object_order_depends_target_obf2_font cmake_object_order_depends_target_obf2_hud cmake_object_order_depends_target_obf2_mesh cmake_object_order_depends_target_obf2_vfs
 
 build tools/hud_dump/CMakeFiles/hud_dump.dir/main.cpp.o: CXX_COMPILER__hud_dump_unscanned_Debug /Users/miami/OpenBattlefield2/tools/hud_dump/main.cpp || cmake_object_order_depends_target_hud_dump
   CONFIG = Debug
   DEP_FILE = tools/hud_dump/CMakeFiles/hud_dump.dir/main.cpp.o.d
   FLAGS = -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror
-  INCLUDES = -I/Users/miami/OpenBattlefield2/src/hud/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/vfs/include
+  INCLUDES = -I/Users/miami/OpenBattlefield2/src/hud/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/font/include -I/Users/miami/OpenBattlefield2/src/mesh/include -I/Users/miami/OpenBattlefield2/src/vfs/include
   OBJECT_DIR = tools/hud_dump/CMakeFiles/hud_dump.dir
   OBJECT_FILE_DIR = tools/hud_dump/CMakeFiles/hud_dump.dir
   TARGET_SUPPORT_DIR = tools/hud_dump/CMakeFiles/hud_dump.dir
@@ -1885,11 +1894,11 @@ build tools/hud_dump/CMakeFiles/hud_dump.dir/main.cpp.o: CXX_COMPILER__hud_dump_
 #############################################
 # Link the executable tools/hud_dump/hud_dump
 
-build tools/hud_dump/hud_dump: CXX_EXECUTABLE_LINKER__hud_dump_Debug tools/hud_dump/CMakeFiles/hud_dump.dir/main.cpp.o | src/hud/libobf2_hud.a src/vfs/libobf2_vfs.a src/con/libobf2_con.a src/core/libobf2_core.a third_party/miniz/libminiz.a || src/con/libobf2_con.a src/core/libobf2_core.a src/hud/libobf2_hud.a src/vfs/libobf2_vfs.a third_party/miniz/libminiz.a
+build tools/hud_dump/hud_dump: CXX_EXECUTABLE_LINKER__hud_dump_Debug tools/hud_dump/CMakeFiles/hud_dump.dir/main.cpp.o | src/hud/libobf2_hud.a src/vfs/libobf2_vfs.a src/font/libobf2_font.a src/mesh/libobf2_mesh.a src/con/libobf2_con.a src/core/libobf2_core.a third_party/miniz/libminiz.a || src/con/libobf2_con.a src/core/libobf2_core.a src/font/libobf2_font.a src/hud/libobf2_hud.a src/mesh/libobf2_mesh.a src/vfs/libobf2_vfs.a third_party/miniz/libminiz.a
   CONFIG = Debug
   FLAGS = -g -arch arm64
   LINK_FLAGS = -Wl,-search_paths_first -Wl,-headerpad_max_install_names
-  LINK_LIBRARIES = src/hud/libobf2_hud.a  src/vfs/libobf2_vfs.a  src/con/libobf2_con.a  src/core/libobf2_core.a  third_party/miniz/libminiz.a
+  LINK_LIBRARIES = src/hud/libobf2_hud.a  src/vfs/libobf2_vfs.a  src/font/libobf2_font.a  src/mesh/libobf2_mesh.a  src/con/libobf2_con.a  src/core/libobf2_core.a  third_party/miniz/libminiz.a
   OBJECT_DIR = tools/hud_dump/CMakeFiles/hud_dump.dir
   POST_BUILD = :
   PRE_LINK = :
@@ -1945,13 +1954,13 @@ build tools/hud_dump/rebuild_cache: phony tools/hud_dump/CMakeFiles/rebuild_cach
 #############################################
 # Order-only phony target for command_audit
 
-build cmake_object_order_depends_target_command_audit: phony || cmake_object_order_depends_target_miniz cmake_object_order_depends_target_obf2_con cmake_object_order_depends_target_obf2_core cmake_object_order_depends_target_obf2_engine cmake_object_order_depends_target_obf2_game cmake_object_order_depends_target_obf2_hud cmake_object_order_depends_target_obf2_level cmake_object_order_depends_target_obf2_loc cmake_object_order_depends_target_obf2_mesh cmake_object_order_depends_target_obf2_vfs
+build cmake_object_order_depends_target_command_audit: phony || cmake_object_order_depends_target_miniz cmake_object_order_depends_target_obf2_con cmake_object_order_depends_target_obf2_core cmake_object_order_depends_target_obf2_engine cmake_object_order_depends_target_obf2_font cmake_object_order_depends_target_obf2_game cmake_object_order_depends_target_obf2_hud cmake_object_order_depends_target_obf2_level cmake_object_order_depends_target_obf2_loc cmake_object_order_depends_target_obf2_mesh cmake_object_order_depends_target_obf2_vfs
 
 build tools/command_audit/CMakeFiles/command_audit.dir/main.cpp.o: CXX_COMPILER__command_audit_unscanned_Debug /Users/miami/OpenBattlefield2/tools/command_audit/main.cpp || cmake_object_order_depends_target_command_audit
   CONFIG = Debug
   DEP_FILE = tools/command_audit/CMakeFiles/command_audit.dir/main.cpp.o.d
   FLAGS = -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror
-  INCLUDES = -I/Users/miami/OpenBattlefield2/src/engine/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/vfs/include -I/Users/miami/OpenBattlefield2/src/loc/include -I/Users/miami/OpenBattlefield2/src/game/include -I/Users/miami/OpenBattlefield2/src/mesh/include -I/Users/miami/OpenBattlefield2/src/hud/include -I/Users/miami/OpenBattlefield2/src/level/include
+  INCLUDES = -I/Users/miami/OpenBattlefield2/src/engine/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/vfs/include -I/Users/miami/OpenBattlefield2/src/loc/include -I/Users/miami/OpenBattlefield2/src/game/include -I/Users/miami/OpenBattlefield2/src/mesh/include -I/Users/miami/OpenBattlefield2/src/hud/include -I/Users/miami/OpenBattlefield2/src/font/include -I/Users/miami/OpenBattlefield2/src/level/include
   OBJECT_DIR = tools/command_audit/CMakeFiles/command_audit.dir
   OBJECT_FILE_DIR = tools/command_audit/CMakeFiles/command_audit.dir
   TARGET_SUPPORT_DIR = tools/command_audit/CMakeFiles/command_audit.dir
@@ -1964,11 +1973,11 @@ build tools/command_audit/CMakeFiles/command_audit.dir/main.cpp.o: CXX_COMPILER_
 #############################################
 # Link the executable tools/command_audit/command_audit
 
-build tools/command_audit/command_audit: CXX_EXECUTABLE_LINKER__command_audit_Debug tools/command_audit/CMakeFiles/command_audit.dir/main.cpp.o | src/engine/libobf2_engine.a src/game/libobf2_game.a src/hud/libobf2_hud.a src/level/libobf2_level.a src/vfs/libobf2_vfs.a src/loc/libobf2_loc.a third_party/miniz/libminiz.a src/con/libobf2_con.a src/mesh/libobf2_mesh.a src/core/libobf2_core.a || src/con/libobf2_con.a src/core/libobf2_core.a src/engine/libobf2_engine.a src/game/libobf2_game.a src/hud/libobf2_hud.a src/level/libobf2_level.a src/loc/libobf2_loc.a src/mesh/libobf2_mesh.a src/vfs/libobf2_vfs.a third_party/miniz/libminiz.a
+build tools/command_audit/command_audit: CXX_EXECUTABLE_LINKER__command_audit_Debug tools/command_audit/CMakeFiles/command_audit.dir/main.cpp.o | src/engine/libobf2_engine.a src/game/libobf2_game.a src/hud/libobf2_hud.a src/level/libobf2_level.a src/vfs/libobf2_vfs.a src/loc/libobf2_loc.a src/font/libobf2_font.a third_party/miniz/libminiz.a src/con/libobf2_con.a src/mesh/libobf2_mesh.a src/core/libobf2_core.a || src/con/libobf2_con.a src/core/libobf2_core.a src/engine/libobf2_engine.a src/font/libobf2_font.a src/game/libobf2_game.a src/hud/libobf2_hud.a src/level/libobf2_level.a src/loc/libobf2_loc.a src/mesh/libobf2_mesh.a src/vfs/libobf2_vfs.a third_party/miniz/libminiz.a
   CONFIG = Debug
   FLAGS = -g -arch arm64
   LINK_FLAGS = -Wl,-search_paths_first -Wl,-headerpad_max_install_names
-  LINK_LIBRARIES = src/engine/libobf2_engine.a  src/game/libobf2_game.a  src/hud/libobf2_hud.a  src/level/libobf2_level.a  src/vfs/libobf2_vfs.a  src/loc/libobf2_loc.a  third_party/miniz/libminiz.a  src/con/libobf2_con.a  src/mesh/libobf2_mesh.a  src/core/libobf2_core.a
+  LINK_LIBRARIES = src/engine/libobf2_engine.a  src/game/libobf2_game.a  src/hud/libobf2_hud.a  src/level/libobf2_level.a  src/vfs/libobf2_vfs.a  src/loc/libobf2_loc.a  src/font/libobf2_font.a  third_party/miniz/libminiz.a  src/con/libobf2_con.a  src/mesh/libobf2_mesh.a  src/core/libobf2_core.a
   OBJECT_DIR = tools/command_audit/CMakeFiles/command_audit.dir
   POST_BUILD = :
   PRE_LINK = :
@@ -2480,13 +2489,13 @@ build tests/test_server: CXX_EXECUTABLE_LINKER__test_server_Debug tests/CMakeFil
 #############################################
 # Order-only phony target for test_hud
 
-build cmake_object_order_depends_target_test_hud: phony || cmake_object_order_depends_target_obf2_con cmake_object_order_depends_target_obf2_core cmake_object_order_depends_target_obf2_hud
+build cmake_object_order_depends_target_test_hud: phony || cmake_object_order_depends_target_obf2_con cmake_object_order_depends_target_obf2_core cmake_object_order_depends_target_obf2_font cmake_object_order_depends_target_obf2_hud cmake_object_order_depends_target_obf2_mesh
 
 build tests/CMakeFiles/test_hud.dir/test_hud.cpp.o: CXX_COMPILER__test_hud_unscanned_Debug /Users/miami/OpenBattlefield2/tests/test_hud.cpp || cmake_object_order_depends_target_test_hud
   CONFIG = Debug
   DEP_FILE = tests/CMakeFiles/test_hud.dir/test_hud.cpp.o.d
   FLAGS = -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror
-  INCLUDES = -I/Users/miami/OpenBattlefield2/tests -I/Users/miami/OpenBattlefield2/src/hud/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include
+  INCLUDES = -I/Users/miami/OpenBattlefield2/tests -I/Users/miami/OpenBattlefield2/src/hud/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/font/include -I/Users/miami/OpenBattlefield2/src/mesh/include
   OBJECT_DIR = tests/CMakeFiles/test_hud.dir
   OBJECT_FILE_DIR = tests/CMakeFiles/test_hud.dir
   TARGET_SUPPORT_DIR = tests/CMakeFiles/test_hud.dir
@@ -2499,11 +2508,11 @@ build tests/CMakeFiles/test_hud.dir/test_hud.cpp.o: CXX_COMPILER__test_hud_unsca
 #############################################
 # Link the executable tests/test_hud
 
-build tests/test_hud: CXX_EXECUTABLE_LINKER__test_hud_Debug tests/CMakeFiles/test_hud.dir/test_hud.cpp.o | src/hud/libobf2_hud.a src/con/libobf2_con.a src/core/libobf2_core.a || src/con/libobf2_con.a src/core/libobf2_core.a src/hud/libobf2_hud.a
+build tests/test_hud: CXX_EXECUTABLE_LINKER__test_hud_Debug tests/CMakeFiles/test_hud.dir/test_hud.cpp.o | src/hud/libobf2_hud.a src/con/libobf2_con.a src/font/libobf2_font.a src/mesh/libobf2_mesh.a src/core/libobf2_core.a || src/con/libobf2_con.a src/core/libobf2_core.a src/font/libobf2_font.a src/hud/libobf2_hud.a src/mesh/libobf2_mesh.a
   CONFIG = Debug
   FLAGS = -g -arch arm64
   LINK_FLAGS = -Wl,-search_paths_first -Wl,-headerpad_max_install_names
-  LINK_LIBRARIES = src/hud/libobf2_hud.a  src/con/libobf2_con.a  src/core/libobf2_core.a
+  LINK_LIBRARIES = src/hud/libobf2_hud.a  src/con/libobf2_con.a  src/font/libobf2_font.a  src/mesh/libobf2_mesh.a  src/core/libobf2_core.a
   OBJECT_DIR = tests/CMakeFiles/test_hud.dir
   POST_BUILD = :
   PRE_LINK = :

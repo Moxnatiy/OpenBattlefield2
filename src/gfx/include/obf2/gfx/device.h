@@ -59,6 +59,12 @@ class Device {
     bool sprint = false;
     bool fire = false;
     bool jump = false;
+
+    // Абсолютна позиція курсора в пікселях вікна — для меню, де миша
+    // не захоплена.
+    float mouseX = 0.0f;
+    float mouseY = 0.0f;
+    bool clicked = false;  // ліва кнопка щойно натиснута
   };
   InputState readInput();
 
@@ -94,6 +100,7 @@ class Device {
   std::string driver_;
   bool quit_ = false;
   bool skip_ = false;
+  bool mouseWasDown_ = false;
   float mouseDeltaX_ = 0.0f;
   float mouseDeltaY_ = 0.0f;
 

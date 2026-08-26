@@ -30,6 +30,10 @@ class Console {
   // ігноруються: цей лічильник і є мірою готовності порту.
   bool execute(const con::Command& command);
 
+  // Той самий виклик, але з текстового рядка: "ціль.метод арг арг".
+  // Саме так команду тримає кнопка інтерфейсу (setButtonNodeConCmd).
+  bool executeLine(std::string_view line);
+
   std::size_t handlerCount() const { return handlers_.size(); }
   long long executedCount() const { return executed_; }
   long long unknownCount() const { return unknown_; }

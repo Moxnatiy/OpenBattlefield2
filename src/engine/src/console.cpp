@@ -2,6 +2,8 @@
 
 #include <cctype>
 
+#include "obf2/con/lexer.h"
+
 namespace obf2::engine {
 namespace {
 
@@ -30,6 +32,18 @@ bool Console::execute(const con::Command& command) {
   ++executed_;
   found->second(command);
   return true;
+}
+
+bool Console::executeLine(std::string_view line) {
+  const std::vector<std::string> tokens = con::tokenizeLine(line);
+  if (tokens.empty()) return false;
+
+  con::Command command;
+  command.path = con::splitCommandPath(tokens[0]);
+  if (command.path.empty()) return false;
+  command.lowerPath = toLower(tokens[0]);
+  command.args.assign(tokens.begin() + 1, tokens.end());
+  return execute(command);
 }
 
 }  // namespace obf2::engine

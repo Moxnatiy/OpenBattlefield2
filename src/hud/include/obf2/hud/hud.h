@@ -99,10 +99,13 @@ struct Node {
   std::vector<std::string> children;
 };
 
-// HUD BF2 розкладений у координатах 640x480 і розтягується на екран.
-// Видно з самих файлів: вузли доходять до 640 по X і 480 по Y.
-inline constexpr float kReferenceWidth = 640.0f;
-inline constexpr float kReferenceHeight = 480.0f;
+// HUD BF2 розкладений у координатах 800x600 і розтягується на екран.
+//
+// Це видно з самих даних, а не з припущення: `hudManager.setCommPos 150 150`
+// разом із `setCommSize 490 300` дає рівно 640x450, а `setCommMousePos
+// 400 300` — центр екрана 800x600. Тека шрифтів теж зветься `800/`.
+inline constexpr float kReferenceWidth = 800.0f;
+inline constexpr float kReferenceHeight = 600.0f;
 
 class Builder {
  public:

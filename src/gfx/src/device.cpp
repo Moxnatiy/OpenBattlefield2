@@ -78,8 +78,17 @@ Device::InputState Device::readInput() {
     state.jump = keys[SDL_SCANCODE_SPACE];
   }
 
-  const SDL_MouseButtonFlags buttons = SDL_GetMouseState(nullptr, nullptr);
+  float mouseX = 0.0f;
+  float mouseY = 0.0f;
+  const SDL_MouseButtonFlags buttons = SDL_GetMouseState(&mouseX, &mouseY);
   state.fire = (buttons & SDL_BUTTON_LMASK) != 0;
+  state.mouseX = mouseX;
+  state.mouseY = mouseY;
+
+  // Клік — саме перехід із відпущеного в натиснуте, інакше одне натискання
+  // спрацьовувало б щокадру.
+  state.clicked = state.fire && !mouseWasDown_;
+  mouseWasDown_ = state.fire;
 
   // Накопичене за кадр зміщення віддаємо один раз і обнуляємо.
   state.mouseDeltaX = mouseDeltaX_;

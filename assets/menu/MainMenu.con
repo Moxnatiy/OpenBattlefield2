@@ -1,0 +1,64 @@
+rem *** Головне меню OpenBattlefield2 ***
+rem
+rem Описане тим самим hudBuilder, що й увесь інтерфейс гри: координати в
+rem базових 800x600, підписи — ключі локалізації з .utxt самої BF2, кнопки
+rem виконують консольні команди.
+rem
+rem Оригінальне меню BF2 — це Flash (External/FlashMenu/*.swf), який ми
+rem свідомо не відтворюємо (див. docs/TODO.md). Натомість збираємо його з
+rem рідної для рушія системи вузлів, на рідних ассетах і підписах.
+
+hudBuilder.createPictureNode	MainMenu Background 0 0 800 600
+hudBuilder.setPictureNodeTexture	menu/external/flashmenu/images/background/background_2.png
+
+rem --- заголовок ---
+
+hudBuilder.createTextNode	MainMenu Title 40 34 300 30
+hudBuilder.setTextNodeString	OpenBattlefield2
+hudBuilder.setNodeColor	255 255 255 255
+
+hudBuilder.createTextNode	MainMenu Subtitle 42 70 300 13
+hudBuilder.setTextNodeString	MAINBUTTON_playnow
+hudBuilder.setNodeColor	200 210 220 255
+
+rem --- головні кнопки ---
+rem Підписи беруться з лексикону гри; якщо ключа немає, видно сам ключ —
+rem рівно так поводиться й оригінал.
+
+rem Порядок і підписи — як у головному меню BF2 (MAINBUTTON_* із .utxt гри).
+
+hudBuilder.createButtonNode	MainMenu ButtonSinglePlayer 40 120 220 18
+hudBuilder.setTextNodeString	MAINBUTTON_3
+hudBuilder.setButtonNodeConCmd	openbf2.startLevel
+hudBuilder.setNodeColor	255 255 255 255
+
+hudBuilder.createButtonNode	MainMenu ButtonMultiplayer 40 144 220 18
+hudBuilder.setTextNodeString	MAINBUTTON_2
+hudBuilder.setButtonNodeConCmd	openbf2.multiplayer
+hudBuilder.setNodeColor	255 255 255 255
+
+hudBuilder.createButtonNode	MainMenu ButtonBfhq 40 168 220 18
+hudBuilder.setTextNodeString	MAINBUTTON_1
+hudBuilder.setButtonNodeConCmd	openbf2.bfhq
+hudBuilder.setNodeColor	255 255 255 255
+
+hudBuilder.createButtonNode	MainMenu ButtonCommunity 40 192 220 18
+hudBuilder.setTextNodeString	MAINBUTTON_4
+hudBuilder.setButtonNodeConCmd	openbf2.community
+hudBuilder.setNodeColor	255 255 255 255
+
+hudBuilder.createButtonNode	MainMenu ButtonOptions 40 216 220 18
+hudBuilder.setTextNodeString	MAINBUTTON_5
+hudBuilder.setButtonNodeConCmd	openbf2.options
+hudBuilder.setNodeColor	255 255 255 255
+
+hudBuilder.createButtonNode	MainMenu ButtonQuit 40 240 220 18
+hudBuilder.setTextNodeString	MAINBUTTON_6
+hudBuilder.setButtonNodeConCmd	openbf2.quit
+hudBuilder.setNodeColor	255 255 255 255
+
+rem --- заголовок списку карт ---
+
+hudBuilder.createTextNode	MainMenu LevelsHeader 40 286 300 13
+hudBuilder.setTextNodeString	HEADER_mapname
+hudBuilder.setNodeColor	180 200 220 255
