@@ -69,6 +69,11 @@ endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for the subdirectory.
+  include("/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/anim/cmake_install.cmake")
+endif()
+
+if(NOT CMAKE_INSTALL_LOCAL_ONLY)
+  # Include the install script for the subdirectory.
   include("/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/texture/cmake_install.cmake")
 endif()
 
@@ -140,6 +145,11 @@ endif()
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for the subdirectory.
   include("/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/baf_info/cmake_install.cmake")
+endif()
+
+if(NOT CMAKE_INSTALL_LOCAL_ONLY)
+  # Include the install script for the subdirectory.
+  include("/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/anim_info/cmake_install.cmake")
 endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
