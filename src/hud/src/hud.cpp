@@ -6,14 +6,16 @@ namespace obf2::hud {
 namespace {
 
 // createXxxNode <група> <ім'я> <x> <y> <ширина> <висота>
-bool readRect(const con::Command& command, Node& node) {
+bool readRect(const con::Command& command, Node& node, int skip = 0) {
   if (command.args.size() < 2) return false;
   node.group = command.args[0];
   node.name = command.args[1];
-  node.x = command.argFloat(2).value_or(0.0f);
-  node.y = command.argFloat(3).value_or(0.0f);
-  node.width = command.argFloat(4).value_or(0.0f);
-  node.height = command.argFloat(5).value_or(0.0f);
+  // У смуги перед прямокутником стоїть ще один аргумент — напрям росту,
+  // тож координати зсунуті на одну позицію.
+  node.x = command.argFloat(2 + skip).value_or(0.0f);
+  node.y = command.argFloat(3 + skip).value_or(0.0f);
+  node.width = command.argFloat(4 + skip).value_or(0.0f);
+  node.height = command.argFloat(5 + skip).value_or(0.0f);
   return true;
 }
 
@@ -53,7 +55,9 @@ void Builder::feed(const con::Command& command) {
   auto create = [&](NodeType type) {
     Node node;
     node.type = type;
-    if (!readRect(command, node)) return;
+    const int skip = type == NodeType::Bar ? 1 : 0;
+    if (type == NodeType::Bar) node.barDirection = command.argInt(2).value_or(0);
+    if (!readRect(command, node, skip)) return;
     nodes_.push_back(std::move(node));
     activeIndex_ = static_cast<int>(nodes_.size()) - 1;
   };
@@ -92,8 +96,18 @@ void Builder::feed(const con::Command& command) {
     return;
   }
 
+  if (method == "setbarnodetexture") {
+    // setBarNodeTexture <0|1> <файл>: нульова текстура — порожня смуга,
+    // перша — повна. Малюємо повну, обрізану за значенням.
+    const int slot = command.argInt(0).value_or(0);
+    std::string path(command.argStr(1));
+    if (slot == 0) node->barTextureEmpty = path;
+    else node->barTextureFull = path;
+    if (node->texture.empty() || slot == 1) node->texture = std::move(path);
+    return;
+  }
   if (method == "setpicturenodetexture" || method == "setbuttonnodetexture" ||
-      method == "setbarnodetexture" || method == "setobjectmarkernodetexture") {
+      method == "setobjectmarkernodetexture") {
     node->texture = std::string(command.argStr(0));
     return;
   }

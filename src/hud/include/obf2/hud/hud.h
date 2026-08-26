@@ -74,6 +74,11 @@ struct Node {
 
   std::string altCommand;      // setButtonNodeAltConCmd — дія правою кнопкою
   std::string valueVariable;   // setBarNodeValueVariable — заповнення смуги
+  // Смуга має свій зайвий параметр перед прямокутником — напрям росту, —
+  // і дві текстури: порожню (0) і повну (1).
+  int barDirection = 0;
+  std::string barTextureEmpty;
+  std::string barTextureFull;
   std::string positionVariable;  // setNodePosVariable
   std::string rotateVariable;    // setPictureNodeRotateVariable
   std::vector<std::string> rgbVariables;  // setNodeRGBVariables

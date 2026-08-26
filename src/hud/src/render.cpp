@@ -10,7 +10,10 @@ namespace {
 mesh::Vec3 flatNormal() { return mesh::Vec3{0.0f, 1.0f, 0.0f}; }
 
 // Прямокутник у NDC із кольором, який іде через альфу текстури.
-mesh::RenderMesh quad(const ScreenRect& rect, const Screen& screen, const std::string& texture) {
+// `uMin`/`uMax` дають змогу показати лише частину картинки — так малюється
+// заповнення смуги.
+mesh::RenderMesh quad(const ScreenRect& rect, const Screen& screen, const std::string& texture,
+                      float uMin = 0.0f, float uMax = 1.0f) {
   auto toNdcX = [&](float pixels) {
     return pixels / static_cast<float>(screen.width) * 2.0f - 1.0f;
   };
@@ -26,10 +29,10 @@ mesh::RenderMesh quad(const ScreenRect& rect, const Screen& screen, const std::s
   const float y1 = toNdcY(rect.y + rect.height);
 
   out.vertices = {
-      mesh::Vertex{{x0, y0, 0.0f}, normal, {0.0f, 0.0f}},
-      mesh::Vertex{{x1, y0, 0.0f}, normal, {1.0f, 0.0f}},
-      mesh::Vertex{{x0, y1, 0.0f}, normal, {0.0f, 1.0f}},
-      mesh::Vertex{{x1, y1, 0.0f}, normal, {1.0f, 1.0f}},
+      mesh::Vertex{{x0, y0, 0.0f}, normal, {uMin, 0.0f}},
+      mesh::Vertex{{x1, y0, 0.0f}, normal, {uMax, 0.0f}},
+      mesh::Vertex{{x0, y1, 0.0f}, normal, {uMin, 1.0f}},
+      mesh::Vertex{{x1, y1, 0.0f}, normal, {uMax, 1.0f}},
   };
   out.indices = {0, 2, 1, 1, 2, 3};
 
@@ -64,9 +67,33 @@ std::vector<DrawPiece> buildNode(const Node& node, const font::Font& font,
   const float scaleY = static_cast<float>(screen.height) / kReferenceHeight;
   const ScreenRect rect = nodeRect(node, screen);
 
-  // Картинки, кнопки й смуги — прямокутник із текстурою.
-  if (node.type == NodeType::Picture || node.type == NodeType::Button ||
-      node.type == NodeType::Bar) {
+  // Смуга: показуємо не всю картинку, а її частину за значенням змінної.
+  if (node.type == NodeType::Bar) {
+    float value = 1.0f;
+    if (!node.valueVariable.empty() && context.variableValue) {
+      value = context.variableValue(node.valueVariable);
+    }
+    value = value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value);
+
+    const std::string& texture = node.barTextureFull.empty() ? node.texture : node.barTextureFull;
+    if (!texture.empty() && value > 0.0f) {
+      // Напрям 3 у даних означає смугу, що росте справа наліво (права
+      // половина екрана — команда противника).
+      ScreenRect part = rect;
+      float uMin = 0.0f, uMax = value;
+      if (node.barDirection == 3) {
+        part.x = rect.x + rect.width * (1.0f - value);
+        uMin = 1.0f - value;
+        uMax = 1.0f;
+      }
+      part.width = rect.width * value;
+      pieces.push_back(DrawPiece{quad(part, screen, texture, uMin, uMax), texture, &node});
+    }
+    return pieces;
+  }
+
+  // Картинки й кнопки — прямокутник із текстурою.
+  if (node.type == NodeType::Picture || node.type == NodeType::Button) {
     std::string texture = node.texture;
     if (texture.empty() && !node.textureVariable.empty() && context.variableText) {
       texture = std::string(context.variableText(node.textureVariable));

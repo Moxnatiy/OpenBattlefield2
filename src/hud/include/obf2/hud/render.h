@@ -38,6 +38,8 @@ struct Context {
   std::function<std::string_view(std::string_view key)> localize;
   std::function<bool(std::string_view variable)> isVisible;
   std::function<std::string_view(std::string_view variable)> variableText;
+  // Заповнення смуги 0..1 (`setBarNodeValueVariable`).
+  std::function<float(std::string_view variable)> variableValue;
 };
 
 // Геометрія одного вузла — картинка, смуга і/або підпис.

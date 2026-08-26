@@ -909,16 +909,17 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   std::vector<int> hudQuads;
   std::map<std::string, bool> hudVariables;
   std::map<std::string, std::string> hudStrings;
-  // Вузли, підпис яких змінюється в грі: геометрію для них перебудовуємо,
-  // але лише коли справді змінився рядок.
-  struct DynamicText {
+  std::map<std::string, float> hudValues;
+  // Вузли, вміст яких змінюється в грі: підписи й смуги. Геометрію для них
+  // перебудовуємо, але лише коли справді змінилося значення.
+  struct DynamicNode {
     const obf2::hud::Node* node = nullptr;
-    std::string variable;
-    std::string shown;
+    std::string shownText;
+    float shownValue = -1.0f;
     obf2::gfx::GpuMesh mesh;
     bool valid = false;
   };
-  std::vector<DynamicText> hudDynamic;
+  std::vector<DynamicNode> hudDynamic;
   const LoadedFont hudFont = bootMode ? LoadedFont{} : loadFont(files, "Fonts/800/dynamicText_13");
   obf2::hud::Screen hudScreen;
   if (!bootMode && hudFont.valid) {
@@ -944,6 +945,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       const auto found = hudVariables.find(std::string(variable));
       return found != hudVariables.end() && found->second;
     };
+    hudContext.variableValue = [&](std::string_view variable) -> float {
+      const auto found = hudValues.find(std::string(variable));
+      return found == hudValues.end() ? 0.0f : found->second;
+    };
     hudContext.variableText = [&](std::string_view variable) -> std::string_view {
       const auto found = hudStrings.find(std::string(variable));
       return found == hudStrings.end() ? std::string_view{} : std::string_view(found->second);
@@ -964,14 +969,15 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       scene.meshes.push_back(std::move(piece.geometry));
       hudQuads.push_back(static_cast<int>(scene.meshes.size()) - 1);
     }
-    // Живі значення: квитки обох команд. Далі сюди підуть здоров'я й набій.
+    // Живі вузли: усе, що бере значення зі змінної, яку ми вміємо заповнити.
     for (const auto& node : ingameHud.nodes()) {
-      if (node.textVariable != "FriendlyTicketsString" &&
-          node.textVariable != "EnemyTicketsString") {
-        continue;
-      }
-      if (node.group != "TicketInfo") continue;  // той самий підпис є і в командира
-      hudDynamic.push_back(DynamicText{&node, node.textVariable, {}, {}, false});
+      const bool ticketText = node.group == "TicketInfo" &&
+                              (node.textVariable == "FriendlyTicketsString" ||
+                               node.textVariable == "EnemyTicketsString");
+      const bool cpBar = node.type == obf2::hud::NodeType::Bar &&
+                         node.group == "CPInformationItems" && !node.valueVariable.empty();
+      if (!ticketText && !cpBar) continue;
+      hudDynamic.push_back(DynamicNode{&node, {}, -1.0f, {}, false});
     }
 
     std::printf("  HUD: %zu вузлів у дереві, шматків до малювання %zu, живих підписів %zu\n",
@@ -1167,6 +1173,17 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
           const int own = 1, enemy = 2;
           hudStrings["FriendlyTicketsString"] = std::to_string(hostedServer->tickets(own));
           hudStrings["EnemyTicketsString"] = std::to_string(hostedServer->tickets(enemy));
+
+          // Смужки прапорів під мінімапою: скільки точок у кожної команди.
+          const auto& points = hostedServer->controlPoints();
+          int ours = 0, theirs = 0;
+          for (const auto& point : points) {
+            if (point.team == own) ++ours;
+            else if (point.team == enemy) ++theirs;
+          }
+          const float total = points.empty() ? 1.0f : static_cast<float>(points.size());
+          hudValues["FriendlyCPs"] = static_cast<float>(ours) / total;
+          hudValues["EnemyCPs"] = static_cast<float>(theirs) / total;
         }
 
         std::vector<obf2::gfx::MeshRenderer::DrawItem> hudItems;
@@ -1177,20 +1194,40 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
               &gpuMeshes[static_cast<std::size_t>(index)], obf2::Mat4::identity()});
         }
 
-        for (DynamicText& dynamic : hudDynamic) {
-          const auto found = hudStrings.find(dynamic.variable);
-          const std::string value = found == hudStrings.end() ? std::string() : found->second;
-          if (value != dynamic.shown) {
-            // Рядок змінився — перебудовуємо тільки цей підпис.
+        for (DynamicNode& dynamic : hudDynamic) {
+          const obf2::hud::Node& node = *dynamic.node;
+          const bool isBar = node.type == obf2::hud::NodeType::Bar;
+
+          std::string text;
+          float value = 0.0f;
+          if (isBar) {
+            const auto found = hudValues.find(node.valueVariable);
+            value = found == hudValues.end() ? 0.0f : found->second;
+          } else {
+            const auto found = hudStrings.find(node.textVariable);
+            if (found != hudStrings.end()) text = found->second;
+          }
+
+          const bool changed = isBar ? std::abs(value - dynamic.shownValue) > 0.001f
+                                     : text != dynamic.shownText;
+          if (changed) {
+            // Значення змінилося — перебудовуємо тільки цей вузол.
             if (dynamic.valid) renderer->release(dynamic.mesh);
             dynamic.valid = false;
-            dynamic.shown = value;
-            if (!value.empty()) {
-              obf2::hud::Node copy = *dynamic.node;
-              copy.text = value;
+            dynamic.shownValue = value;
+            dynamic.shownText = text;
+
+            obf2::hud::Node copy = node;
+            obf2::hud::Context single;
+            if (isBar) {
+              single.variableValue = [&](std::string_view) { return value; };
+            } else {
+              copy.text = text;
               copy.textVariable.clear();
-              auto built = obf2::hud::buildNode(copy, hudFont.font, hudFont.atlasPath, hudScreen,
-                                                obf2::hud::Context{});
+            }
+            if (isBar || !text.empty()) {
+              auto built =
+                  obf2::hud::buildNode(copy, hudFont.font, hudFont.atlasPath, hudScreen, single);
               if (!built.empty()) {
                 if (auto uploaded = renderer->upload(built.front().geometry, resolveTexture)) {
                   dynamic.mesh = *uploaded;

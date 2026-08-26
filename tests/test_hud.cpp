@@ -168,7 +168,51 @@ static void testButtonAtFindsButtonUnderCursor() {
   CHECK(hud::buttonAt(builder, "Menu", screen, 500.0f, 400.0f) == nullptr);
 }
 
+static void testBarNodeHasDirectionBeforeRect() {
+  // У смуги перед прямокутником стоїть напрям росту: без цього зсуву
+  // координати з'їжджають на одну позицію.
+  const hud::Builder builder = build(
+      "hudBuilder.createBarNode Map FriendlyCPs 2 643 180 108 31\n"
+      "hudbuilder.setBarNodeTexture 1 Ingame/Minimap/flags_Captured_Left.tga\n"
+      "hudBuilder.setBarNodeValueVariable FriendlyCPs\n");
+
+  CHECK_EQ(builder.nodes().size(), std::size_t(1));
+  if (builder.nodes().empty()) return;
+  const hud::Node& node = builder.nodes()[0];
+  CHECK_EQ(node.barDirection, 2);
+  CHECK(std::abs(node.x - 643.0f) < 0.01f);
+  CHECK(std::abs(node.y - 180.0f) < 0.01f);
+  CHECK(std::abs(node.width - 108.0f) < 0.01f);
+  CHECK(std::abs(node.height - 31.0f) < 0.01f);
+  CHECK_EQ(node.valueVariable, std::string("FriendlyCPs"));
+  CHECK_EQ(node.barTextureFull, std::string("Ingame/Minimap/flags_Captured_Left.tga"));
+}
+
+static void testBarIsClippedByValue() {
+  const hud::Builder builder = build(
+      "hudBuilder.createBarNode Map Bar 2 0 0 100 10\n"
+      "hudbuilder.setBarNodeTexture 1 bar.tga\n"
+      "hudBuilder.setBarNodeValueVariable Fill\n");
+  const hud::Screen screen{800, 600};
+
+  hud::Context context;
+  context.variableValue = [](std::string_view) { return 0.25f; };
+  auto pieces = hud::buildNode(builder.nodes()[0], font::Font{}, "atlas", screen, context);
+  CHECK_EQ(pieces.size(), std::size_t(1));
+  if (pieces.empty()) return;
+
+  // Чверть значення — чверть ширини: у NDC це від -1 до -0.95 при 800px.
+  const auto& vertices = pieces[0].geometry.vertices;
+  CHECK_EQ(vertices.size(), std::size_t(4));
+  if (vertices.size() < 4) return;
+  CHECK(std::abs(vertices[1].position.x - (-0.9375f)) < 0.01f);
+  // Обрізана й текстура, інакше картинка стиснулася б.
+  CHECK(std::abs(vertices[1].uv[0] - 0.25f) < 0.01f);
+}
+
 TEST_MAIN({
+  testBarNodeHasDirectionBeforeRect();
+  testBarIsClippedByValue();
   testNodeRectScalesFromReference();
   testButtonAtFindsButtonUnderCursor();
   testPictureNode();
