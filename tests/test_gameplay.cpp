@@ -1,8 +1,11 @@
 #include <cmath>
+#include <cstdio>
 #include <string>
 #include <vector>
 
 #include "check.h"
+#include "obf2/mesh/collision.h"
+#include "obf2/server/collision_world.h"
 #include "obf2/server/game_client.h"
 #include "obf2/server/game_server.h"
 
@@ -31,6 +34,20 @@ level::GameplayObjects makeGameplay() {
   gameplay.controlPoints.push_back(neutral);
 
   return gameplay;
+}
+
+// Стіна поперек шляху: два трикутники в площині X = wallX.
+mesh::CollisionLayer makeWall(float wallX) {
+  mesh::CollisionLayer layer;
+  layer.type = mesh::ColType::Soldier;
+  layer.vertices = {
+      mesh::Vec3{wallX, -5.0f, -10.0f}, mesh::Vec3{wallX, 10.0f, -10.0f},
+      mesh::Vec3{wallX, 10.0f, 10.0f},  mesh::Vec3{wallX, -5.0f, 10.0f},
+  };
+  layer.faces = {mesh::CollisionFace{0, 1, 2, 0}, mesh::CollisionFace{0, 2, 3, 0}};
+  layer.bounds.min = mesh::Vec3{wallX - 0.1f, -5.0f, -10.0f};
+  layer.bounds.max = mesh::Vec3{wallX + 0.1f, 10.0f, 10.0f};
+  return layer;
 }
 
 void pump(server::GameServer& gameServer, server::GameClient& client, int steps = 8) {
@@ -353,7 +370,58 @@ static void testDeathCostsTicketAndRespawns() {
   CHECK_EQ(gameServer.tickets(1), 99);
 }
 
+static void testCollisionStillWorksAfterRespawn() {
+  // Повідомлена помилка: після появи гравець проходив крізь об'єкти.
+  server::ServerSettings settings;
+  settings.respawnDelay = 0.2f;
+  settings.spawnPosition = Vec3f{-3.0f, 0.0f, 0.0f};
+
+  server::GameServer gameServer(settings);
+  gameServer.setGameplay(level::GameplayObjects{});
+
+  auto world = std::make_unique<server::CollisionWorld>();
+  world->addLayer(makeWall(0.0f), Mat4::identity());
+  gameServer.setCollision(std::move(world));
+
+  auto [clientSide, serverSide] = net::LoopbackConnection::createPair();
+  gameServer.accept(std::move(serverSide));
+  server::GameClient client(std::move(clientSide), "ARNE");
+  client.connect();
+  pump(gameServer, client);
+
+  const auto pushForward = [&]() {
+    net::PlayerInput input;
+    // Праворуч від нульового кута — це +X, тобто рівно у стіну.
+    input.moveRight = 1.0f;
+    for (int i = 0; i < 120; ++i) {
+      client.setInput(input);
+      gameServer.tick(1.0f / 30.0f);
+      client.tick(1.0f / 30.0f);
+    }
+  };
+
+  pushForward();
+  CHECK(!gameServer.objects().empty());
+  if (gameServer.objects().empty()) return;
+  std::printf("  діаг: після руху %.2f %.2f %.2f\n", gameServer.objects().front().position.x,
+              gameServer.objects().front().position.y, gameServer.objects().front().position.z);
+  // До появи стіна тримає.
+  CHECK(gameServer.objects().front().position.x < 0.2f);
+
+  // Тепер смерть, поява — і знову у стіну.
+  gameServer.killPlayer(gameServer.players().front().id, "тест");
+  for (int i = 0; i < 30; ++i) {
+    gameServer.tick(1.0f / 30.0f);
+    client.tick(1.0f / 30.0f);
+  }
+  CHECK(gameServer.players().front().alive);
+
+  pushForward();
+  CHECK(gameServer.objects().front().position.x < 0.2f);
+}
+
 TEST_MAIN({
+  testCollisionStillWorksAfterRespawn();
   testDeathCostsTicketAndRespawns();
   testEnemyFlagIsNeutralizedBeforeCapture();
   testTicketsStartFromDefaults();

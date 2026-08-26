@@ -3,6 +3,13 @@
 namespace obf2::server {
 namespace {
 
+// Далі цього за один пакет солдат пройти не може: за 1/30 с навіть бігом
+// це менш ніж метр. Отже це переміщення, а не рух.
+constexpr float kTeleportDistance = 5.0f;
+
+}  // namespace
+namespace {
+
 constexpr std::size_t kPacketBytes = 1200;
 
 // Ввід шлемо з тією ж частотою, що сервер крутить симуляцію.
@@ -80,12 +87,18 @@ void GameClient::handlePacket(const net::Packet& packet) {
         object.id = update.objectId;
         // Ім'я шаблону приходить лише при появі; далі його не перезаписуємо.
         if (update.spawn) object.templateName = update.templateName;
-        // Попередній стан лишаємо для згладжування.
-        if (!update.spawn) {
+        // Попередній стан лишаємо для згладжування. Але стрибок через
+        // півсвіту — це не рух, а поява на новому місці: згладжувати його
+        // не можна, інакше камера пролітає крізь рівень, і здається, ніби
+        // зіткнень немає взагалі.
+        const Vec3f jump = update.position - object.position;
+        const bool teleported = length(jump) > kTeleportDistance;
+        if (!update.spawn && !teleported) {
           object.previousPosition = object.position;
           object.moved = true;
         } else {
           object.previousPosition = update.position;
+          object.moved = false;
         }
         object.position = update.position;
         object.rotation = update.rotation;

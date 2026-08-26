@@ -61,6 +61,15 @@ struct SpawnPoint {
   Vec3f rotation;
   int controlPointId = 0;
   Vec3f offset;  // setSpawnPositionOffset: солдат стає трохи вище землі
+
+  // Решта — властивості SpawnPointTemplate. Значення за замовчуванням узяті
+  // з конструктора рушія (`SpawnPointTemplate::SpawnPointTemplate`), а не
+  // з голови: рівні їх майже ніколи не задають.
+  bool active = true;               // setActive, типово увімкнено
+  bool onlyForAI = false;           // setOnlyForAI
+  bool onlyForHuman = false;        // setOnlyForHuman
+  float spawnPreventionDelay = 0.0f;  // setSpawnPreventionDelay, типово 0
+  float minSpawnHeight = -1.0f;       // setMinSpawnHeight, -1 = не перевіряти
 };
 
 struct GameplayObjects {

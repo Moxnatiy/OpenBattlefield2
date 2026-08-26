@@ -1050,7 +1050,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       // залежить від сервера навіть в одиночній грі.
       const auto raw = device->readInput();
       constexpr float kMouseSensitivity = 0.15f;
-      yaw -= raw.mouseDeltaX * kMouseSensitivity;
+      // Кут росте за годинниковою стрілкою (ліва система), тож рух миші
+      // вправо має його **збільшувати**. З правостороннім конвеєром знак
+      // був протилежний, і після переходу керування виявилося дзеркальним.
+      yaw += raw.mouseDeltaX * kMouseSensitivity;
       pitch -= raw.mouseDeltaY * kMouseSensitivity;
       pitch = std::max(-89.0f, std::min(89.0f, pitch));
 

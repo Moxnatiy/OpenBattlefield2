@@ -64,7 +64,10 @@ uFirstEndGame -> uEndGame        (підсумки, наступна карта)
 - [ ] Команди 1 і 2 з назвами (`setTeamName`, `getTeamName`), автобаланс.
 - [x] `SpawnPoint` із `GamePlayObjects.con` — реальні точки появи (24 на
       Dalian) із `setSpawnPositionOffset`, по колу, лише на своїх точках.
+- [x] Вибір точки 1:1 із рушієм: випадкова серед придатних, прапор має
+      бути наш, поруч не має нікого стояти (`docs/functions/spawn.md`).
 - [ ] `SpawnGroup` і поява біля командира/загону.
+- [ ] Поява одразу в техніці, якщо всі точки зайняті (`enterOnSpawn`).
 - [ ] Набори (kits): `menuTeamManager.addKit/addTeam/addWeapon` (зараз без
       обробника), вибір набору при появі.
 - [ ] Хвилі появи: `getDefaultTimeToNextAIWave`, черга `uPlayingSpawning`.

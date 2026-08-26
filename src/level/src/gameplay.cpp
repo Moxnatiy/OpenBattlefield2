@@ -24,6 +24,11 @@ struct TemplateInfo {
   int enemyTicketLossWhenCaptured = 0;
   int teamOnVehicle = 0;
   Vec3f spawnOffset;
+  bool spawnActive = true;
+  bool onlyForAI = false;
+  bool onlyForHuman = false;
+  float spawnPreventionDelay = 0.0f;
+  float minSpawnHeight = -1.0f;
   std::map<int, std::string> templateByTeam;
 };
 
@@ -66,6 +71,16 @@ class Builder {
         info.areaValueTeam2 = command.argFloat(0).value_or(info.areaValueTeam2);
       } else if (method == "enemyticketlosswhencaptured") {
         info.enemyTicketLossWhenCaptured = command.argInt(0).value_or(0);
+      } else if (method == "setactive") {
+        info.spawnActive = command.argBool(0).value_or(true);
+      } else if (method == "setonlyforai") {
+        info.onlyForAI = command.argBool(0).value_or(false);
+      } else if (method == "setonlyforhuman") {
+        info.onlyForHuman = command.argBool(0).value_or(false);
+      } else if (method == "setspawnpreventiondelay") {
+        info.spawnPreventionDelay = command.argFloat(0).value_or(0.0f);
+      } else if (method == "setminspawnheight") {
+        info.minSpawnHeight = command.argFloat(0).value_or(-1.0f);
       } else if (method == "setspawnpositionoffset") {
         if (const auto offset = command.argVec3(0)) {
           info.spawnOffset = Vec3f{offset->x, offset->y, offset->z};
@@ -133,6 +148,11 @@ class Builder {
         spawn.controlPointId =
             info.controlPointId != 0 ? info.controlPointId : placement.controlPointId;
         spawn.offset = info.spawnOffset;
+        spawn.active = info.spawnActive;
+        spawn.onlyForAI = info.onlyForAI;
+        spawn.onlyForHuman = info.onlyForHuman;
+        spawn.spawnPreventionDelay = info.spawnPreventionDelay;
+        spawn.minSpawnHeight = info.minSpawnHeight;
         out.spawnPoints.push_back(std::move(spawn));
       } else if (info.className == "ObjectSpawner") {
         ObjectSpawner spawner;

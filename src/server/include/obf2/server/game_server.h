@@ -10,7 +10,9 @@
 // вихідників): сервер тримає стан світу, приймає під'єднання, розсилає
 // оновлення об'єктів.
 #include <cstdint>
+#include <map>
 #include <memory>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -221,8 +223,10 @@ class GameServer {
   void updateTickets(float step);
   void endGame(int winner);
   // Де з'явитися гравцеві: найближча точка своєї команди, інакше стартова.
-  Vec3f chooseSpawn(int team) const;
-  mutable std::size_t spawnCursor_ = 0;
+  // Вибір точки появи за логікою рушія (див. docs/functions/spawn.md).
+  const level::SpawnPoint* pickSpawnPoint(int team, bool forHuman) const;
+  bool spawnPointActive(const level::SpawnPoint& spawn, int team, bool forHuman) const;
+  Vec3f chooseSpawn(int team);
   bool sendTo(Player& player, std::span<const std::byte> data);
 
   ServerSettings settings_;
@@ -242,6 +246,14 @@ class GameServer {
   long long packetsSent_ = 0;
   long long packetsReceived_ = 0;
   std::vector<std::string> log_;
+
+  // Час у світі — потрібен для затримки повторної появи на тій самій точці
+  // (`spawnPreventionDelay`), і скільки його минуло з останньої появи.
+  float worldTime_ = 0.0f;
+  std::map<const level::SpawnPoint*, float> lastSpawnTime_;
+  // Вибір точки в оригіналі випадковий (`rand() % кількість`). Свій
+  // генератор тримаємо, щоб тести лишалися відтворюваними.
+  mutable std::minstd_rand random_{12345};
 };
 
 }  // namespace obf2::server

@@ -202,21 +202,67 @@ void GameServer::setGameplay(level::GameplayObjects gameplay) {
                  " спавнерів");
 }
 
-Vec3f GameServer::chooseSpawn(int team) const {
-  // Справжні точки появи з GamePlayObjects.con: з'явитися можна лише на
-  // тій, чия контрольна точка вже наша. Перебираємо по колу, щоб гравці
-  // не з'являлися один в одному.
-  std::vector<const level::SpawnPoint*> usable;
-  for (const level::SpawnPoint& spawn : gameplay_.spawnPoints) {
-    for (const ControlPointState& point : controlPoints_) {
-      if (point.id != spawn.controlPointId) continue;
-      if (point.team == team) usable.push_back(&spawn);
+bool GameServer::spawnPointActive(const level::SpawnPoint& spawn, int team,
+                                  bool forHuman) const {
+  // Порядок перевірок — як у `SpawnPoint::getActive` рушія.
+  if (!spawn.active) return false;
+  if (forHuman ? spawn.onlyForAI : spawn.onlyForHuman) return false;
+
+  // Точка, прив'язана до прапора, працює лише поки прапор наш.
+  if (spawn.controlPointId != 0) {
+    const ControlPointState* point = nullptr;
+    for (const ControlPointState& candidate : controlPoints_) {
+      if (candidate.id == spawn.controlPointId) { point = &candidate; break; }
+    }
+    if (point == nullptr || point->team != team) return false;
+  }
+
+  // Зайнята: хтось щойно з'явився тут. Затримка типово нульова, тож
+  // насправді це вмикається лише там, де рівень її задав.
+  if (spawn.spawnPreventionDelay > 0.0f) {
+    const auto found = lastSpawnTime_.find(&spawn);
+    if (found != lastSpawnTime_.end() &&
+        worldTime_ < found->second + spawn.spawnPreventionDelay) {
+      return false;
+    }
+  }
+
+  // Зависоко над землею — теж не годиться (типово вимкнено, -1).
+  if (spawn.minSpawnHeight >= 0.0f) {
+    const float ground = groundHeightAt(spawn.position);
+    if (spawn.position.y - ground < spawn.minSpawnHeight) return false;
+  }
+
+  // І головне: поруч ніхто не стоїть. Рушій шукає об'єкти в радіусі 1 м.
+  for (const Player& player : players_) {
+    if (!player.alive || player.soldierId == 0) continue;
+    for (const WorldObject& object : objects_) {
+      if (object.id != player.soldierId) continue;
+      const Vec3f delta = object.position - (spawn.position + spawn.offset);
+      if (length(delta) < 1.0f) return false;
       break;
     }
   }
-  if (!usable.empty()) {
-    const level::SpawnPoint& spawn = *usable[spawnCursor_++ % usable.size()];
-    return spawn.position + spawn.offset;
+  return true;
+}
+
+const level::SpawnPoint* GameServer::pickSpawnPoint(int team, bool forHuman) const {
+  // Спершу збираємо всі придатні, потім беремо випадкову — рівно так це
+  // робить `SpawnGroup::getSpawnPoint`, а не по колу.
+  std::vector<const level::SpawnPoint*> usable;
+  for (const level::SpawnPoint& spawn : gameplay_.spawnPoints) {
+    if (spawnPointActive(spawn, team, forHuman)) usable.push_back(&spawn);
+  }
+  if (usable.empty()) return nullptr;
+
+  std::uniform_int_distribution<std::size_t> pick(0, usable.size() - 1);
+  return usable[pick(random_)];
+}
+
+Vec3f GameServer::chooseSpawn(int team) {
+  if (const level::SpawnPoint* spawn = pickSpawnPoint(team, true)) {
+    lastSpawnTime_[spawn] = worldTime_;
+    return spawn->position + spawn->offset;
   }
 
   // Точок появи немає — стаємо просто на прапор.
@@ -488,6 +534,7 @@ float GameServer::groundHeightAt(const Vec3f& position) const {
 
 void GameServer::simulate(float step) {
   ++tickCount_;
+  worldTime_ += step;
   if (status_ == GameStatus::Playing) {
     updateControlPoints(step);
     updateTickets(step);
