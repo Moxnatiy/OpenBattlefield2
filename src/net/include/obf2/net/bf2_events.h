@@ -1,0 +1,74 @@
+#pragma once
+// Ігрові події BF2: таблиця розмірів і розбір того, що ми вміємо.
+//
+// Таблиця в `bf2_events.inc` згенерована з бінаря сервера
+// (`tools/linuxded/gen_events.py`): номер типу береться з `getType()`,
+// розміри полів — із `deSerialize`. Перезняти можна тією ж командою.
+//
+// Головне, заради чого вона потрібна, — вміти **пропустити** будь-яку
+// подію рівно на стільки бітів, скільки вона займає. Пакет везе їх одну
+// за одною, і якщо на незнайомій спіткнутися, далі йде сміття: тип
+// події не буває більшим за 69, а зі зсуву вилазять 80 чи 106.
+//
+// Частину подій пропустити за таблицею не можна: у них поля лежать за
+// умовою, і довжина залежить від вмісту. Такі позначені окремо, і розбір
+// для них написано руками.
+#include <cstdint>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "obf2/core/math.h"
+#include "obf2/net/bitstream.h"
+
+namespace obf2::net::bf2 {
+
+// Назва події за номером; порожньо, якщо номера немає в реєстрі.
+std::string_view eventName(std::uint32_t type);
+
+// Чи залежить довжина події від вмісту.
+bool eventIsBranchy(std::uint32_t type);
+
+// Об'єкт світу з `CreateObjectEvent` (тип 6).
+//
+// Розкладка з `bitfields.py --blocks CreateObjectEvent::deSerialize`:
+// прапорець після перших трьох полів розводить дві **взаємно виключні**
+// гілки, а полярність видно в коді (`cmpl $0x1; jne`).
+struct CreateObject {
+  std::uint32_t templateId = 0;
+  std::uint16_t networkId = 0;
+  std::uint32_t field2 = 0;
+  std::optional<std::uint8_t> field8;
+  std::optional<Vec3f> position;
+  std::optional<Vec3f> rotation;
+};
+
+// Гравець із `CreatePlayerEvent` (тип 5). Ім'я сервер шле в 32 байтах.
+struct CreatePlayer {
+  std::uint32_t team = 0;
+  std::uint32_t squad = 0;
+  std::uint32_t id = 0;
+  std::string name;
+};
+
+// Одна подія з пакета: номер типу і те з неї, що ми вже розбираємо.
+struct Event {
+  std::uint32_t type = 0;
+  std::optional<CreateObject> object;
+  std::optional<CreatePlayer> player;
+};
+
+// Пересуває читача рівно на довжину події вказаного типу.
+// false — тип невідомий або пакет обірвався.
+bool skipEvent(BitReader& reader, std::uint32_t type);
+
+// Розбирає одну подію: що вміємо — заповнює, решту просто пропускає.
+std::optional<Event> readEvent(BitReader& reader);
+
+// Проходить пакет даних і повертає всі події з нього.
+// Порожньо — це не пакет даних або він обірвався на першій же події.
+std::vector<Event> readEvents(std::span<const std::byte> packet);
+
+}  // namespace obf2::net::bf2

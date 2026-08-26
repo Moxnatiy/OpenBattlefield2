@@ -24,3 +24,7 @@ obf2_add_test(test_collision obf2_server obf2_mesh)
 obf2_add_test(test_gameplay obf2_server)
 obf2_add_test(test_anim_system obf2_anim)
 obf2_add_test(test_bf2_protocol obf2_net)
+obf2_add_test(test_bf2_events obf2_net)
+# Тест читає спіймані з живого сервера пакети з tests/data.
+target_compile_definitions(test_bf2_events PRIVATE
+  OBF2_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")

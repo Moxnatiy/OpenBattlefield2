@@ -27,6 +27,7 @@
 #include "obf2/level/gameplay.h"
 #include "obf2/level/level.h"
 #include "obf2/server/game_client.h"
+#include "obf2/net/bf2_events.h"
 #include "obf2/net/bf2_protocol.h"
 #include "obf2/net/udp.h"
 #include "obf2/server/game_server.h"
@@ -393,6 +394,7 @@ int runConnect(const Args& args) {
   // відключить. Заразом рахуємо, що саме приходить.
   const std::uint8_t id = packet->accept->connectionId;
   int pings = 0, dataPackets = 0, other = 0, challenges = 0;
+  int eventCount = 0, objectCount = 0;
   std::size_t dataBytes = 0;
   std::uint8_t sequence = 0;
   std::uint8_t batch = 0;
@@ -415,9 +417,29 @@ int runConnect(const Args& args) {
                                                        parsed->pingTime.value_or(0)));
         break;
       }
-      case obf2::net::bf2::PacketKind::Data:
+      case obf2::net::bf2::PacketKind::Data: {
         ++dataPackets;
         dataBytes += more->size();
+
+        // Розбираємо всі події з пакета: за таблицею розмірів кожну
+        // можна пропустити рівно на її довжину, тож незнайомі типи не
+        // збивають розбір наступних.
+        for (const auto& event : obf2::net::bf2::readEvents(*more)) {
+          ++eventCount;
+          if (event.object) {
+            ++objectCount;
+            if (event.object->position && objectCount <= 3) {
+              const auto& at = *event.object->position;
+              std::printf("  об'єкт: шаблон %u, номер %u, позиція %.1f %.1f %.1f\n",
+                          event.object->templateId, event.object->networkId, at.x, at.y,
+                          at.z);
+            }
+          }
+          if (event.player) {
+            std::printf("  гравець: %s (номер %u, команда %u)\n",
+                        event.player->name.c_str(), event.player->id, event.player->team);
+          }
+        }
         if (parsed->challenge) {
           ++challenges;
           if (!answered) {
@@ -471,6 +493,7 @@ int runConnect(const Args& args) {
           }
         }
         break;
+      }
       default:
         ++other;
         break;
@@ -482,6 +505,7 @@ int runConnect(const Args& args) {
               pings, dataPackets, dataBytes, other);
   // Якщо виклик прийшов один раз — сервер прийняв нашу відповідь. Поки
   // вона його не влаштовує, він шле виклик знову й знову.
+  std::printf("  подій розібрано: %d, з них об'єктів світу: %d\n", eventCount, objectCount);
   std::printf("  викликів отримано: %d %s\n", challenges,
               challenges == 1 ? "(відповідь прийнято)" : "(відповідь не прийнято)");
 
