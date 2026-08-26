@@ -24,6 +24,24 @@
 
 namespace obf2::server {
 
+// Стан раунду. В оригіналі це `dice::hfe::GameStatus`, і всю гру крутить
+// машина станів `ServerGameLogic::update`.
+enum class GameStatus { PreGame, Playing, EndGame };
+
+// Положення прапора на щоглі. Змінити власника точки можна лише внизу —
+// звідси й «нейтралізація» перед захопленням.
+enum class FlagPosition { Bottom, Middle, Top };
+
+// Квитки команди. Втрата дробова (витік за секунду), а показуємо ціле.
+struct TeamState {
+  int tickets = 0;
+  float fraction = 0.0f;              // накопичена дробова частина втрати
+  float ticketChangePerSecond = 0.0f;  // < 0 — тече
+  int ticketState = 0;                 // рівень попередження для інтерфейсу
+  float areaValue = 0.0f;              // сума ваг утримуваних точок
+  int controlPoints = 0;
+};
+
 // Об'єкт у світі сервера.
 struct WorldObject {
   std::uint32_t id = 0;
@@ -81,8 +99,20 @@ struct ServerSettings {
   // Скільки секунд гравець чекає до появи. В оригіналі це залежить від
   // режиму й квитків; поки що стала.
   float respawnDelay = 3.0f;
-  // За скільки секунд нейтральна точка переходить до команди, яка її тримає.
-  float captureSeconds = 10.0f;
+
+  // --- квитки (значення з даних і з коду оригіналу) ---
+  //
+  // Стартова кількість задається `gameLogic.setDefaultNumberOfTickets` у
+  // GameLogicInit.con (для bf2 — 250 на команду), у самому рушії за
+  // замовчуванням 50. Множник `sv.ticketRatio` — 100 %.
+  int defaultTickets[3] = {0, 50, 50};
+  float ticketRatio = 100.0f;
+  // Швидкість витоку при повній перевазі противника, квитків за хвилину.
+  // У ServerGameLogic::reset це 10 на команду.
+  float ticketLossPerMin[3] = {0.0f, 10.0f, 10.0f};
+  // Коли в команди не лишилось ні точок, ні живих — вона тече ось так
+  // (у конструкторі оригіналу 1000 за хвилину, тобто майже миттєво).
+  float ticketLossAtEndPerMin = 1000.0f;
 };
 
 class GameServer {
@@ -104,17 +134,42 @@ class GameServer {
   // Логіка режиму: контрольні точки й спавнери техніки.
   void setGameplay(level::GameplayObjects gameplay);
 
-  // Стан захоплення однієї точки.
+  // Стан захоплення однієї точки. Модель — як у gpm_cq.py: прапор їде
+  // вгору-вниз, власник змінюється лише коли прапор унизу.
   struct ControlPointState {
     int id = 0;
     std::string nameKey;
     Vec3f position;
     float radius = 10.0f;
-    int team = 0;
-    float progress = 0.0f;   // 0..1 у бік команди, що захоплює
-    int capturingTeam = 0;
+    int team = 0;  // власник; 0 — нейтральна
+
+    int flagTeam = 0;        // чий прапор зараз на щоглі
+    float takeOver = 0.0f;   // 0 — низ, 1 — верх
+    float takeOverChangePerSecond = 0.0f;
+    FlagPosition flagPosition = FlagPosition::Bottom;
+    int occupantsTeam1 = 0;
+    int occupantsTeam2 = 0;
+
+    // З шаблону ControlPoint у GamePlayObjects.con.
+    float timeToGetControl = 20.0f;
+    float timeToLoseControl = 20.0f;
+    float areaValueTeam1 = 0.0f;
+    float areaValueTeam2 = 0.0f;
+    bool unableToChangeTeam = false;
+    int onlyTakeableByTeam = 0;
+    int enemyTicketLossWhenCaptured = 0;
+
+    // Сумісність із попереднім виглядом: скільки лишилось до зміни.
+    int capturingTeam() const { return flagTeam; }
+    float progress() const { return takeOver; }
   };
   const std::vector<ControlPointState>& controlPoints() const { return controlPoints_; }
+
+  GameStatus status() const { return status_; }
+  const TeamState& team(int index) const { return teams_[index == 2 ? 2 : 1]; }
+  int tickets(int index) const { return team(index).tickets; }
+  // 0 — раунд триває, інакше номер команди-переможця.
+  int winner() const { return winner_; }
   float groundHeightAt(const Vec3f& position) const;
 
   // Приймає нове під'єднання. Сервер бере канал у власність.
@@ -144,6 +199,14 @@ class GameServer {
   WorldObject* findObject(std::uint32_t id);
   std::uint32_t spawnSoldier(Player& player);
   void updateControlPoints(float step);
+  // Перерахунок швидкості підйому прапора однієї точки.
+  void refreshTakeOver(ControlPointState& point);
+  // Прапор дійшов до краю: захоплення або нейтралізація.
+  void onFlagReachedEnd(ControlPointState& point, bool top);
+  // Витік квитків залежно від того, хто скільки точок тримає.
+  void updateTicketLoss();
+  void updateTickets(float step);
+  void endGame(int winner);
   // Де з'явитися гравцеві: найближча точка своєї команди, інакше стартова.
   Vec3f chooseSpawn(int team) const;
   bool sendTo(Player& player, std::span<const std::byte> data);
@@ -153,6 +216,9 @@ class GameServer {
   std::unique_ptr<CollisionWorld> collision_;
   level::GameplayObjects gameplay_;
   std::vector<ControlPointState> controlPoints_;
+  GameStatus status_ = GameStatus::PreGame;
+  TeamState teams_[3];
+  int winner_ = 0;
   std::vector<WorldObject> objects_;
   std::vector<Player> players_;
   std::uint32_t nextPlayerId_ = 1;

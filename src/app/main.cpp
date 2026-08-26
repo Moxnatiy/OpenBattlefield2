@@ -392,6 +392,30 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       std::printf("  фізика: прискорення %.2f, гальмування %.2f, керування в повітрі %.2f\n",
                   serverSettings.physics.acceleration, serverSettings.physics.deceleration,
                   serverSettings.physics.airMovementFactor);
+      // Квитки й налаштування раунду — з тих самих файлів, що читає гра:
+      // GameLogicInit.con (стартові квитки) і Settings/ServerSettings.con.
+      {
+        obf2::engine::Console settingsConsole;
+        settingsConsole.bind("gameLogic.setDefaultNumberOfTickets",
+                             [&](const obf2::con::Command& command) {
+                               const auto team = command.argInt(0);
+                               const auto count = command.argInt(1);
+                               if (team && count && *team >= 1 && *team <= 2) {
+                                 serverSettings.defaultTickets[*team] = *count;
+                               }
+                             });
+        settingsConsole.bind("sv.ticketRatio", [&](const obf2::con::Command& command) {
+          serverSettings.ticketRatio = command.argFloat(0).value_or(serverSettings.ticketRatio);
+        });
+        obf2::con::Interpreter settingsInterpreter(
+            files, [&](const obf2::con::Command& c) { settingsConsole.execute(c); });
+        settingsInterpreter.runFile("GameLogicInit.con");
+        settingsInterpreter.runFile("Settings/ServerSettings.con");
+        std::printf("  квитки: %d проти %d (ticketRatio %.0f%%)\n",
+                    serverSettings.defaultTickets[1], serverSettings.defaultTickets[2],
+                    serverSettings.ticketRatio);
+      }
+
       hostedServer = std::make_unique<obf2::server::GameServer>(serverSettings);
       obf2::server::GameServer& gameServer = *hostedServer;
       // Ігрова логіка режиму: контрольні точки й спавнери техніки.

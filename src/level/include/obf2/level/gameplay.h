@@ -28,6 +28,18 @@ struct ControlPoint {
   Vec3f position;
   int team = 0;  // 0 — нейтральна
   bool unableToChangeTeam = false;
+  int onlyTakeableByTeam = 0;  // 0 — будь-хто
+
+  // Скільки секунд іде підйом і спуск прапора при перевазі в одну людину.
+  float timeToGetControl = 20.0f;
+  float timeToLoseControl = 20.0f;
+
+  // «Вага площі» точки для витоку квитків — окремо для кожної команди.
+  float areaValueTeam1 = 0.0f;
+  float areaValueTeam2 = 0.0f;
+
+  // Разова втрата квитків у противника в мить захоплення.
+  int enemyTicketLossWhenCaptured = 0;
 };
 
 // Спавнер техніки, прив'язаний до контрольної точки.

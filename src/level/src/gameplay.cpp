@@ -16,6 +16,12 @@ struct TemplateInfo {
   float radius = 10.0f;
   int team = 0;
   bool unableToChangeTeam = false;
+  int onlyTakeableByTeam = 0;
+  float timeToGetControl = 20.0f;
+  float timeToLoseControl = 20.0f;
+  float areaValueTeam1 = 0.0f;
+  float areaValueTeam2 = 0.0f;
+  int enemyTicketLossWhenCaptured = 0;
   int teamOnVehicle = 0;
   std::map<int, std::string> templateByTeam;
 };
@@ -47,6 +53,18 @@ class Builder {
         info.team = command.argInt(0).value_or(info.team);
       } else if (method == "unabletochangeteam") {
         info.unableToChangeTeam = command.argBool(0).value_or(false);
+      } else if (method == "onlytakeablebyteam") {
+        info.onlyTakeableByTeam = command.argInt(0).value_or(0);
+      } else if (method == "timetogetcontrol") {
+        info.timeToGetControl = command.argFloat(0).value_or(info.timeToGetControl);
+      } else if (method == "timetolosecontrol") {
+        info.timeToLoseControl = command.argFloat(0).value_or(info.timeToLoseControl);
+      } else if (method == "areavalueteam1") {
+        info.areaValueTeam1 = command.argFloat(0).value_or(info.areaValueTeam1);
+      } else if (method == "areavalueteam2") {
+        info.areaValueTeam2 = command.argFloat(0).value_or(info.areaValueTeam2);
+      } else if (method == "enemyticketlosswhencaptured") {
+        info.enemyTicketLossWhenCaptured = command.argInt(0).value_or(0);
       } else if (method == "teamonvehicle") {
         info.teamOnVehicle = command.argInt(0).value_or(info.teamOnVehicle);
       } else if (method == "setobjecttemplate") {
@@ -95,6 +113,12 @@ class Builder {
         point.position = placement.position;
         point.team = info.team;
         point.unableToChangeTeam = info.unableToChangeTeam;
+        point.onlyTakeableByTeam = info.onlyTakeableByTeam;
+        point.timeToGetControl = info.timeToGetControl;
+        point.timeToLoseControl = info.timeToLoseControl;
+        point.areaValueTeam1 = info.areaValueTeam1;
+        point.areaValueTeam2 = info.areaValueTeam2;
+        point.enemyTicketLossWhenCaptured = info.enemyTicketLossWhenCaptured;
         out.controlPoints.push_back(std::move(point));
       } else if (info.className == "ObjectSpawner") {
         ObjectSpawner spawner;

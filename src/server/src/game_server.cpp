@@ -168,8 +168,29 @@ void GameServer::setGameplay(level::GameplayObjects gameplay) {
     state.position = point.position;
     state.radius = point.radius;
     state.team = point.team;
+    state.flagTeam = point.team;
+    state.takeOver = point.team != 0 ? 1.0f : 0.0f;
+    state.flagPosition = point.team != 0 ? FlagPosition::Top : FlagPosition::Bottom;
+    state.timeToGetControl = point.timeToGetControl;
+    state.timeToLoseControl = point.timeToLoseControl;
+    state.areaValueTeam1 = point.areaValueTeam1;
+    state.areaValueTeam2 = point.areaValueTeam2;
+    state.unableToChangeTeam = point.unableToChangeTeam;
+    state.onlyTakeableByTeam = point.onlyTakeableByTeam;
+    state.enemyTicketLossWhenCaptured = point.enemyTicketLossWhenCaptured;
     controlPoints_.push_back(std::move(state));
   }
+
+  // Квитки заводяться на початку раунду — так само, як це робить
+  // gpm_cq.py у відповідь на перехід у стан Playing.
+  for (int team = 1; team <= 2; ++team) {
+    teams_[team] = TeamState{};
+    teams_[team].tickets =
+        static_cast<int>(settings_.defaultTickets[team] * (settings_.ticketRatio / 100.0f));
+  }
+  status_ = GameStatus::Playing;
+  winner_ = 0;
+  updateTicketLoss();
   log_.push_back("логіка режиму: " + std::to_string(controlPoints_.size()) +
                  " контрольних точок, " + std::to_string(gameplay_.spawners.size()) +
                  " спавнерів");
@@ -183,12 +204,81 @@ Vec3f GameServer::chooseSpawn(int team) const {
   return settings_.spawnPosition;
 }
 
+void GameServer::refreshTakeOver(ControlPointState& point) {
+  // Точку взагалі не можна перебрати — прапор стоїть.
+  if (point.unableToChangeTeam) {
+    point.takeOverChangePerSecond = 0.0f;
+    return;
+  }
+
+  const int overweight = point.occupantsTeam1 - point.occupantsTeam2;
+  const int attackingTeam = overweight > 0 ? 1 : (overweight < 0 ? 2 : 0);
+
+  float attackOverWeight = 0.0f;
+  float timeToChange = point.timeToLoseControl;
+
+  if (point.occupantsTeam1 == 0 && point.occupantsTeam2 == 0) {
+    // Нікого немає: нейтральна точка повільно опускає прапор, а чиясь —
+    // так само повільно піднімає свій назад.
+    attackOverWeight = point.team == 0 ? -0.5f : 0.5f;
+  } else if (point.flagTeam == attackingTeam ||
+             (point.flagPosition == FlagPosition::Bottom && point.team == 0)) {
+    // Прапор уже наш (або щогла порожня) — піднімаємо.
+    attackOverWeight = static_cast<float>(std::abs(overweight));
+    timeToChange = point.timeToGetControl;
+  } else {
+    // На щоглі чужий прапор: спершу його треба спустити.
+    attackOverWeight = -static_cast<float>(std::abs(overweight));
+  }
+
+  if (point.onlyTakeableByTeam != 0 && point.onlyTakeableByTeam != attackingTeam) return;
+
+  // Змінити власника прапора можна тільки внизу.
+  if (point.flagPosition == FlagPosition::Bottom) point.flagTeam = attackingTeam;
+
+  float rate = timeToChange > 0.0f ? attackOverWeight / timeToChange : 0.0f;
+  if ((point.flagPosition == FlagPosition::Top && rate > 0.0f) ||
+      (point.flagPosition == FlagPosition::Bottom && rate < 0.0f)) {
+    rate = 0.0f;
+  }
+  if (rate != 0.0f) point.flagPosition = FlagPosition::Middle;
+  point.takeOverChangePerSecond = rate;
+}
+
+void GameServer::onFlagReachedEnd(ControlPointState& point, bool top) {
+  point.flagPosition = top ? FlagPosition::Top : FlagPosition::Bottom;
+
+  int newTeam = -1;
+  if (point.team != 0) {
+    // Чужий прапор спустили — точка стає нічия.
+    if (!top) newTeam = 0;
+  } else if (top) {
+    newTeam = point.flagTeam;
+  }
+  if (newTeam < 0) return;
+
+  // Захоплення одразу знімає квитки в противника.
+  if (newTeam > 0 && point.enemyTicketLossWhenCaptured > 0) {
+    const int punished = newTeam == 1 ? 2 : 1;
+    teams_[punished].tickets -= point.enemyTicketLossWhenCaptured;
+  }
+
+  if (point.team != newTeam) {
+    point.team = newTeam;
+    log_.push_back(newTeam == 0
+                       ? "точку " + std::to_string(point.id) + " нейтралізовано"
+                       : "точку " + std::to_string(point.id) + " захопила команда " +
+                             std::to_string(newTeam));
+  }
+  updateTicketLoss();
+}
+
 void GameServer::updateControlPoints(float step) {
   for (ControlPointState& point : controlPoints_) {
-    // Хто стоїть у радіусі. Точка захоплюється, лише коли поруч нікого
-    // з протилежної команди — саме так це працює в BF2.
-    int insideTeam = 0;
-    bool contested = false;
+    // Скільки живих із кожної команди стоїть у радіусі. Оригінал рахує це
+    // на входах-виходах через тригери; ми — щотакту, результат той самий.
+    point.occupantsTeam1 = 0;
+    point.occupantsTeam2 = 0;
 
     for (const Player& player : players_) {
       if (!player.alive || player.soldierId == 0) continue;
@@ -203,27 +293,86 @@ void GameServer::updateControlPoints(float step) {
       const float distance = std::sqrt(delta.x * delta.x + delta.z * delta.z);
       if (distance > point.radius) continue;
 
-      if (insideTeam == 0) insideTeam = player.team;
-      else if (insideTeam != player.team) contested = true;
+      if (player.team == 1) ++point.occupantsTeam1;
+      else if (player.team == 2) ++point.occupantsTeam2;
     }
 
-    if (contested || insideTeam == 0 || insideTeam == point.team) {
-      // Ніхто не захоплює — прогрес відкочується.
-      point.capturingTeam = 0;
-      point.progress = std::max(0.0f, point.progress - step / settings_.captureSeconds);
-      continue;
-    }
+    refreshTakeOver(point);
 
-    point.capturingTeam = insideTeam;
-    point.progress += step / settings_.captureSeconds;
-    if (point.progress >= 1.0f) {
-      point.progress = 0.0f;
-      point.team = insideTeam;
-      point.capturingTeam = 0;
-      log_.push_back("точку " + std::to_string(point.id) + " захопила команда " +
-                     std::to_string(insideTeam));
+    if (point.takeOverChangePerSecond == 0.0f) continue;
+    point.takeOver += point.takeOverChangePerSecond * step;
+
+    if (point.takeOver >= 1.0f) {
+      point.takeOver = 1.0f;
+      onFlagReachedEnd(point, true);
+    } else if (point.takeOver <= 0.0f) {
+      point.takeOver = 0.0f;
+      onFlagReachedEnd(point, false);
     }
   }
+}
+
+void GameServer::updateTicketLoss() {
+  for (int team = 1; team <= 2; ++team) {
+    teams_[team].areaValue = 0.0f;
+    teams_[team].controlPoints = 0;
+  }
+  for (const ControlPointState& point : controlPoints_) {
+    if (point.team != 1 && point.team != 2) continue;
+    teams_[point.team].areaValue +=
+        point.team == 1 ? point.areaValueTeam1 : point.areaValueTeam2;
+    ++teams_[point.team].controlPoints;
+  }
+
+  // Команда без жодної точки й без живих гравців стікає майже миттєво.
+  for (int losing = 1; losing <= 2; ++losing) {
+    if (teams_[losing].controlPoints != 0) continue;
+    bool anyoneAlive = false;
+    for (const Player& player : players_) {
+      if (player.team == losing && player.alive) { anyoneAlive = true; break; }
+    }
+    if (anyoneAlive) continue;
+
+    const int winning = losing == 1 ? 2 : 1;
+    teams_[losing].ticketChangePerSecond = -settings_.ticketLossAtEndPerMin / 60.0f;
+    teams_[winning].ticketChangePerSecond = 0.0f;
+    return;
+  }
+
+  // Звичайний витік: тече та команда, у якої менша сумарна вага площі,
+  // і лише коли противник набрав щонайменше 100.
+  const float overweight1 = teams_[1].areaValue - teams_[2].areaValue;
+  const auto lossFor = [&](int team, float enemyArea, float enemyOverweight) {
+    if (enemyArea < 100.0f || enemyOverweight <= 0.0f) return 0.0f;
+    return (settings_.ticketLossPerMin[team] / 60.0f) * (enemyOverweight / 100.0f);
+  };
+  teams_[1].ticketChangePerSecond = -lossFor(1, teams_[2].areaValue, -overweight1);
+  teams_[2].ticketChangePerSecond = -lossFor(2, teams_[1].areaValue, overweight1);
+}
+
+void GameServer::updateTickets(float step) {
+  for (int team = 1; team <= 2; ++team) {
+    TeamState& state = teams_[team];
+    if (state.ticketChangePerSecond != 0.0f) {
+      state.fraction += state.ticketChangePerSecond * step;
+      const int whole = static_cast<int>(state.fraction);
+      if (whole != 0) {
+        state.tickets += whole;
+        state.fraction -= static_cast<float>(whole);
+      }
+    }
+    if (state.tickets <= 0 && status_ == GameStatus::Playing) {
+      state.tickets = 0;
+      endGame(team == 1 ? 2 : 1);
+    }
+  }
+}
+
+void GameServer::endGame(int winner) {
+  status_ = GameStatus::EndGame;
+  winner_ = winner;
+  for (int team = 1; team <= 2; ++team) teams_[team].ticketChangePerSecond = 0.0f;
+  log_.push_back("раунд завершено, перемогла команда " + std::to_string(winner));
 }
 
 std::uint32_t GameServer::spawnSoldier(Player& player) {
@@ -267,7 +416,10 @@ float GameServer::groundHeightAt(const Vec3f& position) const {
 
 void GameServer::simulate(float step) {
   ++tickCount_;
-  updateControlPoints(step);
+  if (status_ == GameStatus::Playing) {
+    updateControlPoints(step);
+    updateTickets(step);
+  }
 
   // Поява після смерті: чекаємо затримку, потім ставимо на точку.
   for (Player& player : players_) {
