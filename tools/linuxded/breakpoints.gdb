@@ -1,21 +1,15 @@
 set pagination off
 set confirm off
-break *0x463108
+break dice::hfe::GameServer::closeClientConnection
 commands
   silent
-  printf ">>СТАН-4 і StartSimulation\n"
+  printf ">>відключення клієнта %d, причина %d\n", (int)$esi, (int)$edx
   continue
 end
-break *0x4631f1
+break *0x441755
 commands
   silent
-  printf ">>ВІДМОВА-27\n"
-  continue
-end
-break *0x462ac0
-commands
-  silent
-  printf ">>вміст-збігся\n"
+  printf ">>пачка поле5=%d\n", *(int*)($rsp+0x58)
   continue
 end
 run
