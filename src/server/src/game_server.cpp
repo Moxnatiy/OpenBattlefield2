@@ -227,6 +227,27 @@ void GameServer::simulate(float step) {
     stepSoldier(body, wish, speed, player.input.jump, settings_.physics,
                 groundHeightAt(soldier->position), step);
 
+    // Зіткнення з геометрією рівня: сервер вирішує, куди гравець дійшов
+    // насправді. Швидкість гасимо в напрямку виштовхування, інакше гравець
+    // «тремтів» би, впираючись у стіну.
+    if (collision_ != nullptr) {
+      const Vec3f before = body.position;
+      // Перевіряємо на висоті грудей, а не біля ніг: інакше сфера чіплялася б
+      // за землю й гравець не міг би рухатися взагалі.
+      Vec3f probe = body.position;
+      probe.y += settings_.soldierRadius + 0.5f;
+      if (collision_->resolveSphere(probe, settings_.soldierRadius) > 0) {
+        body.position.x = probe.x;
+        body.position.z = probe.z;
+        const Vec3f pushed = body.position - before;
+        if (length(pushed) > 1e-4f) {
+          const Vec3f direction = normalize(pushed);
+          const float into = dot(body.velocity, direction);
+          if (into < 0.0f) body.velocity = body.velocity - direction * into;
+        }
+      }
+    }
+
     soldier->position = body.position;
     soldier->velocity = body.velocity;
     soldier->onGround = body.onGround;

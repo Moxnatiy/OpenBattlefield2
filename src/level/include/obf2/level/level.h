@@ -126,6 +126,7 @@ struct TerrainPatch {
   mesh::RenderMesh geometry;
   std::string colormap;  // шлях до .dds цього патча
   std::string lightmap;  // запечене освітлення того ж патча, якщо є
+  std::string detailmap; // детейл: дрібна структура зблизька
 };
 
 // Патчі, для яких у грі немає колормапи, повністю під водою — гра їх і не

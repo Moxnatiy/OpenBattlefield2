@@ -2,6 +2,7 @@ add_library(obf2_server
   src/game_server.cpp
   src/game_client.cpp
   src/physics.cpp
+  src/collision_world.cpp
 )
 add_library(obf2::server ALIAS obf2_server)
 

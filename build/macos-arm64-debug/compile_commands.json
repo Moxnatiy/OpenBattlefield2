@@ -43,6 +43,12 @@
 },
 {
   "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/mesh/include -I/Users/miami/OpenBattlefield2/src/core/include -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror -o src/mesh/CMakeFiles/obf2_mesh.dir/src/collision.cpp.o -c /Users/miami/OpenBattlefield2/src/mesh/src/collision.cpp",
+  "file": "/Users/miami/OpenBattlefield2/src/mesh/src/collision.cpp",
+  "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/mesh/CMakeFiles/obf2_mesh.dir/src/collision.cpp.o"
+},
+{
+  "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
   "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/texture/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/third_party/stb -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror -o src/texture/CMakeFiles/obf2_texture.dir/src/dds.cpp.o -c /Users/miami/OpenBattlefield2/src/texture/src/dds.cpp",
   "file": "/Users/miami/OpenBattlefield2/src/texture/src/dds.cpp",
   "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/texture/CMakeFiles/obf2_texture.dir/src/dds.cpp.o"
@@ -136,6 +142,12 @@
   "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/server/include -I/Users/miami/OpenBattlefield2/src/net/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/game/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/mesh/include -I/Users/miami/OpenBattlefield2/src/level/include -I/Users/miami/OpenBattlefield2/src/vfs/include -I/Users/miami/OpenBattlefield2/src/engine/include -I/Users/miami/OpenBattlefield2/src/loc/include -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror -o src/server/CMakeFiles/obf2_server.dir/src/physics.cpp.o -c /Users/miami/OpenBattlefield2/src/server/src/physics.cpp",
   "file": "/Users/miami/OpenBattlefield2/src/server/src/physics.cpp",
   "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/server/CMakeFiles/obf2_server.dir/src/physics.cpp.o"
+},
+{
+  "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/server/include -I/Users/miami/OpenBattlefield2/src/net/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/game/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/mesh/include -I/Users/miami/OpenBattlefield2/src/level/include -I/Users/miami/OpenBattlefield2/src/vfs/include -I/Users/miami/OpenBattlefield2/src/engine/include -I/Users/miami/OpenBattlefield2/src/loc/include -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror -o src/server/CMakeFiles/obf2_server.dir/src/collision_world.cpp.o -c /Users/miami/OpenBattlefield2/src/server/src/collision_world.cpp",
+  "file": "/Users/miami/OpenBattlefield2/src/server/src/collision_world.cpp",
+  "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/server/CMakeFiles/obf2_server.dir/src/collision_world.cpp.o"
 },
 {
   "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
@@ -280,5 +292,11 @@
   "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/tests -I/Users/miami/OpenBattlefield2/src/hud/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror -o tests/CMakeFiles/test_hud.dir/test_hud.cpp.o -c /Users/miami/OpenBattlefield2/tests/test_hud.cpp",
   "file": "/Users/miami/OpenBattlefield2/tests/test_hud.cpp",
   "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_hud.dir/test_hud.cpp.o"
+},
+{
+  "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/tests -I/Users/miami/OpenBattlefield2/src/server/include -I/Users/miami/OpenBattlefield2/src/net/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/game/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/mesh/include -I/Users/miami/OpenBattlefield2/src/level/include -I/Users/miami/OpenBattlefield2/src/vfs/include -I/Users/miami/OpenBattlefield2/src/engine/include -I/Users/miami/OpenBattlefield2/src/loc/include -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror -o tests/CMakeFiles/test_collision.dir/test_collision.cpp.o -c /Users/miami/OpenBattlefield2/tests/test_collision.cpp",
+  "file": "/Users/miami/OpenBattlefield2/tests/test_collision.cpp",
+  "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_collision.dir/test_collision.cpp.o"
 }
 ]

@@ -36,7 +36,7 @@ struct VertexOut {
 struct Uniforms {
     float4x4 modelViewProjection;
     float4 fogColor;   // rgb — колір туману
-    float4 fogParams;  // x: початок, y: кінець (0 = туману немає), z: режим лайтмапи
+    float4 fogParams;  // x: початок, y: кінець (0 = туману немає), z: режим лайтмапи, w: тайлінг детейлу
     float4 sunColor;   // TerrainSunColor
     float4 skyColor;   // TerrainSkyColor
 };
@@ -60,8 +60,10 @@ vertex VertexOut vertex_main(VertexIn in [[stage_in]],
 fragment float4 fragment_main(VertexOut in [[stage_in]],
                               texture2d<float> baseColor [[texture(0)]],
                               texture2d<float> lightmap [[texture(1)]],
+                              texture2d<float> detail [[texture(2)]],
                               sampler baseSampler [[sampler(0)]],
-                              sampler lightSampler [[sampler(1)]]) {
+                              sampler lightSampler [[sampler(1)]],
+                              sampler detailSampler [[sampler(2)]]) {
     float4 albedo = baseColor.sample(baseSampler, in.uv);
 
     float3 light;
@@ -71,6 +73,14 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
         // TerrainSunColor буває більшим за одиницю: він підсвічує.
         float3 baked = lightmap.sample(lightSampler, in.uv).rgb;
         light = in.sunColor.rgb * baked.r + in.skyColor.rgb * baked.b;
+
+        // Детейл-мапа сюди НЕ домножується. З'ясувалося, що це не колір, а
+        // карта ваг: канали R/G/B задають частки різних матеріалів терену,
+        // і кожен із них має власну текстуру з MaterialManager. Домноження
+        // її як кольору дає кислотні плями. Текстура вантажиться й лежить
+        // у слоті 2, доки не буде матеріальної системи терену.
+        (void)detail;
+        (void)detailSampler;
     } else {
         float3 normal = normalize(in.normal);
         float3 lightDirection = normalize(float3(0.4, 0.9, 0.35));
@@ -143,7 +153,7 @@ SDL_GPUShader* createShader(SDL_GPUDevice* gpu, SDL_GPUShaderStage stage, const 
   info.format = SDL_GPU_SHADERFORMAT_MSL;
   info.stage = stage;
   info.num_uniform_buffers = isVertex ? 1 : 0;
-  info.num_samplers = isVertex ? 0 : 2;  // базовий колір і лайтмапа
+  info.num_samplers = isVertex ? 0 : 3;  // колір, лайтмапа, детейл
   return SDL_CreateGPUShader(gpu, &info);
 }
 
@@ -464,6 +474,13 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
         if (range.texture != nullptr) gpuMesh.ownedTextures.push_back(range.texture);
       }
     }
+    // Третій слот терену — детейл.
+    if (source_range.maps.size() > 2 && resolve && source_range.lightmapInSecondSlot) {
+      if (const auto decoded = resolve(source_range.maps[2])) {
+        range.detail = uploadTexture(*decoded);
+        if (range.detail != nullptr) gpuMesh.ownedTextures.push_back(range.detail);
+      }
+    }
     // Другий слот терену — запечене освітлення. Для звичайних мешів слот 1
     // це детейл, який ми поки не використовуємо, тому беремо лайтмапу лише
     // там, де її явно поклали (див. level::buildTerrainPatches).
@@ -593,15 +610,19 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
     for (const GpuMesh::Range& range : item.mesh->ranges) {
       if (range.indexCount == 0) continue;
 
-      const SDL_GPUTextureSamplerBinding bindings[2] = {
+      const SDL_GPUTextureSamplerBinding bindings[3] = {
           {range.texture != nullptr ? range.texture : placeholder_, sampler_},
           {range.lightmap != nullptr ? range.lightmap : placeholder_, sampler_},
+          {range.detail != nullptr ? range.detail : placeholder_, sampler_},
       };
-      SDL_BindGPUFragmentSamplers(pass, 0, bindings, 2);
+      SDL_BindGPUFragmentSamplers(pass, 0, bindings, 3);
 
       // Режим освітлення змінюється від діапазону до діапазону, тому
       // uniform штовхаємо перед кожним викликом малювання.
       uniforms.fogParams[2] = range.lightmap != nullptr ? 1.0f : 0.0f;
+      // Скільки разів детейл повторюється на патч. Без текстури тайлінг
+      // нульовий, і вибірка потрапляє в білу заглушку.
+      uniforms.fogParams[3] = range.detail != nullptr ? detailTiling_ : 0.0f;
       SDL_PushGPUVertexUniformData(frame.commands, 0, &uniforms, sizeof(uniforms));
 
       SDL_DrawGPUIndexedPrimitives(pass, range.indexCount, 1, range.indexStart, 0, 0);

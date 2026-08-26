@@ -475,6 +475,15 @@ std::vector<TerrainPatch> buildTerrainPatches(const Level& level, const FileSyst
         if (files.exists(candidate)) patch.lightmap = candidate;
       }
 
+      // Детейл-мапа: колормапа має лише ~2 тексели на метр, тому зблизька
+      // терен без неї виглядає розмитим.
+      if (!level.terrain.detailmapBase.empty()) {
+        char detailName[64];
+        std::snprintf(detailName, sizeof(detailName), "%02dx%02d_1.dds", column, row);
+        const std::string candidate = level.terrain.detailmapBase + detailName;
+        if (files.exists(candidate)) patch.detailmap = candidate;
+      }
+
       mesh::DrawRange range;
       range.indexStart = 0;
       range.indexCount = static_cast<std::uint32_t>(patch.geometry.indices.size());
@@ -483,6 +492,7 @@ std::vector<TerrainPatch> buildTerrainPatches(const Level& level, const FileSyst
         range.maps.push_back(patch.lightmap);
         range.lightmapInSecondSlot = true;
       }
+      if (!patch.detailmap.empty()) range.maps.push_back(patch.detailmap);
       patch.geometry.ranges.push_back(std::move(range));
 
       patches.push_back(std::move(patch));

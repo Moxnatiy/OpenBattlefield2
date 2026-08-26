@@ -18,6 +18,7 @@
 #include "obf2/level/level.h"
 #include "obf2/net/connection.h"
 #include "obf2/net/session.h"
+#include "obf2/server/collision_world.h"
 #include "obf2/server/physics.h"
 
 namespace obf2::server {
@@ -63,6 +64,9 @@ struct ServerSettings {
   float walkSpeed = 4.0f;
   float sprintSpeed = 7.0f;
 
+  // Радіус солдата для зіткнень. У BF2 це капсула; сфера трохи грубіша,
+  // але вже не пускає крізь стіни.
+  float soldierRadius = 0.4f;
   Vec3f spawnPosition{0.0f, 0.0f, 0.0f};
   std::string soldierTemplate = "player_soldier";
 
@@ -80,6 +84,11 @@ class GameServer {
 
   // Рельєф для зіткнення з землею. Без нього солдат падає без кінця.
   void setTerrain(const level::Level* level) { terrain_ = level; }
+
+  // Геометрія зіткнень рівня. Будує її застосунок (у нього є VFS і реєстр),
+  // а володіє сервер — бо саме він вирішує, куди гравець дійшов.
+  void setCollision(std::unique_ptr<CollisionWorld> world) { collision_ = std::move(world); }
+  const CollisionWorld* collision() const { return collision_.get(); }
   float groundHeightAt(const Vec3f& position) const;
 
   // Приймає нове під'єднання. Сервер бере канал у власність.
@@ -112,6 +121,7 @@ class GameServer {
 
   ServerSettings settings_;
   const level::Level* terrain_ = nullptr;
+  std::unique_ptr<CollisionWorld> collision_;
   std::vector<WorldObject> objects_;
   std::vector<Player> players_;
   std::uint32_t nextPlayerId_ = 1;

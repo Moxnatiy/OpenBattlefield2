@@ -20,6 +20,7 @@ struct GpuMesh {
     std::uint32_t indexCount = 0;
     SDL_GPUTexture* texture = nullptr;   // базовий колір; nullptr -> заглушка
     SDL_GPUTexture* lightmap = nullptr;  // запечене освітлення; nullptr -> біла
+    SDL_GPUTexture* detail = nullptr;    // дрібна структура, тайлиться
   };
 
   SDL_GPUBuffer* vertices = nullptr;
@@ -76,6 +77,9 @@ class MeshRenderer {
   void setFog(const Fog& fog) { fog_ = fog; }
 
   // Кольори, якими множиться запечена лайтмапа терену (LightSettings.* рівня).
+  // Скільки разів детейл-текстура повторюється на патч терену.
+  void setDetailTiling(float tiles) { detailTiling_ = tiles; }
+
   void setTerrainLighting(Color sun, Color sky) {
     terrainSun_ = sun;
     terrainSky_ = sky;
@@ -104,6 +108,7 @@ class MeshRenderer {
   Fog fog_;
   Color terrainSun_{1.0f, 1.0f, 1.0f, 1.0f};
   Color terrainSky_{0.6f, 0.7f, 0.9f, 1.0f};
+  float detailTiling_ = 16.0f;
   int drawn_ = 0;
   int culled_ = 0;
 };

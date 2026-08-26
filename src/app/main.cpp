@@ -27,6 +27,8 @@
 #include "obf2/server/game_client.h"
 #include "obf2/server/game_server.h"
 #include "obf2/mesh/bf2_mesh.h"
+#include "obf2/mesh/collision.h"
+#include "obf2/server/collision_world.h"
 #include "obf2/texture/dds.h"
 #include "obf2/vfs/filesystem.h"
 
@@ -153,6 +155,19 @@ std::string resolveGeometryPath(obf2::FileSystem& files, const std::string& temp
           obf2::joinAssetPath(dir, std::string(subdirectory) + geometryName + extension);
       if (files.exists(candidate)) return candidate;
     }
+  }
+  return {};
+}
+
+// Меш зіткнень лежить поруч із видимим, у тій самій підтеці meshes.
+std::string resolveCollisionPath(obf2::FileSystem& files, const std::string& templateFile,
+                                 const std::string& name) {
+  if (name.empty()) return {};
+  const std::string_view dir = obf2::assetParentDir(templateFile);
+  for (const char* subdirectory : {"meshes/", ""}) {
+    const std::string candidate =
+        obf2::joinAssetPath(dir, std::string(subdirectory) + name + ".collisionmesh");
+    if (files.exists(candidate)) return candidate;
   }
   return {};
 }
@@ -382,6 +397,58 @@ int main(int argc, char** argv) {
       gameServer.loadWorld(*level);
       // Рельєф для зіткнення з землею: без нього солдат падає без кінця.
       gameServer.setTerrain(&*level);
+
+      // Геометрія зіткнень: для кожного статичного об'єкта беремо шар
+      // солдата з .collisionmesh і переводимо у світові координати.
+      auto collisionWorld = std::make_unique<obf2::server::CollisionWorld>();
+      int withCollision = 0, withoutCollision = 0;
+      std::unordered_map<std::string, std::shared_ptr<obf2::mesh::CollisionMesh>> collisionCache;
+
+      for (const auto& object : level->objects) {
+        auto cached = collisionCache.find(object.templateName);
+        if (cached == collisionCache.end()) {
+          std::shared_ptr<obf2::mesh::CollisionMesh> loaded;
+          if (const auto* root = registry.find(object.templateName)) {
+            // Ім'я меша зіткнень — окрема властивість шаблону.
+            const std::string_view name = root->text("collisionMesh");
+            if (!name.empty()) {
+              const std::string path =
+                  resolveCollisionPath(files, root->file, std::string(name));
+              if (!path.empty()) {
+                if (const auto bytes = files.read(path)) {
+                  if (auto mesh = obf2::mesh::loadCollisionMesh(*bytes)) {
+                    loaded = std::make_shared<obf2::mesh::CollisionMesh>(std::move(*mesh));
+                  }
+                }
+              }
+            }
+          }
+          cached = collisionCache.emplace(object.templateName, std::move(loaded)).first;
+        }
+        if (cached->second == nullptr) {
+          ++withoutCollision;
+          continue;
+        }
+
+        const auto* layer = cached->second->layer(obf2::mesh::ColType::Soldier);
+        if (layer == nullptr) {
+          ++withoutCollision;
+          continue;
+        }
+
+        obf2::Mat4 transform = obf2::translation(object.position);
+        if (object.hasRotation) {
+          transform = transform * obf2::rotationYawPitchRoll(object.rotation.x, object.rotation.y,
+                                                             object.rotation.z);
+        }
+        collisionWorld->addLayer(*layer, transform);
+        ++withCollision;
+      }
+
+      std::printf("  зіткнення: %d об'єктів, %zu трикутників у %zu комірках (без геометрії %d)\n",
+                  withCollision, collisionWorld->triangleCount(), collisionWorld->cellCount(),
+                  withoutCollision);
+      gameServer.setCollision(std::move(collisionWorld));
 
       auto [clientSide, serverSide] = obf2::net::LoopbackConnection::createPair();
       gameServer.accept(std::move(serverSide));

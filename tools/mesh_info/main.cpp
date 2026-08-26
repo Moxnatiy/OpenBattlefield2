@@ -5,11 +5,13 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <map>
 #include <string>
 
 #include "obf2/core/path.h"
 #include "obf2/mesh/bf2_mesh.h"
+#include "obf2/mesh/collision.h"
 #include "obf2/vfs/filesystem.h"
 
 namespace {
@@ -143,6 +145,60 @@ int main(int argc, char** argv) {
   // геометричну нормаль (векторний добуток ребер) із нормалями вершин, які
   // художник задав явно. Якщо вони дивляться в один бік — обхід проти
   // годинникової стрілки, і саме такі грані лицьові.
+  // Регресія парсера зіткнень на всіх .collisionmesh гри.
+  if (what == "--collision") {
+    int parsed = 0, failed = 0;
+    long long triangles = 0;
+    std::map<std::string, int> reasons;
+    std::map<int, int> layerTypes;
+
+    auto paths = files.list();
+    std::sort(paths.begin(), paths.end());
+    paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
+
+    for (const auto& path : paths) {
+      if (obf2::assetExtension(path) != "collisionmesh") continue;
+      const auto bytes = files.read(path);
+      if (!bytes) continue;
+
+      std::string error;
+      const auto mesh = obf2::mesh::loadCollisionMesh(*bytes, &error);
+      if (!mesh) {
+        ++failed;
+        ++reasons[error.substr(0, error.find(" (зсув"))];
+        if (failed <= 3) {
+          std::uint32_t major = 0, minor = 0;
+          if (bytes->size() >= 8) {
+            std::memcpy(&major, bytes->data(), 4);
+            std::memcpy(&minor, bytes->data() + 4, 4);
+          }
+          std::fprintf(stderr, "  %s: версія %u.%u — %s\n", path.c_str(), major, minor,
+                       error.c_str());
+        }
+        continue;
+      }
+      ++parsed;
+      for (const auto& layer : mesh->layers) {
+        triangles += static_cast<long long>(layer.faces.size());
+        ++layerTypes[static_cast<int>(layer.type)];
+      }
+    }
+
+    std::printf("розібрано: %d, не розібрано: %d\n", parsed, failed);
+    std::printf("трикутників зіткнень: %lld\n", triangles);
+    std::puts("шари за призначенням:");
+    for (const auto& [type, count] : layerTypes) {
+      const char* name = type == 0   ? "снаряди"
+                         : type == 1 ? "техніка"
+                         : type == 2 ? "солдат"
+                         : type == 3 ? "боти"
+                                     : "?";
+      std::printf("  %-10s %d\n", name, count);
+    }
+    for (const auto& [reason, count] : reasons) std::printf("  %-44s %d\n", reason.c_str(), count);
+    return failed == 0 ? 0 : 1;
+  }
+
   if (what == "--winding") {
     long long agree = 0, disagree = 0, degenerate = 0;
     int meshesScanned = 0;
