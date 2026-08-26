@@ -344,6 +344,10 @@ def read_create_object(r):
         "прапорець3": r.read(1),
     }
     out["позиція"] = tuple(round(_float(r), 2) for _ in range(3))
+    # `serialize` кладе між позицією і поворотом ще три біти —
+    # у списку читань `deSerialize` їх не видно, але без них подія
+    # коротша на три біти й наступна в пакеті з'їжджає.
+    out["прапорці"] = tuple(r.read(1) for _ in range(3))
     out["поворот"] = tuple(round(_float(r), 2) for _ in range(3))
     return out
 
@@ -398,8 +402,14 @@ def read_string_manager(r):
     return {"поле6": r.read(6), "решта": "ще не розібрано"}
 
 
+def read_voip_on_off(r):
+    """VoipOnOffEvent (тип 35): хто говорить і чи ввімкнено."""
+    return {"гравець": r.read(8), "увімкнено": r.read(1)}
+
+
 EVENT_READERS = {
     0: ("StringManagerEvent", read_string_manager),
+    35: ("VoipOnOffEvent", read_voip_on_off),
     3: ("ConnectionTypeEvent", read_connection_type),
     4: ("DataBlockEvent", read_data_block),
     8: ("DestroyPlayerEvent", read_destroy_player),
@@ -426,11 +436,32 @@ def walk_events(data):
     count, batch, repeat = r.read(8), r.read(5), r.read(1)
 
     events = []
+    complete = True
     for _ in range(count):
         kind = r.read(EVENT_TYPE_BITS)
         name, reader = EVENT_READERS.get(kind, (None, None))
         if reader is None:
             events.append({"тип": kind, "невідома": True})
+            complete = False
             break
         events.append({"тип": kind, "клас": name, **reader(r)})
-    return {"seq": seq, "розмір": size, "пачка": batch, "події": events}
+
+    out = {"seq": seq, "розмір": size, "пачка": batch, "події": events}
+    if complete:
+        out["привиди"] = read_ghosts(r)
+    return out
+
+
+def read_ghosts(r):
+    """Потік привидів у хвості пакета (`GhostManager::processReceivedPacket`).
+
+    1 біт «є дані»; далі 32 біти часу (ділиться на 30), 8 бітів кількості
+    записів і 1 біт «є стан керованого об'єкта».
+    """
+    if r.read(1) != 1:
+        return None
+    return {
+        "час": r.read(32),
+        "записів": r.read(8),
+        "керований об'єкт": r.read(1),
+    }

@@ -166,6 +166,23 @@ std::vector<std::byte> writeDataBlockHeader(std::uint8_t connectionId,
 std::vector<std::byte> writeDataBlockChunk(std::uint8_t connectionId, const ExtendedHeader& header,
                                            std::uint8_t batch, std::span<const std::byte> chunk);
 
+// Подія «підніми в себе оцю подію» (`PostRemoteEvent`, тип 11):
+//   4 біти категорія, 32 біти номер події, 32 біти затримка (float),
+//   8 бітів довжина даних, далі байти.
+//
+// Категорію 6 сервер віддає в `GameServer::handleNetworkEvent`
+// (`GameServer::handleEvent` порівнює саме з шісткою; двійка там — HUD).
+// Номер 2 у таблиці переходів веде в `clientLoadComplete`: поки клієнт її
+// не надішле, стан з'єднання лишається нижчим за поріг `isClientReady`,
+// і сервер не шле ні об'єктів світу, ні потоку привидів.
+inline constexpr std::uint32_t kPostRemoteEvent = 11;
+inline constexpr std::uint32_t kNetworkCategory = 6;
+inline constexpr std::uint32_t kNetLoadComplete = 2;
+
+std::vector<std::byte> writePostRemoteEvent(std::uint8_t connectionId,
+                                            const ExtendedHeader& header, std::uint8_t batch,
+                                            std::uint32_t category, std::uint32_t event);
+
 // Хеш імені, який рейтинговий сервер звіряє з переданим: h = 0x1505, далі
 // для кожного символу в нижньому регістрі h = h * 0x21 ^ c.
 std::uint32_t clientInfoNameHash(const std::string& name);

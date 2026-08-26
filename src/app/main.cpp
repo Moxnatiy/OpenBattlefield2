@@ -461,6 +461,13 @@ int runConnect(const Args& args) {
             }
             std::printf("  надіслано ClientInfo: ім'я %s, %zu байтів\n",
                         info.name.c_str(), blob.size());
+
+            // І одразу — «рівень завантажено». Без цього сервер вважає
+            // клієнта неготовим і не шле ні об'єктів світу, ні привидів.
+            socket->send(obf2::net::bf2::writePostRemoteEvent(
+                id, nextHeader(), batch++, obf2::net::bf2::kNetworkCategory,
+                obf2::net::bf2::kNetLoadComplete));
+            std::printf("  надіслано «рівень завантажено»\n");
           }
         }
         break;

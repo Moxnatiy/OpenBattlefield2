@@ -117,3 +117,80 @@ StringManagerEvent порожня
 Ім'я з пробілом попереду — не помилка розбору: на сервері без рейтингу
 `GameServer::handleClientInfo` складає його як «тег клану + пробіл + ім'я»,
 а тег у нас порожній.
+
+## Розкладка полів усіх подій
+
+Знято пакетно: `tools/linuxded/bitfields.py <Клас>::deSerialize` для
+всього реєстру — 63 події за десять секунд. Числа — розміри полів у
+бітах, у порядку читання.
+
+Кілька подій пишуть більше, ніж читають (`CreatePlayerEvent` — два
+зайвих біти, `CreateObjectEvent` — три між позицією і поворотом):
+порівняння з `::serialize` це показує, і на дроті треба зважати саме
+на запис.
+
+| № | клас | поля (бітів) |
+|---:|---|---|
+| 0 | `StringManagerEvent` | 1, 6, рядок, 1, 1, 1, 8 |
+| 1 | `ChallengeEvent` | 80, 8, рядок |
+| 2 | `ChallengeResponseEvent` | 584, 32, 32, 1, 31, 31 |
+| 3 | `ConnectionTypeEvent` | 3 |
+| 4 | `DataBlockEvent` | 1, 32, 32, 8, рядок |
+| 5 | `CreatePlayerEvent` | 3, 4, 1, 8, 16, 16, 1, 256 |
+| 6 | `CreateObjectEvent` | 32, 16, 2, 1, 8, 1, 1, 32, 32, 32, 32, 32, 32 |
+| 7 | `DestroyObjectEvent` | 16 |
+| 8 | `DestroyPlayerEvent` | 8 |
+| 9 | `EnterVehicleEvent` | 8, 16, 1 |
+| 10 | `ExitVehicleEvent` | 8, 1 |
+| 11 | `PostRemoteEvent` | 4, 32, 32, 8, рядок |
+| 12 | `ChangePlayerNameEvent` | 8, 256 |
+| 13 | `HandleDropEvent` | 8, 16, 16, 32, 32, 32 |
+| 14 | `HandlePickupEvent` | 8, 16, 16 |
+| 15 | `StringBlockEvent` | 1, 8, 8, рядок |
+| 16 | `JoinSquadEvent` | 8, 8, 8 |
+| 17 | `LeaveSquadEvent` | 8, 8, 8, 1 |
+| 19 | `CommanderEvent` | 4, 8, 1, 15, 15 |
+| 20 | `RadioMessageEvent` | 8, 8, 2, 8, 5, 3 |
+| 21 | `KilledByEvent` | 8, 8, 1, 16, 32, 32, 8 |
+| 22 | `ChangeSquadNameEvent` | 8, 8, 8, 8, рядок |
+| 23 | `SetPrivateSquadEvent` | 8, 8, 1 |
+| 24 | `IssueSquadOrderEvent` | 8, 8, 8, 1, 16, 8, 1, 32, 32, 32, 32, 32, 32, 32, 32, 32 |
+| 25 | `InviteEvent` | 8, 8, 8, 1 |
+| 26 | `RankEvent` | 2, 6, 32, 8 |
+| 27 | `SetAcceptOrderEvent` | 8, 8, 1, 8, 8 |
+| 29 | `SpottedEvent` | 16, 16, 32, 32, 8, 32, 32 |
+| 30 | `ArtilleryEvent` | 2, 32, 32, 32, 16, 32 |
+| 31 | `CreateKitEvent` | 32, 16, 32, 32, 32, 4, 4 |
+| 32 | `StickyProjectileEvent` | 16, 16, 8, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 8, 8 |
+| 34 | `AmbientEffectAreaEvent` | 16, 8, 16, 32, 32, 32 |
+| 35 | `VoipOnOffEvent` | 8, 1 |
+| 36 | `CommanderCamEvent` | 32, 32, 32 |
+| 37 | `SupplyDropEvent` | 32, 32, 32 |
+| 38 | `VoipPlayerMuteEvent` | 1, 8, 8 |
+| 39 | `VoteEvent` | 8, 8, 8, 8, 8, 8, 8, 8, 8, 32 |
+| 40 | `ToggleFreeCameraEvent` | — |
+| 41 | `MedalEvent` | 32, 8, 4 |
+| 42 | `UnlockEvent` | 2, 8, 4 |
+| 43 | `MissileInitEvent` | 16, 8, 4, 1 |
+| 45 | `UAVEvent` | 32, 32, 8, 1 |
+| 46 | `ContentCheckEvent` | 128, 128, 128 |
+| 47 | `TargetDirectionEvent` | 16, 8, 32, 32, 32, 32, 32, 32 |
+| 48 | `EndOfRoundEvent` | 32, 32, 32 |
+| 49 | `PythonCommandEvent` | 32, 8, 4, 32 |
+| 50 | `RequestEvent` | 8, 8, 3 |
+| 51 | `DropVehicleEvent` | 32, 32, 8, 1 |
+| 54 | `VoipSessionEvent` | 16 |
+| 55 | `KickBanEvent` | 8, 1, 8 |
+| 56 | `BeginRoundEvent` | 32, 32 |
+| 57 | `CreateSpawnGroupEvent` | 8, 4, 1, 1, 1, 8, 8, 16 |
+| 58 | `RemoveSpawnGroupEvent` | 8, 16 |
+| 59 | `UpdateTriggerEvent` | 32, 16, 32, 32, 32, 32, 32, 32, 8, 8 |
+| 60 | `GrapplingHookContainerCreateEvent` | 8, 16, 8, 32 |
+| 61 | `GrapplingHookContainerUpdateEvent` | 8, 8, 32, 32 |
+| 62 | `GrapplingHookContainerDetachEvent` | 8, 32, 32, 32 |
+| 63 | `GrapplingHookCreateEvent` | 16, 8, 32, 32, 32, 32, 32, 32, 32 |
+| 64 | `GrapplingHookUpdateEvent` | 16, 8, 1 |
+| 65 | `PlayerTearGassedEvent` | 8, 32, 32, 32 |
+| 66 | `SetNightVisionEvent` | 8, 1 |
+| 68 | `VerifyPlayerTeamEvent` | 8, 8, 8, 8 |
+| 69 | `FixPlayerTeamEvent` | 8, 8, 8, 8 |

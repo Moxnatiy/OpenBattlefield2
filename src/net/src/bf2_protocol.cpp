@@ -183,6 +183,23 @@ std::vector<std::byte> writeDataBlockChunk(std::uint8_t connectionId, const Exte
   return finishDataPacket(buffer, writer);
 }
 
+std::vector<std::byte> writePostRemoteEvent(std::uint8_t connectionId,
+                                            const ExtendedHeader& header, std::uint8_t batch,
+                                            std::uint32_t category, std::uint32_t event) {
+  std::vector<std::byte> buffer(32);
+  BitWriter writer(buffer);
+  writeDataHeader(writer, connectionId, header);
+  writeEventFraming(writer, batch, 1);
+
+  writer.writeBits(kPostRemoteEvent, kEventTypeBits);
+  writer.writeBits(category, 4);
+  writer.writeBits(event, 32);
+  writer.writeBits(0, 32);  // затримка: float 0.0
+  writer.writeBits(0, 8);   // даних немає
+
+  return finishDataPacket(buffer, writer);
+}
+
 std::uint32_t clientInfoNameHash(const std::string& name) {
   std::uint32_t value = 0x1505;
   for (const char raw : name) {
