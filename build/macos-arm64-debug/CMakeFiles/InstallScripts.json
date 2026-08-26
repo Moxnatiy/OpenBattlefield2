@@ -13,6 +13,8 @@
 		"/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/level/cmake_install.cmake",
 		"/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/engine/cmake_install.cmake",
 		"/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/net/cmake_install.cmake",
+		"/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/hud/cmake_install.cmake",
+		"/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/server/cmake_install.cmake",
 		"/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/font/cmake_install.cmake",
 		"/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/loc/cmake_install.cmake",
 		"/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/gfx/cmake_install.cmake",
@@ -21,6 +23,7 @@
 		"/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/mesh_info/cmake_install.cmake",
 		"/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/texture_info/cmake_install.cmake",
 		"/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/object_info/cmake_install.cmake",
+		"/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/hud_dump/cmake_install.cmake",
 		"/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/cmake_install.cmake"
 	],
 	"Parallel" : false

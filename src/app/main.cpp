@@ -24,6 +24,8 @@
 #include "obf2/game/scene.h"
 #include "obf2/gfx/mesh_renderer.h"
 #include "obf2/level/level.h"
+#include "obf2/server/game_client.h"
+#include "obf2/server/game_server.h"
 #include "obf2/mesh/bf2_mesh.h"
 #include "obf2/texture/dds.h"
 #include "obf2/vfs/filesystem.h"
@@ -40,6 +42,7 @@ struct Args {
   int frames = 0;  // 0 = крутитися, доки не закриють вікно
   std::string screenshot;
   std::string screen;  // menu | loading — для детермінованих знімків
+  bool hosted = false; // --hosted: світ приходить від локального сервера
   std::optional<obf2::Vec3f> focus;  // куди дивиться камера
   float distance = 0.0f;             // 0 = підібрати за габаритами
 };
@@ -57,6 +60,7 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--frames" && i + 1 < argc) args.frames = std::atoi(argv[++i]);
     else if (flag == "--screenshot" && i + 1 < argc) args.screenshot = argv[++i];
     else if (flag == "--screen" && i + 1 < argc) args.screen = argv[++i];
+    else if (flag == "--hosted") args.hosted = true;
     else if (flag == "--dist" && i + 1 < argc) args.distance = static_cast<float>(std::atof(argv[++i]));
     else if (flag == "--focus" && i + 1 < argc) {
       // Формат як у грі: x/y/z
@@ -333,11 +337,59 @@ int main(int argc, char** argv) {
     registry = buildRegistry(files);
     std::printf("  реєстр: %zu шаблонів (%.1f с)\n", registry.size(), secondsSince(started));
 
+    // --- одиночна гра = локальний сервер плюс клієнт ---
+    //
+    // У BF2 світом володіє сервер навіть офлайн, тому з --hosted розстановка
+    // береться не з файлу рівня, а з пакетів, які прийшли від сервера через
+    // петлю в пам'яті. Рендер малює те, що прийшло по мережі.
+    std::vector<obf2::level::StaticObject> placement = level->objects;
+
+    if (args.hosted) {
+      obf2::server::ServerSettings serverSettings;
+      serverSettings.levelName = level->name;
+      obf2::server::GameServer gameServer(serverSettings);
+      gameServer.loadWorld(*level);
+
+      auto [clientSide, serverSide] = obf2::net::LoopbackConnection::createPair();
+      gameServer.accept(std::move(serverSide));
+
+      obf2::server::GameClient client(std::move(clientSide),
+                                      std::string("player"));
+      client.connect();
+
+      // Світ великий і ріжеться на пакети, тому крутимо, доки надходять нові.
+      std::size_t previous = 0;
+      for (int step = 0; step < 4096; ++step) {
+        gameServer.tick(1.0f / 60.0f);
+        client.tick(1.0f / 60.0f);
+        if (client.objects().size() == previous && step > 8) break;
+        previous = client.objects().size();
+      }
+
+      std::printf("  локальний сервер: %s, гравців %zu, пакетів %lld/%lld\n",
+                  std::string(obf2::server::clientStateName(client.state())).c_str(),
+                  gameServer.playerCount(), gameServer.packetsSent(),
+                  gameServer.packetsReceived());
+      std::printf("  клієнт отримав об'єктів: %zu з %zu\n", client.objects().size(),
+                  level->objects.size());
+
+      placement.clear();
+      placement.reserve(client.objects().size());
+      for (const auto& [id, object] : client.objects()) {
+        obf2::level::StaticObject staticObject;
+        staticObject.templateName = object.templateName;
+        staticObject.position = object.position;
+        staticObject.rotation = object.rotation;
+        staticObject.hasRotation = true;
+        placement.push_back(std::move(staticObject));
+      }
+    }
+
     std::unordered_map<std::string, int> meshIndexByTemplate;
     std::map<std::string, int> missing;
     int placed = 0;
 
-    for (const auto& object : level->objects) {
+    for (const auto& object : placement) {
       auto found = meshIndexByTemplate.find(object.templateName);
       if (found == meshIndexByTemplate.end()) {
         auto built = buildObjectMesh(files, registry, object.templateName, args, false);

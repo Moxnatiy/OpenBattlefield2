@@ -1,5 +1,7 @@
 add_library(obf2_net
   src/bitstream.cpp
+  src/connection.cpp
+  src/session.cpp
 )
 add_library(obf2::net ALIAS obf2_net)
 

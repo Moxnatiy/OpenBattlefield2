@@ -45,6 +45,14 @@
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/net/CMakeFiles/test.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/net/CMakeFiles/edit_cache.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/net/CMakeFiles/rebuild_cache.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/hud/CMakeFiles/obf2_hud.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/hud/CMakeFiles/test.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/hud/CMakeFiles/edit_cache.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/hud/CMakeFiles/rebuild_cache.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/server/CMakeFiles/obf2_server.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/server/CMakeFiles/test.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/server/CMakeFiles/edit_cache.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/server/CMakeFiles/rebuild_cache.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/font/CMakeFiles/obf2_font.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/font/CMakeFiles/test.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/font/CMakeFiles/edit_cache.dir
@@ -77,6 +85,10 @@
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/object_info/CMakeFiles/test.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/object_info/CMakeFiles/edit_cache.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/object_info/CMakeFiles/rebuild_cache.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/hud_dump/CMakeFiles/hud_dump.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/hud_dump/CMakeFiles/test.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/hud_dump/CMakeFiles/edit_cache.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tools/hud_dump/CMakeFiles/rebuild_cache.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_path.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_con.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_mesh.dir
@@ -88,6 +100,7 @@
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_bitstream.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_font_loc.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_frustum.dir
+/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_server.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/edit_cache.dir
 /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/rebuild_cache.dir
