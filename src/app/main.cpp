@@ -1108,8 +1108,19 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         acquired->height == 0
             ? 1.0f
             : static_cast<float>(acquired->width) / static_cast<float>(acquired->height);
-    const obf2::Mat4 projection =
-        obf2::perspective(1.05f, aspect, scene.radius * 0.002f + 0.05f, scene.radius * 40.0f);
+    // Ближня площина. Для гри вона має бути маленькою: інакше все, що
+    // ближче за неї, зникає — і крізь стіну, до якої підійшов упритул,
+    // видно наскрізь. Для оглядача моделей камера й так далеко, тому там
+    // лишаємо пропорційну — вона дає кращу точність глибини.
+    const bool firstPerson = hostedServer != nullptr;
+    const float nearPlane = firstPerson ? 0.1f : scene.radius * 0.002f + 0.05f;
+
+    // Далекість беремо з даних рівня: за кінцем туману видимість нульова,
+    // тож малювати далі немає сенсу (Dalian: fogStartEndAndBase 0/610).
+    const float fogFar = level ? level->terrain.fogEnd : 0.0f;
+    const float farPlane = firstPerson && fogFar > 1.0f ? fogFar : scene.radius * 40.0f;
+
+    const obf2::Mat4 projection = obf2::perspective(1.05f, aspect, nearPlane, farPlane);
     // Згори «вгору екрана» має бути не Y (він збігся б із поглядом), а Z.
     // У лівій системі вправо йде cross(up, forward), тож із up = +Z
     // праворуч опиняється +X — рівно як на власній мінімапі рівня.
