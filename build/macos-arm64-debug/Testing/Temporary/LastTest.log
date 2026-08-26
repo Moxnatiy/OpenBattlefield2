@@ -1,18 +1,18 @@
-Start testing: Aug 26 16:57 EEST
+Start testing: Aug 26 17:10 EEST
 ----------------------------------------------------------
 1/19 Testing: test_path
 1/19 Test: test_path
 Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_path"
 Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
-"test_path" start time: Aug 26 16:57 EEST
+"test_path" start time: Aug 26 17:10 EEST
 Output:
 ----------------------------------------------------------
 OK
 <end of output>
-Test time =   0.01 sec
+Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"test_path" end time: Aug 26 16:57 EEST
+"test_path" end time: Aug 26 17:10 EEST
 "test_path" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -20,7 +20,7 @@ Test Passed.
 2/19 Test: test_con
 Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_con"
 Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
-"test_con" start time: Aug 26 16:57 EEST
+"test_con" start time: Aug 26 17:10 EEST
 Output:
 ----------------------------------------------------------
 OK
@@ -28,7 +28,7 @@ OK
 Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"test_con" end time: Aug 26 16:57 EEST
+"test_con" end time: Aug 26 17:10 EEST
 "test_con" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -36,15 +36,15 @@ Test Passed.
 3/19 Test: test_mesh
 Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_mesh"
 Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
-"test_mesh" start time: Aug 26 16:57 EEST
+"test_mesh" start time: Aug 26 17:10 EEST
 Output:
 ----------------------------------------------------------
 OK
 <end of output>
-Test time =   0.01 sec
+Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"test_mesh" end time: Aug 26 16:57 EEST
+"test_mesh" end time: Aug 26 17:10 EEST
 "test_mesh" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -52,15 +52,15 @@ Test Passed.
 4/19 Test: test_skeleton
 Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_skeleton"
 Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
-"test_skeleton" start time: Aug 26 16:57 EEST
+"test_skeleton" start time: Aug 26 17:10 EEST
 Output:
 ----------------------------------------------------------
 OK
 <end of output>
-Test time =   0.01 sec
+Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"test_skeleton" end time: Aug 26 16:57 EEST
+"test_skeleton" end time: Aug 26 17:10 EEST
 "test_skeleton" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -68,15 +68,15 @@ Test Passed.
 5/19 Test: test_animation
 Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_animation"
 Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
-"test_animation" start time: Aug 26 16:57 EEST
+"test_animation" start time: Aug 26 17:10 EEST
 Output:
 ----------------------------------------------------------
 OK
 <end of output>
-Test time =   0.01 sec
+Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"test_animation" end time: Aug 26 16:57 EEST
+"test_animation" end time: Aug 26 17:10 EEST
 "test_animation" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -84,7 +84,7 @@ Test Passed.
 6/19 Test: test_texture
 Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_texture"
 Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
-"test_texture" start time: Aug 26 16:57 EEST
+"test_texture" start time: Aug 26 17:10 EEST
 Output:
 ----------------------------------------------------------
 OK
@@ -92,7 +92,7 @@ OK
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"test_texture" end time: Aug 26 16:57 EEST
+"test_texture" end time: Aug 26 17:10 EEST
 "test_texture" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -100,7 +100,7 @@ Test Passed.
 7/19 Test: test_object_template
 Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_object_template"
 Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
-"test_object_template" start time: Aug 26 16:57 EEST
+"test_object_template" start time: Aug 26 17:10 EEST
 Output:
 ----------------------------------------------------------
 OK
@@ -108,7 +108,7 @@ OK
 Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"test_object_template" end time: Aug 26 16:57 EEST
+"test_object_template" end time: Aug 26 17:10 EEST
 "test_object_template" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -116,7 +116,7 @@ Test Passed.
 8/19 Test: test_scene
 Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_scene"
 Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
-"test_scene" start time: Aug 26 16:57 EEST
+"test_scene" start time: Aug 26 17:10 EEST
 Output:
 ----------------------------------------------------------
 OK
@@ -124,7 +124,7 @@ OK
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"test_scene" end time: Aug 26 16:57 EEST
+"test_scene" end time: Aug 26 17:10 EEST
 "test_scene" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -132,15 +132,15 @@ Test Passed.
 9/19 Test: test_level
 Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_level"
 Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
-"test_level" start time: Aug 26 16:57 EEST
+"test_level" start time: Aug 26 17:10 EEST
 Output:
 ----------------------------------------------------------
 OK
 <end of output>
-Test time =   0.02 sec
+Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"test_level" end time: Aug 26 16:57 EEST
+"test_level" end time: Aug 26 17:10 EEST
 "test_level" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -148,7 +148,7 @@ Test Passed.
 10/19 Test: test_engine
 Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_engine"
 Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
-"test_engine" start time: Aug 26 16:57 EEST
+"test_engine" start time: Aug 26 17:10 EEST
 Output:
 ----------------------------------------------------------
 OK
@@ -156,7 +156,7 @@ OK
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"test_engine" end time: Aug 26 16:57 EEST
+"test_engine" end time: Aug 26 17:10 EEST
 "test_engine" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -164,15 +164,15 @@ Test Passed.
 11/19 Test: test_bitstream
 Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_bitstream"
 Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
-"test_bitstream" start time: Aug 26 16:57 EEST
+"test_bitstream" start time: Aug 26 17:10 EEST
 Output:
 ----------------------------------------------------------
 OK
 <end of output>
-Test time =   0.49 sec
+Test time =   0.47 sec
 ----------------------------------------------------------
 Test Passed.
-"test_bitstream" end time: Aug 26 16:57 EEST
+"test_bitstream" end time: Aug 26 17:10 EEST
 "test_bitstream" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -180,23 +180,7 @@ Test Passed.
 12/19 Test: test_font_loc
 Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_font_loc"
 Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
-"test_font_loc" start time: Aug 26 16:57 EEST
-Output:
-----------------------------------------------------------
-OK
-<end of output>
-Test time =   0.01 sec
-----------------------------------------------------------
-Test Passed.
-"test_font_loc" end time: Aug 26 16:57 EEST
-"test_font_loc" time elapsed: 00:00:00
-----------------------------------------------------------
-
-13/19 Testing: test_frustum
-13/19 Test: test_frustum
-Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_frustum"
-Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
-"test_frustum" start time: Aug 26 16:57 EEST
+"test_font_loc" start time: Aug 26 17:10 EEST
 Output:
 ----------------------------------------------------------
 OK
@@ -204,7 +188,23 @@ OK
 Test time =   0.00 sec
 ----------------------------------------------------------
 Test Passed.
-"test_frustum" end time: Aug 26 16:57 EEST
+"test_font_loc" end time: Aug 26 17:10 EEST
+"test_font_loc" time elapsed: 00:00:00
+----------------------------------------------------------
+
+13/19 Testing: test_frustum
+13/19 Test: test_frustum
+Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_frustum"
+Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
+"test_frustum" start time: Aug 26 17:10 EEST
+Output:
+----------------------------------------------------------
+OK
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"test_frustum" end time: Aug 26 17:10 EEST
 "test_frustum" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -212,15 +212,15 @@ Test Passed.
 14/19 Test: test_server
 Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_server"
 Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
-"test_server" start time: Aug 26 16:57 EEST
+"test_server" start time: Aug 26 17:10 EEST
 Output:
 ----------------------------------------------------------
 OK
 <end of output>
-Test time =   0.41 sec
+Test time =   0.33 sec
 ----------------------------------------------------------
 Test Passed.
-"test_server" end time: Aug 26 16:57 EEST
+"test_server" end time: Aug 26 17:10 EEST
 "test_server" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -228,7 +228,7 @@ Test Passed.
 15/19 Test: test_hud
 Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_hud"
 Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
-"test_hud" start time: Aug 26 16:57 EEST
+"test_hud" start time: Aug 26 17:10 EEST
 Output:
 ----------------------------------------------------------
 OK
@@ -236,7 +236,7 @@ OK
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"test_hud" end time: Aug 26 16:57 EEST
+"test_hud" end time: Aug 26 17:10 EEST
 "test_hud" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -244,15 +244,15 @@ Test Passed.
 16/19 Test: test_collision
 Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_collision"
 Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
-"test_collision" start time: Aug 26 16:57 EEST
+"test_collision" start time: Aug 26 17:10 EEST
 Output:
 ----------------------------------------------------------
 OK
 <end of output>
-Test time =   0.32 sec
+Test time =   0.30 sec
 ----------------------------------------------------------
 Test Passed.
-"test_collision" end time: Aug 26 16:57 EEST
+"test_collision" end time: Aug 26 17:10 EEST
 "test_collision" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -260,15 +260,15 @@ Test Passed.
 17/19 Test: test_gameplay
 Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_gameplay"
 Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
-"test_gameplay" start time: Aug 26 16:57 EEST
+"test_gameplay" start time: Aug 26 17:10 EEST
 Output:
 ----------------------------------------------------------
 OK
 <end of output>
-Test time =   0.36 sec
+Test time =   0.37 sec
 ----------------------------------------------------------
 Test Passed.
-"test_gameplay" end time: Aug 26 16:57 EEST
+"test_gameplay" end time: Aug 26 17:10 EEST
 "test_gameplay" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -276,7 +276,7 @@ Test Passed.
 18/19 Test: test_anim_system
 Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_anim_system"
 Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
-"test_anim_system" start time: Aug 26 16:57 EEST
+"test_anim_system" start time: Aug 26 17:10 EEST
 Output:
 ----------------------------------------------------------
 OK
@@ -284,7 +284,7 @@ OK
 Test time =   0.01 sec
 ----------------------------------------------------------
 Test Passed.
-"test_anim_system" end time: Aug 26 16:57 EEST
+"test_anim_system" end time: Aug 26 17:10 EEST
 "test_anim_system" time elapsed: 00:00:00
 ----------------------------------------------------------
 
@@ -292,16 +292,16 @@ Test Passed.
 19/19 Test: test_bf2_protocol
 Command: "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/test_bf2_protocol"
 Directory: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
-"test_bf2_protocol" start time: Aug 26 16:57 EEST
+"test_bf2_protocol" start time: Aug 26 17:10 EEST
 Output:
 ----------------------------------------------------------
 OK
 <end of output>
-Test time =   0.36 sec
+Test time =   0.34 sec
 ----------------------------------------------------------
 Test Passed.
-"test_bf2_protocol" end time: Aug 26 16:57 EEST
+"test_bf2_protocol" end time: Aug 26 17:10 EEST
 "test_bf2_protocol" time elapsed: 00:00:00
 ----------------------------------------------------------
 
-End testing: Aug 26 16:57 EEST
+End testing: Aug 26 17:10 EEST

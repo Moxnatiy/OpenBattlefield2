@@ -123,3 +123,48 @@ if __name__ == "__main__":
     versions = [int(v, 0) for v in sys.argv[1:]] or [0]
     for version in versions:
         print("версія %#x -> %s" % (version, probe(version)))
+
+
+# --- потік подій у пакеті даних (тип 15) ---
+#
+# Розкладка з рушія: GameEventManager::processReceivedPacket читає
+#   1 біт  «є події», 8 бітів кількість, 5 бітів ?, 1 біт ?
+# далі readGameEvent бере тип у N бітах, де N — найменше, при якому
+# (1<<N)-1 вміщує розмір реєстру подій. На живих пакетах N = 7.
+#
+# Перед цим у пакеті ще 17 бітів каркасу потоків — їх ми поки не розібрали.
+EVENT_STREAM_OFFSET = 17
+EVENT_TYPE_BITS = 7
+
+
+def decode_events(data):
+    """Розбирає пакет даних і повертає опис подій."""
+    r = Reader(data)
+    kind = r.read(4)
+    r.read(8)
+    if kind != 15:
+        return "не пакет даних (тип %d)" % kind
+
+    sequence = r.read(6)
+    r.read(6)
+    r.read(32)
+    r.at += EVENT_STREAM_OFFSET
+
+    if r.read(1) != 1:
+        return "seq %d: подій немає" % sequence
+    count = r.read(8)
+    r.read(5)
+    r.read(1)
+
+    out = ["seq %d: подій %d" % (sequence, count)]
+    for _ in range(count):
+        kind = r.read(EVENT_TYPE_BITS)
+        if kind == 1:
+            challenge = r.read_bytes(10).split(b"\0")[0].decode("latin-1")
+            length = r.read(8)
+            mod = r.read_bytes(length).decode("latin-1")
+            out.append("  виклик: %r, мод %r" % (challenge, mod))
+        else:
+            out.append("  подія типу %d (ще не розібрано)" % kind)
+            break
+    return "\n".join(out)

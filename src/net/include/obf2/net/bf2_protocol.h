@@ -88,6 +88,25 @@ struct ExtendedHeader {
   std::uint32_t ackBits = 0;
 };
 
+// Каркас потоку подій усередині пакета даних.
+//
+// `GameEventManager::processReceivedPacket` читає: 1 біт «є події»,
+// 8 бітів кількість, 5 бітів і ще 1 біт службових. Далі `readGameEvent`
+// бере тип події у N бітах, де N — найменше, при якому (1<<N)-1 вміщує
+// розмір реєстру подій; на живому сервері це 7.
+//
+// Перед усім цим у пакеті ще 17 бітів каркасу потоків — їх поки не
+// розібрано, але зміщення стале й перевірене на живих пакетах.
+inline constexpr unsigned kStreamFramingBits = 17;
+inline constexpr unsigned kEventTypeBits = 7;
+
+// Подія-виклик: сервер шле її одразу після під'єднання
+// (`GameServer::onNewConnection`), і клієнт має відповісти.
+struct ChallengeEvent {
+  std::string challenge;
+  std::string modDirectory;
+};
+
 // Пакет, розібраний із мережі.
 struct Incoming {
   PacketKind kind = PacketKind::Data;
@@ -99,6 +118,10 @@ struct Incoming {
   std::optional<ExtendedHeader> extended;
   // Час сервера з пінг-запиту: його треба повернути незміненим.
   std::optional<std::uint32_t> pingTime;
+
+  // Для пакетів даних: скільки подій усередині й перша розібрана.
+  int eventCount = 0;
+  std::optional<ChallengeEvent> challenge;
 };
 
 // Збирає запит на під'єднання (тип 1).

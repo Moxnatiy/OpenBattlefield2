@@ -416,6 +416,10 @@ int runConnect(const Args& args) {
       case obf2::net::bf2::PacketKind::Data:
         ++dataPackets;
         dataBytes += more->size();
+        if (parsed->challenge && dataPackets <= 1) {
+          std::printf("  подія-виклик: %s, мод %s\n", parsed->challenge->challenge.c_str(),
+                      parsed->challenge->modDirectory.c_str());
+        }
         break;
       default:
         ++other;

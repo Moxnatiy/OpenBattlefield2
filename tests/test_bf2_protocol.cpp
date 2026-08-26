@@ -84,7 +84,45 @@ static void testVersionIsBuildNumber() {
   CHECK_EQ(0x0C51u, 3153u);
 }
 
+static void testChallengeEventIsDecoded() {
+  // Збираємо пакет даних так, як його шле сервер, і читаємо назад.
+  std::vector<std::byte> buffer(64);
+  net::BitWriter writer(buffer);
+  writer.writeBits(static_cast<std::uint32_t>(PacketKind::Data), 4);
+  writer.writeBits(0, 8);
+  writer.writeBits(1, 6);   // номер пакета
+  writer.writeBits(0, 6);   // підтвердження
+  writer.writeBits(0, 32);  // маска
+  for (unsigned i = 0; i < kStreamFramingBits; ++i) writer.writeBits(0, 1);
+
+  writer.writeBits(1, 1);   // події є
+  writer.writeBits(1, 8);   // рівно одна
+  writer.writeBits(0, 5);
+  writer.writeBits(0, 1);
+  writer.writeBits(1, kEventTypeBits);  // тип 1 — виклик
+
+  const std::string challenge = "nytkkbgzj";
+  for (int i = 0; i < 10; ++i) {
+    writer.writeBits(i < static_cast<int>(challenge.size())
+                         ? static_cast<std::uint8_t>(challenge[i])
+                         : 0u,
+                     8);
+  }
+  const std::string mod = "bf2";
+  writer.writeBits(static_cast<std::uint32_t>(mod.size()), 8);
+  for (const char c : mod) writer.writeBits(static_cast<std::uint8_t>(c), 8);
+  buffer.resize(writer.byteSize());
+
+  const auto parsed = readPacket(buffer);
+  CHECK(parsed.has_value());
+  if (!parsed || !parsed->challenge) { CHECK(false); return; }
+  CHECK_EQ(parsed->eventCount, 1);
+  CHECK_EQ(parsed->challenge->challenge, challenge);
+  CHECK_EQ(parsed->challenge->modDirectory, mod);
+}
+
 TEST_MAIN({
+  testChallengeEventIsDecoded();
   testHeaderIsTwelveBits();
   testConnectRequestLayout();
   testAcceptIsParsed();

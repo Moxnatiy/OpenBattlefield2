@@ -140,6 +140,37 @@ std::optional<Incoming> readPacket(std::span<const std::byte> data) {
       // Після заголовка йде прапорець і час сервера.
       reader.readBits(1);
       if (const auto time = reader.readBits(32)) incoming.pingTime = *time;
+    } else if (incoming.kind == PacketKind::Data) {
+      // Каркас потоків, який ще не розібрано, — просто пропускаємо.
+      for (unsigned i = 0; i < kStreamFramingBits; ++i) reader.readBits(1);
+
+      const auto hasEvents = reader.readBits(1);
+      if (!hasEvents || *hasEvents != 1) return incoming;
+      const auto count = reader.readBits(8);
+      reader.readBits(5);
+      reader.readBits(1);
+      if (!count) return incoming;
+      incoming.eventCount = static_cast<int>(*count);
+
+      // Розбираємо лише подію-виклик: решта типів ще попереду.
+      const auto type = reader.readBits(kEventTypeBits);
+      if (type && *type == 1) {
+        ChallengeEvent event;
+        // Рядок виклику — рівно 80 бітів, десять байтів із нулем у кінці.
+        for (int i = 0; i < 10; ++i) {
+          const auto byte = reader.readBits(8);
+          if (!byte) break;
+          if (*byte != 0) event.challenge.push_back(static_cast<char>(*byte));
+        }
+        if (const auto length = reader.readBits(8)) {
+          for (std::uint32_t i = 0; i < *length && i < 64; ++i) {
+            const auto byte = reader.readBits(8);
+            if (!byte) break;
+            event.modDirectory.push_back(static_cast<char>(*byte));
+          }
+        }
+        incoming.challenge = std::move(event);
+      }
     }
   }
   return incoming;
