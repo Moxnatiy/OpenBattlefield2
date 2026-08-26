@@ -1074,6 +1074,24 @@ build src/net/CMakeFiles/obf2_net.dir/src/session.cpp.o: CXX_COMPILER__obf2_net_
   OBJECT_FILE_DIR = src/net/CMakeFiles/obf2_net.dir/src
   TARGET_SUPPORT_DIR = src/net/CMakeFiles/obf2_net.dir
 
+build src/net/CMakeFiles/obf2_net.dir/src/bf2_protocol.cpp.o: CXX_COMPILER__obf2_net_unscanned_Debug /Users/miami/OpenBattlefield2/src/net/src/bf2_protocol.cpp || cmake_object_order_depends_target_obf2_net
+  CONFIG = Debug
+  DEP_FILE = src/net/CMakeFiles/obf2_net.dir/src/bf2_protocol.cpp.o.d
+  FLAGS = -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -I/Users/miami/OpenBattlefield2/src/net/include -I/Users/miami/OpenBattlefield2/src/core/include
+  OBJECT_DIR = src/net/CMakeFiles/obf2_net.dir
+  OBJECT_FILE_DIR = src/net/CMakeFiles/obf2_net.dir/src
+  TARGET_SUPPORT_DIR = src/net/CMakeFiles/obf2_net.dir
+
+build src/net/CMakeFiles/obf2_net.dir/src/udp.cpp.o: CXX_COMPILER__obf2_net_unscanned_Debug /Users/miami/OpenBattlefield2/src/net/src/udp.cpp || cmake_object_order_depends_target_obf2_net
+  CONFIG = Debug
+  DEP_FILE = src/net/CMakeFiles/obf2_net.dir/src/udp.cpp.o.d
+  FLAGS = -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -I/Users/miami/OpenBattlefield2/src/net/include -I/Users/miami/OpenBattlefield2/src/core/include
+  OBJECT_DIR = src/net/CMakeFiles/obf2_net.dir
+  OBJECT_FILE_DIR = src/net/CMakeFiles/obf2_net.dir/src
+  TARGET_SUPPORT_DIR = src/net/CMakeFiles/obf2_net.dir
+
 
 # =============================================================================
 # Link build statements for STATIC_LIBRARY target obf2_net
@@ -1082,7 +1100,7 @@ build src/net/CMakeFiles/obf2_net.dir/src/session.cpp.o: CXX_COMPILER__obf2_net_
 #############################################
 # Link the static library src/net/libobf2_net.a
 
-build src/net/libobf2_net.a: CXX_STATIC_LIBRARY_LINKER__obf2_net_Debug src/net/CMakeFiles/obf2_net.dir/src/bitstream.cpp.o src/net/CMakeFiles/obf2_net.dir/src/connection.cpp.o src/net/CMakeFiles/obf2_net.dir/src/session.cpp.o || src/core/libobf2_core.a
+build src/net/libobf2_net.a: CXX_STATIC_LIBRARY_LINKER__obf2_net_Debug src/net/CMakeFiles/obf2_net.dir/src/bitstream.cpp.o src/net/CMakeFiles/obf2_net.dir/src/connection.cpp.o src/net/CMakeFiles/obf2_net.dir/src/session.cpp.o src/net/CMakeFiles/obf2_net.dir/src/bf2_protocol.cpp.o src/net/CMakeFiles/obf2_net.dir/src/udp.cpp.o || src/core/libobf2_core.a
   ARCH_FLAGS = -arch arm64
   CONFIG = Debug
   LANGUAGE_COMPILE_FLAGS = -g
@@ -3052,6 +3070,44 @@ build tests/test_anim_system: CXX_EXECUTABLE_LINKER__test_anim_system_Debug test
   TARGET_PDB = test_anim_system.dbg
   TARGET_SUPPORT_DIR = tests/CMakeFiles/test_anim_system.dir
 
+# =============================================================================
+# Object build statements for EXECUTABLE target test_bf2_protocol
+
+
+#############################################
+# Order-only phony target for test_bf2_protocol
+
+build cmake_object_order_depends_target_test_bf2_protocol: phony || cmake_object_order_depends_target_obf2_core cmake_object_order_depends_target_obf2_net
+
+build tests/CMakeFiles/test_bf2_protocol.dir/test_bf2_protocol.cpp.o: CXX_COMPILER__test_bf2_protocol_unscanned_Debug /Users/miami/OpenBattlefield2/tests/test_bf2_protocol.cpp || cmake_object_order_depends_target_test_bf2_protocol
+  CONFIG = Debug
+  DEP_FILE = tests/CMakeFiles/test_bf2_protocol.dir/test_bf2_protocol.cpp.o.d
+  FLAGS = -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror
+  INCLUDES = -I/Users/miami/OpenBattlefield2/tests -I/Users/miami/OpenBattlefield2/src/net/include -I/Users/miami/OpenBattlefield2/src/core/include
+  OBJECT_DIR = tests/CMakeFiles/test_bf2_protocol.dir
+  OBJECT_FILE_DIR = tests/CMakeFiles/test_bf2_protocol.dir
+  TARGET_SUPPORT_DIR = tests/CMakeFiles/test_bf2_protocol.dir
+
+
+# =============================================================================
+# Link build statements for EXECUTABLE target test_bf2_protocol
+
+
+#############################################
+# Link the executable tests/test_bf2_protocol
+
+build tests/test_bf2_protocol: CXX_EXECUTABLE_LINKER__test_bf2_protocol_Debug tests/CMakeFiles/test_bf2_protocol.dir/test_bf2_protocol.cpp.o | src/net/libobf2_net.a src/core/libobf2_core.a || src/core/libobf2_core.a src/net/libobf2_net.a
+  CONFIG = Debug
+  FLAGS = -g -arch arm64
+  LINK_FLAGS = -Wl,-search_paths_first -Wl,-headerpad_max_install_names
+  LINK_LIBRARIES = src/net/libobf2_net.a  src/core/libobf2_core.a
+  OBJECT_DIR = tests/CMakeFiles/test_bf2_protocol.dir
+  POST_BUILD = :
+  PRE_LINK = :
+  TARGET_FILE = tests/test_bf2_protocol
+  TARGET_PDB = test_bf2_protocol.dbg
+  TARGET_SUPPORT_DIR = tests/CMakeFiles/test_bf2_protocol.dir
+
 
 #############################################
 # Utility command for test
@@ -3180,6 +3236,8 @@ build stb_image: phony third_party/stb/libstb_image.a
 build test_anim_system: phony tests/test_anim_system
 
 build test_animation: phony tests/test_animation
+
+build test_bf2_protocol: phony tests/test_bf2_protocol
 
 build test_bitstream: phony tests/test_bitstream
 
@@ -3342,7 +3400,7 @@ build src/vfs/all: phony src/vfs/libobf2_vfs.a
 #############################################
 # Folder: /Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests
 
-build tests/all: phony tests/test_path tests/test_con tests/test_mesh tests/test_skeleton tests/test_animation tests/test_texture tests/test_object_template tests/test_scene tests/test_level tests/test_engine tests/test_bitstream tests/test_font_loc tests/test_frustum tests/test_server tests/test_hud tests/test_collision tests/test_gameplay tests/test_anim_system
+build tests/all: phony tests/test_path tests/test_con tests/test_mesh tests/test_skeleton tests/test_animation tests/test_texture tests/test_object_template tests/test_scene tests/test_level tests/test_engine tests/test_bitstream tests/test_font_loc tests/test_frustum tests/test_server tests/test_hud tests/test_collision tests/test_gameplay tests/test_anim_system tests/test_bf2_protocol
 
 # =============================================================================
 

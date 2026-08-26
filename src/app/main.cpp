@@ -27,6 +27,8 @@
 #include "obf2/level/gameplay.h"
 #include "obf2/level/level.h"
 #include "obf2/server/game_client.h"
+#include "obf2/net/bf2_protocol.h"
+#include "obf2/net/udp.h"
 #include "obf2/server/game_server.h"
 #include "obf2/mesh/bf2_mesh.h"
 #include "obf2/mesh/collision.h"
@@ -54,6 +56,8 @@ struct Args {
   // --topdown: строго згори, +X праворуч, -Z вгору. Потрібно, щоб звіряти
   // орієнтацію світу з власною мінімапою рівня.
   bool topDown = false;
+  std::string connectTo;      // --connect <хост[:порт]>: справжній сервер BF2
+  std::string connectPassword;
   std::vector<std::string> animationPaths;  // --anim: можна кілька, вони змішуються
   std::string skeletonPath;    // --skeleton: .ske; типово скелет солдата
   int frame = 0;               // --frame: який кадр показати
@@ -77,6 +81,8 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--hosted") args.hosted = true;
     else if (flag == "--verbose-menu") args.verboseMenu = true;
     else if (flag == "--topdown") args.topDown = true;
+    else if (flag == "--connect" && i + 1 < argc) args.connectTo = argv[++i];
+    else if (flag == "--connect-password" && i + 1 < argc) args.connectPassword = argv[++i];
     else if (flag == "--anim" && i + 1 < argc) args.animationPaths.emplace_back(argv[++i]);
     else if (flag == "--skeleton" && i + 1 < argc) args.skeletonPath = argv[++i];
     else if (flag == "--frame" && i + 1 < argc) args.frame = std::atoi(argv[++i]);
@@ -314,6 +320,118 @@ std::string findMenuBackground(obf2::FileSystem& files) {
 // Одна сесія: меню або гра. Повертається код виходу; якщо з меню обрали
 // рівень, його назва лягає в nextLevel і головний цикл заводить сесію
 // наново — вже у грі.
+// Під'єднання до справжнього сервера BF2. Поки що це саме рукостискання:
+// запит, відповідь, підтвердження. Далі має йти потік даних, який ще не
+// розібрано — але вже видно, чи сервер нас узагалі приймає.
+int runConnect(const Args& args) {
+  std::string host = args.connectTo;
+  std::uint16_t port = 16567;  // типовий ігровий порт BF2
+  if (const std::size_t colon = host.rfind(':'); colon != std::string::npos) {
+    port = static_cast<std::uint16_t>(std::atoi(host.c_str() + colon + 1));
+    host = host.substr(0, colon);
+  }
+
+  std::string error;
+  auto socket = obf2::net::UdpSocket::connect(host, port, &error);
+  if (!socket) {
+    std::fprintf(stderr, "%s\n", error.c_str());
+    return 1;
+  }
+  std::printf("під'єднання: %s\n", socket->describe().c_str());
+
+  obf2::net::bf2::ConnectRequest request;
+  request.password = args.connectPassword;
+  // Сервер звіряє теку мода з власною (`GSModDirectory`), і при розбіжності
+  // сам присилає свою — тому помилку видно одразу.
+  request.modDirectory = "mods/bf2";
+
+  if (!socket->send(obf2::net::bf2::writeConnectRequest(request))) {
+    std::fprintf(stderr, "не вдалося надіслати запит\n");
+    return 1;
+  }
+  std::printf("  надіслано запит: протокол %#x, версія %#x\n", request.magic, request.version);
+
+  const auto reply = socket->receive(2000);
+  if (!reply) {
+    std::fprintf(stderr, "  сервер мовчить\n");
+    return 1;
+  }
+
+  const auto packet = obf2::net::bf2::readPacket(*reply);
+  if (!packet) {
+    std::fprintf(stderr, "  прийшло %zu байтів, але це не пакет\n", reply->size());
+    return 1;
+  }
+
+  if (packet->denied) {
+    std::printf("  відмова: %s\n",
+                std::string(obf2::net::bf2::denyReasonName(packet->denied->reason)).c_str());
+    if (!packet->denied->modDirectory.empty()) {
+      std::printf("  сервер хоче теку %s\n", packet->denied->modDirectory.c_str());
+    }
+    return 1;
+  }
+
+  if (!packet->accept) {
+    std::printf("  несподіваний пакет типу %d\n", static_cast<int>(packet->kind));
+    return 1;
+  }
+
+  std::printf("  ПРИЙНЯТО: з'єднання %d, час сервера %u мс, PunkBuster %s\n",
+              packet->accept->connectionId, packet->accept->serverTime,
+              packet->accept->punkBuster ? "увімкнено" : "вимкнено");
+
+  // Рушій чекає підтвердження — лише після нього з'єднання стає робочим
+  // (у `NetServer::_update` стан 1 -> 2).
+  socket->send(obf2::net::bf2::writeShortPacket(obf2::net::bf2::PacketKind::ConnectAcceptAck,
+                                                packet->accept->connectionId));
+  std::printf("  надіслано підтвердження\n");
+
+  // Далі тримаємо зв'язок: сервер шле пінги, і без відповіді він нас
+  // відключить. Заразом рахуємо, що саме приходить.
+  const std::uint8_t id = packet->accept->connectionId;
+  int pings = 0, dataPackets = 0, other = 0;
+  std::size_t dataBytes = 0;
+  std::uint8_t sequence = 0;
+
+  for (int i = 0; i < 60; ++i) {
+    const auto more = socket->receive(500);
+    if (!more) continue;
+    const auto parsed = obf2::net::bf2::readPacket(*more);
+    if (!parsed) continue;
+
+    switch (parsed->kind) {
+      case obf2::net::bf2::PacketKind::PingRequest: {
+        ++pings;
+        obf2::net::bf2::ExtendedHeader header;
+        header.sequence = sequence++ & 0x3F;
+        if (parsed->extended) {
+          header.ack = parsed->extended->sequence;
+          header.ackBits = parsed->extended->ackBits;
+        }
+        socket->send(obf2::net::bf2::writePingResponse(id, header,
+                                                       parsed->pingTime.value_or(0)));
+        break;
+      }
+      case obf2::net::bf2::PacketKind::Data:
+        ++dataPackets;
+        dataBytes += more->size();
+        break;
+      default:
+        ++other;
+        break;
+    }
+  }
+
+  std::printf("  за 30 секунд: пінгів %d (на всі відповіли), пакетів даних %d (%zu байтів), "
+              "інших %d\n",
+              pings, dataPackets, dataBytes, other);
+
+  socket->send(obf2::net::bf2::writeShortPacket(obf2::net::bf2::PacketKind::Disconnect,
+                                                packet->accept->connectionId));
+  return 0;
+}
+
 int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel) {
   // --- підготовка сцени -------------------------------------------------
 
@@ -1410,6 +1528,10 @@ int main(int argc, char** argv) {
   std::printf("OpenBattlefield2 | %s/%s\n", OBF2_PLATFORM_NAME, OBF2_ARCH_NAME);
   std::printf("мод: %s | архівів: %d\n", args.modDir.string().c_str(), mounted);
   for (const auto& e : mountErrors) std::printf("  [mount] %s\n", e.c_str());
+
+  // Під'єднання до справжнього сервера — окремий режим: тут не потрібні
+  // ні вікно, ні рівень.
+  if (!args.connectTo.empty()) return runConnect(args);
 
   // Меню й гра — це дві сесії поспіль: обраний у меню рівень просто
   // заводить наступну з іншими аргументами.

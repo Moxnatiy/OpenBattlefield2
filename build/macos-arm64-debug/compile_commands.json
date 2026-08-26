@@ -151,6 +151,18 @@
 },
 {
   "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/net/include -I/Users/miami/OpenBattlefield2/src/core/include -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror -o src/net/CMakeFiles/obf2_net.dir/src/bf2_protocol.cpp.o -c /Users/miami/OpenBattlefield2/src/net/src/bf2_protocol.cpp",
+  "file": "/Users/miami/OpenBattlefield2/src/net/src/bf2_protocol.cpp",
+  "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/net/CMakeFiles/obf2_net.dir/src/bf2_protocol.cpp.o"
+},
+{
+  "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/net/include -I/Users/miami/OpenBattlefield2/src/core/include -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror -o src/net/CMakeFiles/obf2_net.dir/src/udp.cpp.o -c /Users/miami/OpenBattlefield2/src/net/src/udp.cpp",
+  "file": "/Users/miami/OpenBattlefield2/src/net/src/udp.cpp",
+  "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/net/CMakeFiles/obf2_net.dir/src/udp.cpp.o"
+},
+{
+  "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
   "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/src/hud/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/font/include -I/Users/miami/OpenBattlefield2/src/mesh/include -g -std=c++20 -arch arm64 -fPIC -Wall -Wextra -Wpedantic -Werror -o src/hud/CMakeFiles/obf2_hud.dir/src/hud.cpp.o -c /Users/miami/OpenBattlefield2/src/hud/src/hud.cpp",
   "file": "/Users/miami/OpenBattlefield2/src/hud/src/hud.cpp",
   "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/src/hud/CMakeFiles/obf2_hud.dir/src/hud.cpp.o"
@@ -382,5 +394,11 @@
   "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/tests -I/Users/miami/OpenBattlefield2/src/anim/include -I/Users/miami/OpenBattlefield2/src/con/include -I/Users/miami/OpenBattlefield2/src/core/include -I/Users/miami/OpenBattlefield2/src/vfs/include -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror -o tests/CMakeFiles/test_anim_system.dir/test_anim_system.cpp.o -c /Users/miami/OpenBattlefield2/tests/test_anim_system.cpp",
   "file": "/Users/miami/OpenBattlefield2/tests/test_anim_system.cpp",
   "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_anim_system.dir/test_anim_system.cpp.o"
+},
+{
+  "directory": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug",
+  "command": "/usr/bin/c++ -I/Users/miami/OpenBattlefield2/tests -I/Users/miami/OpenBattlefield2/src/net/include -I/Users/miami/OpenBattlefield2/src/core/include -g -std=c++20 -arch arm64 -fPIE -Wall -Wextra -Wpedantic -Werror -o tests/CMakeFiles/test_bf2_protocol.dir/test_bf2_protocol.cpp.o -c /Users/miami/OpenBattlefield2/tests/test_bf2_protocol.cpp",
+  "file": "/Users/miami/OpenBattlefield2/tests/test_bf2_protocol.cpp",
+  "output": "/Users/miami/OpenBattlefield2/build/macos-arm64-debug/tests/CMakeFiles/test_bf2_protocol.dir/test_bf2_protocol.cpp.o"
 }
 ]
