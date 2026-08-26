@@ -54,7 +54,7 @@ struct Args {
   // --topdown: строго згори, +X праворуч, -Z вгору. Потрібно, щоб звіряти
   // орієнтацію світу з власною мінімапою рівня.
   bool topDown = false;
-  std::string animationPath;   // --anim: .baf для скелетної анімації
+  std::vector<std::string> animationPaths;  // --anim: можна кілька, вони змішуються
   std::string skeletonPath;    // --skeleton: .ske; типово скелет солдата
   int frame = 0;               // --frame: який кадр показати
   bool click = false;  // --click: одне натискання в позиції --mouse
@@ -77,7 +77,7 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--hosted") args.hosted = true;
     else if (flag == "--verbose-menu") args.verboseMenu = true;
     else if (flag == "--topdown") args.topDown = true;
-    else if (flag == "--anim" && i + 1 < argc) args.animationPath = argv[++i];
+    else if (flag == "--anim" && i + 1 < argc) args.animationPaths.emplace_back(argv[++i]);
     else if (flag == "--skeleton" && i + 1 < argc) args.skeletonPath = argv[++i];
     else if (flag == "--frame" && i + 1 < argc) args.frame = std::atoi(argv[++i]);
     else if (flag == "--click") args.click = true;
@@ -836,31 +836,53 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         return 1;
       }
 
-      // Скелетна анімація: ставимо меш у позу з кліпу.
-      if (!args.animationPath.empty() && !single->skin.empty()) {
+      // Скелетна анімація: ставимо меш у позу з кліпів. Кліпів може бути
+      // кілька — рушій змішує їх по кістках (зброя рухає верх тіла, рух —
+      // ноги), і кожен торкається лише своїх кісток.
+      if (!args.animationPaths.empty() && !single->skin.empty()) {
         const std::string skeletonPath =
             args.skeletonPath.empty()
                 ? std::string("objects/soldiers/Common/Animations/3p_setup.ske")
                 : args.skeletonPath;
 
         const auto skeletonBytes = files.read(skeletonPath);
-        const auto animationBytes = files.read(args.animationPath);
-        if (!skeletonBytes || !animationBytes) {
-          std::fprintf(stderr, "немає скелета або анімації\n");
+        std::string skinError;
+        const auto skeleton =
+            skeletonBytes ? obf2::mesh::loadSkeleton(*skeletonBytes, &skinError) : std::nullopt;
+        if (!skeleton) {
+          std::fprintf(stderr, "скелет: %s\n", skinError.c_str());
         } else {
-          std::string skinError;
-          const auto skeleton = obf2::mesh::loadSkeleton(*skeletonBytes, &skinError);
-          const auto animation = obf2::mesh::loadBoneAnimation(*animationBytes, &skinError);
-          if (!skeleton || !animation) {
-            std::fprintf(stderr, "скелет/анімація: %s\n", skinError.c_str());
-          } else {
-            const auto frameIndex = static_cast<std::uint32_t>(args.frame < 0 ? 0 : args.frame);
-            const auto pose = obf2::mesh::poseSkeleton(*skeleton, &*animation, frameIndex);
+          std::vector<obf2::mesh::BoneAnimation> clips;
+          for (const std::string& path : args.animationPaths) {
+            const auto bytes = files.read(path);
+            if (!bytes) {
+              std::fprintf(stderr, "немає анімації %s\n", path.c_str());
+              continue;
+            }
+            auto clip = obf2::mesh::loadBoneAnimation(*bytes, &skinError);
+            if (!clip) {
+              std::fprintf(stderr, "анімація %s: %s\n", path.c_str(), skinError.c_str());
+              continue;
+            }
+            clips.push_back(std::move(*clip));
+          }
+
+          std::vector<obf2::mesh::PoseStage> stages;
+          const auto frameIndex = static_cast<std::uint32_t>(args.frame < 0 ? 0 : args.frame);
+          for (const auto& clip : clips) {
+            // Кадр беремо по колу: кліпи різної довжини (ноги 16 кадрів,
+            // зброя 36), а показуємо ми один момент.
+            const std::uint32_t frame =
+                clip.frameCount == 0 ? 0 : frameIndex % clip.frameCount;
+            stages.push_back(obf2::mesh::PoseStage{&clip, frame, 1.0f});
+            std::printf("  кліп: %zu доріжок, %u кадрів -> кадр %u\n", clip.boneIds.size(),
+                        clip.frameCount, frame);
+          }
+
+          if (!stages.empty()) {
+            const auto pose = obf2::mesh::poseSkeleton(*skeleton, stages);
             obf2::mesh::RenderMesh posed = *single;
             obf2::mesh::skinMesh(*single, pose, posed);
-            std::printf("  поза: скелет %zu кісток, кліп %zu доріжок, кадр %u з %u\n",
-                        skeleton->bones.size(), animation->boneIds.size(), frameIndex,
-                        animation->frameCount);
             single = std::move(posed);
           }
         }

@@ -261,7 +261,81 @@ static void testSkinMovesVertexWithItsBone() {
   CHECK(std::abs(posed.vertices[0].normal.y - 1.0f) < 0.001f);
 }
 
+static void testFullWeightStageClearsWhatWasBefore() {
+  // Правило з рушія: кліп із вагою 1 очищає стек кістки, тобто повністю
+  // володіє нею, а не змішується з попередніми.
+  const mesh::Skeleton skeleton = makeTwoBoneSkeleton();
+
+  // Два кліпи на ту саму кістку 1: перший ставить зсув y = 1, другий 0.5.
+  const auto makeClip = [](std::int16_t offsetY) {
+    AnimationBuilder builder(1, 1, 15);
+    std::vector<std::vector<std::int16_t>> channels;
+    builder.constantChannel(1, 0); channels.push_back(builder.channel());
+    builder.constantChannel(1, 0); channels.push_back(builder.channel());
+    builder.constantChannel(1, 0); channels.push_back(builder.channel());
+    builder.constantChannel(1, 32767); channels.push_back(builder.channel());
+    builder.constantChannel(1, 0); channels.push_back(builder.channel());
+    builder.constantChannel(1, offsetY); channels.push_back(builder.channel());
+    builder.constantChannel(1, 0); channels.push_back(builder.channel());
+    builder.flushBone(channels);
+    auto bytes = builder.bytes();
+    bytes[6] = static_cast<std::byte>(1);  // кістка 1
+    bytes[7] = static_cast<std::byte>(0);
+    return bytes;
+  };
+
+  const auto full = mesh::loadBoneAnimation(makeClip(static_cast<std::int16_t>((1 << 15) - 1)));
+  const auto half = mesh::loadBoneAnimation(makeClip(static_cast<std::int16_t>(((1 << 15) - 1) / 2)));
+  CHECK(full.has_value() && half.has_value());
+  if (!full || !half) return;
+
+  // Спершу половинний кліп, потім повний — має лишитися саме повний.
+  std::vector<mesh::PoseStage> stages;
+  stages.push_back(mesh::PoseStage{&*half, 0, 0.5f});
+  stages.push_back(mesh::PoseStage{&*full, 0, 1.0f});
+  const auto pose = mesh::poseSkeleton(skeleton, stages);
+  CHECK_EQ(pose.size(), std::size_t(2));
+  if (pose.size() < 2) return;
+  CHECK(std::abs(pose[1].m[13] - 1.0f) < 0.01f);
+}
+
+static void testStageTouchesOnlyItsOwnBones() {
+  // Кліп рухає лише перелічені в ньому кістки — саме тому в BF2 ноги й
+  // верх тіла можуть іти з різних кліпів одночасно.
+  const mesh::Skeleton skeleton = makeTwoBoneSkeleton();
+
+  AnimationBuilder builder(1, 1, 15);
+  std::vector<std::vector<std::int16_t>> channels;
+  builder.constantChannel(1, 0); channels.push_back(builder.channel());
+  builder.constantChannel(1, 0); channels.push_back(builder.channel());
+  builder.constantChannel(1, 0); channels.push_back(builder.channel());
+  builder.constantChannel(1, 32767); channels.push_back(builder.channel());
+  builder.constantChannel(1, static_cast<std::int16_t>((1 << 15) - 1)); channels.push_back(builder.channel());
+  builder.constantChannel(1, 0); channels.push_back(builder.channel());
+  builder.constantChannel(1, 0); channels.push_back(builder.channel());
+  builder.flushBone(channels);
+  auto bytes = builder.bytes();
+  bytes[6] = static_cast<std::byte>(1);  // тільки кістка 1
+  bytes[7] = static_cast<std::byte>(0);
+
+  const auto clip = mesh::loadBoneAnimation(bytes);
+  CHECK(clip.has_value());
+  if (!clip) return;
+
+  const auto pose = mesh::poseSkeleton(skeleton, std::vector<mesh::PoseStage>{
+                                                     mesh::PoseStage{&*clip, 0, 1.0f}});
+  CHECK_EQ(pose.size(), std::size_t(2));
+  if (pose.size() < 2) return;
+  // Корінь лишився в позі спокою.
+  CHECK(std::abs(pose[0].m[12]) < 0.001f);
+  CHECK(std::abs(pose[0].m[13]) < 0.001f);
+  // А кістка 1 зсунулася по X, як задав кліп.
+  CHECK(std::abs(pose[1].m[12] - 1.0f) < 0.01f);
+}
+
 TEST_MAIN({
+  testFullWeightStageClearsWhatWasBefore();
+  testStageTouchesOnlyItsOwnBones();
   testPoseWithoutClipIsRestPose();
   testClipMovesOnlyItsOwnBones();
   testSkinMovesVertexWithItsBone();

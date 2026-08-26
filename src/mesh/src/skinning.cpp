@@ -56,34 +56,108 @@ Vec3 transformDirection(const Mat4& m, const Vec3& v) {
 
 }  // namespace
 
-std::vector<Mat4> poseSkeleton(const Skeleton& skeleton, const BoneAnimation* animation,
-                               std::uint32_t frame) {
-  std::vector<Mat4> world(skeleton.bones.size());
+namespace {
 
-  // Яка кістка скелета якою доріжкою кліпу керується.
-  std::vector<int> trackForBone(skeleton.bones.size(), -1);
-  if (animation != nullptr) {
-    for (std::size_t i = 0; i < animation->boneIds.size(); ++i) {
-      const std::uint16_t id = animation->boneIds[i];
-      if (id < trackForBone.size()) trackForBone[id] = static_cast<int>(i);
+// Сферична інтерполяція між двома кватерніонами. Для близьких значень
+// переходить на лінійну — інакше ділення на синус втрачає точність.
+void slerp(const float from[4], const float to[4], float t, float out[4]) {
+  float target[4] = {to[0], to[1], to[2], to[3]};
+  float cosine = from[0] * to[0] + from[1] * to[1] + from[2] * to[2] + from[3] * to[3];
+  if (cosine < 0.0f) {
+    // Кватерніони q і -q дають той самий поворот; беремо ближчий.
+    for (float& value : target) value = -value;
+    cosine = -cosine;
+  }
+
+  float weightFrom = 1.0f - t;
+  float weightTo = t;
+  if (cosine < 0.9995f) {
+    const float angle = std::acos(cosine);
+    const float sine = std::sin(angle);
+    if (sine > 1e-6f) {
+      weightFrom = std::sin((1.0f - t) * angle) / sine;
+      weightTo = std::sin(t * angle) / sine;
     }
   }
 
+  float length = 0.0f;
+  for (int i = 0; i < 4; ++i) {
+    out[i] = from[i] * weightFrom + target[i] * weightTo;
+    length += out[i] * out[i];
+  }
+  length = std::sqrt(length);
+  if (length > 1e-6f) {
+    for (int i = 0; i < 4; ++i) out[i] /= length;
+  }
+}
+
+}  // namespace
+
+std::vector<Mat4> poseSkeleton(const Skeleton& skeleton, const std::vector<PoseStage>& stages) {
+  // Крок 1: розкласти кліпи по кістках так само, як це робить рушій —
+  // стек на кістку, вага 1 його очищає.
+  struct Applied {
+    const BoneAnimation* animation = nullptr;
+    std::size_t track = 0;
+    std::uint32_t frame = 0;
+    float weight = 1.0f;
+  };
+  std::vector<std::vector<Applied>> perBone(skeleton.bones.size());
+
+  for (const PoseStage& stage : stages) {
+    if (stage.animation == nullptr || stage.weight <= 0.0f) continue;
+    const float weight = stage.weight > 1.0f ? 1.0f : stage.weight;
+
+    for (std::size_t track = 0; track < stage.animation->boneIds.size(); ++track) {
+      const std::uint16_t bone = stage.animation->boneIds[track];
+      if (bone >= perBone.size()) continue;
+
+      std::vector<Applied>& stack = perBone[bone];
+      if (weight >= 1.0f) stack.clear();
+      else if (stack.size() >= static_cast<std::size_t>(kMaxPoseStagesPerBone)) {
+        stack.erase(stack.begin());
+      }
+      stack.push_back(Applied{stage.animation, track, stage.frame, weight});
+    }
+  }
+
+  // Крок 2: власне поза.
+  std::vector<Mat4> world(skeleton.bones.size());
   for (std::size_t i = 0; i < skeleton.bones.size(); ++i) {
     const SkeletonBone& bone = skeleton.bones[i];
 
     float rotation[4] = {bone.rotation[0], bone.rotation[1], bone.rotation[2], bone.rotation[3]};
     Vec3 position = bone.position;
-    if (animation != nullptr && trackForBone[i] >= 0) {
-      animation->sample(static_cast<std::size_t>(trackForBone[i]), frame, rotation, &position);
+
+    for (const Applied& applied : perBone[i]) {
+      float clipRotation[4];
+      Vec3 clipPosition;
+      applied.animation->sample(applied.track, applied.frame, clipRotation, &clipPosition);
+
+      if (applied.weight >= 1.0f) {
+        for (int k = 0; k < 4; ++k) rotation[k] = clipRotation[k];
+        position = clipPosition;
+      } else {
+        float blended[4];
+        slerp(rotation, clipRotation, applied.weight, blended);
+        for (int k = 0; k < 4; ++k) rotation[k] = blended[k];
+        position.x += (clipPosition.x - position.x) * applied.weight;
+        position.y += (clipPosition.y - position.y) * applied.weight;
+        position.z += (clipPosition.z - position.z) * applied.weight;
+      }
     }
 
     const Mat4 local = fromRotationTranslation(rotation, position);
-    // Батько завжди прочитаний раніше, тож його світова матриця вже готова.
     world[i] = bone.parent >= 0 ? multiply(world[static_cast<std::size_t>(bone.parent)], local)
                                 : local;
   }
   return world;
+}
+
+std::vector<Mat4> poseSkeleton(const Skeleton& skeleton, const BoneAnimation* animation,
+                               std::uint32_t frame) {
+  if (animation == nullptr) return poseSkeleton(skeleton, std::vector<PoseStage>{});
+  return poseSkeleton(skeleton, std::vector<PoseStage>{PoseStage{animation, frame, 1.0f}});
 }
 
 void skinMesh(const RenderMesh& bindPose, const std::vector<Mat4>& boneWorld, RenderMesh& out) {
