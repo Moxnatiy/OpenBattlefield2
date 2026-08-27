@@ -42,7 +42,11 @@ if [ -n "$BF2_PLAIN" ] || [ ! -x "$WINE" ] || [ ! -x "$SIDECAR" ]; then
     "$CX/bin/wine" --bottle "$BOTTLE" "$GAME\\BF2.exe" +menu 1 +fullscreen 0 >"$LOG" 2>&1 &
     echo "запущено (CrossOver, без sidecar); журнал: $LOG"
 else
-    WINEPREFIX="$B" WINEDLLOVERRIDES="d3d9=n" \
-      "$SIDECAR" --cooperative "$WINE" "$GAME\\BF2.exe" +menu 1 +fullscreen 0 >"$LOG" 2>&1 &
+    # Sidecar не обгортає Wine — навпаки: Wine сам його запускає, коли
+    # бачить ROSETTA_X87_PATH. Це видно в його ntdll.so:
+    # «ROSETTA_X87_PATH: attaching rosettax87 --cooperative». Обгорнутий
+    # вручну sidecar просто стоїть на нулі відсотків і нічого не робить.
+    WINEPREFIX="$B" WINEDLLOVERRIDES="d3d9=n" ROSETTA_X87_PATH="$SIDECAR" \
+      "$WINE" "$GAME\\BF2.exe" +menu 1 +fullscreen 0 >"$LOG" 2>&1 &
     echo "запущено (x87sidecar); журнал: $LOG"
 fi
