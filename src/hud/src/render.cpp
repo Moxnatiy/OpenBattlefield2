@@ -60,8 +60,10 @@ ScreenRect nodeRect(const Node& node, const Screen& screen) {
   const float padX = screen.anchor == Anchor::Center  ? spare * 0.5f
                      : screen.anchor == Anchor::Right ? spare
                                                       : 0.0f;
-  return ScreenRect{(node.x + screen.originX) * scale + padX,
-                    (node.y + screen.originY) * scale, node.width * scale,
+  // setNodeOffset зсуває вузол від його ж місця — цим користуються
+  // підписи в меню наказів і мітки командира.
+  return ScreenRect{(node.x + node.offsetX + screen.originX) * scale + padX,
+                    (node.y + node.offsetY + screen.originY) * scale, node.width * scale,
                     node.height * scale};
 }
 
