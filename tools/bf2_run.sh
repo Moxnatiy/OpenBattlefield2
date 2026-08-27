@@ -1,8 +1,9 @@
 #!/bin/sh
 # Піднімає оригінальний BF2.exe — для динамічного аналізу.
 #
-#   tools/bf2_run.sh           через athei/wine + x87sidecar (швидко)
-#   BF2_PLAIN=1 tools/bf2_run.sh   через Wine із CrossOver, без sidecar
+#   tools/bf2_run.sh                 через athei/wine + x87sidecar
+#   BF2_RES=1024x768 tools/bf2_run.sh   інша роздільність
+#   BF2_PLAIN=1 tools/bf2_run.sh        через Wine із CrossOver, без sidecar
 #
 # Чому саме так:
 #
@@ -13,9 +14,11 @@
 # * графіка — mtld3d (D3D9 прямо в Metal), зібраний із гілки:
 #   у релізі v0.7.0 текстура не віддає жодного інтерфейсу
 #   (tools/d3d9_qi_test.c), і гра падає. Збірка — tools/mtld3d_build.sh;
-# * стіл — 1024x768, більший за вікно гри. Рівно 800x600 не годиться:
-#   заголовок вікна з'їдає 22 пікселі, гра дістає 800x578, і HUD пливе —
-#   він розкладений під 600, а малюється в 578;
+# * стіл має бути **більшим за вікно гри**. Рівно такий, як вікно, не
+#   годиться: заголовок з'їдає 22 пікселі, і гра дістає 800x578 замість
+#   800x600 (або 1024x746 замість 1024x768). HUD від цього пливе — він
+#   розкладений під повну висоту, а малюється в обрізану. Тому скрипт
+#   ставить стіл сам, із запасом: BF2_RES=1024x768 -> стіл 1280x960;
 # * стіл заданий у реєстрі пляшки, а не через `explorer /desktop=`:
 #   той ковтає stderr дитини, і журнал драйвера зникає. Без столу гра
 #   бачить масштабовані режими Mac (960x600, 1024x640) і не знаходить
@@ -35,11 +38,31 @@ SIDECAR="$HERE/reference/x87sidecar/x87sidecar"
 pkill -f "BF2.exe" 2>/dev/null || true
 pkill -f x87sidecar 2>/dev/null || true
 
+# Роздільність гра бере зі свого профілю, тож звідти її й читаємо, а не
+# вгадуємо. Стіл ставимо на крок більший — інакше заголовок вікна з'їдає
+# 22 пікселі висоти й HUD пливе.
+# Профіль гра при старті не застосовує — роздільність береться з
+# командного рядка (+szx/+szy). Стіл рахуємо від неї.
+RES=${BF2_RES:-800x600}
+SZX=${RES%x*}
+SZY=${RES#*x}
+case $RES in
+    640x480)   DESKTOP=800x600   ;;
+    800x600)   DESKTOP=1024x768  ;;
+    1024x768)  DESKTOP=1280x960  ;;
+    1152x864)  DESKTOP=1280x1024 ;;
+    1280x960)  DESKTOP=1400x1050 ;;
+    *)         DESKTOP=1400x1050 ;;
+esac
+WINEPREFIX="$B" "$WINE" reg add 'HKCU\Software\Wine\Explorer\Desktops' \
+    /v Default /d "$DESKTOP" /f >/dev/null 2>&1 || true
+
 cd "$GAME_UNIX" || exit 1
 
 if [ -n "$BF2_PLAIN" ] || [ ! -x "$WINE" ] || [ ! -x "$SIDECAR" ]; then
     CX="$HOME/Applications/CrossOver.app/Contents/SharedSupport/CrossOver"
-    "$CX/bin/wine" --bottle "$BOTTLE" "$GAME\\BF2.exe" +menu 1 +fullscreen 0 >"$LOG" 2>&1 &
+    "$CX/bin/wine" --bottle "$BOTTLE" "$GAME\\BF2.exe" +menu 1 +fullscreen 0 \
+        +szx "$SZX" +szy "$SZY" >"$LOG" 2>&1 &
     echo "запущено (CrossOver, без sidecar); журнал: $LOG"
 else
     # Sidecar не обгортає Wine — навпаки: Wine сам його запускає, коли
@@ -47,6 +70,6 @@ else
     # «ROSETTA_X87_PATH: attaching rosettax87 --cooperative». Обгорнутий
     # вручну sidecar просто стоїть на нулі відсотків і нічого не робить.
     WINEPREFIX="$B" WINEDLLOVERRIDES="d3d9=n" ROSETTA_X87_PATH="$SIDECAR" \
-      "$WINE" "$GAME\\BF2.exe" +menu 1 +fullscreen 0 >"$LOG" 2>&1 &
-    echo "запущено (x87sidecar); журнал: $LOG"
+      "$WINE" "$GAME\\BF2.exe" +menu 1 +fullscreen 0 +szx "$SZX" +szy "$SZY" >"$LOG" 2>&1 &
+    echo "запущено (x87sidecar) $RES у столі $DESKTOP; журнал: $LOG"
 fi
