@@ -71,7 +71,8 @@ struct Args {
   // --ordinal: номер рядка у файлах відбитків. Сервер обирає його при
   // завантаженні рівня; звідки його дізнається справжній клієнт — ще не
   // знайдено, тож поки задаємо руками.
-  int ordinal = 0;
+  // -1 = взяти з блока, який присилає сервер.
+  int ordinal = -1;
   int team = 1;                        // --team, --kit, --group: вибір при появі
   int kit = 0;
   int spawnGroup = 1;
@@ -649,6 +650,7 @@ struct RemoteWorld {
   Step step = Step::Level;
   std::chrono::steady_clock::time_point lastStep = std::chrono::steady_clock::now();
   std::string levelName;
+  int blockOrdinal = 0;
   int pings = 0, dataPackets = 0, other = 0, challenges = 0;
   int eventCount = 0, objectCount = 0;
   std::uint8_t lastServerSequence = 0;
@@ -754,7 +756,8 @@ struct RemoteWorld {
             step = Step::Content;
             break;
           case Step::Content: {
-            const auto hashes = contentHashes(files, levelName, args.ordinal);
+            const auto hashes =
+              contentHashes(files, levelName, args.ordinal < 0 ? blockOrdinal : args.ordinal);
             if (!hashes) {
               std::printf("  перевірку вмісту пропущено: %s\n", "немає відбитків");
               step = Step::Team;
@@ -861,8 +864,12 @@ struct RemoteWorld {
               const auto done = blocks.feed(*event.block);
               if (done && done->first == obf2::net::bf2::kMapInfoBlock && !levelReady) {
                 if (const auto info = obf2::net::bf2::parseMapInfo(done->second)) {
-                  std::printf("  сервер грає %s, режим %s, розмір %d\n", info->levelName.c_str(),
-                              info->gameMode.c_str(), info->size);
+                  std::printf("  сервер грає %s, режим %s, розмір %d, перше число %u\n",
+                              info->levelName.c_str(), info->gameMode.c_str(), info->size,
+                              info->first);
+                  // Номер виклику беремо з блока, коли його не задали
+                  // руками: це єдине число, яке сервер тут присилає.
+                  if (args.ordinal < 0) blockOrdinal = static_cast<int>(info->first);
                   std::string levelError;
                   if (!obf2::level::mountLevel(files, args.modDir, info->levelName, &levelError)) {
                     std::printf("  рівень не змонтовано: %s\n", levelError.c_str());

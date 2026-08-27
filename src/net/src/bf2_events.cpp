@@ -245,7 +245,8 @@ std::optional<MapInfo> parseMapInfo(std::span<const std::byte> block) {
   // Розкладка знята з живого блока: u32, далі три рядки з довжиною u16
   // попереду — назва рівня, режим гри і розмір.
   BitReader reader(block);
-  if (!reader.skipBits(32)) return std::nullopt;
+  const auto first = reader.readBits(32);
+  if (!first) return std::nullopt;
 
   const auto text = [&reader]() -> std::optional<std::string> {
     const auto length = reader.readBits(16);
@@ -267,6 +268,7 @@ std::optional<MapInfo> parseMapInfo(std::span<const std::byte> block) {
   info.levelName = *level;
   info.gameMode = *mode;
   info.size = static_cast<int>(*size);
+  info.first = *first;
   return info;
 }
 

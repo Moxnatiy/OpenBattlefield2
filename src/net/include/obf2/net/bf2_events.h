@@ -76,6 +76,10 @@ struct MapInfo {
   std::string levelName;
   std::string gameMode;
   int size = 0;
+  // Перше число блока. Схоже на «номер виклику» — той самий рядок у
+  // файлах відбитків, яким сервер перевіряє вміст. Перевіряється на
+  // живому сервері, а не взяте на віру.
+  std::uint32_t first = 0;
 };
 
 inline constexpr std::uint32_t kMapInfoBlock = 5;
