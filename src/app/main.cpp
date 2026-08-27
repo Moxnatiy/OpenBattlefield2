@@ -1746,9 +1746,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     // вузли задані в абсолютних 800x600, тож лягають правильно.
     //
     // Кутові шари (BottomLeftStatic, BottomRightAnimate, TopLayer ...) поки
-    // не малюємо: у `.con` вони ніде не позиціонуються, координати всередині
-    // них відлічуються від якоря, який задає сам рушій. Якір треба дістати з
-    // BF2.exe — інакше смуга здоров'я їде на середину екрана.
+    // не малюємо: у `.con` вони ніде не позиціонуються. Якір лежить у
+    // файлах `MemeFile 2.0` — це дані, а не код, шукати в BF2.exe його не
+    // треба (див. docs/formats/hud-meme.md). Поки він не розібраний, смуга
+    // здоров'я їхала б на середину екрана.
     auto pieces = obf2::hud::buildTree(ingameHud, "Global", hudFont.font, hudFont.atlasPath,
                                        hudScreen, hudContext);
     for (auto& piece : pieces) {
