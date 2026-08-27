@@ -60,11 +60,35 @@ void Builder::feed(const con::Command& command) {
   const std::string_view method = std::string_view(command.lowerPath).substr(11);
 
   // --- створення вузлів ---
+  // Скільки аргументів стоїть між іменем і прямокутником — знято з даних
+  // гри (tools/hud_audit.py):
+  //
+  //   createPictureNode  <група> <ім'я> <x> <y> <ш> <в>
+  //   createBarNode      <група> <ім'я> <напрям> <x> <y> <ш> <в>
+  //   createCompassNode  <група> <ім'я> <вид> <x> <y> <ш> <в> <прапорець> <прапорець>
+  //   createOccupiedNode <група> <ім'я> <?> <x> <y> <ш> <в>
+  //   createSliderNode   <група> <ім'я> <мін> <макс> <значення> <крок>   — без прямокутника
+  //   createMapNode      <група> <ім'я>                                  — теж без
+  //
+  // Компас через це й виїжджав на пів екрана: ми читали його прямокутник
+  // на одну позицію раніше, і замість 186x32 виходило 165x186.
   auto create = [&](NodeType type) {
     Node node;
     node.type = type;
-    const int skip = type == NodeType::Bar ? 1 : 0;
+    const bool shifted = type == NodeType::Bar || type == NodeType::Compass ||
+                         type == NodeType::Occupied;
+    const int skip = shifted ? 1 : 0;
     if (type == NodeType::Bar) node.barDirection = command.argInt(2).value_or(0);
+    // Повзунок і карта прямокутника не несуть: у повзунка там межі й крок.
+    if (type == NodeType::Slider || type == NodeType::Map) {
+      if (command.args.size() >= 2) {
+        node.group = command.args[0];
+        node.name = command.args[1];
+        nodes_.push_back(std::move(node));
+        activeIndex_ = static_cast<int>(nodes_.size()) - 1;
+      }
+      return;
+    }
     if (!readRect(command, node, skip)) return;
     nodes_.push_back(std::move(node));
     activeIndex_ = static_cast<int>(nodes_.size()) - 1;

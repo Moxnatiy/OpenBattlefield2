@@ -53,12 +53,16 @@ mesh::RenderMesh buildRect(const ScreenRect& rect, const Screen& screen,
 }
 
 ScreenRect nodeRect(const Node& node, const Screen& screen) {
-  // Розтягуємо базові 800x600 на весь екран. Пропорції при цьому пливуть,
-  // як і в оригіналі на широких моніторах.
-  const float scaleX = static_cast<float>(screen.width) / kReferenceWidth;
-  const float scaleY = static_cast<float>(screen.height) / kReferenceHeight;
-  return ScreenRect{(node.x + screen.originX) * scaleX, (node.y + screen.originY) * scaleY,
-                    node.width * scaleX, node.height * scaleY};
+  // Масштаб однаковий по обох осях — по висоті. Розтягування по ширині
+  // робило б з круглого овальне.
+  const float scale = static_cast<float>(screen.height) / kReferenceHeight;
+  const float spare = static_cast<float>(screen.width) - kReferenceWidth * scale;
+  const float padX = screen.anchor == Anchor::Center  ? spare * 0.5f
+                     : screen.anchor == Anchor::Right ? spare
+                                                      : 0.0f;
+  return ScreenRect{(node.x + screen.originX) * scale + padX,
+                    (node.y + screen.originY) * scale, node.width * scale,
+                    node.height * scale};
 }
 
 std::vector<DrawPiece> buildNode(const Node& node, const font::Font& font,

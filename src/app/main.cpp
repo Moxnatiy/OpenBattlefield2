@@ -1791,8 +1791,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     // розібраний, якір беремо з габаритів самого шару: притуляємо його до
     // того краю, який названий в імені. Це припущення, але перевірне —
     // видно на екрані, чи смуги стали в куток.
-    for (const char* layer : {"BottomLeftStatic", "BottomLeftAnimate", "BottomRightStatic",
-                              "BottomRightAnimate", "TopLayer"}) {
+    // Порядок важливий: «рухомі» шари несуть тло, а «нерухомі» — смуги
+    // поверх нього. Намалювавши навпаки, ми ховали здоров'я під плашкою.
+    for (const char* layer : {"BottomLeftAnimate", "BottomLeftStatic", "BottomRightAnimate",
+                              "BottomRightStatic", "TopLayer"}) {
       const auto bounds = obf2::hud::treeBounds(ingameHud, layer, hudContext);
       if (!bounds) continue;
       obf2::hud::Screen layerScreen = hudScreen;
@@ -1800,7 +1802,11 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       if (name.rfind("Bottom", 0) == 0) {
         layerScreen.originY = obf2::hud::kReferenceHeight - bounds->maxY;
       }
+      // Кутові шари тримаються краю екрана, а не базового прямокутника:
+      // саме для цього гра й тримає їх окремими коренями.
+      layerScreen.anchor = obf2::hud::Anchor::Left;
       if (name.rfind("BottomRight", 0) == 0) {
+        layerScreen.anchor = obf2::hud::Anchor::Right;
         layerScreen.originX = obf2::hud::kReferenceWidth - bounds->maxX;
       }
       auto layerPieces = obf2::hud::buildTree(ingameHud, layer, hudFont.font, hudFont.atlasPath,
@@ -1856,6 +1862,19 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
                          node.group == "CPInformationItems" && !node.valueVariable.empty();
       if (!ticketText && !cpBar) continue;
       hudDynamic.push_back(DynamicNode{&node, {}, -1.0f, {}, false});
+    }
+
+    // --hud-screen list: що саме лягло на екран. Без цього доводиться
+    // здогадуватися, який вузол з'їхав.
+    if (args.hudScreenName == "list") {
+      for (const auto& piece : pieces) {
+        if (piece.node == nullptr) continue;
+        std::printf("    %-10s %-28s %-22s %6.0f %6.0f %5.0f %5.0f  %s\n",
+                    std::string(obf2::hud::nodeTypeName(piece.node->type)).c_str(),
+                    piece.node->name.c_str(), piece.node->group.c_str(), piece.node->x,
+                    piece.node->y, piece.node->width, piece.node->height,
+                    piece.texture.c_str());
+      }
     }
 
     std::printf("  HUD: %zu вузлів у дереві, шматків до малювання %zu, живих підписів %zu\n",
