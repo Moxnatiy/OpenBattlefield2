@@ -189,9 +189,10 @@ class Capture:
         # Перший хеш — той, що сервер рахує сам; решта два з файлів
         # відбитків у теці мода.
         self._drain(3)
-        if self.misc_hash:
-            here = os.path.dirname(os.path.abspath(__file__))
-            mods = os.path.join(here, "..", "..", "Game Files", "mods", "bf2")
+        here = os.path.dirname(os.path.abspath(__file__))
+        mods = os.path.join(here, "..", "..", "Game Files", "mods", "bf2")
+        misc = self.misc_hash or p.misc_hash(mods)
+        if misc:
             archives = p.read_fingerprints(os.path.join(mods, "std_archive.md5"))
             level = p.read_fingerprints(
                 os.path.join(mods, "levels", self.level, "archive.md5"))
@@ -200,11 +201,12 @@ class Capture:
             # першим числом.
             # Номер виклику приходить у блоці з рівнем першим полем —
             # знак плюс 31 біт, а не звичайне u32.
+            # Номер виклику приходить у блоці з рівнем; --ordinal його
+            # перекриває, коли треба перебрати варіанти.
             ordinal = self.ordinal
-            if self.map_info:
-                ordinal = p.parse_map_info(self.map_info)["номер виклику"]
-                print("номер виклику: %d" % ordinal)
-            s.send_events([p.content_check_event(self.misc_hash,
+            if ordinal < 0:
+                ordinal = 0
+            s.send_events([p.content_check_event(misc,
                                                  archives[ordinal % len(archives)],
                                                  level[ordinal % len(level)])])
             self._drain(3)
@@ -279,7 +281,7 @@ def main():
     parser.add_argument("--team", type=int, default=1, help="команда для етапу spawn")
     parser.add_argument("--kit", type=int, default=0, help="набір для етапу spawn")
     parser.add_argument("--group", type=int, default=1, help="місце появи для етапу spawn")
-    parser.add_argument("--ordinal", type=int, default=0,
+    parser.add_argument("--ordinal", type=int, default=-1,
                         help="номер рядка у файлах відбитків")
     parser.add_argument("--level", default="dalian_plant", help="назва рівня для відбитка")
     parser.add_argument("--misc-hash", dest="misc_hash",

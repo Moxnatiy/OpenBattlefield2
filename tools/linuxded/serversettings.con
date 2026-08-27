@@ -16,7 +16,10 @@ sv.allowNoseCam 1
 sv.hitIndicator 1
 sv.maxPlayers 16
 sv.numPlayersNeededToStart 1
-sv.notEnoughPlayersRestartDelay 15
+rem *** Раунд не перезапускати: з кожним перезапуском сервер обирає
+rem *** новий номер виклику для перевірки вмісту, і стенд стає рухомою
+rem *** ціллю. Для дослідів це головне джерело плутанини.
+sv.notEnoughPlayersRestartDelay 36000
 sv.startDelay 5
 sv.endDelay 15
 sv.spawnTime 15

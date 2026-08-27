@@ -541,6 +541,27 @@ def read_ghosts(r):
 # просто читаємо потрібний рядок.
 EVENT_CONTENT_CHECK = 46
 
+# Перший хеш перевірки вмісту рахують обидва боки самі:
+# `ChecksumContext::runMiscChecksum` бере MD5 по чотирьох файлах мода,
+# саме в такому порядку. Імена знайдено в самій функції.
+MISC_CON_FILES = ("ClientArchives.con", "ServerArchives.con",
+                  "Init.con", "GameLogicInit.con")
+
+
+def misc_hash(mod_dir):
+    """MD5 по .con-файлах мода — перший хеш перевірки вмісту."""
+    import hashlib
+    import os
+
+    digest = hashlib.md5()
+    for name in MISC_CON_FILES:
+        path = os.path.join(mod_dir, name)
+        if not os.path.exists(path):
+            return None
+        with open(path, "rb") as handle:
+            digest.update(handle.read())
+    return digest.hexdigest()
+
 
 def read_fingerprints(path):
     """Номер -> md5 із файлу відбитків.
