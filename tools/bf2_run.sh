@@ -77,9 +77,16 @@ cd "$GAME_UNIX" || exit 1
 
 # +restart 1 пропускає заставки; ім'я гравця задаємо самі, щоб гра не
 # питала профіль. Рівень — коли попросили.
-ARGS="+menu 1 +fullscreen 0 +restart 1 +szx $SZX +szy $SZY"
-ARGS="$ARGS +playerName ${BF2_NAME:-OpenBF2}"
-[ -n "$BF2_LEVEL" ] && ARGS="$ARGS +loadLevel $BF2_LEVEL +gameMode ${BF2_MODE:-gpm_cq}"
+# `+menu` серед прапорців гри немає — у таблиці BF2.exe такого імені
+# нема взагалі, тож ми передавали сміття. Живий набір:
+ARGS="+fullscreen 0 +restart 1 +szx $SZX +szy $SZY"
+ARGS="$ARGS +playerName ${BF2_NAME:-defaultPlayer}"
+# Меню гра пропускає, коли непорожній GSLoadLevel (те, що кладе
+# +loadLevel), GSJoinAddress, playNow 1 або GSDedicated — перевірка
+# стоїть одним `if` перед запуском Flash-меню. Режим і кількість місць
+# рівню потрібні: без них раунд не за чим будувати.
+[ -n "$BF2_LEVEL" ] && ARGS="$ARGS +loadLevel $BF2_LEVEL \
+    +gameMode ${BF2_MODE:-gpm_cq} +maxPlayers ${BF2_PLAYERS:-16}"
 
 if [ -n "$BF2_PLAIN" ] || [ ! -x "$WINE" ] || [ ! -x "$SIDECAR" ]; then
     CX="$HOME/Applications/CrossOver.app/Contents/SharedSupport/CrossOver"
