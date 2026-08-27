@@ -1733,6 +1733,8 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   std::map<std::string, bool> hudVariables;
   std::map<std::string, std::string> hudStrings;
   std::map<std::string, float> hudValues;
+  // Прозорість вузлів: те, що ми справді знаємо. Решта лишається видимою.
+  const std::map<std::string, float> hudAlpha = {{"MenuBackgroundAlpha", 0.0f}};
   // Вузли, вміст яких змінюється в грі: підписи й смуги. Геометрію для них
   // перебудовуємо, але лише коли справді змінилося значення.
   struct DynamicNode {
@@ -1782,6 +1784,15 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     hudContext.variableValue = [&](std::string_view variable) -> float {
       const auto found = hudValues.find(std::string(variable));
       return found == hudValues.end() ? 0.0f : found->second;
+    };
+    // Прозорість: знаємо поки одну змінну, зате важливу. Широкі плашки
+    // під смугами здоров'я й набоїв (400x39, healthBackground.tga і
+    // ammoBackground.tga) висять саме на ній, і в бою вона нульова — у
+    // грі під смугами видно лише вузьку смужку загону, 142 одиниці.
+    hudContext.variableAlpha = [&](std::string_view variable) -> std::optional<float> {
+      const auto found = hudAlpha.find(std::string(variable));
+      if (found == hudAlpha.end()) return std::nullopt;
+      return found->second;
     };
     hudContext.variableText = [&](std::string_view variable) -> std::string_view {
       const auto found = hudStrings.find(std::string(variable));

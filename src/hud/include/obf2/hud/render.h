@@ -58,6 +58,10 @@ struct Context {
   std::function<std::string_view(std::string_view variable)> variableText;
   // Заповнення смуги 0..1 (`setBarNodeValueVariable`).
   std::function<float(std::string_view variable)> variableValue;
+  // Прозорість вузла (`setNodeAlphaVariable`). nullopt — про таку змінну
+  // ми нічого не знаємо, і вузол лишається видимим: більшість із них —
+  // це плавні згасання, і за замовчуванням вони ввімкнені.
+  std::function<std::optional<float>(std::string_view variable)> variableAlpha;
 };
 
 // Геометрія одного вузла — картинка, смуга і/або підпис.

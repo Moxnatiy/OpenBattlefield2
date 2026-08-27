@@ -154,6 +154,20 @@ std::vector<DrawPiece> buildGroup(const Builder& builder, std::string_view group
   return pieces;
 }
 
+namespace {
+
+// Вузол із прозорістю на змінній: поки та змінна нам невідома, вузол не
+// малюємо. Так само ми чинимо з `setNodeShowVariable`, і так само чинить
+// гра: `MenuBackgroundAlpha` — це тло **меню**, у бою воно нульове, і
+// широкі плашки під смугами здоров'я та набоїв там просто не видно.
+bool hiddenByAlpha(const Node& node, const Context& context) {
+  if (node.alphaVariable.empty() || !context.variableAlpha) return false;
+  const auto alpha = context.variableAlpha(node.alphaVariable);
+  return alpha && *alpha <= 0.0f;
+}
+
+}  // namespace
+
 std::vector<DrawPiece> buildTree(const Builder& builder, std::string_view rootGroup,
                                  const font::Font& font, const std::string& fontAtlas,
                                  const Screen& screen, const Context& context, int maxDepth) {
@@ -180,6 +194,7 @@ std::vector<DrawPiece> buildTree(const Builder& builder, std::string_view rootGr
         self(self, node->name, depth + 1);
         continue;
       }
+      if (hiddenByAlpha(*node, context)) continue;
       for (auto& piece : buildNode(*node, font, fontAtlas, screen, context)) {
         pieces.push_back(std::move(piece));
       }
@@ -211,6 +226,7 @@ std::optional<Bounds> treeBounds(const Builder& builder, std::string_view rootGr
         continue;
       }
       if (node->width <= 0.0f || node->height <= 0.0f) continue;
+      if (hiddenByAlpha(*node, context)) continue;
       if (!out) {
         out = Bounds{node->x, node->y, node->x + node->width, node->y + node->height};
         continue;
