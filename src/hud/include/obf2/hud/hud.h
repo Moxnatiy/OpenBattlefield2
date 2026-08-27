@@ -35,6 +35,16 @@ enum class NodeType {
   ObjectMarker,
   Compass,
   TransformList,
+  // Далі — вузли, які ми розбираємо, але ще не малюємо. Тип знати треба
+  // однаково: без нього прямокутник читається не з тих аргументів.
+  List,
+  Edit,
+  Hover,
+  Occupied,
+  Slider,
+  ObjectSelection,
+  MiniMap,
+  Map,
   Other,
 };
 
@@ -98,6 +108,14 @@ struct Node {
   // Об'єкти, які позначає маркер, і вузол підпису до нього.
   std::vector<std::string> markerObjects;
   std::string lockTextNode;
+
+  int barSnapDir = 0;      // setBarNodeSnapDir — куди смуга «прилипає»
+  float rotation = 0.0f;   // setPictureNodeRotation
+
+  // Команди, які ми вже впізнаємо, але ще не малюємо: аргументи лежать
+  // тут як є. Так вони не губляться мовчки, і за списком видно, чого
+  // бракує саме рендеру, а не розборові. Таблиця — hud_recorded.inc.
+  std::map<std::string, std::vector<std::string>> extra;
 
   std::vector<ShowEffect> showEffects;
   // Імена вузлів, доданих до цього списку трансформацій.

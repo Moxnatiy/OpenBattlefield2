@@ -31,6 +31,14 @@ std::string_view nodeTypeName(NodeType type) {
     case NodeType::ObjectMarker: return "marker";
     case NodeType::Compass: return "compass";
     case NodeType::TransformList: return "list";
+    case NodeType::List: return "listbox";
+    case NodeType::Edit: return "edit";
+    case NodeType::Hover: return "hover";
+    case NodeType::Occupied: return "occupied";
+    case NodeType::Slider: return "slider";
+    case NodeType::ObjectSelection: return "selection";
+    case NodeType::MiniMap: return "minimap";
+    case NodeType::Map: return "map";
     case NodeType::Other: return "other";
   }
   return "?";
@@ -70,14 +78,32 @@ void Builder::feed(const con::Command& command) {
   if (method == "createobjectmarkernode") { create(NodeType::ObjectMarker); return; }
   if (method == "createcompassnode") { create(NodeType::Compass); return; }
   if (method == "createtransformlistnode") { create(NodeType::TransformList); return; }
+  // Вузли, які ми поки не малюємо, але тип у них свій: інакше вони всі
+  // злипаються в «інше» і по дереву не видно, чого бракує.
+  if (method == "createtransformnode") { create(NodeType::TransformList); return; }
+  if (method == "createlistnode") { create(NodeType::List); return; }
+  if (method == "createeditnode") { create(NodeType::Edit); return; }
+  if (method == "createhovernode") { create(NodeType::Hover); return; }
+  if (method == "createoccupiednode") { create(NodeType::Occupied); return; }
+  if (method == "createslidernode") { create(NodeType::Slider); return; }
+  if (method == "createobjectselectionnode") { create(NodeType::ObjectSelection); return; }
+  if (method == "createminimapnode") { create(NodeType::MiniMap); return; }
+  if (method == "createmapnode") { create(NodeType::Map); return; }
   if (method.rfind("create", 0) == 0) { create(NodeType::Other); return; }
 
   // setActiveObject перемикає, до якого вузла йдуть наступні команди.
   // Без нього властивості осідали б на останньому створеному — і частина
   // інтерфейсу збиралася б неправильно.
   if (method == "setactiveobject") {
-    const std::string_view name = command.argStr(0);
+    // setActiveObject <група> <ім'я>. Ім'я — останній аргумент: у формі з
+    // одним аргументом група просто не вказана.
+    const std::string_view name = command.args.empty()
+                                      ? std::string_view()
+                                      : std::string_view(command.args.back());
+    const std::string_view group =
+        command.args.size() >= 2 ? std::string_view(command.args.front()) : std::string_view();
     for (std::size_t i = nodes_.size(); i-- > 0;) {
+      if (!group.empty() && group != "Global" && nodes_[i].group != group) continue;
       if (nodes_[i].name == name) {
         activeIndex_ = static_cast<int>(i);
         return;
@@ -93,6 +119,27 @@ void Builder::feed(const con::Command& command) {
   if (node == nullptr) {
     ++unknown_;
     ++unknownByName_[std::string(method)];
+    return;
+  }
+
+  // Прямокутник вузла можна змінити й після створення — цим користуються
+  // там, де один опис підганяють під кілька місць.
+  if (method == "setnodepos") {
+    node->x = command.argFloat(0).value_or(node->x);
+    node->y = command.argFloat(1).value_or(node->y);
+    return;
+  }
+  if (method == "setnodesize") {
+    node->width = command.argFloat(0).value_or(node->width);
+    node->height = command.argFloat(1).value_or(node->height);
+    return;
+  }
+  if (method == "setbarnodesnapdir") {
+    node->barSnapDir = command.argInt(0).value_or(0);
+    return;
+  }
+  if (method == "setpicturenoderotation") {
+    node->rotation = command.argFloat(0).value_or(0.0f);
     return;
   }
 
@@ -245,7 +292,17 @@ void Builder::feed(const con::Command& command) {
     return;
   }
   if (method == "addobjectmarkernodelocktextnode") {
-    node->lockTextNode = std::string(command.argStr(0));
+    // Рушій заводить під підпис власний вузол з іменем «<підпис>TextNode»
+    // (видно в BF2_r.exe: до імені дописується саме цей рядок). Далі опис
+    // на нього перемикається через setActiveObject, тож без такого вузла
+    // наступні команди осідали б не там.
+    const std::string label(command.argStr(0));
+    node->lockTextNode = label;
+    Node child;
+    child.type = NodeType::Text;
+    child.group = node->group;
+    child.name = label + "TextNode";
+    nodes_.push_back(std::move(child));
     return;
   }
   if (method == "setobjectmarkernodeobjects") {
@@ -293,6 +350,23 @@ void Builder::feed(const con::Command& command) {
   if (method == "setnodergbvariables") {
     node->rgbVariables.clear();
     for (const std::string& argument : command.args) node->rgbVariables.push_back(argument);
+    return;
+  }
+
+  // Команди, які ми впізнаємо, але ще не малюємо: аргументи кладемо у
+  // вузол як є. Таблиця створена з даних гри — tools/hud_audit.py.
+  static const std::map<std::string_view, int> recorded = {
+#define HUD_RECORDED(name, count) {name, count},
+#include "hud_recorded.inc"
+#undef HUD_RECORDED
+  };
+  if (const auto found = recorded.find(method); found != recorded.end()) {
+    node->extra[std::string(method)] = command.args;
+    // Кількість аргументів звірена з даними гри. Розбіжність означає, що
+    // команду викликають інакше, ніж ми думали, — про це варто знати.
+    if (static_cast<int>(command.args.size()) != found->second) {
+      ++unknownByName_[std::string(method) + " (несподівано аргументів)"];
+    }
     return;
   }
 
