@@ -1828,17 +1828,21 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       const char* group;
       float x;
       float y;
+      obf2::hud::Anchor anchor;  // до якого краю тулиться на широкому екрані
     };
     for (const Layer& layer : {
-             Layer{"BottomLeftAnimate", -1.0f, 563.0f},
-             Layer{"BottomLeftStatic", -1.0f, 563.0f},
-             Layer{"BottomRightAnimate", 201.0f, 497.0f},
-             Layer{"BottomRightStatic", 401.0f, 563.0f},
-             Layer{"TopLayer", 0.0f, 0.0f},
+             Layer{"BottomLeftAnimate", -1.0f, 563.0f, obf2::hud::Anchor::Left},
+             Layer{"BottomLeftStatic", -1.0f, 563.0f, obf2::hud::Anchor::Left},
+             Layer{"BottomRightAnimate", 201.0f, 497.0f, obf2::hud::Anchor::Right},
+             Layer{"BottomRightStatic", 401.0f, 563.0f, obf2::hud::Anchor::Right},
+             Layer{"TopLayer", 0.0f, 0.0f, obf2::hud::Anchor::Left},
          }) {
       obf2::hud::Screen layerScreen = hudScreen;
       layerScreen.originX = layer.x;
       layerScreen.originY = layer.y;
+      // На широкому екрані ділянка тримається свого краю — саме для
+      // цього вона в грі й окрема.
+      layerScreen.anchor = layer.anchor;
       auto layerPieces = obf2::hud::buildTree(ingameHud, layer.group, hudFont.font,
                                               hudFont.atlasPath, layerScreen, hudContext);
       if (layerPieces.empty()) continue;
