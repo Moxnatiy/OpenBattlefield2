@@ -22,6 +22,7 @@ set -e
 BOTTLE=${BF2_BOTTLE:-bf2bottle}
 CX="$HOME/Applications/CrossOver.app/Contents/SharedSupport/CrossOver"
 GAME='C:\Program Files (x86)\EA GAMES\Battlefield 2'
+GAME_UNIX="$HOME/Library/Application Support/CrossOver/Bottles/$BOTTLE/drive_c/Program Files (x86)/EA GAMES/Battlefield 2"
 LOG=${BF2_LOG:-/tmp/bf2run.log}
 
 [ -x "$CX/bin/cxstart" ] || { echo "немає CrossOver: $CX"; exit 1; }
@@ -34,8 +35,11 @@ sleep 1
 # 16:10). Гра шукає свій вбудований 800x600 і не знаходить, а далі
 # сипляться всі списки налаштувань. Усередині столу Wine перелік
 # стандартний: 640x480, 800x600, 1024x768 і далі.
-"$CX/bin/wine" --bottle "$BOTTLE" explorer /desktop=bf2,800x600 \
-    "$GAME\\BF2.exe" +menu 1 +fullscreen 0 >"$LOG" 2>&1 &
+# Робоча тека — сама тека гри: BF2 шукає mods/bf2/... відносно неї.
+# Стіл задано в реєстрі пляшки, тож `explorer /desktop=` тут не потрібен
+# (він до того ж ковтає stderr дитини, і журнал драйвера зникає).
+cd "$GAME_UNIX" || exit 1
+"$CX/bin/wine" --bottle "$BOTTLE" "$GAME\\BF2.exe" +menu 1 +fullscreen 0 >"$LOG" 2>&1 &
 
 echo "запущено; журнал: $LOG"
 [ "$1" = "--log" ] || exit 0
