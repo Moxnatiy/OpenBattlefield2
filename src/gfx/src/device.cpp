@@ -65,6 +65,59 @@ bool Device::pumpEvents() {
   return !quit_;
 }
 
+bool Device::isKeyDown(std::string_view name) const {
+  // Імена клавіш беремо такі, як у `Settings/Controls.con`. Перекладаємо
+  // лише ті, що відрізняються від назви скан-коду SDL; решта збігається
+  // після зняття префікса.
+  if (name.rfind("IDKey_", 0) != 0) return false;
+  const std::string_view key = name.substr(6);
+
+  static const std::pair<std::string_view, SDL_Scancode> kNamed[] = {
+      {"Tab", SDL_SCANCODE_TAB},
+      {"Enter", SDL_SCANCODE_RETURN},
+      {"Space", SDL_SCANCODE_SPACE},
+      {"Escape", SDL_SCANCODE_ESCAPE},
+      {"Backspace", SDL_SCANCODE_BACKSPACE},
+      {"Delete", SDL_SCANCODE_DELETE},
+      {"Insert", SDL_SCANCODE_INSERT},
+      {"Home", SDL_SCANCODE_HOME},
+      {"End", SDL_SCANCODE_END},
+      {"PageUp", SDL_SCANCODE_PAGEUP},
+      {"PageDown", SDL_SCANCODE_PAGEDOWN},
+      // Гра зве CapsLock старим ім'ям із Windows.
+      {"Capital", SDL_SCANCODE_CAPSLOCK},
+      {"Grave", SDL_SCANCODE_GRAVE},
+      {"Add", SDL_SCANCODE_KP_PLUS},
+      {"LeftShift", SDL_SCANCODE_LSHIFT},
+      {"RightShift", SDL_SCANCODE_RSHIFT},
+      {"LeftCtrl", SDL_SCANCODE_LCTRL},
+      {"RightCtrl", SDL_SCANCODE_RCTRL},
+      {"LeftAlt", SDL_SCANCODE_LALT},
+      {"RightAlt", SDL_SCANCODE_RALT},
+      {"ArrowUp", SDL_SCANCODE_UP},
+      {"ArrowDown", SDL_SCANCODE_DOWN},
+      {"ArrowLeft", SDL_SCANCODE_LEFT},
+      {"ArrowRight", SDL_SCANCODE_RIGHT},
+      {"PrintScreen", SDL_SCANCODE_PRINTSCREEN},
+  };
+
+  SDL_Scancode code = SDL_SCANCODE_UNKNOWN;
+  for (const auto& [named, scancode] : kNamed) {
+    if (named == key) {
+      code = scancode;
+      break;
+    }
+  }
+  if (code == SDL_SCANCODE_UNKNOWN) {
+    // Літери, цифри й F-клавіші звуться однаково — SDL їх знає за іменем.
+    code = SDL_GetScancodeFromName(std::string(key).c_str());
+  }
+  if (code == SDL_SCANCODE_UNKNOWN) return false;
+
+  const bool* keys = SDL_GetKeyboardState(nullptr);
+  return keys != nullptr && keys[code];
+}
+
 Device::InputState Device::readInput() {
   InputState state;
   const bool* keys = SDL_GetKeyboardState(nullptr);

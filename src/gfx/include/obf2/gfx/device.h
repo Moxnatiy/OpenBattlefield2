@@ -68,6 +68,11 @@ class Device {
   };
   InputState readInput();
 
+  // Чи натиснута клавіша з іменем, як його пише гра: "IDKey_Tab",
+  // "IDKey_Q". Ім'я приходить із `ControlMap`, тобто з даних, тож жодна
+  // розкладка тут не зашита — лише переклад імені у скан-код SDL.
+  bool isKeyDown(std::string_view name) const;
+
   // Захоплення миші: без нього огляд упирається в межі вікна.
   void setRelativeMouse(bool enabled);
 

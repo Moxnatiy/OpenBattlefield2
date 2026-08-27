@@ -22,6 +22,7 @@
 #include "obf2/engine/engine.h"
 #include "obf2/font/text.h"
 #include "obf2/hud/render.h"
+#include "obf2/game/controls.h"
 #include "obf2/game/scene.h"
 #include "obf2/gfx/mesh_renderer.h"
 #include "obf2/level/gameplay.h"
@@ -1693,6 +1694,16 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   // Global -> GlobalHud -> IngameHud -> десятки під-груп через `split`.
   obf2::hud::Builder ingameHud;
   std::vector<int> hudQuads;
+  // Екрани, які видно, лише поки тримають клавішу: табло, рація, поява.
+  // Геометрію печемо наперед — вона не змінюється, змінюється лише те,
+  // чи малювати її цього кадру.
+  struct KeyScreen {
+    std::string group;
+    std::string action;  // назва дії в ControlMap, не клавіша
+    std::vector<int> quads;
+  };
+  std::vector<KeyScreen> keyScreens;
+  obf2::game::ControlMap controls;
   std::map<std::string, bool> hudVariables;
   std::map<std::string, std::string> hudStrings;
   std::map<std::string, float> hudValues;
@@ -1712,6 +1723,12 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     obf2::con::Interpreter hudInterpreter(
         files, [&](const obf2::con::Command& command) { ingameHud.feed(command); });
     hudInterpreter.runFile("Menu/HUD/HudSetup/HudSetupMain.con");
+
+    // Розкладка керування — з даних гри. Питаємо про дію, а яка це
+    // клавіша, вирішує `Settings/Controls.con`.
+    obf2::con::Interpreter controlInterpreter(
+        files, [&](const obf2::con::Command& command) { controls.feed(command); });
+    controlInterpreter.runFile("Settings/Controls.con");
 
     // Змінні показу: у даних це або стала 1/0, або назва стану інтерфейсу.
     // Невідому назву вважаємо вимкненою — інакше на екран одразу виїхали б
@@ -1780,6 +1797,28 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       scene.meshes.push_back(std::move(piece.geometry));
       hudQuads.push_back(static_cast<int>(scene.meshes.size()) - 1);
     }
+    // Екрани на клавішах. Групи названі в даних гри, дії — теж; зв'язок
+    // «дія -> клавіша» лишається за `ControlMap`.
+    for (const auto& [group, action] : {
+             std::pair{"Scoreboard", "c_GIShowScoreboard"},
+             std::pair{"RadioRose", "c_GIRadioComm"},
+             std::pair{"SpawnMenu", "c_GIEnter"},
+         }) {
+      auto built = obf2::hud::buildTree(ingameHud, group, hudFont.font, hudFont.atlasPath,
+                                        hudScreen, hudContext);
+      if (built.empty()) continue;
+      KeyScreen screen;
+      screen.group = group;
+      screen.action = action;
+      for (auto& piece : built) {
+        scene.meshes.push_back(std::move(piece.geometry));
+        screen.quads.push_back(static_cast<int>(scene.meshes.size()) - 1);
+      }
+      std::printf("  HUD: екран %-12s на %s (%s), шматків %zu\n", group, action,
+                  std::string(controls.key(action)).c_str(), screen.quads.size());
+      keyScreens.push_back(std::move(screen));
+    }
+
     // Живі вузли: усе, що бере значення зі змінної, яку ми вміємо заповнити.
     for (const auto& node : ingameHud.nodes()) {
       const bool ticketText = node.group == "TicketInfo" &&
@@ -2043,7 +2082,23 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
 
         std::vector<obf2::gfx::MeshRenderer::DrawItem> hudItems;
         hudItems.reserve(hudQuads.size() + hudDynamic.size());
+
+        // Табло, рація й екран появи — поверх усього, поки тримають
+        // клавішу. Порядок такий самий, як у грі: спершу бойовий HUD.
+        std::vector<int> extra;
+        for (const KeyScreen& screen : keyScreens) {
+          const std::string_view key = controls.key(screen.action);
+          if (key.empty() || !device->isKeyDown(key)) continue;
+          extra.insert(extra.end(), screen.quads.begin(), screen.quads.end());
+        }
+
         for (const int index : hudQuads) {
+          if (index < 0 || !uploadedOk[static_cast<std::size_t>(index)]) continue;
+          hudItems.push_back(obf2::gfx::MeshRenderer::DrawItem{
+              &gpuMeshes[static_cast<std::size_t>(index)], obf2::Mat4::identity()});
+        }
+
+        for (const int index : extra) {
           if (index < 0 || !uploadedOk[static_cast<std::size_t>(index)]) continue;
           hudItems.push_back(obf2::gfx::MeshRenderer::DrawItem{
               &gpuMeshes[static_cast<std::size_t>(index)], obf2::Mat4::identity()});
