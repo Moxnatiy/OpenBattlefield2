@@ -71,8 +71,10 @@ def wait_for_server(host, port, attempts=60, delay=5):
 
 
 class Capture:
-    def __init__(self, host, port, name, team=1, kit=0, group=1, misc_hash=None):
+    def __init__(self, host, port, name, team=1, kit=0, group=1, misc_hash=None,
+                 level="dalian_plant"):
         self.misc_hash = misc_hash
+        self.level = level
         self.team = team
         self.kit = kit
         self.group = group
@@ -147,7 +149,10 @@ class Capture:
 
         info = p.client_info_blob(name=s.name, number=p.name_hash(s.name))
         for event in p.data_block_events(p.CLIENT_INFO_BLOCK, info):
+            # Пауза між заголовком блока і шматком: сервер має встигнути
+            # завести блок, перш ніж у нього щось складатимуть.
             s.send_events([event])
+            self._drain(2)
         self._drain(3)
         if stage == "player":
             self._drain(hold)
@@ -157,7 +162,7 @@ class Capture:
         # оригінал: сервер шле рівень, клієнт його завантажує і аж тоді
         # каже «готово». Інакше об'єкти приходять раніше за рівень.
         waited = 0.0
-        while self.map_info is None and waited < 10.0:
+        while self.map_info is None and waited < 20.0:
             self._drain(1.0)
             waited += 1.0
         if self.map_info is None:
@@ -175,12 +180,15 @@ class Capture:
         if self.misc_hash:
             here = os.path.dirname(os.path.abspath(__file__))
             mods = os.path.join(here, "..", "..", "Game Files", "mods", "bf2")
-            std = p.read_fingerprints(os.path.join(mods, "std_archive.md5"))
-            bst = p.read_fingerprints(os.path.join(mods, "bst_archive.md5"))
-            s.send_events([p.content_check_event(self.misc_hash, std[0], bst[0])])
+            archives = p.read_fingerprints(os.path.join(mods, "std_archive.md5"))
+            level = p.read_fingerprints(
+                os.path.join(mods, "levels", self.level, "archive.md5"))
+            # Три хеші: власний підрахунок сервера, архіви, рівень.
+            # Номер рядка — той, що дає getChallengeOrdinal(); на стенді 0.
+            s.send_events([p.content_check_event(self.misc_hash, archives[0], level[0])])
             self._drain(3)
             s.send_events([post_remote(p.NETWORK_CATEGORY, NET_DATABASE_COMPLETE)])
-            self._drain(3)
+            self._drain(4)
 
         # Поява: команда, набір, місце. Саме в такому порядку і саме
         # цими подіями — перевірено, `ServerGameLogic::spawnPlayer`
@@ -250,6 +258,7 @@ def main():
     parser.add_argument("--team", type=int, default=1, help="команда для етапу spawn")
     parser.add_argument("--kit", type=int, default=0, help="набір для етапу spawn")
     parser.add_argument("--group", type=int, default=1, help="місце появи для етапу spawn")
+    parser.add_argument("--level", default="dalian_plant", help="назва рівня для відбитка")
     parser.add_argument("--misc-hash", dest="misc_hash",
                         help="перший хеш для перевірки вмісту (сервер рахує його сам)")
     args = parser.parse_args()
@@ -264,7 +273,7 @@ def main():
         return 0 if ok else 1
 
     capture = Capture(args.host, args.port, args.name, args.team, args.kit, args.group,
-                      args.misc_hash)
+                      args.misc_hash, args.level)
     capture.run(args.stage, args.hold)
 
     if args.out:

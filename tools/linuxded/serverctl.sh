@@ -16,6 +16,10 @@ HOST=${BF2_HOST:-homeserver}
 HERE=$(cd "$(dirname "$0")" && pwd)
 SSH="ssh -o ControlMaster=auto -o ControlPath=$HOME/.ssh/cm/%r@%h:%p -o ControlPersist=10m"
 
+# Власні перемикачі сервера: він сам розповідає, що робить із мережею
+# і привидами. Дешевше за точки зупину — і не гальмує його.
+EXTRA=${BF2_EXTRA:-}
+
 case "$1" in
 up)
     mkdir -p "$HOME/.ssh/cm"
@@ -42,7 +46,7 @@ up)
           -v \$HOME/bf2img/maplist.con:/server/mods/bf2/settings/maplist.con:ro \
           -v \$HOME/bf2img/admin-default.cfg:/server/admin/default.cfg:ro \
           $MOUNT -w /server -e LD_LIBRARY_PATH=/server/bin/amd-64 \
-          bf2dbg $CMD +modPath mods/bf2 +dedicated 1 +ignoreAsserts 1 >/dev/null"
+          bf2dbg $CMD +modPath mods/bf2 +dedicated 1 +ignoreAsserts 1 $EXTRA >/dev/null"
     echo "стенд піднято на $HOST"
     ;;
 wait)

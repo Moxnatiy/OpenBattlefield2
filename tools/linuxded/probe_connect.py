@@ -543,13 +543,19 @@ EVENT_CONTENT_CHECK = 46
 
 
 def read_fingerprints(path):
-    """Номер -> md5 із файлу відбитків."""
+    """Номер -> md5 із файлу відбитків.
+
+    Файли архівів мають вигляд «номер + md5», а файл рівня — ще й назву
+    попереду: «dalian_plant 0 <md5>». Обидва читаємо однаково.
+    """
     out = {}
     with open(path) as handle:
         for line in handle:
             parts = line.split()
             if len(parts) == 2 and parts[0].isdigit():
                 out[int(parts[0])] = parts[1]
+            elif len(parts) == 3 and parts[1].isdigit():
+                out[int(parts[1])] = parts[2]
     return out
 
 

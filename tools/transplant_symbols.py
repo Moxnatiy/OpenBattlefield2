@@ -96,7 +96,9 @@ def linux_asserts():
     return found
 
 
-WINDOWS = os.path.join(ROOT, "Game Files/BF2.exe")
+# BF2_r.exe — складання з налагодженням: те саме, але перевірок утричі
+# більше, тож і збігів виходить більше. Перемикається через BF2_PE.
+WINDOWS = os.environ.get("BF2_PE", os.path.join(ROOT, "Game Files/BF2.exe"))
 PUSH_IMM = re.compile(r"pushl\s+\$0x([0-9a-f]+)")
 
 

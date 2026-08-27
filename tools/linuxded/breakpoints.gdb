@@ -1,9 +1,15 @@
 set pagination off
 set confirm off
-break *0x7d4726
+break *0x462b1f
 commands
   silent
-  printf ">>тип=%d мережевий стан=%d\n", *(int*)($rsp+0x28), *(int*)($r12+0xb8)
+  printf ">>ПОЗНАЧКА-ВСТАНОВЛЕНА\n"
+  continue
+end
+break *0x4631f1
+commands
+  silent
+  printf ">>ВІДМОВА-27\n"
   continue
 end
 run
