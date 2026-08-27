@@ -36,6 +36,7 @@ MAP_INFO_BLOCK = 5
 # Друга подія, що рухає стан з'єднання (`clientSendDatabaseComplete`).
 # Ланцюжок появи гравця. Номери з таблиці, яку BF2.exe реєструє сам
 # (див. docs/functions/network-events.md).
+NET_DATABASE_COMPLETE = 4
 NET_SELECT_SPAWN_GROUP = 6
 NET_SELECT_TEAM = 7
 NET_SELECT_KIT = 8
@@ -70,7 +71,8 @@ def wait_for_server(host, port, attempts=60, delay=5):
 
 
 class Capture:
-    def __init__(self, host, port, name, team=1, kit=0, group=1):
+    def __init__(self, host, port, name, team=1, kit=0, group=1, misc_hash=None):
+        self.misc_hash = misc_hash
         self.team = team
         self.kit = kit
         self.group = group
@@ -165,10 +167,24 @@ class Capture:
             self._drain(hold)
             return
 
+        # Перевірка вмісту: без неї `clientSendDatabaseComplete` іде
+        # гілкою відмови й стан з'єднання не доростає до потрібного.
+        # Перший хеш — той, що сервер рахує сам; решта два з файлів
+        # відбитків у теці мода.
+        self._drain(3)
+        if self.misc_hash:
+            here = os.path.dirname(os.path.abspath(__file__))
+            mods = os.path.join(here, "..", "..", "Game Files", "mods", "bf2")
+            std = p.read_fingerprints(os.path.join(mods, "std_archive.md5"))
+            bst = p.read_fingerprints(os.path.join(mods, "bst_archive.md5"))
+            s.send_events([p.content_check_event(self.misc_hash, std[0], bst[0])])
+            self._drain(3)
+            s.send_events([post_remote(p.NETWORK_CATEGORY, NET_DATABASE_COMPLETE)])
+            self._drain(3)
+
         # Поява: команда, набір, місце. Саме в такому порядку і саме
         # цими подіями — перевірено, `ServerGameLogic::spawnPlayer`
         # після них викликається.
-        self._drain(3)
         for event, value in ((NET_SELECT_TEAM, self.team), (NET_SELECT_KIT, self.kit),
                              (NET_SELECT_SPAWN_GROUP, self.group)):
             s.send_events([post_remote(p.NETWORK_CATEGORY, event, value)])
@@ -234,6 +250,8 @@ def main():
     parser.add_argument("--team", type=int, default=1, help="команда для етапу spawn")
     parser.add_argument("--kit", type=int, default=0, help="набір для етапу spawn")
     parser.add_argument("--group", type=int, default=1, help="місце появи для етапу spawn")
+    parser.add_argument("--misc-hash", dest="misc_hash",
+                        help="перший хеш для перевірки вмісту (сервер рахує його сам)")
     args = parser.parse_args()
 
     if args.replay:
@@ -245,7 +263,8 @@ def main():
         print("сервер готовий" if ok else "сервер не відповідає")
         return 0 if ok else 1
 
-    capture = Capture(args.host, args.port, args.name, args.team, args.kit, args.group)
+    capture = Capture(args.host, args.port, args.name, args.team, args.kit, args.group,
+                      args.misc_hash)
     capture.run(args.stage, args.hold)
 
     if args.out:
