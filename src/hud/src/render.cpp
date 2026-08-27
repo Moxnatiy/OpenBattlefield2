@@ -2,6 +2,8 @@
 
 #include "obf2/core/math.h"
 
+#include <algorithm>
+
 namespace obf2::hud {
 namespace {
 
@@ -55,7 +57,8 @@ ScreenRect nodeRect(const Node& node, const Screen& screen) {
   // як і в оригіналі на широких моніторах.
   const float scaleX = static_cast<float>(screen.width) / kReferenceWidth;
   const float scaleY = static_cast<float>(screen.height) / kReferenceHeight;
-  return ScreenRect{node.x * scaleX, node.y * scaleY, node.width * scaleX, node.height * scaleY};
+  return ScreenRect{(node.x + screen.originX) * scaleX, (node.y + screen.originY) * scaleY,
+                    node.width * scaleX, node.height * scaleY};
 }
 
 std::vector<DrawPiece> buildNode(const Node& node, const font::Font& font,
@@ -178,6 +181,42 @@ std::vector<DrawPiece> buildTree(const Builder& builder, std::string_view rootGr
   };
   walk(walk, rootGroup, 0);
   return pieces;
+}
+
+std::optional<Bounds> treeBounds(const Builder& builder, std::string_view rootGroup,
+                                const Context& context, int maxDepth) {
+  // Ходимо тим самим шляхом, що й buildTree: рахувати треба саме те, що
+  // справді потрапить на екран, інакше вимкнені вузли тягли б габарити.
+  std::optional<Bounds> out;
+  std::vector<std::string> visited;
+  const auto walk = [&](auto&& self, std::string_view group, int depth) -> void {
+    if (depth > maxDepth) return;
+    for (const std::string& seen : visited) {
+      if (seen == group) return;
+    }
+    visited.emplace_back(group);
+    for (const Node* node : builder.group(group)) {
+      if (!node->showVariable.empty() && context.isVisible &&
+          !context.isVisible(node->showVariable)) {
+        continue;
+      }
+      if (node->type == NodeType::Split) {
+        self(self, node->name, depth + 1);
+        continue;
+      }
+      if (node->width <= 0.0f || node->height <= 0.0f) continue;
+      if (!out) {
+        out = Bounds{node->x, node->y, node->x + node->width, node->y + node->height};
+        continue;
+      }
+      out->minX = std::min(out->minX, node->x);
+      out->minY = std::min(out->minY, node->y);
+      out->maxX = std::max(out->maxX, node->x + node->width);
+      out->maxY = std::max(out->maxY, node->y + node->height);
+    }
+  };
+  walk(walk, rootGroup, 0);
+  return out;
 }
 
 const Node* buttonAt(const Builder& builder, std::string_view group, const Screen& screen,

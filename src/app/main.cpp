@@ -1752,6 +1752,30 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     // здоров'я їхала б на середину екрана.
     auto pieces = obf2::hud::buildTree(ingameHud, "Global", hudFont.font, hudFont.atlasPath,
                                        hudScreen, hudContext);
+
+    // Кутові шари — окремі корені: у даних ніщо не веде до них із Global.
+    // Їхні вузли описані від власного якоря, і поки `MemeFile` не
+    // розібраний, якір беремо з габаритів самого шару: притуляємо його до
+    // того краю, який названий в імені. Це припущення, але перевірне —
+    // видно на екрані, чи смуги стали в куток.
+    for (const char* layer : {"BottomLeftStatic", "BottomLeftAnimate", "BottomRightStatic",
+                              "BottomRightAnimate", "TopLayer"}) {
+      const auto bounds = obf2::hud::treeBounds(ingameHud, layer, hudContext);
+      if (!bounds) continue;
+      obf2::hud::Screen layerScreen = hudScreen;
+      const std::string_view name(layer);
+      if (name.rfind("Bottom", 0) == 0) {
+        layerScreen.originY = obf2::hud::kReferenceHeight - bounds->maxY;
+      }
+      if (name.rfind("BottomRight", 0) == 0) {
+        layerScreen.originX = obf2::hud::kReferenceWidth - bounds->maxX;
+      }
+      auto layerPieces = obf2::hud::buildTree(ingameHud, layer, hudFont.font, hudFont.atlasPath,
+                                              layerScreen, hudContext);
+      std::printf("  HUD: шар %-20s зсув %.0f %.0f, шматків %zu\n", layer,
+                  layerScreen.originX, layerScreen.originY, layerPieces.size());
+      for (auto& piece : layerPieces) pieces.push_back(std::move(piece));
+    }
     for (auto& piece : pieces) {
       scene.meshes.push_back(std::move(piece.geometry));
       hudQuads.push_back(static_cast<int>(scene.meshes.size()) - 1);

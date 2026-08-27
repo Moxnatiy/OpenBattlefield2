@@ -9,6 +9,7 @@
 // Результат — звичайні RenderMesh у координатах NDC, які малює той самий
 // накладний пайплайн, що й текст.
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -22,6 +23,11 @@ namespace obf2::hud {
 struct Screen {
   int width = 1280;
   int height = 720;
+  // Зсув шару в базових 800x600. Кутові шари HUD описані від власного
+  // якоря, а не від краю екрана, тож без нього вони лягають у лівий
+  // верхній кут (див. docs/formats/hud-meme.md).
+  float originX = 0.0f;
+  float originY = 0.0f;
 };
 
 // Один готовий до малювання шматок інтерфейсу.
@@ -69,6 +75,14 @@ struct ScreenRect {
 };
 
 ScreenRect nodeRect(const Node& node, const Screen& screen);
+
+// Габарити цілого піддерева в базових 800x600 — потрібні, щоб притулити
+// кутовий шар до потрібного краю. Порожнє дерево дає nullopt.
+struct Bounds {
+  float minX = 0.0f, minY = 0.0f, maxX = 0.0f, maxY = 0.0f;
+};
+std::optional<Bounds> treeBounds(const Builder& builder, std::string_view rootGroup,
+                                 const Context& context, int maxDepth = 8);
 
 // Готовий прямокутник у координатах NDC — тим самим шляхом, що й текст.
 // Потрібен для підсвітки кнопки під курсором: геометрію печемо наперед на
