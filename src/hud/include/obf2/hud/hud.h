@@ -61,6 +61,21 @@ struct Color {
   float r = 1.0f, g = 1.0f, b = 1.0f, a = 1.0f;
 };
 
+// Яким поданням показана карта. Мініатюра в кутку — звичайний бій,
+// велика — екран появи та карта на весь екран, командирська — окремо.
+enum class MapView { Mini, Maxi, Commander };
+
+// Одне з подань карти: положення і розмір.
+// Ставить вузлові карти прямокутник обраного подання: власного
+// прямокутника карта при створенні не має.
+struct Node;
+void useMapView(Node& node, MapView view);
+
+struct MapRect {
+  bool set = false;
+  float x = 0.0f, y = 0.0f, width = 0.0f, height = 0.0f;
+};
+
 struct Node {
   NodeType type = NodeType::Other;
   std::string group;  // IngameHud, ScoreboardHud ...
@@ -111,6 +126,20 @@ struct Node {
 
   int barSnapDir = 0;      // setBarNodeSnapDir — куди смуга «прилипає»
   float rotation = 0.0f;   // setPictureNodeRotation
+
+  // Карта власного прямокутника при створенні не дістає — гра задає їй
+  // три різні подання окремими командами (HudElementsMap.con):
+  //
+  //   setMaxiPos -122/-273   setMaxiSize 512/512     екран появи
+  //   setMiniPos 197/-300    setMiniSize 197/197     кут під час бою
+  //   setCommanderPos …      setCommanderSize 561/561  режим командира
+  //
+  // Пара пишеться **одним словом** через скісну риску, а не двома
+  // аргументами. Від'ємне число означає відлік від правого чи нижнього
+  // краю — так само, як у решті HUD.
+  MapRect mapMaxi;
+  MapRect mapMini;
+  MapRect mapCommander;
 
   // Команди, які ми вже впізнаємо, але ще не малюємо: аргументи лежать
   // тут як є. Так вони не губляться мовчки, і за списком видно, чого

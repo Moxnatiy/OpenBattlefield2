@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include "obf2/hud/hud.h"
 
 #include <algorithm>
@@ -51,6 +52,17 @@ Node* Builder::active() {
     return &nodes_[static_cast<std::size_t>(activeIndex_)];
   }
   return nodes_.empty() ? nullptr : &nodes_.back();
+}
+
+void useMapView(Node& node, MapView view) {
+  const MapRect& rect = view == MapView::Maxi        ? node.mapMaxi
+                        : view == MapView::Commander ? node.mapCommander
+                                                     : node.mapMini;
+  if (!rect.set) return;
+  node.x = rect.x;
+  node.y = rect.y;
+  node.width = rect.width;
+  node.height = rect.height;
 }
 
 void Builder::feed(const con::Command& command) {
@@ -299,6 +311,40 @@ void Builder::feed(const con::Command& command) {
     node->texture = std::string(command.argStr(0));
     return;
   }
+  // Пара «x/y» одним словом — так записані всі розміри карти.
+  auto pair = [&](std::size_t i, float& first, float& second) {
+    if (i >= command.args.size()) return false;
+    const std::string& text = command.args[i];
+    const std::size_t slash = text.find('/');
+    if (slash == std::string::npos) {
+      // Трапляється й розділена форма: «197 197».
+      first = command.argFloat(i).value_or(0.0f);
+      second = command.argFloat(i + 1).value_or(0.0f);
+      return true;
+    }
+    first = std::strtof(text.substr(0, slash).c_str(), nullptr);
+    second = std::strtof(text.substr(slash + 1).c_str(), nullptr);
+    return true;
+  };
+  auto mapPos = [&](MapRect& rect) {
+    if (!pair(0, rect.x, rect.y)) return;
+    rect.set = true;
+    // Поки не сказано інакше, карта — мініатюра в кутку: це її вигляд
+    // під час звичайного бою. Екран появи перемикає на велику сам.
+    if (&rect == &node->mapMini) useMapView(*node, MapView::Mini);
+  };
+  auto mapSize = [&](MapRect& rect) {
+    if (!pair(0, rect.width, rect.height)) return;
+    rect.set = true;
+    if (&rect == &node->mapMini) useMapView(*node, MapView::Mini);
+  };
+  if (method == "setmaxipos") { mapPos(node->mapMaxi); return; }
+  if (method == "setmaxisize") { mapSize(node->mapMaxi); return; }
+  if (method == "setminipos") { mapPos(node->mapMini); return; }
+  if (method == "setminisize") { mapSize(node->mapMini); return; }
+  if (method == "setcommanderpos") { mapPos(node->mapCommander); return; }
+  if (method == "setcommandersize") { mapSize(node->mapCommander); return; }
+
   if (method == "setcompassnodeoffset" || method == "setnodeoffset") {
     node->offsetX = command.argFloat(0).value_or(0.0f);
     node->offsetY = command.argFloat(1).value_or(0.0f);
