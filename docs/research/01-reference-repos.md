@@ -258,3 +258,38 @@ GUID з'явився вже після тега (у git видно, що ці р
 є лише arm64-Wine у `/usr/local`, а CrossOver файлів розробки не
 постачає. Решта інструментів уже стоїть: rustup, цілі, лінкер, Windows
 SDK у `reference/xwin`.
+
+### Прапорці командного рядка — з таблиці в самому BF2.exe
+
+Форуми й вікі тут не потрібні: гра носить свій перелік із поясненнями.
+
+| прапорець | що каже сама гра |
+|---|---|
+| `+restart 1` | Used when restarting executable. — пропускає заставки |
+| `+playerName` | Set the player name |
+| `+playerPassword` | Set the player password |
+| `+loadLevel` | Set the level to load |
+| `+gameMode` | Sets the game mode. |
+| `+maxPlayers` | Sets max players. |
+| `+szx` / `+szy` | Set resolution width / height |
+| `+wx` / `+wy` | Position game window on the screen |
+| `+fullscreen` | Start game in full screen mode |
+| `+noSound` | Start game without sound |
+| `+multi` | Allow starting multiple BF2 instances |
+| `+modPath` | Set the mod path (default mods/bf2) |
+| `+joinServer` / `+port` / `+password` | під'єднання до сервера |
+| `+mapList` / `+config` / `+rsconfig` | шляхи до MapList / ServerSettings / ReservedSlots |
+| `+dedicated` | Start in dedicated server mode |
+| `+demo` | Sets the con-file with demo options |
+| `+skipDXCheck` | Skips DirectX version check. |
+| `+lowPriority` | Run the game with slightly lower priority |
+| `+hostServer` | use playnow functionality |
+| `+dropDynamicSpawns` | Don't re-add dynamic spawn groups as round (re)starts. |
+| `+ranked` | Allows gamespy snapshot sending |
+| `+help` | Displays this help |
+
+Поруч у бінарі лежать і внутрішні перемикачі, які варто пам'ятати:
+`GSDumpAllConFiles`, `GSCustomConFile`, `GSFileChangeMonitor`,
+`GSDisableShaderCache`, `GSDebugGhostManager`, `GSDebugNetwork`,
+`hack-ignore-asserts`, `swiffDebug`, `disable-swiff`. І гра пише історію
+команд у `Logs/BfCommandHistory.con`.

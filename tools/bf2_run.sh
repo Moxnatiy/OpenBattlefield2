@@ -1,9 +1,25 @@
 #!/bin/sh
 # Піднімає оригінальний BF2.exe — для динамічного аналізу.
 #
-#   tools/bf2_run.sh                 через athei/wine + x87sidecar
-#   BF2_RES=1024x768 tools/bf2_run.sh   інша роздільність
-#   BF2_PLAIN=1 tools/bf2_run.sh        через Wine із CrossOver, без sidecar
+#   tools/bf2_run.sh                       меню
+#   BF2_LEVEL=dalian_plant tools/bf2_run.sh   одразу рівень
+#   BF2_RES=1024x768 tools/bf2_run.sh         інша роздільність
+#   BF2_PLAIN=1 tools/bf2_run.sh              через CrossOver, без sidecar
+#
+# Прапорці взяті не з форумів, а з таблиці в самому BF2.exe — вона там
+# лежить разом із поясненнями:
+#
+#   restart      Used when restarting executable.   (пропускає заставки)
+#   playerName   Set the player name
+#   loadLevel    Set the level to load
+#   gameMode     Sets the game mode.
+#   szx / szy    Set resolution width / height
+#   fullscreen   Start game in full screen mode
+#   noSound      Start game without sound
+#   multi        Allow starting multiple BF2 instances
+#   modPath      Set the mod path (default mods/bf2)
+#   joinServer   Join a server by ip address or hostname
+#   help         Displays this help
 #
 # Чому саме так:
 #
@@ -59,10 +75,15 @@ WINEPREFIX="$B" "$WINE" reg add 'HKCU\Software\Wine\Explorer\Desktops' \
 
 cd "$GAME_UNIX" || exit 1
 
+# +restart 1 пропускає заставки; ім'я гравця задаємо самі, щоб гра не
+# питала профіль. Рівень — коли попросили.
+ARGS="+menu 1 +fullscreen 0 +restart 1 +szx $SZX +szy $SZY"
+ARGS="$ARGS +playerName ${BF2_NAME:-OpenBF2}"
+[ -n "$BF2_LEVEL" ] && ARGS="$ARGS +loadLevel $BF2_LEVEL +gameMode ${BF2_MODE:-gpm_cq}"
+
 if [ -n "$BF2_PLAIN" ] || [ ! -x "$WINE" ] || [ ! -x "$SIDECAR" ]; then
     CX="$HOME/Applications/CrossOver.app/Contents/SharedSupport/CrossOver"
-    "$CX/bin/wine" --bottle "$BOTTLE" "$GAME\\BF2.exe" +menu 1 +fullscreen 0 \
-        +szx "$SZX" +szy "$SZY" >"$LOG" 2>&1 &
+    "$CX/bin/wine" --bottle "$BOTTLE" "$GAME\\BF2.exe" $ARGS >"$LOG" 2>&1 &
     echo "запущено (CrossOver, без sidecar); журнал: $LOG"
 else
     # Sidecar не обгортає Wine — навпаки: Wine сам його запускає, коли
@@ -70,6 +91,6 @@ else
     # «ROSETTA_X87_PATH: attaching rosettax87 --cooperative». Обгорнутий
     # вручну sidecar просто стоїть на нулі відсотків і нічого не робить.
     WINEPREFIX="$B" WINEDLLOVERRIDES="d3d9=n" ROSETTA_X87_PATH="$SIDECAR" \
-      "$WINE" "$GAME\\BF2.exe" +menu 1 +fullscreen 0 +szx "$SZX" +szy "$SZY" >"$LOG" 2>&1 &
+      "$WINE" "$GAME\\BF2.exe" $ARGS >"$LOG" 2>&1 &
     echo "запущено (x87sidecar) $RES у столі $DESKTOP; журнал: $LOG"
 fi
