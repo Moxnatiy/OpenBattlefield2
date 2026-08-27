@@ -80,6 +80,9 @@ struct Args {
   std::string skeletonPath;    // --skeleton: .ske; типово скелет солдата
   int frame = 0;               // --frame: який кадр показати
   bool click = false;  // --click: одне натискання в позиції --mouse
+  // --hud-screen <група>: показати екран, який зазвичай видно лише поки
+  // тримають клавішу. Потрібно для знімків і для звірки очима.
+  std::string hudScreenName;
   float distance = 0.0f;             // 0 = підібрати за габаритами
 };
 
@@ -101,6 +104,7 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--topdown") args.topDown = true;
     else if (flag == "--connect" && i + 1 < argc) args.connectTo = argv[++i];
     else if (flag == "--probe") args.probe = true;
+    else if (flag == "--hud-screen" && i + 1 < argc) args.hudScreenName = argv[++i];
     else if (flag == "--connect-password" && i + 1 < argc) args.connectPassword = argv[++i];
     else if (flag == "--name" && i + 1 < argc) args.playerName = argv[++i];
     else if (flag == "--calibrate" && i + 1 < argc) args.calibrate = argv[++i];
@@ -1727,6 +1731,11 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   const LoadedFont hudFont = bootMode ? LoadedFont{} : loadFont(files, "Fonts/800/dynamicText_13");
   obf2::hud::Screen hudScreen;
   if (!bootMode && hudFont.valid) {
+    // Словник: без нього на HUD видно ключі («HUD_TEXT_MENU_SCORE_ROUNDSWON»)
+    // замість тексту. У меню його вантажить boot, а в бою його ніхто не
+    // вантажив — звідси й ключі на екрані.
+    engine.loadLexicon(files);
+
     obf2::con::Interpreter hudInterpreter(
         files, [&](const obf2::con::Command& command) { ingameHud.feed(command); });
     hudInterpreter.runFile("Menu/HUD/HudSetup/HudSetupMain.con");
@@ -1806,13 +1815,25 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     }
     // Екрани на клавішах. Групи названі в даних гри, дії — теж; зв'язок
     // «дія -> клавіша» лишається за `ControlMap`.
+    // Усередині такого екрана змінні показу вмикає сама поява екрана:
+    // рація вся висить на RadioInterfaceShow, і поки її не тримають, її
+    // й немає. Тому тут вимкненим вважаємо лише те, що ми знаємо як
+    // вимкнене, а не все незнайоме.
+    obf2::hud::Context keyContext = hudContext;
+    keyContext.isVisible = [&](std::string_view variable) {
+      if (variable == "0") return false;
+      const auto found = hudVariables.find(std::string(variable));
+      return found == hudVariables.end() || found->second;
+    };
+
     for (const auto& [group, action] : {
              std::pair{"Scoreboard", "c_GIShowScoreboard"},
              std::pair{"RadioRose", "c_GIRadioComm"},
              std::pair{"SpawnMenu", "c_GIEnter"},
+             std::pair{"MapMenu", "c_GIMapSize"},
          }) {
       auto built = obf2::hud::buildTree(ingameHud, group, hudFont.font, hudFont.atlasPath,
-                                        hudScreen, hudContext);
+                                        hudScreen, keyContext);
       if (built.empty()) continue;
       KeyScreen screen;
       screen.group = group;
@@ -2095,7 +2116,8 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         std::vector<int> extra;
         for (const KeyScreen& screen : keyScreens) {
           const std::string_view key = controls.key(screen.action);
-          if (key.empty() || !device->isKeyDown(key)) continue;
+          const bool forced = screen.group == args.hudScreenName;
+          if (!forced && (key.empty() || !device->isKeyDown(key))) continue;
           extra.insert(extra.end(), screen.quads.begin(), screen.quads.end());
         }
 

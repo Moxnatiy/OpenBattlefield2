@@ -54,6 +54,11 @@ class Engine {
   // Виконує стартовий ланцюжок .con у тому ж порядку, що й гра.
   bool boot(FileSystem& files, const std::filesystem::path& modDir);
 
+  // Тільки словник, без решти завантаження. Потрібен і в бою: підписи
+  // HUD — це ключі локалізації, і без словника на екрані видно самі
+  // ключі замість тексту.
+  void loadLexicon(FileSystem& files);
+
   void update(float deltaSeconds);
 
   // Перехід до завантаження рівня — як вибір карти в меню.
@@ -80,7 +85,6 @@ class Engine {
 
  private:
   void enter(State next);
-  void loadLexicon(FileSystem& files);
   void scanLevels(FileSystem& files, const std::filesystem::path& modDir);
 
   Console console_;
