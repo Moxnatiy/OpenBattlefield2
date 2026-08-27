@@ -71,6 +71,7 @@ class Image:
             vsize, rva, rsize, raw = struct.unpack_from("<IIII", d, entry + 8)
             self.sections.append((name, rva, max(vsize, rsize), raw))
         self.export_rva = struct.unpack_from("<I", d, pe + 24 + 96)[0]
+        self.import_rva = struct.unpack_from("<I", d, pe + 24 + 104)[0]
 
     def offset(self, rva):
         for _, start, size, raw in self.sections:
@@ -84,6 +85,46 @@ class Image:
         if at is not None and self.data[at] == 0xE9:
             return address + 5 + struct.unpack_from("<i", self.data, at + 1)[0]
         return address
+
+    def imports(self):
+        """Адреса комірки IAT -> ім'я. MemeBf.dll кличе MemeDll саме так,
+        і без цього виклик до батьківського onStream виглядає як стрибок
+        у нікуди."""
+        if hasattr(self, "_imports"):
+            return self._imports
+        self._imports = {}
+        at = self.offset(self.import_rva)
+        if at is None:
+            return self._imports
+        while True:
+            lookup, _, _, name_rva, first = struct.unpack_from("<IIIII", self.data, at)
+            if name_rva == 0 and first == 0:
+                break
+            table = self.offset(lookup or first)
+            slot = self.base + first
+            while table is not None:
+                entry = struct.unpack_from("<I", self.data, table)[0]
+                if entry == 0:
+                    break
+                if not entry & 0x80000000:
+                    text = self.string(entry + 2, 512)
+                    if text:
+                        self._imports[slot] = text
+                table += 4
+                slot += 4
+            at += 20
+        return self._imports
+
+    def symbol_at(self, address):
+        if not hasattr(self, "_by_address"):
+            self._by_address = {}
+            self._by_address.update(self.imports())
+            for name, raw in self.exports().items():
+                # Виклики йдуть на перехідник, а не на саму функцію, тож
+                # знаємо обидві адреси.
+                self._by_address.setdefault(raw, name)
+                self._by_address.setdefault(self.follow(raw), name)
+        return self._by_address.get(address)
 
     def string(self, rva, limit=128):
         at = self.offset(rva)
@@ -116,7 +157,19 @@ class Image:
 
 
 CALL = re.compile(r"calll\s+\*(0x[0-9a-f]+)\(%\w+\)")
+DIRECT = re.compile(r"calll\s+\*?(0x[0-9a-f]+)$")
 PUSH = re.compile(r"pushl\s+\$(0x[0-9a-f]+)")
+BASE = re.compile(r"\?onStream@([A-Za-z0-9_]+)@meme@dice@@")
+HELPER = re.compile(r"\?stream@(Coordinate2|Rectangle|Color)@meme@dice@@")
+
+# Помічники пишуть кілька чисел підряд і не через таблицю методів, тож у
+# розборі їх видно як звичайний виклик. Що саме вони пишуть — прочитано
+# з них самих: Coordinate2 це два float, Rectangle — два Coordinate2,
+# Color — чотири float з ось такими іменами.
+HELPER_FIELDS = {
+    "Rectangle": ["X", "Y", "Width", "Height"],
+    "Color": ["Red", "Green", "Blue", "Alpha"],
+}
 
 
 def fields(image, address, end=None):
@@ -140,14 +193,125 @@ def fields(image, address, end=None):
             name = image.string(int(push.group(1), 16) - image.base)
             # Назви полів — короткі слова з великої літери; решта сталих
             # (розміри, прапорці) нас тут не цікавить.
-            if name and re.fullmatch(r"[A-Za-z][A-Za-z0-9 _]{0,30}", name):
+            # Імена бувають і з приміткою: "Value <do not edit>".
+            if name and re.fullmatch(r"[A-Za-z][A-Za-z0-9 _<>/.-]{0,40}", name):
                 pending.append(name)
             continue
         call = CALL.search(line)
         if call and pending:
             out.append((pending[-1], int(call.group(1), 16)))
             pending = []
+            continue
+        # Клас спершу віддає роботу батьківському onStream — саме тому
+        # успадковані поля стоять у файлі перед власними.
+        direct = DIRECT.search(line.split("<")[0].strip())
+        if direct and not CALL.search(line):
+            target = int(direct.group(1), 16)
+            symbol = image.symbol_at(target)
+            base = BASE.match(symbol or "")
+            if base:
+                out.append(("@" + base.group(1), -1))
+                continue
+            helper = HELPER.match(symbol or "")
+            if helper:
+                kind = helper.group(1)
+                if kind == "Coordinate2":
+                    # Аргументи кладуться справа наліво, тож перше ім'я
+                    # виклику — останнє з покладених.
+                    pair = pending[-2:][::-1] if len(pending) >= 2 else ["X", "Y"]
+                    for field in pair:
+                        out.append((field, 0x34))
+                else:
+                    for field in HELPER_FIELDS[kind]:
+                        out.append((field, 0x34))
+                pending = []
     return out
+
+
+def symbols(image):
+    """Адреса -> коротке ім'я. Саме заради цього ми й беремо DLL: у грі
+    таких імен немає, а тут вони є для кожної функції."""
+    out = {}
+    for name, address in image.exports().items():
+        target = image.follow(address)
+        match = re.match(r"\?([A-Za-z0-9_]+)@([A-Za-z0-9_]+)@meme@dice@@", name)
+        short = "%s::%s" % (match.group(2), match.group(1)) if match else name
+        out.setdefault(target, short)
+    return out
+
+
+def dump(image, wanted, span=0):
+    """Розбір функції з підписаними викликами.
+
+    Головне тут — імена: `calll 0x100432a0` нічого не каже, а
+    `calll ... ; IStream::streamInt` каже все. Без цього читати чужий
+    двійковий код — це вгадувати.
+    """
+    names = symbols(image)
+    starts = sorted(names)
+    picked = [(n, a) for n, a in image.exports().items() if wanted in n]
+    if not picked:
+        return
+    for full, address in sorted(picked):
+        start = image.follow(address)
+        after = [s for s in starts if s > start]
+        end = start + span if span else min(after[0] if after else start + 0x400,
+                                            start + 0x400)
+        text = subprocess.run(
+            ["objdump", "-d", "--no-show-raw-insn",
+             "--start-address=%#x" % start, "--stop-address=%#x" % end, image.path],
+            capture_output=True, text=True).stdout
+        print("=== %s  (%s, %#x..%#x)" % (full, os.path.basename(image.path), start, end))
+        for line in text.splitlines():
+            if ":" not in line[:12]:
+                continue
+            line = line.strip()
+            call = re.search(r"call[lq]?\s+(0x[0-9a-f]+)", line)
+            if call and int(call.group(1), 16) in names:
+                line += "    ; " + names[int(call.group(1), 16)]
+            push = re.search(r"pushl\s+\$(0x[0-9a-f]+)", line)
+            if push:
+                text_at = image.string(int(push.group(1), 16) - image.base)
+                if text_at:
+                    line += '    ; "%s"' % text_at
+            print("   " + line)
+        print()
+
+
+VTABLE = re.compile(r"movl\s+\$(0x[0-9a-f]+),\s*\(%\w+\)")
+
+
+def inherited(image, klass):
+    """Чий `onStream` дістався класові, коли свого він не має.
+
+    Беремо його конструктор, звідти адресу таблиці методів, а з таблиці
+    — комірку 0x30. Саме її кличе рушій, тож це не здогад, а те, що
+    станеться насправді.
+    """
+    picked = [a for n, a in image.exports().items()
+              if n.startswith("??0%s@meme@dice@@" % klass)]
+    if not picked:
+        return None, None
+    start = image.follow(picked[0])
+    text = subprocess.run(
+        ["objdump", "-d", "--no-show-raw-insn",
+         "--start-address=%#x" % start, "--stop-address=%#x" % (start + 0x80),
+         image.path], capture_output=True, text=True).stdout
+    for line in text.splitlines():
+        found = VTABLE.search(line)
+        if not found:
+            continue
+        table = int(found.group(1), 16)
+        at = image.offset(table - image.base)
+        if at is None:
+            continue
+        slot = struct.unpack_from("<I", image.data, at + 0x30)[0]
+        symbol = image.symbol_at(slot) or ""
+        match = re.match(r"\?onStream@([A-Za-z0-9_]+)@meme@dice@@", symbol)
+        # Ім'я буває, а буває сама адреса: не всі onStream експортовані.
+        # Тоді розбираємо просто за адресою — вона теж із таблиці методів.
+        return (match.group(1) if match else None, image.follow(slot))
+    return None, None
 
 
 def classes(image):
@@ -170,6 +334,9 @@ def main():
     parser.add_argument("klass", nargs="?", help="показати один клас")
     parser.add_argument("--slots", action="store_true", help="які зсуви трапляються")
     parser.add_argument("--emit", help="записати повний перелік у файл")
+    parser.add_argument("--dump", help="розібрати функцію за початком імені символа")
+    parser.add_argument("--span", type=lambda s: int(s, 0), default=0,
+                        help="скільки байтів розбирати (0 = до наступного символа)")
     args = parser.parse_args()
 
     images = []
@@ -185,6 +352,11 @@ def main():
     for image in images:
         for name, span in classes(image).items():
             found[name] = (image, span)
+
+    if args.dump:
+        for image in images:
+            dump(image, args.dump, args.span)
+        return 0
 
     if args.slots:
         counts = {}

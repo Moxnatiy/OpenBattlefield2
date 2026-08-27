@@ -1805,40 +1805,61 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
                                        hudScreen, hudContext);
 
     // Кутові шари — окремі корені: у даних ніщо не веде до них із Global.
-    // Їхні вузли описані від власного якоря, і поки `MemeFile` не
-    // розібраний, якір беремо з габаритів самого шару: притуляємо його до
-    // того краю, який названий в імені. Це припущення, але перевірне —
-    // видно на екрані, чи смуги стали в куток.
-    // Порядок важливий: «рухомі» шари несуть тло, а «нерухомі» — смуги
-    // поверх нього. Намалювавши навпаки, ми ховали здоров'я під плашкою.
-    for (const char* layer : {"BottomLeftAnimate", "BottomLeftStatic", "BottomRightAnimate",
-                              "BottomRightStatic", "TopLayer"}) {
-      const auto bounds = obf2::hud::treeBounds(ingameHud, layer, hudContext);
-      if (!bounds) continue;
+    // Їхні вузли описані від якоря, а якір лежить у `Menu/Ingame` — це
+    // файл `MemeFile 2.0`, і числа нижче прочитані звідти
+    // (`tools/meme_read.py Ingame`), а не підібрані:
+    //
+    //   BottomLeft   TransformNode X=-1  Y=563  400x64
+    //   BottomRight  TransformNode X=401 Y=563  400x64
+    //
+    // `TransformNode::iteratePaint` саме **додає** X і Y до батьківського
+    // прямокутника (нічого не масштабує), тож зсув тут звичайний.
+    //
+    // Ліворуч це сходиться з даними інтерфейсу: BottomLeftBar описаний
+    // від -103 до 297, тобто рівно в чотирьохсотці шару.
+    //
+    // Праворуч ще ні. У файлі поруч із «BottomRight/BottomRight_XPos»
+    // (значення 503) стоїть інший шар — 600x100, — і вузли
+    // BottomRightPrimaryAmmo описані під нього: y від 5 до 103. Куди
+    // саме він стає, ще не доведено, тож там лишається старий спосіб:
+    // притулити шар за його ж габаритами. Це видно й у виводі — «за
+    // габаритами» замість «якір».
+    struct Layer {
+      const char* group;
+      float x;
+      float y;
+      bool known;  // false -> ставимо за габаритами, доки не доведено
+    };
+    for (const Layer& layer : {
+             Layer{"BottomLeftAnimate", -1.0f, 563.0f, true},
+             Layer{"BottomLeftStatic", -1.0f, 563.0f, true},
+             Layer{"BottomRightAnimate", 0.0f, 0.0f, false},
+             Layer{"BottomRightStatic", 0.0f, 0.0f, false},
+             Layer{"TopLayer", 0.0f, 0.0f, true},
+         }) {
       obf2::hud::Screen layerScreen = hudScreen;
-      const std::string_view name(layer);
-      if (name.rfind("Bottom", 0) == 0) {
+      layerScreen.originX = layer.x;
+      layerScreen.originY = layer.y;
+      if (!layer.known) {
+        const auto bounds = obf2::hud::treeBounds(ingameHud, layer.group, hudContext);
+        if (!bounds) continue;
+        layerScreen.originX = obf2::hud::kReferenceWidth - bounds->maxX;
         layerScreen.originY = obf2::hud::kReferenceHeight - bounds->maxY;
       }
-      // Кутові шари тримаються краю екрана, а не базового прямокутника:
-      // саме для цього гра й тримає їх окремими коренями.
-      layerScreen.anchor = obf2::hud::Anchor::Left;
-      if (name.rfind("BottomRight", 0) == 0) {
-        layerScreen.anchor = obf2::hud::Anchor::Right;
-        layerScreen.originX = obf2::hud::kReferenceWidth - bounds->maxX;
-      }
-      auto layerPieces = obf2::hud::buildTree(ingameHud, layer, hudFont.font, hudFont.atlasPath,
-                                              layerScreen, hudContext);
-      std::printf("  HUD: шар %-20s зсув %.0f %.0f, шматків %zu\n", layer,
-                  layerScreen.originX, layerScreen.originY, layerPieces.size());
+      auto layerPieces = obf2::hud::buildTree(ingameHud, layer.group, hudFont.font,
+                                              hudFont.atlasPath, layerScreen, hudContext);
+      if (layerPieces.empty()) continue;
+      std::printf("  HUD: шар %-20s %s %.0f %.0f, шматків %zu\n", layer.group,
+                  layer.known ? "якір" : "за габаритами", layerScreen.originX,
+                  layerScreen.originY, layerPieces.size());
       for (auto& piece : layerPieces) pieces.push_back(std::move(piece));
     }
+
     for (auto& piece : pieces) {
       scene.meshes.push_back(std::move(piece.geometry));
       hudQuads.push_back(static_cast<int>(scene.meshes.size()) - 1);
     }
-    // Екрани на клавішах. Групи названі в даних гри, дії — теж; зв'язок
-    // «дія -> клавіша» лишається за `ControlMap`.
+
     // Усередині такого екрана змінні показу вмикає сама поява екрана:
     // рація вся висить на RadioInterfaceShow, і поки її не тримають, її
     // й немає. Тому тут вимкненим вважаємо лише те, що ми знаємо як
