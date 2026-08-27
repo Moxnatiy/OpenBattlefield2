@@ -113,6 +113,19 @@ std::optional<Event> readEvent(BitReader& reader);
 // для кожного пакета u32 довжина, далі байти.
 std::vector<std::vector<std::byte>> loadCapture(const std::string& path);
 
+// Заголовок потоку привидів — те, що йде після подій у пакеті даних.
+// Час рахується тактами по 1/30 секунди.
+struct GhostHeader {
+  std::uint32_t time = 0;
+  std::uint8_t records = 0;
+  bool controlObjectState = false;
+};
+
+// Читає заголовок потоку привидів із пакета даних, пройшовши події.
+// nullopt — привидів у пакеті немає або якусь подію ще не вміємо
+// пропустити на потрібну довжину.
+std::optional<GhostHeader> readGhostHeader(std::span<const std::byte> packet);
+
 // Проходить пакет даних і повертає всі події з нього.
 // Порожньо — це не пакет даних або він обірвався на першій же події.
 std::vector<Event> readEvents(std::span<const std::byte> packet);

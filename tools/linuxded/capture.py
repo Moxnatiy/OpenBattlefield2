@@ -72,7 +72,8 @@ def wait_for_server(host, port, attempts=60, delay=5):
 
 class Capture:
     def __init__(self, host, port, name, team=1, kit=0, group=1, misc_hash=None,
-                 level="dalian_plant"):
+                 level="dalian_plant", ordinal=0):
+        self.ordinal = ordinal
         self.misc_hash = misc_hash
         self.level = level
         self.team = team
@@ -81,6 +82,7 @@ class Capture:
         self.session = Session(host, port, name)
         self.packets = []
         self.map_info = None
+        self.answered = False
         self._block = None
         self._block_type = 0
         self._block_size = 0
@@ -107,6 +109,19 @@ class Capture:
                     self._block = None
         return got_level
 
+    def _answer_challenge(self, data):
+        """Відповідає на виклик, якщо він у цьому пакеті."""
+        if self.answered:
+            return
+        info = p.walk_events(data)
+        if not info:
+            return
+        for event in info["події"]:
+            if event.get("тип") == 1:
+                self.answered = True
+                self.session.send_events([p.challenge_response_event()])
+                return
+
     def _drain(self, seconds):
         s = self.session
         until = time.time() + seconds
@@ -116,6 +131,7 @@ class Capture:
             except socket.timeout:
                 continue
             self.packets.append(data)
+            self._answer_challenge(data)
             self._handle_blocks(data)
             r = p.Reader(data)
             kind = r.read(4)
@@ -135,14 +151,10 @@ class Capture:
             self._drain(hold)
             return
 
-        answered = []
-
-        def answer():
-            if not answered:
-                answered.append(True)
-                s.send_events([p.challenge_response_event()])
-
-        s.pump(6, on_challenge=answer)
+        # Виклик і відповідь на нього обробляє сам `_drain`: тільки він
+        # записує пакети й збирає блоки, тож іншого циклу прийому бути
+        # не повинно — інакше блок із рівнем проходить повз.
+        self._drain(6)
         if stage == "challenge":
             self._drain(hold)
             return
@@ -153,7 +165,7 @@ class Capture:
             # завести блок, перш ніж у нього щось складатимуть.
             s.send_events([event])
             self._drain(2)
-        self._drain(3)
+        self._drain(4)
         if stage == "player":
             self._drain(hold)
             return
@@ -183,9 +195,13 @@ class Capture:
             archives = p.read_fingerprints(os.path.join(mods, "std_archive.md5"))
             level = p.read_fingerprints(
                 os.path.join(mods, "levels", self.level, "archive.md5"))
-            # Три хеші: власний підрахунок сервера, архіви, рівень.
-            # Номер рядка — той, що дає getChallengeOrdinal(); на стенді 0.
-            s.send_events([p.content_check_event(self.misc_hash, archives[0], level[0])])
+            # Номер рядка у файлах відбитків — «номер виклику». Сервер
+            # обирає його при завантаженні рівня й шле в блоці з рівнем
+            # першим числом.
+            ordinal = self.ordinal
+            s.send_events([p.content_check_event(self.misc_hash,
+                                                 archives[ordinal % len(archives)],
+                                                 level[ordinal % len(level)])])
             self._drain(3)
             s.send_events([post_remote(p.NETWORK_CATEGORY, NET_DATABASE_COMPLETE)])
             self._drain(4)
@@ -258,6 +274,8 @@ def main():
     parser.add_argument("--team", type=int, default=1, help="команда для етапу spawn")
     parser.add_argument("--kit", type=int, default=0, help="набір для етапу spawn")
     parser.add_argument("--group", type=int, default=1, help="місце появи для етапу spawn")
+    parser.add_argument("--ordinal", type=int, default=0,
+                        help="номер рядка у файлах відбитків")
     parser.add_argument("--level", default="dalian_plant", help="назва рівня для відбитка")
     parser.add_argument("--misc-hash", dest="misc_hash",
                         help="перший хеш для перевірки вмісту (сервер рахує його сам)")
@@ -273,7 +291,7 @@ def main():
         return 0 if ok else 1
 
     capture = Capture(args.host, args.port, args.name, args.team, args.kit, args.group,
-                      args.misc_hash, args.level)
+                      args.misc_hash, args.level, args.ordinal)
     capture.run(args.stage, args.hold)
 
     if args.out:

@@ -289,6 +289,50 @@ std::vector<std::vector<std::byte>> loadCapture(const std::string& path) {
   return packets;
 }
 
+namespace {
+
+// Спільний початок: пройти заголовок пакета й потік дій гравця.
+// Повертає false, якщо це не пакет даних.
+bool enterPayload(BitReader& reader) {
+  const auto kind = reader.readBits(4);
+  if (!kind || *kind != static_cast<std::uint32_t>(PacketKind::Data)) return false;
+  if (!reader.skipBits(8 + 6 + 6 + 32 + kStreamFramingBits)) return false;
+  return reader.skipBits(1);
+}
+
+}  // namespace
+
+std::optional<GhostHeader> readGhostHeader(std::span<const std::byte> packet) {
+  BitReader reader(packet);
+  if (!enterPayload(reader)) return std::nullopt;
+
+  const auto hasEvents = reader.readBits(1);
+  if (!hasEvents) return std::nullopt;
+  if (*hasEvents == 1) {
+    const auto count = reader.readBits(8);
+    if (!count) return std::nullopt;
+    reader.skipBits(5 + 1);
+    for (std::uint32_t i = 0; i < *count; ++i) {
+      const auto type = reader.readBits(kEventTypeBits);
+      if (!type || !skipEvent(reader, *type)) return std::nullopt;
+    }
+  }
+
+  const auto hasGhosts = reader.readBits(1);
+  if (!hasGhosts || *hasGhosts != 1) return std::nullopt;
+
+  const auto time = reader.readBits(32);
+  const auto records = reader.readBits(8);
+  const auto control = reader.readBits(1);
+  if (!time || !records || !control) return std::nullopt;
+
+  GhostHeader out;
+  out.time = *time;
+  out.records = static_cast<std::uint8_t>(*records);
+  out.controlObjectState = *control != 0;
+  return out;
+}
+
 std::vector<Event> readEvents(std::span<const std::byte> packet) {
   std::vector<Event> events;
   BitReader reader(packet);

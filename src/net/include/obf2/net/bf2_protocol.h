@@ -11,6 +11,7 @@
 //   8 бітів номер з'єднання (у клієнта до під'єднання це 0)
 //
 // Біти пакуються молодшими вперед — так само, як у нашому BitStream.
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -178,10 +179,43 @@ std::vector<std::byte> writeDataBlockChunk(std::uint8_t connectionId, const Exte
 inline constexpr std::uint32_t kPostRemoteEvent = 11;
 inline constexpr std::uint32_t kNetworkCategory = 6;
 inline constexpr std::uint32_t kNetLoadComplete = 2;
+inline constexpr std::uint32_t kNetDatabaseComplete = 4;
+inline constexpr std::uint32_t kNetSelectSpawnGroup = 6;
+inline constexpr std::uint32_t kNetSelectTeam = 7;
+inline constexpr std::uint32_t kNetSelectKit = 8;
 
+// `value` передається у корисних даних 32-бітним числом — так його
+// читають ті події, що несуть вибір (команда, набір, місце появи).
 std::vector<std::byte> writePostRemoteEvent(std::uint8_t connectionId,
                                             const ExtendedHeader& header, std::uint8_t batch,
-                                            std::uint32_t category, std::uint32_t event);
+                                            std::uint32_t category, std::uint32_t event,
+                                            std::optional<std::int32_t> value = std::nullopt);
+
+// Перевірка вмісту (`ContentCheckEvent`, тип 46): три хеші по 128 бітів.
+// Сервер звіряє їх у `GameServer::onContentCheckEvent` і лише після
+// збігу виставляє клієнтові `contentValid`. Без цього
+// `clientSendDatabaseComplete` ставить його в чергу на від'єднання, і
+// стан з'єднання не доростає до потрібного для потоку привидів.
+//
+// Порядок хешів:
+//   1. те, що сервер рахує сам при старті (`runMiscChecksum`);
+//   2. рядок із `mods/<мод>/std_archive.md5`;
+//   3. рядок із `mods/<мод>/levels/<рівень>/archive.md5`.
+//
+// Номер рядка в обох файлах дає `MapInfo::getChallengeOrdinal()`.
+inline constexpr std::uint32_t kContentCheckEvent = 46;
+
+// Перевірку сервер розглядає лише коли стан з'єднання вже більший за
+// одиницю, тобто після NELoadComplete. Інакше він її мовчки ігнорує.
+std::vector<std::byte> writeContentCheckEvent(std::uint8_t connectionId,
+                                              const ExtendedHeader& header, std::uint8_t batch,
+                                              const std::array<std::byte, 16>& misc,
+                                              const std::array<std::byte, 16>& archives,
+                                              const std::array<std::byte, 16>& level);
+
+// Читає файл відбитків: «номер md5» для архівів, «назва номер md5» для
+// рівня. nullopt — рядка з таким номером немає.
+std::optional<std::array<std::byte, 16>> readFingerprint(std::string_view text, int ordinal);
 
 // Хеш імені, який рейтинговий сервер звіряє з переданим: h = 0x1505, далі
 // для кожного символу в нижньому регістрі h = h * 0x21 ^ c.

@@ -185,7 +185,8 @@ std::vector<std::byte> writeDataBlockChunk(std::uint8_t connectionId, const Exte
 
 std::vector<std::byte> writePostRemoteEvent(std::uint8_t connectionId,
                                             const ExtendedHeader& header, std::uint8_t batch,
-                                            std::uint32_t category, std::uint32_t event) {
+                                            std::uint32_t category, std::uint32_t event,
+                                            std::optional<std::int32_t> value) {
   std::vector<std::byte> buffer(32);
   BitWriter writer(buffer);
   writeDataHeader(writer, connectionId, header);
@@ -195,9 +196,78 @@ std::vector<std::byte> writePostRemoteEvent(std::uint8_t connectionId,
   writer.writeBits(category, 4);
   writer.writeBits(event, 32);
   writer.writeBits(0, 32);  // затримка: float 0.0
-  writer.writeBits(0, 8);   // даних немає
+  if (value) {
+    writer.writeBits(4, 8);
+    const auto raw = static_cast<std::uint32_t>(*value);
+    for (int i = 0; i < 4; ++i) writer.writeBits((raw >> (i * 8)) & 0xFF, 8);
+  } else {
+    writer.writeBits(0, 8);
+  }
 
   return finishDataPacket(buffer, writer);
+}
+
+std::vector<std::byte> writeContentCheckEvent(std::uint8_t connectionId,
+                                              const ExtendedHeader& header, std::uint8_t batch,
+                                              const std::array<std::byte, 16>& misc,
+                                              const std::array<std::byte, 16>& archives,
+                                              const std::array<std::byte, 16>& level) {
+  std::vector<std::byte> buffer(96);
+  BitWriter writer(buffer);
+  writeDataHeader(writer, connectionId, header);
+  writeEventFraming(writer, batch, 1);
+
+  writer.writeBits(kContentCheckEvent, kEventTypeBits);
+  for (const auto* hash : {&misc, &archives, &level}) {
+    for (const auto byte : *hash) writer.writeBits(std::to_integer<std::uint32_t>(byte), 8);
+  }
+  return finishDataPacket(buffer, writer);
+}
+
+std::optional<std::array<std::byte, 16>> readFingerprint(std::string_view text, int ordinal) {
+  std::size_t at = 0;
+  while (at < text.size()) {
+    const std::size_t end = text.find('\n', at);
+    const std::string_view line = text.substr(at, end == std::string_view::npos ? end : end - at);
+    at = end == std::string_view::npos ? text.size() : end + 1;
+
+    // Розбираємо на слова: останнє — сам хеш, передостаннє — номер.
+    std::vector<std::string_view> words;
+    std::size_t from = 0;
+    while (from < line.size()) {
+      const std::size_t space = line.find_first_of(" \t\r", from);
+      const std::size_t stop = space == std::string_view::npos ? line.size() : space;
+      if (stop > from) words.push_back(line.substr(from, stop - from));
+      from = stop + 1;
+    }
+    if (words.size() < 2) continue;
+
+    const std::string_view number = words[words.size() - 2];
+    const std::string_view hash = words.back();
+    if (hash.size() != 32) continue;
+    int value = 0;
+    bool digits = !number.empty();
+    for (const char c : number) {
+      if (c < '0' || c > '9') { digits = false; break; }
+      value = value * 10 + (c - '0');
+    }
+    if (!digits || value != ordinal) continue;
+
+    std::array<std::byte, 16> out{};
+    for (std::size_t i = 0; i < out.size(); ++i) {
+      const auto digit = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+      };
+      const int hi = digit(hash[i * 2]), lo = digit(hash[i * 2 + 1]);
+      if (hi < 0 || lo < 0) return std::nullopt;
+      out[i] = static_cast<std::byte>(hi * 16 + lo);
+    }
+    return out;
+  }
+  return std::nullopt;
 }
 
 std::uint32_t clientInfoNameHash(const std::string& name) {
