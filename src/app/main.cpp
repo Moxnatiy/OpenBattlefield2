@@ -1805,53 +1805,45 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
                                        hudScreen, hudContext);
 
     // Кутові шари — окремі корені: у даних ніщо не веде до них із Global.
-    // Їхні вузли описані від якоря, а якір лежить у `Menu/Ingame` — це
-    // файл `MemeFile 2.0`, і числа нижче прочитані звідти
-    // (`tools/meme_read.py Ingame`), а не підібрані:
+    // Розробники самі це описали в `Menu/HUD/HudSetup/Readme.txt`: є сім
+    // ділянок, і вузли в них дістають координати **від лівого верхнього
+    // кута ділянки**. Де ті кути — сказано в `Menu/Ingame`
+    // (`tools/meme_read.py Ingame`):
     //
-    //   BottomLeft   TransformNode X=-1  Y=563  400x64
-    //   BottomRight  TransformNode X=401 Y=563  400x64
+    //   BottomLeftAnimate   BfTransformNode 400x64   X<-BottomLeft_XPos   Y=563
+    //     Next node -> TransformNode  X=-1  Y=563  400x64   (Static)
+    //   BottomRightAnimate  BfTransformNode 600x100  X<-BottomRight_XPos  Y=497
+    //     Next node -> TransformNode  X=401 Y=563  400x64   (Static)
     //
-    // `TransformNode::iteratePaint` саме **додає** X і Y до батьківського
-    // прямокутника (нічого не масштабує), тож зсув тут звичайний.
+    // Y беремо просто звідти. X у «рухомих» шарів — це змінна, і в файлі
+    // збережено відведене положення (-295 і 503): з ним вміст цілком за
+    // краєм екрана, тобто це саме сховано. Висунуте положення — рівне з
+    // нерухомим шаром по зовнішньому краю: ліворуч по лівому (-1),
+    // праворуч по правому (401+400-600=201).
     //
-    // Ліворуч це сходиться з даними інтерфейсу: BottomLeftBar описаний
-    // від -103 до 297, тобто рівно в чотирьохсотці шару.
-    //
-    // Праворуч ще ні. У файлі поруч із «BottomRight/BottomRight_XPos»
-    // (значення 503) стоїть інший шар — 600x100, — і вузли
-    // BottomRightPrimaryAmmo описані під нього: y від 5 до 103. Куди
-    // саме він стає, ще не доведено, тож там лишається старий спосіб:
-    // притулити шар за його ж габаритами. Це видно й у виводі — «за
-    // габаритами» замість «якір».
+    // Перевірка сходиться: обидві плашки лягають в одну й ту саму смугу
+    // 561..600 і виступають за свій край дзеркально — ліва на 103, права
+    // на 101.
     struct Layer {
       const char* group;
       float x;
       float y;
-      bool known;  // false -> ставимо за габаритами, доки не доведено
     };
     for (const Layer& layer : {
-             Layer{"BottomLeftAnimate", -1.0f, 563.0f, true},
-             Layer{"BottomLeftStatic", -1.0f, 563.0f, true},
-             Layer{"BottomRightAnimate", 0.0f, 0.0f, false},
-             Layer{"BottomRightStatic", 0.0f, 0.0f, false},
-             Layer{"TopLayer", 0.0f, 0.0f, true},
+             Layer{"BottomLeftAnimate", -1.0f, 563.0f},
+             Layer{"BottomLeftStatic", -1.0f, 563.0f},
+             Layer{"BottomRightAnimate", 201.0f, 497.0f},
+             Layer{"BottomRightStatic", 401.0f, 563.0f},
+             Layer{"TopLayer", 0.0f, 0.0f},
          }) {
       obf2::hud::Screen layerScreen = hudScreen;
       layerScreen.originX = layer.x;
       layerScreen.originY = layer.y;
-      if (!layer.known) {
-        const auto bounds = obf2::hud::treeBounds(ingameHud, layer.group, hudContext);
-        if (!bounds) continue;
-        layerScreen.originX = obf2::hud::kReferenceWidth - bounds->maxX;
-        layerScreen.originY = obf2::hud::kReferenceHeight - bounds->maxY;
-      }
       auto layerPieces = obf2::hud::buildTree(ingameHud, layer.group, hudFont.font,
                                               hudFont.atlasPath, layerScreen, hudContext);
       if (layerPieces.empty()) continue;
-      std::printf("  HUD: шар %-20s %s %.0f %.0f, шматків %zu\n", layer.group,
-                  layer.known ? "якір" : "за габаритами", layerScreen.originX,
-                  layerScreen.originY, layerPieces.size());
+      std::printf("  HUD: шар %-20s кут %.0f %.0f, шматків %zu\n", layer.group, layer.x,
+                  layer.y, layerPieces.size());
       for (auto& piece : layerPieces) pieces.push_back(std::move(piece));
     }
 
