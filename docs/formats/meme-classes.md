@@ -1,0 +1,788 @@
+# Класи `dice::meme::*` та їхні поля
+
+Створено `tools/meme_types.py --emit`. Руками не правити.
+
+Порядок полів — це порядок у файлі: `onStream` викликає
+методи потоку один за одним, і кожному передає назву поля
+рядком. Тип — за тим, який саме метод викликано.
+
+## ActionFunction (MemeDll.dll)
+
+* `Action` — action
+
+## ActionListAction (MemeDll.dll)
+
+* `Action list` — list
+
+## ActionNode (MemeDll.dll)
+
+* `Action` — action
+
+## AnyKeyEvent (MemeDll.dll)
+
+* `Event type` — index
+
+## BfAddSubEffectNode (MemeBf.dll)
+
+* `Value` — data
+* `End value` — data
+* `Start time` — data
+* `Start percentage` — data
+* `End time` — data
+* `Delay` — data
+* `Up` — data
+* `Go` — data
+
+## BfAddSubNextEffectNode (MemeBf.dll)
+
+* `Value` — data
+* `End value` — data
+* `Start time` — data
+* `Start percentage` — data
+* `End time` — data
+* `Delay` — data
+* `Up` — data
+* `Next action` — action
+* `Go` — data
+
+## BfAnimationNode (MemeBf.dll)
+
+* `Frames` — int
+* `Start` — bool
+* `Looping` — bool
+
+## BfBinkNode (MemeBf.dll)
+
+* `Background picture` — data
+* `Fade time` — float
+* `Play` — data
+
+## BfButtonNode (MemeBf.dll)
+
+* `Picture` — picture
+* `Mouse over picture` — picture
+* `Action` — action
+* `Width` — float
+* `Height` — float
+
+## BfColorData (MemeBf.dll)
+
+* `Red` — float
+* `Green` — float
+* `Blue` — float
+* `Alpha` — float
+
+## BfColorFillNode (MemeBf.dll)
+
+* `Picture` — picture
+* `Data` — data
+* `Maximum value` — data
+* `Horizontal align` — bool
+* `Fill order` — bool
+* `Color` — data
+* `Fill color` — data
+
+## BfCreditsNode (MemeBf.dll)
+
+* `Value` — data
+* `End value` — float
+* `Reset value` — float
+* `Time` — float
+* `Go` — data
+
+## BfCrosshairNode (MemeBf.dll)
+
+* `Radius` — data
+* `Thickness` — data
+* `outline thickness` — data
+* `Deviation` — data
+* `color` — data
+* `outline` — data
+
+## BfEditNode (MemeBf.dll)
+
+* `Font` — font
+* `String` — data
+* `Select action` — action
+* `Editbox data` — data
+* `Focus` — bool
+
+## BfEditNodeInt (MemeBf.dll)
+
+* `Font` — font
+* `Int` — data
+* `String` — data
+* `Select action` — action
+* `Editbox data` — data
+* `Focus` — bool
+
+## BfEditNodeNew (MemeBf.dll)
+
+* `Font` — font
+* `String` — data
+* `Index` — int
+* `Max index` — int
+* `Current index` — data
+
+## BfFixedSliderNode (MemeBf.dll)
+
+* `Cursor node` — child
+* `Data` — data
+* `Minimum value` — float
+* `Maximum value` — float
+* `Number visible` — float
+* `Interval` — float
+
+## BfGaugeNode (MemeBf.dll)
+
+* `color` — data
+* `background color` — data
+* `Data` — data
+* `Maximum value` — data
+* `Horizontal align` — bool
+
+## BfListBoxData (MemeBf.dll)
+
+* `Create new action` — action
+* `Create new string` — data
+* `Profile name` — data
+
+## BfLocaleData (MemeBf.dll)
+
+* `Valid` — data
+
+## BfLocaleNode (MemeBf.dll)
+
+* `Locale` — data
+
+## BfLocaleStringData (MemeBf.dll)
+
+* `Locale` — data
+* `Valid` — data
+* `String Id` — data
+
+## BfMultiplyColorEffect (MemeBf.dll)
+
+* `Red` — data
+* `Green` — data
+* `Blue` — data
+* `Alpha` — data
+
+## BfMultiplyColorEffect2 (MemeBf.dll)
+
+* `Alpha` — data
+
+## BfNavigationButtonNode (MemeBf.dll)
+
+* `Picture` — picture
+* `Mouse over picture` — picture
+* `Clicked picture` — picture
+* `Action` — action
+* `MouseOver button` — bool
+* `Index` — int
+* `Current mouseover index` — data
+* `Current clicked index` — data
+* `MouseOver active` — data
+* `Width` — float
+* `Height` — float
+
+## BfNewListBoxNode (MemeBf.dll)
+
+* `Listbox data` — data
+* `Font` — font
+* `Select action` — action
+* `Focus action` — action
+* `Step sound` — sound
+* `Select sound` — sound
+* `Failed select sound` — sound
+* `Row height` — float
+* `IsSelectable` — bool
+* `Border or not` — bool
+* `Background color red` — float
+* `Background color green` — float
+* `Background color blue` — float
+* `Background color alpha` — float
+* `Scrollbar width` — float
+* `Frame color red` — float
+* `Frame color green` — float
+* `Frame color blue` — float
+* `Frame color alpha` — float
+* `Select color red` — float
+* `Select color green` — float
+* `Select color blue` — float
+* `Select color alpha` — float
+* `Show tooltip` — bool
+* `Scrollbar offset from border` — float
+
+## BfOccupiedVehicleData (MemeBf.dll)
+
+Власних полів немає.
+
+## BfOccupiedVehicleNode (MemeBf.dll)
+
+* `Position` — int
+* `Draw debug pic` — bool
+* `BfOccupiedVehicleData` — data
+
+## BfPictureFillNode (MemeBf.dll)
+
+* `Picture` — picture
+* `Fill picture` — picture
+* `Data` — data
+* `Maximum value` — data
+* `Horizontal align` — bool
+* `Fill order` — bool
+
+## BfPlayerInfoData (MemeBf.dll)
+
+Власних полів немає.
+
+## BfPlayerInfoNode (MemeBf.dll)
+
+* `PlayerInfo` — data
+
+## BfPlayerInfoStringData (MemeBf.dll)
+
+* `Row` — int
+* `Col` — int
+* `PlayerInfo` — data
+
+## BfPlayerInfoStringTeamData (MemeBf.dll)
+
+* `Row` — int
+* `Col` — int
+* `Team` — int
+* `PlayerInfo` — data
+
+## BfRectangle (MemeBf.dll)
+
+* `Thickness` — float
+
+## BfScrollPictureNode (MemeBf.dll)
+
+* `Scroll picture` — picture
+* `Data` — data
+* `Maximum value` — data
+* `Y offset` — int
+* `Size` — int
+* `Var size` — data
+* `Maintain value` — data
+* `From bottom` — bool
+
+## BfSelectButtonNode (MemeBf.dll)
+
+* `Picture` — picture
+* `Mouse over picture` — picture
+* `Clicked picture` — picture
+* `Action` — action
+* `Index` — int
+* `Current clicked index` — data
+* `Width` — float
+* `Height` — float
+
+## BfSliderNode (MemeBf.dll)
+
+* `Cursor node` — child
+* `Data` — data
+* `Minimum value` — float
+* `Maximum value` — float
+* `Number visible` — float
+
+## BfTextNode (MemeBf.dll)
+
+* `String` — data
+* `Style` — style
+* `Type` — data
+
+## BfTransformNode (MemeBf.dll)
+
+* `X` — data
+* `Y` — data
+* `Transformed node` — child
+
+## BfTransformNodeSize (MemeBf.dll)
+
+* `Width` — data
+* `Height` — data
+* `Transformed node` — child
+
+## BfVariablePictureFillNode (MemeBf.dll)
+
+* `Picture` — picture
+* `Fill picture` — picture
+* `Data` — data
+* `Maximum value` — data
+* `Size` — int
+* `Horizontal align` — bool
+* `Fill order` — bool
+
+## BfVariablePictureFillNode2 (MemeBf.dll)
+
+* `Picture` — data
+* `Fill picture` — data
+* `Data` — data
+* `Maximum value` — data
+* `Size` — data
+* `Horizontal align` — bool
+* `Fill order` — bool
+
+## BfVariablePictureNode (MemeBf.dll)
+
+* `picture str` — data
+* `redraw` — data
+
+## BfVariableTimeoutActionNode (MemeBf.dll)
+
+* `Timeout time` — data
+
+## BfVariableTimeoutActionNode2 (MemeBf.dll)
+
+* `Current time` — data
+* `Timeout time` — data
+
+## BfVerticalScrollExNode (MemeBf.dll)
+
+* `Text` — data
+* `Style` — style
+* `Scroll speed` — float
+* `Scroll speed multiplier` — data
+* `Restart toggle` — data
+
+## BfVerticalScrollNode (MemeBf.dll)
+
+* `Text` — data
+* `Font` — font
+* `Scroll speed` — float
+* `Scroll speed multiplier` — data
+* `Restart toggle` — data
+
+## BlendFuncEffect (MemeDll.dll)
+
+* `Source blend func` — index
+* `Destination blend func` — index
+
+## BoolData (MemeDll.dll)
+
+Власних полів немає.
+
+## ButtonEvent (MemeDll.dll)
+
+* `Event type` — index
+* `Button type` — index
+
+## CallFunctionAction (MemeDll.dll)
+
+* `Function` — function
+
+## CallFunctionVariableAction (MemeDll.dll)
+
+* `Result data` — data
+
+## ClipEffect (MemeDll.dll)
+
+Власних полів немає.
+
+## ColorEffect (MemeDll.dll)
+
+Власних полів немає.
+
+## ConcatenateListData (MemeDll.dll)
+
+* `Data list` — list
+
+## CullActionNode (MemeDll.dll)
+
+Власних полів немає.
+
+## CullEventActionNode (MemeDll.dll)
+
+* `Event` — event
+
+## CullEventTimeoutActionNode (MemeDll.dll)
+
+* `Timeout time` — float
+
+## CullNode (MemeDll.dll)
+
+* `Data` — data
+* `In time` — float
+* `Out time` — float
+
+## CullVariableActionNode (MemeDll.dll)
+
+* `Variable` — data
+
+## CullVariableAndEventActionNode (MemeDll.dll)
+
+* `Variable` — data
+* `Event` — event
+
+## CullVariableNode (MemeBf.dll)
+
+* `Variable` — data
+* `Data` — data
+
+## CurserNode (MemeBf.dll)
+
+* `Width` — data
+* `Height` — data
+* `X` — data
+* `Y` — data
+
+## DataListData (MemeDll.dll)
+
+* `Data list` — list
+
+## DisableNode (MemeDll.dll)
+
+* `Disable data` — data
+
+## EditNode (MemeDll.dll)
+
+* `Font` — font
+* `String` — data
+
+## EffectNode (MemeDll.dll)
+
+* `Effect` — effect
+
+## Event (MemeDll.dll)
+
+Власних полів немає.
+
+## ExtendedButtonEvent (MemeDll.dll)
+
+* `Repeat count` — int
+
+## ExtendedFocusToPressedEffectNode (MemeDll.dll)
+
+* `Min value` — float
+* `Max value` — float
+
+## ExtendedNormalToFocusEffectNode (MemeDll.dll)
+
+* `Min value` — float
+* `Max value` — float
+
+## ExtendedRememberingTabstopManagerNode (MemeDll.dll)
+
+* `Index` — data
+
+## ExtendedUnicodeEvent (MemeDll.dll)
+
+* `Repeat count` — int
+
+## FloatData (MemeDll.dll)
+
+Власних полів немає.
+
+## FocusNode (MemeDll.dll)
+
+* `Focus X` — data
+* `Focus Y` — data
+
+## IfElseEventActionNode (MemeDll.dll)
+
+* `Variable` — data
+* `Else Action` — action
+* `Event` — event
+
+## IndexCountData (MemeDll.dll)
+
+* `Data` — data
+
+## IndexDataData (MemeDll.dll)
+
+* `Data` — data
+* `Index` — data
+
+## IntData (MemeDll.dll)
+
+Власних полів немає.
+
+## LastInputIndexAction (MemeDll.dll)
+
+* `Last input index` — data
+
+## LockPointerAction (MemeDll.dll)
+
+* `Input index data` — data
+
+## LogicalData (MemeDll.dll)
+
+* `Data 1` — data
+* `Data 2` — data
+
+## ModifyVariableAction (MemeDll.dll)
+
+* `Variable` — data
+* `Modify value` — float
+* `Limit value` — float
+
+## MoveClipEffect (MemeDll.dll)
+
+* `Move length` — float
+* `Move direction` — float
+
+## MoveEffect (MemeDll.dll)
+
+* `Move length` — data
+* `Move direction` — data
+
+## NavigateAction (MemeDll.dll)
+
+* `Action tree` — tree
+
+## NavigateSiblingIndexAction (MemeDll.dll)
+
+* `Index` — int
+
+## NavigateTreeObject (MemeDll.dll)
+
+* `Description` — data
+* `Action` — action
+
+## NavigateViewNode (MemeDll.dll)
+
+* `Navigate tree` — tree
+* `Font` — font
+
+## Node (MemeDll.dll)
+
+* `Next node` — next
+
+## NotData (MemeDll.dll)
+
+* `Data` — data
+
+## Object (MemeDll.dll)
+
+Власних полів немає.
+
+## OperatorData (MemeDll.dll)
+
+* `Data 1` — data
+* `Data 2` — data
+
+## PictureNode (MemeDll.dll)
+
+* `Picture` — picture
+
+## PictureUVNode (MemeDll.dll)
+
+* `Picture` — picture
+
+## PopPathAction (MemeDll.dll)
+
+* `Stack path node` — object
+* `In time` — float
+* `Out time` — float
+* `In wait time` — float
+* `Out wait time` — float
+* `Paint outnode over innode` — bool
+
+## PushPathAction (MemeDll.dll)
+
+* `Stack path node` — object
+* `Destination node` — object
+* `In time` — float
+* `Out time` — float
+* `In wait time` — float
+* `Out wait time` — float
+* `Paint outnode over innode` — bool
+
+## RotateAroundCoordinateEffect (MemeDll.dll)
+
+* `X` — data
+* `Y` — data
+
+## RotateEffect (MemeDll.dll)
+
+* `Start angle` — data
+* `Angle multiplyer` — data
+
+## RowDistanceStyle (MemeDll.dll)
+
+* `Row distance` — float
+
+## SetFocusAction (MemeDll.dll)
+
+* `x` — data
+* `y` — data
+
+## SetPathAction (MemeDll.dll)
+
+* `Path node` — object
+* `Destination node` — object
+* `In time` — float
+* `Out time` — float
+* `In wait time` — float
+* `Out wait time` — float
+* `Paint outnode over innode` — bool
+
+## SetStringAction (MemeDll.dll)
+
+* `Variable` — data
+* `Data` — data
+
+## SetTabstopAction (MemeDll.dll)
+
+* `Tabstop index` — data
+
+## SetVariableAction (MemeDll.dll)
+
+* `Variable` — data
+* `Data` — data
+
+## SetVariableArrayAction (MemeDll.dll)
+
+* `Index` — data
+
+## SetVariableSineAction (MemeDll.dll)
+
+* `Braking distance` — float
+
+## SetVariableSoftAction (MemeDll.dll)
+
+* `Speed` — float
+
+## SizeStyle (MemeDll.dll)
+
+* `Size constant` — float
+
+## SliderNode (MemeDll.dll)
+
+* `Cursor node` — child
+* `Data` — data
+* `Minimum value` — float
+* `Maximum value` — float
+* `Number visible` — float
+
+## SoundAction (MemeDll.dll)
+
+* `Sound` — sound
+
+## SplitAction (MemeDll.dll)
+
+* `Action 1` — action
+* `Action 2` — action
+
+## SplitEffect (MemeDll.dll)
+
+* `Effect 1` — effect
+* `Effect 2` — effect
+
+## SplitNode (MemeDll.dll)
+
+* `Split node` — child
+
+## StickyNode (MemeDll.dll)
+
+* `Variable` — data
+* `Data` — data
+
+## StringData (MemeDll.dll)
+
+Власних полів немає.
+
+## Style (MemeDll.dll)
+
+* `Font handle` — font
+
+## TextNode (MemeDll.dll)
+
+* `String` — data
+* `Style` — style
+
+## TimeoutActionNode (MemeDll.dll)
+
+* `Timeout time` — float
+
+## ToggleData (MemeDll.dll)
+
+* `Toggle data` — data
+* `Data 1` — data
+* `Data 2` — data
+
+## ToggleVariableAction (MemeDll.dll)
+
+* `Variable` — data
+
+## TransformNode (MemeDll.dll)
+
+* `Transformed node` — child
+
+## TranslateNode (MemeDll.dll)
+
+* `X` — data
+* `Y` — data
+
+## Tree (MemeDll.dll)
+
+Власних полів немає.
+
+## TreeObject (MemeDll.dll)
+
+Власних полів немає.
+
+## TypeEvent (MemeDll.dll)
+
+* `Event type` — index
+
+## UnicodeEvent (MemeDll.dll)
+
+* `Event type` — index
+* `Unicode` — string
+
+## VariableColorEffect (MemeBf.dll)
+
+* `Red` — data
+* `Green` — data
+* `Blue` — data
+* `Alpha` — data
+
+## VariableEffectNode (MemeDll.dll)
+
+* `Effect level` — data
+
+## VariablePictureNode (MemeBf.dll)
+
+* `First part` — data
+* `Middle part` — data
+* `Last part` — data
+
+## VariableTabstopNode (MemeDll.dll)
+
+* `Variable` — data
+
+## VertexColorEffect (MemeDll.dll)
+
+* `Top left red` — float
+* `Top left green` — float
+* `Top left blue` — float
+* `Top left alpha` — float
+* `Top right red` — float
+* `Top right green` — float
+* `Top right blue` — float
+* `Top right alpha` — float
+* `Bottom right red` — float
+* `Bottom right green` — float
+* `Bottom right blue` — float
+* `Bottom right alpha` — float
+* `Bottom left red` — float
+* `Bottom left green` — float
+* `Bottom left blue` — float
+* `Bottom left alpha` — float
+
+## VolumedSoundAction (MemeDll.dll)
+
+Власних полів немає.
+
+## WstringData (MemeDll.dll)
+
+Власних полів немає.
+
+## ZoomNode (MemeDll.dll)
+
+* `Z` — data
+
