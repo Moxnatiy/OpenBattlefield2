@@ -6,6 +6,7 @@
 // перевірка виходить така, якої не дає жоден синтетичний пакет: якщо
 // хоч в одній події зіб'ється довжина, наступна прочитається як сміття.
 #include <cstdio>
+#include <map>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -90,7 +91,39 @@ void testHeightsAreOnTheTerrain() {
 
 }  // namespace
 
+// Зразок tests/data/bf2-ghosts.bin спіймано після повного рукостискання
+// (`capture.py --stage spawn`): у ньому вже є потік привидів.
+void testGhostStreamIsWalkable() {
+  const auto packets = loadCapture(std::string(OBF2_TEST_DATA) + "/bf2-ghosts.bin");
+  CHECK(!packets.empty());
+
+  int withGhosts = 0, records = 0;
+  std::map<std::uint16_t, int> perObject;
+  for (const auto& packet : packets) {
+    const auto header = obf2::net::bf2::readGhostHeader(packet);
+    if (!header) continue;
+    ++withGhosts;
+    if (header->controlObjectState) continue;
+
+    const auto found = obf2::net::bf2::readGhostRecords(packet);
+    // Кожен запис має бути прочитаний: рушій покладається на те, що
+    // довжина в записі дозволяє пропустити навіть незнайомий об'єкт.
+    CHECK_EQ(found.size(), std::size_t(header->records));
+    for (const auto& record : found) {
+      CHECK(record.kind != 2);       // вид 2 — помилка потоку
+      ++records;
+      ++perObject[record.networkId];
+    }
+  }
+
+  CHECK(withGhosts >= 100);
+  CHECK(records >= 100);
+  // Рухомі об'єкти оновлюються майже щопакета, статика — раз.
+  CHECK(perObject.size() >= 10);
+}
+
 TEST_MAIN({
   testWorldCaptureIsFullyDecoded();
   testHeightsAreOnTheTerrain();
+  testGhostStreamIsWalkable();
 });

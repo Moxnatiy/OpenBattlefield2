@@ -302,8 +302,11 @@ bool enterPayload(BitReader& reader) {
 
 }  // namespace
 
-std::optional<GhostHeader> readGhostHeader(std::span<const std::byte> packet) {
-  BitReader reader(packet);
+namespace {
+
+// Спільне для заголовка й записів: дійти до потоку привидів, пройшовши
+// потік дій гравця й усі події.
+std::optional<GhostHeader> enterGhosts(BitReader& reader) {
   if (!enterPayload(reader)) return std::nullopt;
 
   const auto hasEvents = reader.readBits(1);
@@ -331,6 +334,40 @@ std::optional<GhostHeader> readGhostHeader(std::span<const std::byte> packet) {
   out.records = static_cast<std::uint8_t>(*records);
   out.controlObjectState = *control != 0;
   return out;
+}
+
+}  // namespace
+
+std::vector<GhostRecord> readGhostRecords(std::span<const std::byte> packet) {
+  std::vector<GhostRecord> out;
+  BitReader reader(packet);
+  const auto header = enterGhosts(reader);
+  if (!header || header->controlObjectState) return out;
+
+  for (std::uint8_t i = 0; i < header->records; ++i) {
+    const auto kind = reader.readBits(2);
+    const auto networkId = reader.readBits(16);
+    if (!kind || !networkId) break;
+
+    GhostRecord record;
+    record.kind = *kind;
+    record.networkId = static_cast<std::uint16_t>(*networkId);
+    if (*kind == 2) break;  // рушій вважає це помилкою потоку
+    if (*kind == 1) {
+      const auto flag = reader.readBits(1);
+      const auto length = reader.readBits(kGhostLengthBits);
+      if (!flag || !length) break;
+      record.payloadBits = *length;
+      if (!reader.skipBits(*length)) break;
+    }
+    out.push_back(record);
+  }
+  return out;
+}
+
+std::optional<GhostHeader> readGhostHeader(std::span<const std::byte> packet) {
+  BitReader reader(packet);
+  return enterGhosts(reader);
 }
 
 std::vector<Event> readEvents(std::span<const std::byte> packet) {

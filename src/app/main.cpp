@@ -27,7 +27,10 @@
 #include "obf2/level/gameplay.h"
 #include "obf2/level/level.h"
 #include "obf2/server/game_client.h"
+#include <set>
+
 #include "obf2/net/bf2_events.h"
+#include "obf2/net/md5.h"
 #include "obf2/net/bf2_protocol.h"
 #include "obf2/net/udp.h"
 #include "obf2/server/game_server.h"
@@ -61,7 +64,10 @@ struct Args {
   std::string connectPassword;
   std::string playerName = "OpenBF2";  // --name: під яким іменем заходимо
   std::string calibrate;               // --calibrate <файл>: зіставити номери шаблонів
-  std::string miscHash;                // --misc-hash: перший хеш перевірки вмісту
+  // --ordinal: номер рядка у файлах відбитків. Сервер обирає його при
+  // завантаженні рівня; звідки його дізнається справжній клієнт — ще не
+  // знайдено, тож поки задаємо руками.
+  int ordinal = 0;
   int team = 1;                        // --team, --kit, --group: вибір при появі
   int kit = 0;
   int spawnGroup = 1;
@@ -92,7 +98,7 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--connect-password" && i + 1 < argc) args.connectPassword = argv[++i];
     else if (flag == "--name" && i + 1 < argc) args.playerName = argv[++i];
     else if (flag == "--calibrate" && i + 1 < argc) args.calibrate = argv[++i];
-    else if (flag == "--misc-hash" && i + 1 < argc) args.miscHash = argv[++i];
+    else if (flag == "--ordinal" && i + 1 < argc) args.ordinal = std::atoi(argv[++i]);
     else if (flag == "--team" && i + 1 < argc) args.team = std::atoi(argv[++i]);
     else if (flag == "--kit" && i + 1 < argc) args.kit = std::atoi(argv[++i]);
     else if (flag == "--group" && i + 1 < argc) args.spawnGroup = std::atoi(argv[++i]);
@@ -571,25 +577,21 @@ struct ContentHashes {
   std::array<std::byte, 16> level{};
 };
 
-std::optional<ContentHashes> contentHashes(obf2::FileSystem& files, const Args& args,
-                                           const std::string& levelName) {
+std::optional<ContentHashes> contentHashes(obf2::FileSystem& files, const std::string& levelName,
+                                           int ordinal) {
   ContentHashes out;
 
-  // Номер рядка у файлах відбитків — той, що дає getChallengeOrdinal().
-  constexpr int kOrdinal = 0;
 
-  if (args.miscHash.size() != 32) return std::nullopt;
-  for (std::size_t i = 0; i < out.misc.size(); ++i) {
-    const auto digit = [](char c) -> int {
-      if (c >= '0' && c <= '9') return c - '0';
-      if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-      if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-      return -1;
-    };
-    const int hi = digit(args.miscHash[i * 2]), lo = digit(args.miscHash[i * 2 + 1]);
-    if (hi < 0 || lo < 0) return std::nullopt;
-    out.misc[i] = static_cast<std::byte>(hi * 16 + lo);
+  // Перший хеш: MD5 по чотирьох файлах мода, саме в такому порядку.
+  // Імена взято з `ChecksumContext::runMiscChecksum`.
+  obf2::net::Md5 misc;
+  for (const char* name : {"ClientArchives.con", "ServerArchives.con", "Init.con",
+                           "GameLogicInit.con"}) {
+    const auto data = files.read(name);
+    if (!data) return std::nullopt;
+    misc.update(*data);
   }
+  out.misc = misc.finish();
 
   const auto readText = [&files](const std::string& path) -> std::string {
     const auto data = files.read(path);
@@ -599,8 +601,8 @@ std::optional<ContentHashes> contentHashes(obf2::FileSystem& files, const Args& 
 
   const std::string archivesText = readText("std_archive.md5");
   const std::string levelText = readText("levels/" + levelName + "/archive.md5");
-  const auto archives = obf2::net::bf2::readFingerprint(archivesText, kOrdinal);
-  const auto level = obf2::net::bf2::readFingerprint(levelText, kOrdinal);
+  const auto archives = obf2::net::bf2::readFingerprint(archivesText, ordinal);
+  const auto level = obf2::net::bf2::readFingerprint(levelText, ordinal);
   if (!archives || !level) return std::nullopt;
   out.archives = *archives;
   out.level = *level;
@@ -699,7 +701,8 @@ int runConnect(const Args& args, obf2::FileSystem& files) {
   int pings = 0, dataPackets = 0, other = 0, challenges = 0;
   int eventCount = 0, objectCount = 0;
   std::uint8_t lastServerSequence = 0;
-  int ghostPackets = 0;
+  int ghostPackets = 0, ghostRecords = 0;
+  std::set<std::uint16_t> ghostObjects;
   std::size_t dataBytes = 0;
   std::uint8_t sequence = 0;
   std::uint8_t batch = 0;
@@ -726,10 +729,10 @@ int runConnect(const Args& args, obf2::FileSystem& files) {
               id, next, batch++, obf2::net::bf2::kNetworkCategory,
               obf2::net::bf2::kNetLoadComplete));
           std::printf("  крок: рівень завантажено\n");
-          step = args.miscHash.empty() ? Step::Team : Step::Content;
+          step = Step::Content;
           break;
         case Step::Content: {
-          const auto hashes = contentHashes(files, args, levelName);
+          const auto hashes = contentHashes(files, levelName, args.ordinal);
           if (!hashes) {
             std::printf("  перевірку вмісту пропущено: %s\n", "немає відбитків");
             step = Step::Team;
@@ -820,6 +823,10 @@ int runConnect(const Args& args, obf2::FileSystem& files) {
           if (ghostPackets <= 3) {
             std::printf("  привиди: час %u, записів %u%s\n", ghost->time, ghost->records,
                         ghost->controlObjectState ? ", є стан керованого об'єкта" : "");
+          }
+          for (const auto& record : obf2::net::bf2::readGhostRecords(*more)) {
+            ++ghostRecords;
+            ghostObjects.insert(record.networkId);
           }
         }
 
@@ -945,7 +952,8 @@ int runConnect(const Args& args, obf2::FileSystem& files) {
   // Якщо виклик прийшов один раз — сервер прийняв нашу відповідь. Поки
   // вона його не влаштовує, він шле виклик знову й знову.
   std::printf("  подій розібрано: %d, з них об'єктів світу: %d\n", eventCount, objectCount);
-  std::printf("  пакетів із потоком привидів: %d\n", ghostPackets);
+  std::printf("  пакетів із потоком привидів: %d, оновлень стану: %d, різних об'єктів: %zu\n",
+              ghostPackets, ghostRecords, ghostObjects.size());
   if (!checked.empty()) {
     std::printf("  різних шаблонів: %zu\n", checked.size());
     for (const auto& [stage, count] : stageCounts) {

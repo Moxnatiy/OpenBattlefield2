@@ -514,6 +514,34 @@ def walk_events(data):
     return out
 
 
+# Ширина поля довжини в записі привида. У рушії вона обчислюється на
+# льоту (`GhostManager` тримає її в полі 0x4298), а на дроті виявилася
+# рівно одинадцять бітів: із нею всі 132 пакети зразка розбираються до
+# останнього байта, з будь-якою іншою — жоден.
+GHOST_LENGTH_BITS = 11
+
+
+def read_ghost_record(r):
+    """Один запис потоку привидів (`GhostManager::readData`).
+
+        2  вид
+       16  мережевий номер
+    вид 1: 1 біт, 11 бітів довжини вмісту, сам вміст
+    вид 0: більше нічого
+    вид 3: об'єкт зникає (рушій шукає його в NetworkManager)
+    вид 2: рушій вважає це помилкою потоку
+    """
+    kind = r.read(2)
+    out = {"вид": kind, "номер": r.read(16)}
+    if kind == 1:
+        out["прапорець"] = r.read(1)
+        length = r.read(GHOST_LENGTH_BITS)
+        out["бітів вмісту"] = length
+        out["вміст"] = r.at
+        r.at += length
+    return out
+
+
 def read_ghosts(r):
     """Потік привидів у хвості пакета (`GhostManager::processReceivedPacket`).
 
@@ -522,11 +550,16 @@ def read_ghosts(r):
     """
     if r.read(1) != 1:
         return None
-    return {
+    out = {
         "час": r.read(32),
         "записів": r.read(8),
         "керований об'єкт": r.read(1),
     }
+    # Стан керованого об'єкта йде перед записами і поки не розібраний,
+    # тож у таких пакетах записи не читаємо.
+    if not out["керований об'єкт"]:
+        out["записи"] = [read_ghost_record(r) for _ in range(out["записів"])]
+    return out
 
 
 # --- перевірка вмісту ---
