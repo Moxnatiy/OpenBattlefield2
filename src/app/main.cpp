@@ -61,6 +61,9 @@ struct Args {
   // орієнтацію світу з власною мінімапою рівня.
   bool topDown = false;
   std::string connectTo;      // --connect <хост[:порт]>: справжній сервер BF2
+  // --probe: тільки розбір протоколу, без вікна. Без нього --connect
+  // відкриває світ, як і належить клієнтові.
+  bool probe = false;
   std::string connectPassword;
   std::string playerName = "OpenBF2";  // --name: під яким іменем заходимо
   std::string calibrate;               // --calibrate <файл>: зіставити номери шаблонів
@@ -95,6 +98,7 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--verbose-menu") args.verboseMenu = true;
     else if (flag == "--topdown") args.topDown = true;
     else if (flag == "--connect" && i + 1 < argc) args.connectTo = argv[++i];
+    else if (flag == "--probe") args.probe = true;
     else if (flag == "--connect-password" && i + 1 < argc) args.connectPassword = argv[++i];
     else if (flag == "--name" && i + 1 < argc) args.playerName = argv[++i];
     else if (flag == "--calibrate" && i + 1 < argc) args.calibrate = argv[++i];
@@ -609,82 +613,28 @@ std::optional<ContentHashes> contentHashes(obf2::FileSystem& files, const std::s
   return out;
 }
 
-// Під'єднання до справжнього сервера BF2. Поки що це саме рукостискання:
-// запит, відповідь, підтвердження. Далі має йти потік даних, який ще не
-// розібрано — але вже видно, чи сервер нас узагалі приймає.
-int runConnect(const Args& args, obf2::FileSystem& files) {
-  std::string host = args.connectTo;
-  std::uint16_t port = 16567;  // типовий ігровий порт BF2
-  if (const std::size_t colon = host.rfind(':'); colon != std::string::npos) {
-    port = static_cast<std::uint16_t>(std::atoi(host.c_str() + colon + 1));
-    host = host.substr(0, colon);
-  }
+// Зв'язок зі справжнім сервером BF2, який живе разом із вікном: одне
+// й те саме з'єднання спершу доводить рукостискання до кінця, а потім
+// крутиться в кадровому циклі. Саме так робить і оригінал — сесія не
+// закінчується на тому, що сервер нас прийняв.
+struct RemoteWorld {
+  RemoteWorld(const Args& a, obf2::FileSystem& f) : args(a), files(f) {}
 
-  std::string error;
-  auto socket = obf2::net::UdpSocket::connect(host, port, &error);
-  if (!socket) {
-    std::fprintf(stderr, "%s\n", error.c_str());
-    return 1;
-  }
-  std::printf("під'єднання: %s\n", socket->describe().c_str());
+  const Args& args;
+  obf2::FileSystem& files;
+  std::unique_ptr<obf2::net::UdpSocket> socket;
+  std::uint8_t id = 0;
 
-  obf2::net::bf2::ConnectRequest request;
-  request.password = args.connectPassword;
-  // Сервер звіряє теку мода з власною (`GSModDirectory`), і при розбіжності
-  // сам присилає свою — тому помилку видно одразу.
-  request.modDirectory = "mods/bf2";
-
-  if (!socket->send(obf2::net::bf2::writeConnectRequest(request))) {
-    std::fprintf(stderr, "не вдалося надіслати запит\n");
-    return 1;
-  }
-  std::printf("  надіслано запит: протокол %#x, версія %#x\n", request.magic, request.version);
-
-  const auto reply = socket->receive(2000);
-  if (!reply) {
-    std::fprintf(stderr, "  сервер мовчить\n");
-    return 1;
-  }
-
-  const auto packet = obf2::net::bf2::readPacket(*reply);
-  if (!packet) {
-    std::fprintf(stderr, "  прийшло %zu байтів, але це не пакет\n", reply->size());
-    return 1;
-  }
-
-  if (packet->denied) {
-    std::printf("  відмова: %s\n",
-                std::string(obf2::net::bf2::denyReasonName(packet->denied->reason)).c_str());
-    if (!packet->denied->modDirectory.empty()) {
-      std::printf("  сервер хоче теку %s\n", packet->denied->modDirectory.c_str());
-    }
-    return 1;
-  }
-
-  if (!packet->accept) {
-    std::printf("  несподіваний пакет типу %d\n", static_cast<int>(packet->kind));
-    return 1;
-  }
-
-  std::printf("  ПРИЙНЯТО: з'єднання %d, час сервера %u мс, PunkBuster %s\n",
-              packet->accept->connectionId, packet->accept->serverTime,
-              packet->accept->punkBuster ? "увімкнено" : "вимкнено");
-
-  // Рушій чекає підтвердження — лише після нього з'єднання стає робочим
-  // (у `NetServer::_update` стан 1 -> 2).
-  socket->send(obf2::net::bf2::writeShortPacket(obf2::net::bf2::PacketKind::ConnectAcceptAck,
-                                                packet->accept->connectionId));
-  std::printf("  надіслано підтвердження\n");
 
   // Далі тримаємо зв'язок: сервер шле пінги, і без відповіді він нас
   // відключить. Заразом рахуємо, що саме приходить.
-  const std::uint8_t id = packet->accept->connectionId;
 
   // Рівень беремо від сервера, як в оригіналі: він шле його блоком даних
   // типу 5 одразу після реєстрації. Далі стежимо, що з отриманих
   // об'єктів доходить до екрана — сервер каже номер і місце, місце дає
   // назву шаблона, а потім той самий шлях, що й у грі.
   std::vector<KnownObject> known;
+  std::map<std::uint16_t, obf2::Vec3f> objects;  // номер -> де стоїть
   obf2::game::Registry registry;
   std::map<std::string, DrawStage> checked;
   std::map<DrawStage, int> stageCounts;
@@ -696,7 +646,7 @@ int runConnect(const Args& args, obf2::FileSystem& files) {
   // один пакет не можна.
   enum class Step { Level, Content, Database, Team, Kit, Group, Done };
   Step step = Step::Level;
-  auto lastStep = std::chrono::steady_clock::now();
+  std::chrono::steady_clock::time_point lastStep = std::chrono::steady_clock::now();
   std::string levelName;
   int pings = 0, dataPackets = 0, other = 0, challenges = 0;
   int eventCount = 0, objectCount = 0;
@@ -708,267 +658,360 @@ int runConnect(const Args& args, obf2::FileSystem& files) {
   std::uint8_t batch = 0;
   bool answered = false;
 
-  for (int i = 0; i < 90; ++i) {
-    // Наступний крок ланцюжка — раз на кілька обертів, щоб сервер
-    // устигав виконати попередній.
-    // Пауза між кроками — за годинником, а не за обертами циклу:
-    // мережеві події виконуються наступним тактом сервера, і якщо
-    // надіслати наступний крок раніше, він застане старий стан.
-    const auto now = std::chrono::steady_clock::now();
-    if (levelReady && step != Step::Done &&
-        now - lastStep >= std::chrono::seconds(3)) {
-      lastStep = now;
-      obf2::net::bf2::ExtendedHeader next;
-      next.sequence = sequence++ & 0x3F;
-      next.ack = lastServerSequence;
-      next.ackBits = 0xFFFFFFFFu;
 
-      switch (step) {
-        case Step::Level:
-          socket->send(obf2::net::bf2::writePostRemoteEvent(
-              id, next, batch++, obf2::net::bf2::kNetworkCategory,
-              obf2::net::bf2::kNetLoadComplete));
-          std::printf("  крок: рівень завантажено\n");
-          step = Step::Content;
-          break;
-        case Step::Content: {
-          const auto hashes = contentHashes(files, levelName, args.ordinal);
-          if (!hashes) {
-            std::printf("  перевірку вмісту пропущено: %s\n", "немає відбитків");
-            step = Step::Team;
+  // Рукостискання: запит, відповідь сервера, підтвердження.
+  bool connect() {
+    std::string host = args.connectTo;
+    std::uint16_t port = 16567;  // типовий ігровий порт BF2
+    if (const std::size_t colon = host.rfind(':'); colon != std::string::npos) {
+      port = static_cast<std::uint16_t>(std::atoi(host.c_str() + colon + 1));
+      host = host.substr(0, colon);
+    }
+
+    std::string error;
+    socket = obf2::net::UdpSocket::connect(host, port, &error);
+    if (!socket) {
+      std::fprintf(stderr, "%s\n", error.c_str());
+      return false;
+    }
+    std::printf("під'єднання: %s\n", socket->describe().c_str());
+
+    obf2::net::bf2::ConnectRequest request;
+    request.password = args.connectPassword;
+    // Сервер звіряє теку мода з власною (`GSModDirectory`), і при розбіжності
+    // сам присилає свою — тому помилку видно одразу.
+    request.modDirectory = "mods/bf2";
+
+    if (!socket->send(obf2::net::bf2::writeConnectRequest(request))) {
+      std::fprintf(stderr, "не вдалося надіслати запит\n");
+      return false;
+    }
+    std::printf("  надіслано запит: протокол %#x, версія %#x\n", request.magic, request.version);
+
+    const auto reply = socket->receive(2000);
+    if (!reply) {
+      std::fprintf(stderr, "  сервер мовчить\n");
+      return false;
+    }
+
+    const auto packet = obf2::net::bf2::readPacket(*reply);
+    if (!packet) {
+      std::fprintf(stderr, "  прийшло %zu байтів, але це не пакет\n", reply->size());
+      return false;
+    }
+
+    if (packet->denied) {
+      std::printf("  відмова: %s\n",
+                  std::string(obf2::net::bf2::denyReasonName(packet->denied->reason)).c_str());
+      if (!packet->denied->modDirectory.empty()) {
+        std::printf("  сервер хоче теку %s\n", packet->denied->modDirectory.c_str());
+      }
+      return false;
+    }
+
+    if (!packet->accept) {
+      std::printf("  несподіваний пакет типу %d\n", static_cast<int>(packet->kind));
+      return false;
+    }
+
+    std::printf("  ПРИЙНЯТО: з'єднання %d, час сервера %u мс, PunkBuster %s\n",
+                packet->accept->connectionId, packet->accept->serverTime,
+                packet->accept->punkBuster ? "увімкнено" : "вимкнено");
+
+    // Рушій чекає підтвердження — лише після нього з'єднання стає робочим
+    // (у `NetServer::_update` стан 1 -> 2).
+    socket->send(obf2::net::bf2::writeShortPacket(obf2::net::bf2::PacketKind::ConnectAcceptAck,
+                                                  packet->accept->connectionId));
+    std::printf("  надіслано підтвердження\n");
+    id = packet->accept->connectionId;
+    return true;
+  }
+
+  // Один оберт: рухаємо ланцюжок появи і читаємо, що прийшло. Чекати
+  // довго можна лише поза кадром — у кадрі це були б завмирання.
+  void pump(int timeoutMs) {
+      // Наступний крок ланцюжка — раз на кілька обертів, щоб сервер
+      // устигав виконати попередній.
+      // Пауза між кроками — за годинником, а не за обертами циклу:
+      // мережеві події виконуються наступним тактом сервера, і якщо
+      // надіслати наступний крок раніше, він застане старий стан.
+      const auto now = std::chrono::steady_clock::now();
+      if (levelReady && step != Step::Done &&
+          now - lastStep >= std::chrono::seconds(3)) {
+        lastStep = now;
+        obf2::net::bf2::ExtendedHeader next;
+        next.sequence = sequence++ & 0x3F;
+        next.ack = lastServerSequence;
+        next.ackBits = 0xFFFFFFFFu;
+
+        switch (step) {
+          case Step::Level:
+            socket->send(obf2::net::bf2::writePostRemoteEvent(
+                id, next, batch++, obf2::net::bf2::kNetworkCategory,
+                obf2::net::bf2::kNetLoadComplete));
+            std::printf("  крок: рівень завантажено\n");
+            step = Step::Content;
+            break;
+          case Step::Content: {
+            const auto hashes = contentHashes(files, levelName, args.ordinal);
+            if (!hashes) {
+              std::printf("  перевірку вмісту пропущено: %s\n", "немає відбитків");
+              step = Step::Team;
+              break;
+            }
+            const auto packet = obf2::net::bf2::writeContentCheckEvent(
+                id, next, batch++, hashes->misc, hashes->archives, hashes->level);
+            {
+              std::string hex;
+              for (std::size_t k = 0; k < std::min<std::size_t>(packet.size(), 20); ++k) {
+                char pair[4];
+                std::snprintf(pair, sizeof(pair), "%02x ", std::to_integer<int>(packet[k]));
+                hex += pair;
+              }
+              std::printf("  пакет перевірки (%zu б): %s\n", packet.size(), hex.c_str());
+            }
+            socket->send(packet);
+            const auto show = [](const std::array<std::byte, 16>& hash) {
+              std::string out;
+              for (const auto byte : hash) {
+                char pair[3];
+                std::snprintf(pair, sizeof(pair), "%02x", std::to_integer<int>(byte));
+                out += pair;
+              }
+              return out;
+            };
+            std::printf("  крок: перевірка вмісту\n    %s\n    %s\n    %s\n",
+                        show(hashes->misc).c_str(), show(hashes->archives).c_str(),
+                        show(hashes->level).c_str());
+            step = Step::Database;
             break;
           }
-          const auto packet = obf2::net::bf2::writeContentCheckEvent(
-              id, next, batch++, hashes->misc, hashes->archives, hashes->level);
-          {
-            std::string hex;
-            for (std::size_t k = 0; k < std::min<std::size_t>(packet.size(), 20); ++k) {
-              char pair[4];
-              std::snprintf(pair, sizeof(pair), "%02x ", std::to_integer<int>(packet[k]));
-              hex += pair;
-            }
-            std::printf("  пакет перевірки (%zu б): %s\n", packet.size(), hex.c_str());
-          }
-          socket->send(packet);
-          const auto show = [](const std::array<std::byte, 16>& hash) {
-            std::string out;
-            for (const auto byte : hash) {
-              char pair[3];
-              std::snprintf(pair, sizeof(pair), "%02x", std::to_integer<int>(byte));
-              out += pair;
-            }
-            return out;
-          };
-          std::printf("  крок: перевірка вмісту\n    %s\n    %s\n    %s\n",
-                      show(hashes->misc).c_str(), show(hashes->archives).c_str(),
-                      show(hashes->level).c_str());
-          step = Step::Database;
+          case Step::Database:
+            socket->send(obf2::net::bf2::writePostRemoteEvent(
+                id, next, batch++, obf2::net::bf2::kNetworkCategory,
+                obf2::net::bf2::kNetDatabaseComplete));
+            std::printf("  крок: база гравців отримана\n");
+            step = Step::Team;
+            break;
+          case Step::Team:
+            socket->send(obf2::net::bf2::writePostRemoteEvent(
+                id, next, batch++, obf2::net::bf2::kNetworkCategory,
+                obf2::net::bf2::kNetSelectTeam, args.team));
+            std::printf("  крок: команда %d\n", args.team);
+            step = Step::Kit;
+            break;
+          case Step::Kit:
+            socket->send(obf2::net::bf2::writePostRemoteEvent(
+                id, next, batch++, obf2::net::bf2::kNetworkCategory,
+                obf2::net::bf2::kNetSelectKit, args.kit));
+            std::printf("  крок: набір %d\n", args.kit);
+            step = Step::Group;
+            break;
+          case Step::Group:
+            socket->send(obf2::net::bf2::writePostRemoteEvent(
+                id, next, batch++, obf2::net::bf2::kNetworkCategory,
+                obf2::net::bf2::kNetSelectSpawnGroup, args.spawnGroup));
+            std::printf("  крок: місце появи %d\n", args.spawnGroup);
+            step = Step::Done;
+            break;
+          case Step::Done: break;
+        }
+      }
+
+      const auto more = socket->receive(timeoutMs);
+      if (!more) return;
+      const auto parsed = obf2::net::bf2::readPacket(*more);
+      if (!parsed) return;
+      if (parsed->extended) lastServerSequence = parsed->extended->sequence;
+
+      switch (parsed->kind) {
+        case obf2::net::bf2::PacketKind::PingRequest: {
+          ++pings;
+          obf2::net::bf2::ExtendedHeader header;
+          header.sequence = sequence++ & 0x3F;
+          if (parsed->extended) header.ack = parsed->extended->sequence;
+          header.ackBits = 0xFFFFFFFFu;
+          socket->send(obf2::net::bf2::writePingResponse(id, header,
+                                                         parsed->pingTime.value_or(0)));
           break;
         }
-        case Step::Database:
-          socket->send(obf2::net::bf2::writePostRemoteEvent(
-              id, next, batch++, obf2::net::bf2::kNetworkCategory,
-              obf2::net::bf2::kNetDatabaseComplete));
-          std::printf("  крок: база гравців отримана\n");
-          step = Step::Team;
-          break;
-        case Step::Team:
-          socket->send(obf2::net::bf2::writePostRemoteEvent(
-              id, next, batch++, obf2::net::bf2::kNetworkCategory,
-              obf2::net::bf2::kNetSelectTeam, args.team));
-          std::printf("  крок: команда %d\n", args.team);
-          step = Step::Kit;
-          break;
-        case Step::Kit:
-          socket->send(obf2::net::bf2::writePostRemoteEvent(
-              id, next, batch++, obf2::net::bf2::kNetworkCategory,
-              obf2::net::bf2::kNetSelectKit, args.kit));
-          std::printf("  крок: набір %d\n", args.kit);
-          step = Step::Group;
-          break;
-        case Step::Group:
-          socket->send(obf2::net::bf2::writePostRemoteEvent(
-              id, next, batch++, obf2::net::bf2::kNetworkCategory,
-              obf2::net::bf2::kNetSelectSpawnGroup, args.spawnGroup));
-          std::printf("  крок: місце появи %d\n", args.spawnGroup);
-          step = Step::Done;
-          break;
-        case Step::Done: break;
-      }
-    }
+        case obf2::net::bf2::PacketKind::Data: {
+          ++dataPackets;
+          dataBytes += more->size();
 
-    const auto more = socket->receive(500);
-    if (!more) continue;
-    const auto parsed = obf2::net::bf2::readPacket(*more);
-    if (!parsed) continue;
-    if (parsed->extended) lastServerSequence = parsed->extended->sequence;
-
-    switch (parsed->kind) {
-      case obf2::net::bf2::PacketKind::PingRequest: {
-        ++pings;
-        obf2::net::bf2::ExtendedHeader header;
-        header.sequence = sequence++ & 0x3F;
-        if (parsed->extended) header.ack = parsed->extended->sequence;
-        header.ackBits = 0xFFFFFFFFu;
-        socket->send(obf2::net::bf2::writePingResponse(id, header,
-                                                       parsed->pingTime.value_or(0)));
-        break;
-      }
-      case obf2::net::bf2::PacketKind::Data: {
-        ++dataPackets;
-        dataBytes += more->size();
-
-        if (const auto ghost = obf2::net::bf2::readGhostHeader(*more)) {
-          ++ghostPackets;
-          if (ghostPackets <= 3) {
-            std::printf("  привиди: час %u, записів %u%s\n", ghost->time, ghost->records,
-                        ghost->controlObjectState ? ", є стан керованого об'єкта" : "");
+          if (const auto ghost = obf2::net::bf2::readGhostHeader(*more)) {
+            ++ghostPackets;
+            if (ghostPackets <= 3) {
+              std::printf("  привиди: час %u, записів %u%s\n", ghost->time, ghost->records,
+                          ghost->controlObjectState ? ", є стан керованого об'єкта" : "");
+            }
+            for (const auto& record : obf2::net::bf2::readGhostRecords(*more)) {
+              ++ghostRecords;
+              ghostObjects.insert(record.networkId);
+            }
           }
-          for (const auto& record : obf2::net::bf2::readGhostRecords(*more)) {
-            ++ghostRecords;
-            ghostObjects.insert(record.networkId);
-          }
-        }
 
-        // Розбираємо всі події з пакета: за таблицею розмірів кожну
-        // можна пропустити рівно на її довжину, тож незнайомі типи не
-        // збивають розбір наступних.
-        for (const auto& event : obf2::net::bf2::readEvents(*more)) {
-          ++eventCount;
-          if (event.block) {
-            const auto done = blocks.feed(*event.block);
-            if (done && done->first == obf2::net::bf2::kMapInfoBlock && !levelReady) {
-              if (const auto info = obf2::net::bf2::parseMapInfo(done->second)) {
-                std::printf("  сервер грає %s, режим %s, розмір %d\n", info->levelName.c_str(),
-                            info->gameMode.c_str(), info->size);
-                std::string levelError;
-                if (!obf2::level::mountLevel(files, args.modDir, info->levelName, &levelError)) {
-                  std::printf("  рівень не змонтовано: %s\n", levelError.c_str());
-                } else {
-                  known = buildKnownObjects(files, info->levelName, &levelError);
-                  registry = buildRegistry(files);
-                  std::printf("  рівень прочитано: відомих об'єктів %zu\n", known.size());
+          // Розбираємо всі події з пакета: за таблицею розмірів кожну
+          // можна пропустити рівно на її довжину, тож незнайомі типи не
+          // збивають розбір наступних.
+          for (const auto& event : obf2::net::bf2::readEvents(*more)) {
+            ++eventCount;
+            if (event.block) {
+              const auto done = blocks.feed(*event.block);
+              if (done && done->first == obf2::net::bf2::kMapInfoBlock && !levelReady) {
+                if (const auto info = obf2::net::bf2::parseMapInfo(done->second)) {
+                  std::printf("  сервер грає %s, режим %s, розмір %d\n", info->levelName.c_str(),
+                              info->gameMode.c_str(), info->size);
+                  std::string levelError;
+                  if (!obf2::level::mountLevel(files, args.modDir, info->levelName, &levelError)) {
+                    std::printf("  рівень не змонтовано: %s\n", levelError.c_str());
+                  } else {
+                    known = buildKnownObjects(files, info->levelName, &levelError);
+                    registry = buildRegistry(files);
+                    std::printf("  рівень прочитано: відомих об'єктів %zu\n", known.size());
+                  }
+                  levelReady = true;
+                  levelName = info->levelName;
                 }
-                levelReady = true;
-                levelName = info->levelName;
-              }
-            }
-            continue;
-          }
-          if (event.object) {
-            ++objectCount;
-            if (!event.object->position) continue;
-            const auto& at = *event.object->position;
-            if (known.empty()) {
-              if (objectCount <= 3) {
-                std::printf("  об'єкт: шаблон %u, номер %u, позиція %.1f %.1f %.1f\n",
-                            event.object->templateId, event.object->networkId, at.x, at.y, at.z);
               }
               continue;
             }
-            const KnownObject* match = nearestKnown(known, at);
-            if (match == nullptr) {
-              std::printf("  не впізнано: шаблон %u @ %.1f %.1f %.1f\n",
-                          event.object->templateId, at.x, at.y, at.z);
-              continue;
-            }
+            if (event.object) {
+              ++objectCount;
+              if (!event.object->position) continue;
+              const auto& at = *event.object->position;
+              // Місця, які сервер нам назвав. З них беремо, звідки
+              // дивитися: свого солдата ми ще не знаємо, а от прапори
+              // сервер присилає одразу — і саме біля них гравець з'являється.
+              objects[event.object->networkId] = at;
+              if (known.empty()) {
+                if (objectCount <= 3) {
+                  std::printf("  об'єкт: шаблон %u, номер %u, позиція %.1f %.1f %.1f\n",
+                              event.object->templateId, event.object->networkId, at.x, at.y, at.z);
+                }
+                continue;
+              }
+              const KnownObject* match = nearestKnown(known, at);
+              if (match == nullptr) {
+                std::printf("  не впізнано: шаблон %u @ %.1f %.1f %.1f\n",
+                            event.object->templateId, at.x, at.y, at.z);
+                continue;
+              }
 
-            auto found = checked.find(match->name);
-            if (found == checked.end()) {
-              const DrawStage stage = checkDrawable(files, registry, match->name, args);
-              found = checked.emplace(match->name, stage).first;
-              ++stageCounts[stage];
+              auto found = checked.find(match->name);
+              if (found == checked.end()) {
+                const DrawStage stage = checkDrawable(files, registry, match->name, args);
+                found = checked.emplace(match->name, stage).first;
+                ++stageCounts[stage];
+              }
+              if (found->second != DrawStage::Drawn) {
+                std::printf("  НЕ ВИДНО: %-44s %s\n", match->name.c_str(),
+                            std::string(drawStageName(found->second)).c_str());
+              }
             }
-            if (found->second != DrawStage::Drawn) {
-              std::printf("  НЕ ВИДНО: %-44s %s\n", match->name.c_str(),
-                          std::string(drawStageName(found->second)).c_str());
+            if (event.player) {
+              std::printf("  гравець: %s (номер %u, команда %u)\n",
+                          event.player->name.c_str(), event.player->id, event.player->team);
             }
           }
-          if (event.player) {
-            std::printf("  гравець: %s (номер %u, команда %u)\n",
-                        event.player->name.c_str(), event.player->id, event.player->team);
+          if (parsed->challenge) {
+            ++challenges;
+            if (!answered) {
+              std::printf("  подія-виклик: %s, мод %s\n", parsed->challenge->challenge.c_str(),
+                          parsed->challenge->modDirectory.c_str());
+
+              obf2::net::bf2::ExtendedHeader header;
+              header.sequence = sequence++ & 0x3F;
+              if (parsed->extended) header.ack = parsed->extended->sequence;
+              // Одиниці в масці означають «усе попереднє дійшло». Без цього
+              // сервер вважає подію непідтвердженою й шле її знову й знову.
+              header.ackBits = 0xFFFFFFFFu;
+              socket->send(obf2::net::bf2::writeChallengeResponse(id, header, batch++));
+              std::printf("  надіслано відповідь на виклик\n");
+              answered = true;
+
+              // Далі рушій чекає на блок із відомостями про клієнта: без
+              // нього гравця не існує. Блок їде подіями — спершу заголовок
+              // із типом і розміром, потім шматки.
+              obf2::net::bf2::ClientInfo info;
+              info.name = args.playerName;
+              info.nameHash = obf2::net::bf2::clientInfoNameHash(info.name);
+              const auto blob = obf2::net::bf2::buildClientInfo(info);
+
+              const auto nextHeader = [&]() {
+                obf2::net::bf2::ExtendedHeader next;
+                next.sequence = sequence++ & 0x3F;
+                if (parsed->extended) next.ack = parsed->extended->sequence;
+                next.ackBits = 0xFFFFFFFFu;
+                return next;
+              };
+
+              socket->send(obf2::net::bf2::writeDataBlockHeader(
+                  id, nextHeader(), batch++, obf2::net::bf2::kClientInfoBlock,
+                  static_cast<std::uint32_t>(blob.size())));
+              for (std::size_t at = 0; at < blob.size(); at += 200) {
+                const auto count = std::min<std::size_t>(200, blob.size() - at);
+                socket->send(obf2::net::bf2::writeDataBlockChunk(
+                    id, nextHeader(), batch++,
+                    std::span<const std::byte>(blob.data() + at, count)));
+              }
+              std::printf("  надіслано ClientInfo: ім'я %s, %zu байтів\n",
+                          info.name.c_str(), blob.size());
+
+            }
           }
+          break;
         }
-        if (parsed->challenge) {
-          ++challenges;
-          if (!answered) {
-            std::printf("  подія-виклик: %s, мод %s\n", parsed->challenge->challenge.c_str(),
-                        parsed->challenge->modDirectory.c_str());
-
-            obf2::net::bf2::ExtendedHeader header;
-            header.sequence = sequence++ & 0x3F;
-            if (parsed->extended) header.ack = parsed->extended->sequence;
-            // Одиниці в масці означають «усе попереднє дійшло». Без цього
-            // сервер вважає подію непідтвердженою й шле її знову й знову.
-            header.ackBits = 0xFFFFFFFFu;
-            socket->send(obf2::net::bf2::writeChallengeResponse(id, header, batch++));
-            std::printf("  надіслано відповідь на виклик\n");
-            answered = true;
-
-            // Далі рушій чекає на блок із відомостями про клієнта: без
-            // нього гравця не існує. Блок їде подіями — спершу заголовок
-            // із типом і розміром, потім шматки.
-            obf2::net::bf2::ClientInfo info;
-            info.name = args.playerName;
-            info.nameHash = obf2::net::bf2::clientInfoNameHash(info.name);
-            const auto blob = obf2::net::bf2::buildClientInfo(info);
-
-            const auto nextHeader = [&]() {
-              obf2::net::bf2::ExtendedHeader next;
-              next.sequence = sequence++ & 0x3F;
-              if (parsed->extended) next.ack = parsed->extended->sequence;
-              next.ackBits = 0xFFFFFFFFu;
-              return next;
-            };
-
-            socket->send(obf2::net::bf2::writeDataBlockHeader(
-                id, nextHeader(), batch++, obf2::net::bf2::kClientInfoBlock,
-                static_cast<std::uint32_t>(blob.size())));
-            for (std::size_t at = 0; at < blob.size(); at += 200) {
-              const auto count = std::min<std::size_t>(200, blob.size() - at);
-              socket->send(obf2::net::bf2::writeDataBlockChunk(
-                  id, nextHeader(), batch++,
-                  std::span<const std::byte>(blob.data() + at, count)));
-            }
-            std::printf("  надіслано ClientInfo: ім'я %s, %zu байтів\n",
-                        info.name.c_str(), blob.size());
-
+        default:
+          ++other;
+          if (other <= 4) {
+            std::printf("  інший пакет: тип %d\n", static_cast<int>(parsed->kind));
           }
-        }
-        break;
+          break;
       }
-      default:
-        ++other;
-        if (other <= 4) {
-          std::printf("  інший пакет: тип %d\n", static_cast<int>(parsed->kind));
-        }
-        break;
-    }
   }
 
-  std::printf("  за 30 секунд: пінгів %d (на всі відповіли), пакетів даних %d (%zu байтів), "
-              "інших %d\n",
-              pings, dataPackets, dataBytes, other);
-  // Якщо виклик прийшов один раз — сервер прийняв нашу відповідь. Поки
-  // вона його не влаштовує, він шле виклик знову й знову.
-  std::printf("  подій розібрано: %d, з них об'єктів світу: %d\n", eventCount, objectCount);
-  std::printf("  пакетів із потоком привидів: %d, оновлень стану: %d, різних об'єктів: %zu\n",
-              ghostPackets, ghostRecords, ghostObjects.size());
-  if (!checked.empty()) {
-    std::printf("  різних шаблонів: %zu\n", checked.size());
-    for (const auto& [stage, count] : stageCounts) {
-      std::printf("    %-24s %d\n", std::string(drawStageName(stage)).c_str(), count);
-    }
-  }
-  std::printf("  викликів отримано: %d %s\n", challenges,
-              challenges == 1 ? "(відповідь прийнято)" : "(відповідь не прийнято)");
+  void report() {
 
-  socket->send(obf2::net::bf2::writeShortPacket(obf2::net::bf2::PacketKind::Disconnect,
-                                                packet->accept->connectionId));
+    std::printf("  за 30 секунд: пінгів %d (на всі відповіли), пакетів даних %d (%zu байтів), "
+                "інших %d\n",
+                pings, dataPackets, dataBytes, other);
+    // Якщо виклик прийшов один раз — сервер прийняв нашу відповідь. Поки
+    // вона його не влаштовує, він шле виклик знову й знову.
+    std::printf("  подій розібрано: %d, з них об'єктів світу: %d\n", eventCount, objectCount);
+    std::printf("  пакетів із потоком привидів: %d, оновлень стану: %d, різних об'єктів: %zu\n",
+                ghostPackets, ghostRecords, ghostObjects.size());
+    if (!checked.empty()) {
+      std::printf("  різних шаблонів: %zu\n", checked.size());
+      for (const auto& [stage, count] : stageCounts) {
+        std::printf("    %-24s %d\n", std::string(drawStageName(stage)).c_str(), count);
+      }
+    }
+    std::printf("  викликів отримано: %d %s\n", challenges,
+                challenges == 1 ? "(відповідь прийнято)" : "(відповідь не прийнято)");
+
+  }
+
+  void disconnect() {
+    if (!socket) return;
+    socket->send(obf2::net::bf2::writeShortPacket(
+        obf2::net::bf2::PacketKind::Disconnect, id));
+  }
+};
+
+// Текстовий режим: під'єднатися, покрутитися й розповісти, що прийшло.
+// Вікна тут немає навмисно — це знаряддя для розбору протоколу.
+int runProbe(const Args& args, obf2::FileSystem& files) {
+  RemoteWorld remote(args, files);
+  if (!remote.connect()) return 1;
+  for (int i = 0; i < 90; ++i) remote.pump(500);
+  remote.report();
+  remote.disconnect();
   return 0;
 }
 
-int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel) {
+int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel,
+               RemoteWorld* remote = nullptr) {
   // --- підготовка сцени -------------------------------------------------
 
   // Унікальна геометрія окремо від розстановки: на рівні той самий будинок
@@ -1789,6 +1832,11 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
 
   int frame = 0;
   while (device->pumpEvents()) {
+    // Сервер шле пінги й чекає відповіді: якщо мовчати кадр за кадром,
+    // він нас відключить. Тому зв'язок крутиться разом із картинкою, а
+    // чекання тримаємо коротким — інакше це були б завмирання.
+    if (remote != nullptr) remote->pump(1);
+
     auto acquired = device->beginFrame();
     if (!acquired) continue;
 
@@ -2080,7 +2128,39 @@ int main(int argc, char** argv) {
 
   // Під'єднання до справжнього сервера — окремий режим: тут не потрібні
   // ні вікно, ні рівень.
-  if (!args.connectTo.empty()) return runConnect(args, files);
+  if (args.probe) return runProbe(args, files);
+
+  // Гра на справжньому сервері: спершу доводимо рукостискання до того
+  // місця, де сервер каже, який рівень він грає, і аж тоді відкриваємо
+  // вікно — рівень нам призначає він, а не ми.
+  if (!args.connectTo.empty()) {
+    RemoteWorld remote(args, files);
+    if (!remote.connect()) return 1;
+    for (int i = 0; i < 40 && !remote.levelReady; ++i) remote.pump(500);
+    if (!remote.levelReady) {
+      std::fprintf(stderr, "сервер не сказав, який рівень він грає\n");
+      remote.disconnect();
+      return 1;
+    }
+    args.levelName = remote.levelName;
+
+    // Дочекатися хоч кількох об'єктів: сервер шле їх слідом за рівнем, і
+    // перший же прапор каже, куди дивитися. Інакше камера стоїть там,
+    // де ми її поставили самі, — тобто ніде.
+    for (int i = 0; i < 20 && remote.objects.size() < 4; ++i) remote.pump(200);
+    if (!args.focus && !remote.objects.empty()) {
+      const obf2::Vec3f at = remote.objects.begin()->second;
+      std::printf("камера: біля об'єкта %u (%.0f %.0f %.0f)\n",
+                  remote.objects.begin()->first, at.x, at.y, at.z);
+      args.focus = at;
+      if (args.distance <= 0.0f) args.distance = 60.0f;
+    }
+
+    const int code = runSession(args, files, nullptr, &remote);
+    remote.report();
+    remote.disconnect();
+    return code;
+  }
 
   // Меню й гра — це дві сесії поспіль: обраний у меню рівень просто
   // заводить наступну з іншими аргументами.
