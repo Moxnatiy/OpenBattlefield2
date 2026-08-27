@@ -84,6 +84,11 @@ struct Args {
   // тримають клавішу. Потрібно для знімків і для звірки очима.
   std::string hudScreenName;
   float distance = 0.0f;             // 0 = підібрати за габаритами
+  // Гра зроблена під 4:3, і поки що ми тримаємося цього: 1600x1200 — це
+  // рівно вдвічі більше за базові 800x600, тож HUD лягає без залишку.
+  // Широкий екран буде окремою роботою.
+  int width = 1600;
+  int height = 1200;
 };
 
 Args parseArgs(int argc, char** argv) {
@@ -104,6 +109,8 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--topdown") args.topDown = true;
     else if (flag == "--connect" && i + 1 < argc) args.connectTo = argv[++i];
     else if (flag == "--probe") args.probe = true;
+    else if (flag == "--width" && i + 1 < argc) args.width = std::atoi(argv[++i]);
+    else if (flag == "--height" && i + 1 < argc) args.height = std::atoi(argv[++i]);
     else if (flag == "--hud-screen" && i + 1 < argc) args.hudScreenName = argv[++i];
     else if (flag == "--connect-password" && i + 1 < argc) args.connectPassword = argv[++i];
     else if (flag == "--name" && i + 1 < argc) args.playerName = argv[++i];
@@ -1495,8 +1502,8 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       obf2::hud::Context hudContext;
       hudContext.localize = [&](std::string_view key) { return engine.lexicon().text(key); };
 
-      menuScreen.width = 1280;
-      menuScreen.height = 720;
+      menuScreen.width = args.width;
+      menuScreen.height = args.height;
       for (auto& piece : obf2::hud::buildGroup(menuHud, "MainMenu", menuFont.font,
                                                menuFont.atlasPath, menuScreen, hudContext)) {
         scene.meshes.push_back(std::move(piece.geometry));
@@ -1623,13 +1630,21 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
 
   obf2::gfx::WindowDesc desc;
   desc.title = "OpenBattlefield2";
+  desc.width = args.width;
+  desc.height = args.height;
   std::string error;
   auto device = obf2::gfx::Device::create(desc, &error);
   if (!device) {
     std::fprintf(stderr, "не вдалося створити пристрій: %s\n", error.c_str());
     return 1;
   }
-  std::printf("GPU-бекенд: %s\n", std::string(device->driver()).c_str());
+  {
+    int windowWidth = 0, windowHeight = 0;
+    SDL_GetWindowSize(device->window(), &windowWidth, &windowHeight);
+    std::printf("GPU-бекенд: %s | вікно %dx%d (просили %dx%d)\n",
+                std::string(device->driver()).c_str(), windowWidth, windowHeight, args.width,
+                args.height);
+  }
 
   auto renderer = obf2::gfx::MeshRenderer::create(*device, &error);
   if (!renderer) {
@@ -1773,8 +1788,11 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       return found == hudStrings.end() ? std::string_view{} : std::string_view(found->second);
     };
 
-    hudScreen.width = 1280;
-    hudScreen.height = 720;
+    // HUD міряємо **справжнім** вікном, а не тим, що просили: екран міг
+    // виявитися меншим, і вікно з'їхало б разом із запитом.
+    hudScreen.width = args.width;
+    hudScreen.height = args.height;
+    SDL_GetWindowSize(device->window(), &hudScreen.width, &hudScreen.height);
     // Корінь — група Global (Global -> GlobalHud -> IngameHud і далі). Її
     // вузли задані в абсолютних 800x600, тож лягають правильно.
     //

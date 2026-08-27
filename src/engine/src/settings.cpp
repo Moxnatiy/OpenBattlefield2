@@ -28,6 +28,20 @@ void Settings::bind(Console& console) {
   });
   console.bind("renderer.allowAllRefreshRates", [](const con::Command&) {});
 
+  // Роздільність гра тримає ще й тут: `game.setGameDisplayMode 800 600 32 0`
+  // у профілі гравця (Profiles/<профіль>/Video.con). Це та сама
+  // роздільність, з якою BF2 малює HUD, тож беремо її звідси, а не
+  // вигадуємо своєї.
+  console.bind("game.setGameDisplayMode", [this](const con::Command& c) {
+    const auto width = c.argInt(0);
+    const auto height = c.argInt(1);
+    if (width && height && *width > 0 && *height > 0) {
+      video.width = *width;
+      video.height = *height;
+    }
+    if (const auto fullScreen = c.argInt(3)) video.fullScreen = *fullScreen != 0;
+  });
+
   // Рівні якості: у грі це цілі 0..3 (низька/середня/висока/дуже висока).
   console.bind("renderer.setTerrainQuality", [this](const con::Command& c) {
     video.terrainQuality = c.argInt(0).value_or(video.terrainQuality);

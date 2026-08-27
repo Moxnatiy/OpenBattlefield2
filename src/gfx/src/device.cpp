@@ -1,5 +1,8 @@
 #include "obf2/gfx/device.h"
 
+#include <algorithm>
+#include <cmath>
+
 namespace obf2::gfx {
 
 Device::~Device() {
@@ -24,8 +27,43 @@ std::unique_ptr<Device> Device::create(const WindowDesc& desc, std::string* erro
 
   SDL_WindowFlags flags = 0;
   if (desc.resizable) flags |= SDL_WINDOW_RESIZABLE;
-  device->window_ = SDL_CreateWindow(desc.title.c_str(), desc.width, desc.height, flags);
+
+  // Просимо стільки, скільки сказали, але не більше, ніж лишає екран, —
+  // і **зі збереженням сторін**. Це важливо: гра зроблена під 4:3, і якщо
+  // вікно тихо обрізати до розміру екрана, HUD поїде разом із ним.
+  int width = desc.width;
+  int height = desc.height;
+  SDL_Rect usable{};
+  const SDL_DisplayID display = SDL_GetPrimaryDisplay();
+  if (display != 0 && SDL_GetDisplayUsableBounds(display, &usable) && usable.w > 0 &&
+      usable.h > 0 && (width > usable.w || height > usable.h)) {
+    const double scale = std::min(static_cast<double>(usable.w) / width,
+                                  static_cast<double>(usable.h) / height);
+    width = std::max(1, static_cast<int>(width * scale));
+    height = std::max(1, static_cast<int>(height * scale));
+  }
+
+  device->window_ = SDL_CreateWindow(desc.title.c_str(), width, height, flags);
   if (device->window_ == nullptr) return fail("SDL_CreateWindow");
+
+  // Система може врізати вікно ще раз — під смугу меню чи панель. Тоді
+  // сторони пливуть, а нам вони потрібні цілі, тож підганяємо вручну:
+  // беремо найбільший прямокутник потрібних сторін, який туди влазить.
+  int actualWidth = 0;
+  int actualHeight = 0;
+  SDL_GetWindowSize(device->window_, &actualWidth, &actualHeight);
+  if (actualWidth > 0 && actualHeight > 0 && desc.width > 0 && desc.height > 0) {
+    const double wanted = static_cast<double>(desc.width) / desc.height;
+    const double got = static_cast<double>(actualWidth) / actualHeight;
+    if (std::abs(wanted - got) > 0.001) {
+      if (got > wanted) {
+        actualWidth = static_cast<int>(actualHeight * wanted);
+      } else {
+        actualHeight = static_cast<int>(actualWidth / wanted);
+      }
+      SDL_SetWindowSize(device->window_, actualWidth, actualHeight);
+    }
+  }
 
   // Перелічуємо всі формати шейдерів, які вміємо постачати; SDL сам вибере
   // бекенд, доступний на цій платформі.
