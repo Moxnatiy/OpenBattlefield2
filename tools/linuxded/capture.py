@@ -198,7 +198,12 @@ class Capture:
             # Номер рядка у файлах відбитків — «номер виклику». Сервер
             # обирає його при завантаженні рівня й шле в блоці з рівнем
             # першим числом.
+            # Номер виклику приходить у блоці з рівнем першим полем —
+            # знак плюс 31 біт, а не звичайне u32.
             ordinal = self.ordinal
+            if self.map_info:
+                ordinal = p.parse_map_info(self.map_info)["номер виклику"]
+                print("номер виклику: %d" % ordinal)
             s.send_events([p.content_check_event(self.misc_hash,
                                                  archives[ordinal % len(archives)],
                                                  level[ordinal % len(level)])])

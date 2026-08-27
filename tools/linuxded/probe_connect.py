@@ -568,3 +568,27 @@ def content_check_event(first, second, third):
             for byte in raw:
                 w.write(byte, 8)
     return _event(EVENT_CONTENT_CHECK, fill)
+
+
+def parse_map_info(block):
+    """Розбирає блок з рівнем.
+
+    Перше поле — не звичайне u32, а «1 біт знака + 31 біт значення»
+    (`MapInfo::setFromDataBlock` читає його саме так). Через це байти
+    01 00 00 00 означають нуль, а не одиницю — і це номер виклику, за
+    яким беруться рядки у файлах відбитків.
+    """
+    r = Reader(block)
+    sign = r.read(1)
+    ordinal = r.read(31)
+    if sign:
+        ordinal = -ordinal
+
+    def text():
+        length = r.read(16)
+        return r.read_bytes(length).decode("latin-1", "replace")
+
+    level = text()
+    mode = text()
+    size = r.read(16)
+    return {"номер виклику": ordinal, "рівень": level, "режим": mode, "розмір": size}
