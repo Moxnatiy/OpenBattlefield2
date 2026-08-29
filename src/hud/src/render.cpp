@@ -16,7 +16,7 @@ mesh::Vec3 flatNormal() { return mesh::Vec3{0.0f, 1.0f, 0.0f}; }
 // `uMin`/`uMax` дають змогу показати лише частину картинки — так малюється
 // заповнення смуги.
 mesh::RenderMesh quad(const ScreenRect& rect, const Screen& screen, const std::string& texture,
-                      float uMin = 0.0f, float uMax = 1.0f) {
+                      float uMin = 0.0f, float uMax = 1.0f, float vMin = 0.0f, float vMax = 1.0f) {
   auto toNdcX = [&](float pixels) {
     return pixels / static_cast<float>(screen.width) * 2.0f - 1.0f;
   };
@@ -32,10 +32,10 @@ mesh::RenderMesh quad(const ScreenRect& rect, const Screen& screen, const std::s
   const float y1 = toNdcY(rect.y + rect.height);
 
   out.vertices = {
-      mesh::Vertex{{x0, y0, 0.0f}, normal, {uMin, 0.0f}},
-      mesh::Vertex{{x1, y0, 0.0f}, normal, {uMax, 0.0f}},
-      mesh::Vertex{{x0, y1, 0.0f}, normal, {uMin, 1.0f}},
-      mesh::Vertex{{x1, y1, 0.0f}, normal, {uMax, 1.0f}},
+      mesh::Vertex{{x0, y0, 0.0f}, normal, {uMin, vMin}},
+      mesh::Vertex{{x1, y0, 0.0f}, normal, {uMax, vMin}},
+      mesh::Vertex{{x0, y1, 0.0f}, normal, {uMin, vMax}},
+      mesh::Vertex{{x1, y1, 0.0f}, normal, {uMax, vMax}},
   };
   out.indices = {0, 2, 1, 1, 2, 3};
 
@@ -50,6 +50,7 @@ mesh::RenderMesh quad(const ScreenRect& rect, const Screen& screen, const std::s
 // map_Frame.tga кутів не закриває (там прозорість), тож обрізати
 // картинку має сам вузол.
 mesh::RenderMesh disc(const ScreenRect& rect, const Screen& screen, const std::string& texture,
+                      float u0 = 0.0f, float v0 = 0.0f, float u1 = 1.0f, float v1 = 1.0f,
                       int segments = 48) {
   auto toNdcX = [&](float pixels) {
     return pixels / static_cast<float>(screen.width) * 2.0f - 1.0f;
@@ -65,7 +66,11 @@ mesh::RenderMesh disc(const ScreenRect& rect, const Screen& screen, const std::s
   const float rx = rect.width * 0.5f;
   const float ry = rect.height * 0.5f;
 
-  out.vertices.push_back(mesh::Vertex{{toNdcX(cx), toNdcY(cy), 0.0f}, normal, {0.5f, 0.5f}});
+  const float uMid = (u0 + u1) * 0.5f;
+  const float vMid = (v0 + v1) * 0.5f;
+  const float uHalf = (u1 - u0) * 0.5f;
+  const float vHalf = (v1 - v0) * 0.5f;
+  out.vertices.push_back(mesh::Vertex{{toNdcX(cx), toNdcY(cy), 0.0f}, normal, {uMid, vMid}});
   for (int i = 0; i <= segments; ++i) {
     const float angle =
         2.0f * 3.14159265358979f * static_cast<float>(i) / static_cast<float>(segments);
@@ -73,7 +78,7 @@ mesh::RenderMesh disc(const ScreenRect& rect, const Screen& screen, const std::s
     const float oy = std::sin(angle);
     out.vertices.push_back(mesh::Vertex{{toNdcX(cx + ox * rx), toNdcY(cy + oy * ry), 0.0f},
                                         normal,
-                                        {0.5f + ox * 0.5f, 0.5f + oy * 0.5f}});
+                                        {uMid + ox * uHalf, vMid + oy * vHalf}});
   }
   for (int i = 1; i <= segments; ++i) {
     out.indices.push_back(0);
@@ -188,8 +193,13 @@ std::vector<DrawPiece> buildNode(const Node& node, const font::Font& font,
   if (node.type == NodeType::Map || node.type == NodeType::MiniMap) {
     if (!context.mapTexture.empty()) {
       // Мініатюра в бою кругла, а велика на екрані появи — квадратна.
-      auto geometry = node.mapView == MapView::Mini ? disc(rect, screen, context.mapTexture)
-                                                    : quad(rect, screen, context.mapTexture);
+      // Гра показує не всю картинку рівня, а квадрат навколо бойової
+      // зони — межі приходять у контексті.
+      auto geometry = node.mapView == MapView::Mini
+                          ? disc(rect, screen, context.mapTexture, context.mapU0, context.mapV0,
+                                 context.mapU1, context.mapV1)
+                          : quad(rect, screen, context.mapTexture, context.mapU0, context.mapU1,
+                                 context.mapV0, context.mapV1);
       pieces.push_back(DrawPiece{std::move(geometry), context.mapTexture, &node, node.color});
     }
     return pieces;

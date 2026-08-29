@@ -1,6 +1,8 @@
 #include "obf2/level/gameplay.h"
 
 #include <algorithm>
+#include <cstdlib>
+#include <limits>
 
 #include "obf2/con/interpreter.h"
 
@@ -96,6 +98,20 @@ class Builder {
     }
 
     // --- розстановка ---
+    // Бойова зона: `CombatArea.addAreaPoint -49.101/-466.631` — пара
+    // світових координат x/z одним словом через скісну риску. Саме нею
+    // гра обрізає карту на екрані появи.
+    if (path == "combatarea.addareapoint") {
+      const std::string_view text = command.argStr(0);
+      const std::size_t slash = text.find('/');
+      if (slash != std::string_view::npos) {
+        const std::string first(text.substr(0, slash));
+        const std::string second(text.substr(slash + 1));
+        combatArea_.points.push_back(
+            Vec3f{std::strtof(first.c_str(), nullptr), 0.0f, std::strtof(second.c_str(), nullptr)});
+      }
+      return;
+    }
     if (path == "object.create") {
       placements_.push_back(Placement{std::string(command.argStr(0)), {}, {}, 0});
       return;
@@ -118,6 +134,7 @@ class Builder {
 
   GameplayObjects build() const {
     GameplayObjects out;
+    out.combatArea = combatArea_;
     for (const Placement& placement : placements_) {
       const auto found = templates_.find(placement.templateName);
       if (found == templates_.end()) continue;
@@ -179,6 +196,7 @@ class Builder {
   std::map<std::string, TemplateInfo> templates_;
   std::vector<Placement> placements_;
   std::string activeTemplate_;
+  CombatArea combatArea_;
 };
 
 }  // namespace
@@ -213,6 +231,21 @@ std::optional<GameplayObjects> loadGameplayObjects(FileSystem& files, std::strin
   objects.gameMode = std::string(gameMode);
   objects.size = size;
   return objects;
+}
+
+}  // namespace obf2::level
+
+namespace obf2::level {
+
+void CombatArea::bounds(float& minX, float& maxX, float& minZ, float& maxZ) const {
+  minX = minZ = std::numeric_limits<float>::max();
+  maxX = maxZ = std::numeric_limits<float>::lowest();
+  for (const Vec3f& point : points) {
+    minX = std::min(minX, point.x);
+    maxX = std::max(maxX, point.x);
+    minZ = std::min(minZ, point.z);
+    maxZ = std::max(maxZ, point.z);
+  }
 }
 
 }  // namespace obf2::level

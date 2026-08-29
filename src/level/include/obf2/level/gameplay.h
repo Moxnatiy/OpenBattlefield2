@@ -72,9 +72,21 @@ struct SpawnPoint {
   float minSpawnHeight = -1.0f;       // setMinSpawnHeight, -1 = не перевіряти
 };
 
+// Бойова зона раунду — багатокутник, за межі якого виходити не можна.
+// Вона ж вирішує, який шматок карти видно на екрані появи: у 16-місцевих
+// режимах Dalian_plant це приблизно третина світу, і карта там помітно
+// ближча, ніж уся картинка рівня.
+struct CombatArea {
+  std::vector<Vec3f> points;  // x і z; y не використовується
+  bool empty() const { return points.empty(); }
+  // Габарити по осях x і z.
+  void bounds(float& minX, float& maxX, float& minZ, float& maxZ) const;
+};
+
 struct GameplayObjects {
   std::string gameMode;
   int size = 0;
+  CombatArea combatArea;
   std::vector<ControlPoint> controlPoints;
   std::vector<ObjectSpawner> spawners;
   std::vector<SpawnPoint> spawnPoints;

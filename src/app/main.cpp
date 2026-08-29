@@ -1873,6 +1873,34 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     if (!args.levelName.empty()) {
       hudContext.mapTexture = "Levels/" + args.levelName + "/Hud/Minimap/ingameMap.tga";
     }
+    // Гра показує не всю картинку рівня, а квадрат навколо бойової зони.
+    // Правило знято з дампу кадру оригіналу: сторона квадрата — 1.2 від
+    // більшого боку зони, центр — її центр. Для Dalian_plant 16 це дає
+    // u 0.2694..0.7430 і v до 0.7677, а в оригіналі там 0.2703, 0.7431 і
+    // 0.7678 — збіг до третього знака.
+    //
+    // Картинка орієнтована так, що z росте вгору: v = (1024 - z) / 2048.
+    const auto hudGameplay =
+        level ? obf2::level::loadGameplayObjects(files, level->name, "gpm_cq", 16)
+              : std::optional<obf2::level::GameplayObjects>{};
+    if (hudGameplay && !hudGameplay->combatArea.empty()) {
+      float minX = 0.0f, maxX = 0.0f, minZ = 0.0f, maxZ = 0.0f;
+      hudGameplay->combatArea.bounds(minX, maxX, minZ, maxZ);
+      const float world = static_cast<float>(level ? level->primary.size - 1 : 1024) *
+                          (level ? level->primary.scale.x : 2.0f);
+      const float half = std::max(maxX - minX, maxZ - minZ) * 0.5f * 1.2f;
+      const float centerX = (minX + maxX) * 0.5f;
+      const float centerZ = (minZ + maxZ) * 0.5f;
+      const auto toU = [&](float x) { return (x + world * 0.5f) / world; };
+      const auto toV = [&](float z) { return (world * 0.5f - z) / world; };
+      hudContext.mapU0 = toU(centerX - half);
+      hudContext.mapU1 = toU(centerX + half);
+      hudContext.mapV0 = toV(centerZ + half);
+      hudContext.mapV1 = toV(centerZ - half);
+      std::printf("  карта: бойова зона %.0f..%.0f / %.0f..%.0f, видно u %.3f..%.3f v %.3f..%.3f\n",
+                  minX, maxX, minZ, maxZ, hudContext.mapU0, hudContext.mapU1, hudContext.mapV0,
+                  hudContext.mapV1);
+    }
     hudContext.localize = [&](std::string_view key) { return engine.lexicon().text(key); };
     // Шрифт кожного вузла — той, що названий у setTextNodeStyle. Шлях у
     // даних записаний як "Fonts/hudFontLocalBold_9.dif" (подекуди зі
