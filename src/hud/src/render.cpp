@@ -261,6 +261,15 @@ std::vector<DrawPiece> buildNode(const Node& node, const font::Font& font,
     // Лишається тільки перерахунок з базових 800x600 у вікно.
     layout.scale = scaleY;
 
+    // Рядок стоїть посередині свого вузла, а не з лівого краю. Видно на
+    // знімку кадру оригіналу: вузол повідомлення — `0 200 800 40`, а
+    // напис починається з 249.5 при ширині 301.3, тобто рівно
+    // (800 - 301.3) / 2. Доти всі підписи в нас тулилися вліво.
+    const float textPixels = font::textWidth(*face, text, layout.scale);
+    if (textPixels > 0.0f && rect.width > textPixels) {
+      layout.x = rect.x + (rect.width - textPixels) * 0.5f;
+    }
+
     auto geometry = font::buildText(*face, text, layout, atlas);
     if (!geometry.indices.empty()) {
       pieces.push_back(DrawPiece{std::move(geometry), atlas, &node, node.color});
