@@ -286,6 +286,7 @@ void Builder::feed(const con::Command& command) {
     return;
   }
   if (method == "settextnodestyle") {
+    node->textAlign = command.argInt(1).value_or(0);
     node->style = std::string(command.argStr(0));
     return;
   }

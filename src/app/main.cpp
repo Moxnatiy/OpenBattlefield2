@@ -83,6 +83,10 @@ struct Args {
   // --hud-screen <група>: показати екран, який зазвичай видно лише поки
   // тримають клавішу. Потрібно для знімків і для звірки очима.
   std::string hudScreenName;
+  // --hud-rects: виписати прямокутники всіх намальованих вузлів. Формат
+  // такий самий, як у дампі кадру оригіналу, щоб їх можна було звірити
+  // (tools/hud_coverage.py).
+  bool hudRects = false;
   float distance = 0.0f;             // 0 = підібрати за габаритами
   // Гра зроблена під 4:3, і поки що ми тримаємося цього: 1600x1200 — це
   // рівно вдвічі більше за базові 800x600, тож HUD лягає без залишку.
@@ -112,6 +116,7 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--width" && i + 1 < argc) args.width = std::atoi(argv[++i]);
     else if (flag == "--height" && i + 1 < argc) args.height = std::atoi(argv[++i]);
     else if (flag == "--hud-screen" && i + 1 < argc) args.hudScreenName = argv[++i];
+    else if (flag == "--hud-rects") args.hudRects = true;
     else if (flag == "--connect-password" && i + 1 < argc) args.connectPassword = argv[++i];
     else if (flag == "--name" && i + 1 < argc) args.playerName = argv[++i];
     else if (flag == "--calibrate" && i + 1 < argc) args.calibrate = argv[++i];
@@ -1936,10 +1941,15 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       // StandardTextBold_15 є тільки як English/StandardTextBold_15.
       // Тому пробуємо чотири місця — мовне й загальне, кожне з `800`
       // (набір для 800x600) і без нього.
-      LoadedFont loaded = loadFont(files, dir + "English/800/" + name);
-      if (!loaded.valid) loaded = loadFont(files, dir + "English/" + name);
-      if (!loaded.valid) loaded = loadFont(files, dir + "800/" + name);
+      // Порядок саме такий: спершу мовна тека, і **без** підтеки `800`.
+      // Знімок кадру оригіналу на 800x600 показує підпис класу шириною
+      // 79.2 при висоті 11, а набір із `800` дав би 60.3 на 9 — бо там
+      // кегль 13 проти 16 у корені мовної теки. Тобто `800` призначений
+      // не для 800x600, як здавалося з назви.
+      LoadedFont loaded = loadFont(files, dir + "English/" + name);
+      if (!loaded.valid) loaded = loadFont(files, dir + "English/800/" + name);
       if (!loaded.valid) loaded = loadFont(files, key);
+      if (!loaded.valid) loaded = loadFont(files, dir + "800/" + name);
       const auto placed = hudFonts.emplace(key, std::move(loaded)).first;
       return obf2::hud::FontRef{placed->second.valid ? &placed->second.font : nullptr,
                                 placed->second.atlasPath};
@@ -1982,6 +1992,30 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     // файлах `MemeFile 2.0` — це дані, а не код, шукати в BF2.exe його не
     // треба (див. docs/formats/hud-meme.md). Поки він не розібраний, смуга
     // здоров'я їхала б на середину екрана.
+    // --hud-rects: той самий формат, що й у дампі кадру оригіналу.
+    const auto reportRects = [&](const char* where,
+                                 const std::vector<obf2::hud::DrawPiece>& pieces) {
+      if (!args.hudRects) return;
+      for (const obf2::hud::DrawPiece& piece : pieces) {
+        if (piece.node == nullptr || piece.geometry.vertices.empty()) continue;
+        // Габарит рахуємо з самої геометрії, а не з прямокутника вузла:
+        // так підписи зіставні з дампом оригіналу, де теж стоїть обвід
+        // намальованого рядка, а не рамка вузла.
+        float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+        for (const auto& vertex : piece.geometry.vertices) {
+          const float px = (vertex.position.x + 1.0f) * 0.5f * hudScreen.width;
+          const float py = (1.0f - vertex.position.y) * 0.5f * hudScreen.height;
+          x0 = std::min(x0, px);
+          y0 = std::min(y0, py);
+          x1 = std::max(x1, px);
+          y1 = std::max(y1, py);
+        }
+        std::printf("RECT %-14s %-30s %7.1f %7.1f %7.1f %7.1f %s\n", where,
+                    piece.node->name.c_str(), x0, y0, x1 - x0, y1 - y0,
+                    piece.texture.c_str());
+      }
+    };
+
     auto pieces = obf2::hud::buildTree(ingameHud, "Global", hudFont.font, hudFont.atlasPath,
                                        hudScreen, hudContext);
 
@@ -2039,11 +2073,13 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       auto layerPieces = obf2::hud::buildTree(ingameHud, layer.group, hudFont.font,
                                               hudFont.atlasPath, layerScreen, hudContext);
       if (layerPieces.empty()) continue;
+      reportRects(layer.group, layerPieces);
       std::printf("  HUD: шар %-20s кут %.0f %.0f, шматків %zu\n", layer.group, layer.x,
                   layer.y, layerPieces.size());
       for (auto& piece : layerPieces) pieces.push_back(std::move(piece));
     }
 
+    reportRects("Global", pieces);
     for (auto& piece : pieces) {
       scene.meshes.push_back(std::move(piece.geometry));
       const int index = static_cast<int>(scene.meshes.size()) - 1;
@@ -2105,6 +2141,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
           built.push_back(std::move(piece));
         }
       }
+      // Звіт складаємо ДО повернення подання: інакше вузол карти вже
+      // мірявся б мініатюрою, хоча в екран запеклася велика.
+      if (!built.empty()) reportRects(group, built);
       // Повертаємо мініатюру: основний HUD міряється саме нею.
       if (setup.mapView != obf2::hud::MapView::Mini) {
         ingameHud.setMapView(obf2::hud::MapView::Mini);

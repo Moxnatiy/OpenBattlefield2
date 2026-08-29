@@ -104,6 +104,11 @@ struct Node {
   std::string text;             // setTextNodeString
   std::string textVariable;     // setTextNodeStringVariable
   std::string style;            // setTextNodeStyle
+  // Другий аргумент setTextNodeStyle — вирівнювання рядка в рамці
+  // вузла. У даних лише три значення: 0 (142 рази), 1 (97) і 2 (103).
+  // Знімок кадру оригіналу показує: повідомлення посеред екрана має 0 і
+  // стоїть по центру, а підпис класу має 2 і тулиться ліворуч.
+  int textAlign = 0;
   std::string showVariable;     // умова показу — setNodeShowVariable
   // setNodeLogicShowVariable завжди має вигляд `дія змінна значення`:
   // NOT (118), EQUAL (92), AND (44), OR (31). Це не ім'я змінної, як ми

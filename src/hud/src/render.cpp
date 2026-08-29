@@ -271,13 +271,18 @@ std::vector<DrawPiece> buildNode(const Node& node, const font::Font& font,
     // Лишається тільки перерахунок з базових 800x600 у вікно.
     layout.scale = scaleY;
 
-    // Рядок стоїть посередині свого вузла, а не з лівого краю. Видно на
-    // знімку кадру оригіналу: вузол повідомлення — `0 200 800 40`, а
-    // напис починається з 249.5 при ширині 301.3, тобто рівно
-    // (800 - 301.3) / 2. Доти всі підписи в нас тулилися вліво.
+    // Вирівнювання задає другий аргумент setTextNodeStyle. Обидва кінці
+    // перевірені знімком кадру оригіналу: повідомлення посеред екрана
+    // має 0 і стоїть по центру ((800-301.3)/2 = 249.35 при 249.5 у
+    // дампі), а підпис класу має 2 і починається просто з краю рамки
+    // (34 у даних проти 33.5 у дампі).
     const float textPixels = font::textWidth(*face, text, layout.scale);
     if (textPixels > 0.0f && rect.width > textPixels) {
-      layout.x = rect.x + (rect.width - textPixels) * 0.5f;
+      if (node.textAlign == 0) {
+        layout.x = rect.x + (rect.width - textPixels) * 0.5f;
+      } else if (node.textAlign == 1) {
+        layout.x = rect.x + rect.width - textPixels;
+      }
     }
 
     auto geometry = font::buildText(*face, text, layout, atlas);
