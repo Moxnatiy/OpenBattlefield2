@@ -134,10 +134,15 @@ vertex VertexOut overlay_vertex(VertexIn in [[stage_in]],
     return out;
 }
 
+struct OverlayTint {
+    float4 tint;
+};
+
 fragment float4 overlay_fragment(VertexOut in [[stage_in]],
                                  texture2d<float> image [[texture(0)]],
-                                 sampler imageSampler [[sampler(0)]]) {
-    return image.sample(imageSampler, in.uv);
+                                 sampler imageSampler [[sampler(0)]],
+                                 constant OverlayTint& shade [[buffer(0)]]) {
+    return image.sample(imageSampler, in.uv) * shade.tint;
 }
 )MSL";
 
@@ -150,7 +155,9 @@ SDL_GPUShader* createOverlayShader(SDL_GPUDevice* gpu, SDL_GPUShaderStage stage,
   info.format = SDL_GPU_SHADERFORMAT_MSL;
   info.stage = stage;
   info.num_samplers = stage == SDL_GPU_SHADERSTAGE_FRAGMENT ? 1 : 0;
-  info.num_uniform_buffers = stage == SDL_GPU_SHADERSTAGE_VERTEX ? 1 : 0;
+  // Обидва щаблі мають по одному буферу сталих: вершинний бере зсув і
+  // масштаб, фрагментний — відтінок вузла.
+  info.num_uniform_buffers = 1;
   return SDL_CreateGPUShader(gpu, &info);
 }
 
@@ -536,6 +543,7 @@ void MeshRenderer::renderOverlay(const Frame& frame, const std::vector<DrawItem>
     const float offsetScale[4] = {item.transform.m[12], item.transform.m[13],
                                   item.transform.m[0], item.transform.m[5]};
     SDL_PushGPUVertexUniformData(frame.commands, 0, offsetScale, sizeof(offsetScale));
+    SDL_PushGPUFragmentUniformData(frame.commands, 0, item.tint, sizeof(item.tint));
 
     const SDL_GPUBufferBinding vertexBinding{item.mesh->vertices, 0};
     SDL_BindGPUVertexBuffers(pass, 0, &vertexBinding, 1);

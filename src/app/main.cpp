@@ -1722,6 +1722,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   // Global -> GlobalHud -> IngameHud -> десятки під-груп через `split`.
   obf2::hud::Builder ingameHud;
   std::vector<int> hudQuads;
+  // Колір вузла за номером меша: setNodeColor у грі домножує текстуру, і
+  // без нього жовті написи, підсвітка вкладок і кольорові смуги виходять
+  // просто білими.
+  std::map<int, obf2::hud::Color> hudTints;
   // Екрани, які видно, лише поки тримають клавішу: табло, рація, поява.
   // Геометрію печемо наперед — вона не змінюється, змінюється лише те,
   // чи малювати її цього кадру.
@@ -1913,7 +1917,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
 
     for (auto& piece : pieces) {
       scene.meshes.push_back(std::move(piece.geometry));
-      hudQuads.push_back(static_cast<int>(scene.meshes.size()) - 1);
+      const int index = static_cast<int>(scene.meshes.size()) - 1;
+      hudQuads.push_back(index);
+      if (piece.node != nullptr) hudTints.emplace(index, piece.node->color);
     }
 
     // Кожен екран на клавішу відмикає рівно **одна** змінна — та, що
@@ -1959,7 +1965,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       screen.action = action;
       for (auto& piece : built) {
         scene.meshes.push_back(std::move(piece.geometry));
-        screen.quads.push_back(static_cast<int>(scene.meshes.size()) - 1);
+        const int index = static_cast<int>(scene.meshes.size()) - 1;
+        screen.quads.push_back(index);
+        if (piece.node != nullptr) hudTints.emplace(index, piece.node->color);
       }
       std::printf("  HUD: екран %-12s на %s (%s), шматків %zu\n", group, action,
                   std::string(controls.key(action)).c_str(), screen.quads.size());
@@ -2253,17 +2261,21 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
           extra.insert(extra.end(), screen.quads.begin(), screen.quads.end());
         }
 
-        for (const int index : hudQuads) {
-          if (index < 0 || !uploadedOk[static_cast<std::size_t>(index)]) continue;
-          hudItems.push_back(obf2::gfx::MeshRenderer::DrawItem{
-              &gpuMeshes[static_cast<std::size_t>(index)], obf2::Mat4::identity()});
-        }
-
-        for (const int index : extra) {
-          if (index < 0 || !uploadedOk[static_cast<std::size_t>(index)]) continue;
-          hudItems.push_back(obf2::gfx::MeshRenderer::DrawItem{
-              &gpuMeshes[static_cast<std::size_t>(index)], obf2::Mat4::identity()});
-        }
+        const auto pushHud = [&](int index) {
+          if (index < 0 || !uploadedOk[static_cast<std::size_t>(index)]) return;
+          obf2::gfx::MeshRenderer::DrawItem item{&gpuMeshes[static_cast<std::size_t>(index)],
+                                                 obf2::Mat4::identity()};
+          const auto tint = hudTints.find(index);
+          if (tint != hudTints.end()) {
+            item.tint[0] = tint->second.r;
+            item.tint[1] = tint->second.g;
+            item.tint[2] = tint->second.b;
+            item.tint[3] = tint->second.a;
+          }
+          hudItems.push_back(item);
+        };
+        for (const int index : hudQuads) pushHud(index);
+        for (const int index : extra) pushHud(index);
 
         for (DynamicNode& dynamic : hudDynamic) {
           const obf2::hud::Node& node = *dynamic.node;

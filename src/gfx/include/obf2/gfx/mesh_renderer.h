@@ -66,6 +66,10 @@ class MeshRenderer {
   struct DrawItem {
     const GpuMesh* mesh = nullptr;
     Mat4 transform;
+    // Відтінок накладу. У HUD це `setNodeColor`: гра множить ним текстуру
+    // вузла, і без нього жовті написи, підсвітка вкладок та кольорові
+    // смуги виходять просто білими.
+    float tint[4] = {1.0f, 1.0f, 1.0f, 1.0f};
   };
 
   // Туман беремо з даних рівня (Sky.con). fogEnd == 0 вимикає його.
