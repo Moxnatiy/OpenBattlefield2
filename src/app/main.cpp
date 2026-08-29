@@ -1753,6 +1753,12 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     std::string group;
     std::string action;  // назва дії в ControlMap, не клавіша
     std::vector<int> quads;
+    // Стан HUD, якому цей екран належить (docs/functions/hud-states.md).
+    // Екран появи — стан 1, і в грі його **не тримають клавішею**: він
+    // стоїть, доки гравець не з'явився. Табло — стан 9, і воно справді
+    // на клавіші.
+    int state = -1;
+    bool heldByKey = true;
   };
   std::vector<KeyScreen> keyScreens;
   obf2::game::ControlMap controls;
@@ -2064,12 +2070,16 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       // на екрані вона просто перемикається у велике подання.
       const char* extraRoot = nullptr;
       obf2::hud::MapView mapView = obf2::hud::MapView::Mini;
+      int state = -1;
+      bool heldByKey = true;
     };
     for (const KeyScreenSetup& setup : {
-             KeyScreenSetup{"Scoreboard", "c_GIShowScoreboard", "ScoreboardShow"},
+             KeyScreenSetup{"Scoreboard", "c_GIShowScoreboard", "ScoreboardShow", nullptr,
+                            obf2::hud::MapView::Mini, 9, true},
              KeyScreenSetup{"RadioRose", "c_GIRadioComm", "RadioInterfaceShow"},
+             // Стан 1: тримається сам, доки гравець не з'явився.
              KeyScreenSetup{"SpawnMenu", "c_GIEnter", "SpawnShow", "MapSplit",
-                            obf2::hud::MapView::Maxi},
+                            obf2::hud::MapView::Maxi, 1, false},
              KeyScreenSetup{"MapMenu", "c_GIMapSize", "MapMenuShow"},
          }) {
       const char* const group = setup.group;
@@ -2103,6 +2113,8 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       KeyScreen screen;
       screen.group = group;
       screen.action = action;
+      screen.state = setup.state;
+      screen.heldByKey = setup.heldByKey;
       for (auto& piece : built) {
         scene.meshes.push_back(std::move(piece.geometry));
         const int index = static_cast<int>(scene.meshes.size()) - 1;
@@ -2430,10 +2442,22 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         // Табло, рація й екран появи — поверх усього, поки тримають
         // клавішу. Порядок такий самий, як у грі: спершу бойовий HUD.
         std::vector<int> extra;
+        // Стан HUD. У грі це не набір клавіш, а машина на 32 позиції
+        // (docs/functions/hud-states.md): стан 1 — екран появи, і він
+        // стоїть сам, доки гравець не з'явився; стан 9 — табло, воно
+        // справді на клавіші. Ми поки розрізняємо саме ці два випадки.
+        const bool spawned = hostedClient != nullptr;
+        const int hudState = spawned ? 0 : 1;
         for (const KeyScreen& screen : keyScreens) {
-          const std::string_view key = controls.key(screen.action);
           const bool forced = screen.group == args.hudScreenName;
-          if (!forced && (key.empty() || !device->isKeyDown(key))) continue;
+          bool visible = forced;
+          if (!visible && screen.heldByKey) {
+            const std::string_view key = controls.key(screen.action);
+            visible = !key.empty() && device->isKeyDown(key);
+          } else if (!visible) {
+            visible = screen.state == hudState;
+          }
+          if (!visible) continue;
           extra.insert(extra.end(), screen.quads.begin(), screen.quads.end());
         }
 
