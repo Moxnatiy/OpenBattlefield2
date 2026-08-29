@@ -105,10 +105,21 @@ void useMapView(Node& node, MapView view) {
                         : view == MapView::Commander ? node.mapCommander
                                                      : node.mapMini;
   if (!rect.set) return;
-  node.x = rect.x;
-  node.y = rect.y;
+  // Карта — єдиний вузол, чиї координати відлічені **від центра екрана**,
+  // а не від батька. Тому в даних вони від'ємні. Сходиться відразу тричі:
+  //
+  //   mini      197/-300 197x197 -> (597, 0),   а рамка MapFrame (596, 0) 200x212
+  //   maxi     -122/-273 512x512 -> (278, 27)
+  //   commander -161/-281 561x561 -> (239, 19), правий край рівно 800
+  //
+  // Тобто мінікарта лягає в свою рамку з полем в один піксель, а
+  // командирська впирається в край екрана. Доти ми брали ці числа як є, і
+  // карта йшла за верхній край.
+  node.x = kReferenceWidth * 0.5f + rect.x;
+  node.y = kReferenceHeight * 0.5f + rect.y;
   node.width = rect.width;
   node.height = rect.height;
+  node.mapView = view;
 }
 
 void Builder::feed(const con::Command& command) {

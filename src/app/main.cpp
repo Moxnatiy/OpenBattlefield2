@@ -1692,10 +1692,23 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     }
 
     auto bytes = files.read(path);
+    // У грі шляхи вказують на `.tga`, а в архівах лежить `.dds` — так,
+    // наприклад, із картою рівня: BF2.exe просить
+    // `Levels/%s/Hud/Minimap/ingameMap.tga`, а в client.zip є лише
+    // `ingameMap.dds`. Тому стиснений варіант пробуємо тим самим шляхом.
+    std::string swapped;
+    if (path.size() > 4 && path.compare(path.size() - 4, 4, ".tga") == 0) {
+      swapped = path.substr(0, path.size() - 4) + ".dds";
+      if (!bytes) bytes = files.read(swapped);
+    }
     if (!bytes) bytes = files.read(obf2::joinAssetPath("objects", path));
+    if (!bytes && !swapped.empty()) bytes = files.read(obf2::joinAssetPath("objects", swapped));
     // Шляхи в HUD відлічуються від теки текстур інтерфейсу — так само, як
     // це видно в `nametags.setTexture Menu/HUD/Texture/...`.
     if (!bytes) bytes = files.read(obf2::joinAssetPath("menu/hud/texture", path));
+    if (!bytes && !swapped.empty()) {
+      bytes = files.read(obf2::joinAssetPath("menu/hud/texture", swapped));
+    }
     if (!bytes) {
       ++texturesMissing;
       textureCache.emplace(path, std::nullopt);
@@ -1801,6 +1814,11 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     }
 
     obf2::hud::Context hudContext;
+    // Картинку карти рівня задає не HUD: у BF2.exe для неї є шаблон
+    // `Levels/%s/Hud/Minimap/ingameMap.tga`.
+    if (!args.levelName.empty()) {
+      hudContext.mapTexture = "Levels/" + args.levelName + "/Hud/Minimap/ingameMap.tga";
+    }
     hudContext.localize = [&](std::string_view key) { return engine.lexicon().text(key); };
     // Шрифт кожного вузла — той, що названий у setTextNodeStyle. Шлях у
     // даних записаний як "Fonts/hudFontLocalBold_9.dif" (подекуди зі
@@ -1899,7 +1917,6 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
              Layer{"BottomLeftStatic", -1.0f, 563.0f, obf2::hud::Anchor::Left},
              Layer{"BottomRightAnimate", 201.0f, 497.0f, obf2::hud::Anchor::Right},
              Layer{"BottomRightStatic", 401.0f, 563.0f, obf2::hud::Anchor::Right},
-             Layer{"TopLayer", 0.0f, 0.0f, obf2::hud::Anchor::Left},
          }) {
       obf2::hud::Screen layerScreen = hudScreen;
       layerScreen.originX = layer.x;

@@ -46,6 +46,48 @@ mesh::RenderMesh quad(const ScreenRect& rect, const Screen& screen, const std::s
   return out;
 }
 
+// Круг замість прямокутника — цим малюється мініатюра карти. Рамка
+// map_Frame.tga кутів не закриває (там прозорість), тож обрізати
+// картинку має сам вузол.
+mesh::RenderMesh disc(const ScreenRect& rect, const Screen& screen, const std::string& texture,
+                      int segments = 48) {
+  auto toNdcX = [&](float pixels) {
+    return pixels / static_cast<float>(screen.width) * 2.0f - 1.0f;
+  };
+  auto toNdcY = [&](float pixels) {
+    return 1.0f - pixels / static_cast<float>(screen.height) * 2.0f;
+  };
+
+  mesh::RenderMesh out;
+  const mesh::Vec3 normal = flatNormal();
+  const float cx = rect.x + rect.width * 0.5f;
+  const float cy = rect.y + rect.height * 0.5f;
+  const float rx = rect.width * 0.5f;
+  const float ry = rect.height * 0.5f;
+
+  out.vertices.push_back(mesh::Vertex{{toNdcX(cx), toNdcY(cy), 0.0f}, normal, {0.5f, 0.5f}});
+  for (int i = 0; i <= segments; ++i) {
+    const float angle =
+        2.0f * 3.14159265358979f * static_cast<float>(i) / static_cast<float>(segments);
+    const float ox = std::cos(angle);
+    const float oy = std::sin(angle);
+    out.vertices.push_back(mesh::Vertex{{toNdcX(cx + ox * rx), toNdcY(cy + oy * ry), 0.0f},
+                                        normal,
+                                        {0.5f + ox * 0.5f, 0.5f + oy * 0.5f}});
+  }
+  for (int i = 1; i <= segments; ++i) {
+    out.indices.push_back(0);
+    out.indices.push_back(static_cast<std::uint32_t>(i));
+    out.indices.push_back(static_cast<std::uint32_t>(i + 1));
+  }
+
+  mesh::DrawRange range;
+  range.indexCount = static_cast<std::uint32_t>(out.indices.size());
+  if (!texture.empty()) range.maps.push_back(texture);
+  out.ranges.push_back(std::move(range));
+  return out;
+}
+
 }  // namespace
 
 // Чи показувати вузол. Крім простої змінної (setNodeShowVariable) вузол
@@ -138,6 +180,17 @@ std::vector<DrawPiece> buildNode(const Node& node, const font::Font& font,
       }
       part.width = rect.width * value;
       pieces.push_back(DrawPiece{quad(part, screen, texture, uMin, uMax), texture, &node, node.color});
+    }
+    return pieces;
+  }
+
+  // Карта: власної текстури вузол не має — її дає рівень.
+  if (node.type == NodeType::Map || node.type == NodeType::MiniMap) {
+    if (!context.mapTexture.empty()) {
+      // Мініатюра в бою кругла, а велика на екрані появи — квадратна.
+      auto geometry = node.mapView == MapView::Mini ? disc(rect, screen, context.mapTexture)
+                                                    : quad(rect, screen, context.mapTexture);
+      pieces.push_back(DrawPiece{std::move(geometry), context.mapTexture, &node, node.color});
     }
     return pieces;
   }

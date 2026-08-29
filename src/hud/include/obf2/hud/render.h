@@ -76,6 +76,9 @@ struct Context {
   // ми нічого не знаємо, і вузол лишається видимим: більшість із них —
   // це плавні згасання, і за замовчуванням вони ввімкнені.
   std::function<std::optional<float>(std::string_view variable)> variableAlpha;
+  // Картинка карти рівня. Шлях до неї задає не HUD, а сам рівень —
+  // у BF2.exe для цього є шаблон `Levels/%s/Hud/Minimap/ingameMap.tga`.
+  std::string mapTexture;
 };
 
 // Геометрія одного вузла — картинка, смуга і/або підпис.
