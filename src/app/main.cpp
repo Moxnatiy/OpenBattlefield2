@@ -1919,7 +1919,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       scene.meshes.push_back(std::move(piece.geometry));
       const int index = static_cast<int>(scene.meshes.size()) - 1;
       hudQuads.push_back(index);
-      if (piece.node != nullptr) hudTints.emplace(index, piece.node->color);
+      hudTints.emplace(index, piece.tint);
     }
 
     // Кожен екран на клавішу відмикає рівно **одна** змінна — та, що
@@ -1967,7 +1967,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         scene.meshes.push_back(std::move(piece.geometry));
         const int index = static_cast<int>(scene.meshes.size()) - 1;
         screen.quads.push_back(index);
-        if (piece.node != nullptr) hudTints.emplace(index, piece.node->color);
+        hudTints.emplace(index, piece.tint);
       }
       std::printf("  HUD: екран %-12s на %s (%s), шматків %zu\n", group, action,
                   std::string(controls.key(action)).c_str(), screen.quads.size());

@@ -137,7 +137,29 @@ std::vector<DrawPiece> buildNode(const Node& node, const font::Font& font,
         uMax = 1.0f;
       }
       part.width = rect.width * value;
-      pieces.push_back(DrawPiece{quad(part, screen, texture, uMin, uMax), texture, &node});
+      pieces.push_back(DrawPiece{quad(part, screen, texture, uMin, uMax), texture, &node, node.color});
+    }
+    return pieces;
+  }
+
+  // Список: тло і рамка — суцільні кольори, а не текстури. Малюємо
+  // рамку на весь вузол, а тло — всередині її відступів. Рядки з'являться
+  // тоді, коли буде звідки взяти гравців; сама плашка потрібна вже зараз,
+  // бо без неї на табло замість списку діра.
+  if (node.type == NodeType::List) {
+    static const std::string kFill = "#ffffff";
+    if (node.hasListBorder) {
+      pieces.push_back(DrawPiece{quad(rect, screen, kFill), kFill, &node, node.listBorderColor});
+    }
+    if (node.hasListBackground) {
+      ScreenRect inner = rect;
+      inner.x += node.listBorder[0] * scaleY;
+      inner.width -= (node.listBorder[0] + node.listBorder[1]) * scaleY;
+      inner.y += node.listBorder[2] * scaleY;
+      inner.height -= (node.listBorder[2] + node.listBorder[3]) * scaleY;
+      if (inner.width > 0.0f && inner.height > 0.0f) {
+        pieces.push_back(DrawPiece{quad(inner, screen, kFill), kFill, &node, node.listBackground});
+      }
     }
     return pieces;
   }
@@ -149,7 +171,7 @@ std::vector<DrawPiece> buildNode(const Node& node, const font::Font& font,
       texture = std::string(context.variableText(node.textureVariable));
     }
     if (!texture.empty()) {
-      pieces.push_back(DrawPiece{quad(rect, screen, texture), texture, &node});
+      pieces.push_back(DrawPiece{quad(rect, screen, texture), texture, &node, node.color});
     }
   }
 
@@ -188,7 +210,7 @@ std::vector<DrawPiece> buildNode(const Node& node, const font::Font& font,
 
     auto geometry = font::buildText(*face, text, layout, atlas);
     if (!geometry.indices.empty()) {
-      pieces.push_back(DrawPiece{std::move(geometry), atlas, &node});
+      pieces.push_back(DrawPiece{std::move(geometry), atlas, &node, node.color});
     }
   }
   return pieces;

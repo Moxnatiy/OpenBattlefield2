@@ -154,6 +154,23 @@ struct Node {
   std::string area;
   float absX = 0.0f, absY = 0.0f;
 
+  // Список (табло, вибір загону). Тло і рамка в нього не текстури, а
+  // суцільні кольори — саме тому список без них виглядав порожнім
+  // місцем:
+  //
+  //   createListNode Scoreboard FriendlyScoreList 10 75 389 462 19 1
+  //   setListNodeBackgroundColor 0.745 0.729 0.58 0.9
+  //   setListNodeBorder 20 22 3 3
+  //   setListNodeBorderColor 0.482 0.474 0.388 1
+  //
+  // Передостаннє число в createListNode — висота рядка.
+  bool hasListBackground = false;
+  Color listBackground;
+  bool hasListBorder = false;
+  Color listBorderColor;
+  float listBorder[4] = {0.0f, 0.0f, 0.0f, 0.0f};  // ліворуч, праворуч, згори, знизу
+  float listRowHeight = 0.0f;
+
   // Карта власного прямокутника при створенні не дістає — гра задає їй
   // три різні подання окремими командами (HudElementsMap.con):
   //

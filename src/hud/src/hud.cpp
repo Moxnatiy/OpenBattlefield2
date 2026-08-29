@@ -137,6 +137,8 @@ void Builder::feed(const con::Command& command) {
                          type == NodeType::Occupied;
     const int skip = shifted ? 1 : 0;
     if (type == NodeType::Bar) node.barDirection = command.argInt(2).value_or(0);
+    // createListNode <батько> <ім'я> <x> <y> <ш> <в> <висота рядка> <?>
+    if (type == NodeType::List) node.listRowHeight = command.argFloat(6).value_or(0.0f);
     // Повзунок і карта прямокутника не несуть: у повзунка там межі й крок.
     if (type == NodeType::Slider || type == NodeType::Map) {
       if (command.args.size() >= 2) {
@@ -397,6 +399,28 @@ void Builder::feed(const con::Command& command) {
     rect.set = true;
     if (&rect == &node->mapMini) useMapView(*node, MapView::Mini);
   };
+  auto readColor = [&](Color& out) {
+    out.r = command.argFloat(0).value_or(1.0f);
+    out.g = command.argFloat(1).value_or(1.0f);
+    out.b = command.argFloat(2).value_or(1.0f);
+    out.a = command.argFloat(3).value_or(1.0f);
+  };
+  if (method == "setlistnodebackgroundcolor") {
+    readColor(node->listBackground);
+    node->hasListBackground = true;
+    return;
+  }
+  if (method == "setlistnodebordercolor") {
+    readColor(node->listBorderColor);
+    node->hasListBorder = true;
+    return;
+  }
+  if (method == "setlistnodeborder") {
+    for (int i = 0; i < 4; ++i) {
+      node->listBorder[i] = command.argFloat(static_cast<std::size_t>(i)).value_or(0.0f);
+    }
+    return;
+  }
   if (method == "setmaxipos") { mapPos(node->mapMaxi); return; }
   if (method == "setmaxisize") { mapSize(node->mapMaxi); return; }
   if (method == "setminipos") { mapPos(node->mapMini); return; }

@@ -47,6 +47,10 @@ struct DrawPiece {
   mesh::RenderMesh geometry;
   std::string texture;  // порожньо для тексту — там атлас шрифту
   const Node* node = nullptr;
+  // Відтінок саме цього шматка. Здебільшого це колір вузла, але список
+  // малює своє тло власним кольором (`setListNodeBackgroundColor`), тож
+  // одного кольору на вузол не досить.
+  Color tint;
 };
 
 // Як розв'язати те, що вузол не тримає в собі:
