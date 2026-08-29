@@ -100,6 +100,16 @@ void Builder::finish() {
   }
 }
 
+void Builder::setMapView(MapView view) {
+  for (Node& node : nodes_) {
+    if (node.type == NodeType::Map || node.type == NodeType::MiniMap) {
+      useMapView(node, view);
+    }
+  }
+  // Прямокутник вузла змінився — зведені координати треба перерахувати.
+  finish();
+}
+
 void useMapView(Node& node, MapView view) {
   const MapRect& rect = view == MapView::Maxi        ? node.mapMaxi
                         : view == MapView::Commander ? node.mapCommander

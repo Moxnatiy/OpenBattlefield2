@@ -1827,25 +1827,42 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     //
     //   HUD_TEXT_MENU_SPAWN_KIT_SPECIALFORCES  SNIPER  ASSAULT  SUPPORT
     //   ENGINEER  MEDIC  ANTITANK
+    // Зброя в кожній панелі — теж змінна (KitWeaponIcon<N>Path). Яка
+    // саме, видно з набору: у `Objects_server.zip` кожен `Kits/US/*.con`
+    // перелічує свої шаблони, і рівно один із них має піктограму в
+    // `Weapons/Icons/Hud/Selection`. Звідти й беремо.
     struct KitSlot {
       const char* nameKey;
       const char* icon;
+      const char* weapon;
     };
     static const KitSlot kKits[] = {
-        {"HUD_TEXT_MENU_SPAWN_KIT_SPECIALFORCES", "Ingame/Kits/Icons/kit_Specops.tga"},
-        {"HUD_TEXT_MENU_SPAWN_KIT_SNIPER", "Ingame/Kits/Icons/kit_Sniper.tga"},
-        {"HUD_TEXT_MENU_SPAWN_KIT_ASSAULT", "Ingame/Kits/Icons/kit_Light_Assault.tga"},
-        {"HUD_TEXT_MENU_SPAWN_KIT_SUPPORT", "Ingame/Kits/Icons/kit_Heavy_Assault.tga"},
-        {"HUD_TEXT_MENU_SPAWN_KIT_ENGINEER", "Ingame/Kits/Icons/kit_Engineer.tga"},
-        {"HUD_TEXT_MENU_SPAWN_KIT_MEDIC", "Ingame/Kits/Icons/kit_Medic.tga"},
-        {"HUD_TEXT_MENU_SPAWN_KIT_ANTITANK", "Ingame/Kits/Icons/kit_ATAA.tga"},
+        {"HUD_TEXT_MENU_SPAWN_KIT_SPECIALFORCES", "Ingame/Kits/Icons/kit_Specops.tga",
+         "USRIF_M4.tga"},
+        {"HUD_TEXT_MENU_SPAWN_KIT_SNIPER", "Ingame/Kits/Icons/kit_Sniper.tga", "USRIF_M24.tga"},
+        {"HUD_TEXT_MENU_SPAWN_KIT_ASSAULT", "Ingame/Kits/Icons/kit_Light_Assault.tga",
+         "USRIF_M203.tga"},
+        {"HUD_TEXT_MENU_SPAWN_KIT_SUPPORT", "Ingame/Kits/Icons/kit_Heavy_Assault.tga",
+         "USLMG_M249SAW.tga"},
+        {"HUD_TEXT_MENU_SPAWN_KIT_ENGINEER", "Ingame/Kits/Icons/kit_Engineer.tga",
+         "USRIF_Remington11-87.tga"},
+        {"HUD_TEXT_MENU_SPAWN_KIT_MEDIC", "Ingame/Kits/Icons/kit_Medic.tga", "USRIF_M16a2.tga"},
+        {"HUD_TEXT_MENU_SPAWN_KIT_ANTITANK", "Ingame/Kits/Icons/kit_ATAA.tga",
+         "USRIF_MP5_A3.tga"},
     };
+    // Вкладки команд угорі екрана появи. У даних гілка TeamSelectInfo
+    // висить на Team1Selected, а всередині два блоки — Team1Selected і
+    // Team2Selected.
+    hudVariables["Team1Selected"] = args.team != 2;
+    hudVariables["Team2Selected"] = args.team == 2;
     hudVariables["KitsShow"] = true;
     for (int slot = 0; slot < static_cast<int>(std::size(kKits)); ++slot) {
       const std::string index = std::to_string(slot);
       hudVariables["Kit" + index + "Show"] = true;
       hudStrings["KitName" + index + "String"] = kKits[slot].nameKey;
       hudStrings["KitIcon" + index + "Path"] = kKits[slot].icon;
+      hudStrings["KitWeaponIcon" + index + "Path"] =
+          std::string("Ingame/Weapons/Icons/Hud/Selection/") + kKits[slot].weapon;
       // Вибраний клас підсвічується окремою гілкою вузла.
       hudVariables["PlayerKitIcon" + index + "SelectShow"] = slot == args.kit;
     }
@@ -2003,11 +2020,17 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       const char* group;
       const char* action;
       const char* gate;
+      // Друга гілка, яку цей екран додає до себе. Карта живе в основному
+      // дереві (MapSplit під IngameHud), а не всередині екрана появи, —
+      // на екрані вона просто перемикається у велике подання.
+      const char* extraRoot = nullptr;
+      obf2::hud::MapView mapView = obf2::hud::MapView::Mini;
     };
     for (const KeyScreenSetup& setup : {
              KeyScreenSetup{"Scoreboard", "c_GIShowScoreboard", "ScoreboardShow"},
              KeyScreenSetup{"RadioRose", "c_GIRadioComm", "RadioInterfaceShow"},
-             KeyScreenSetup{"SpawnMenu", "c_GIEnter", "SpawnShow"},
+             KeyScreenSetup{"SpawnMenu", "c_GIEnter", "SpawnShow", "MapSplit",
+                            obf2::hud::MapView::Maxi},
              KeyScreenSetup{"MapMenu", "c_GIMapSize", "MapMenuShow"},
          }) {
       const char* const group = setup.group;
@@ -2024,8 +2047,19 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         const auto found = hudValues.find(std::string(variable));
         return found == hudValues.end() ? 0.0f : found->second;
       };
+      if (setup.mapView != obf2::hud::MapView::Mini) ingameHud.setMapView(setup.mapView);
       auto built = obf2::hud::buildTree(ingameHud, group, hudFont.font, hudFont.atlasPath,
                                         hudScreen, keyContext);
+      if (setup.extraRoot != nullptr) {
+        for (auto& piece : obf2::hud::buildTree(ingameHud, setup.extraRoot, hudFont.font,
+                                                hudFont.atlasPath, hudScreen, keyContext)) {
+          built.push_back(std::move(piece));
+        }
+      }
+      // Повертаємо мініатюру: основний HUD міряється саме нею.
+      if (setup.mapView != obf2::hud::MapView::Mini) {
+        ingameHud.setMapView(obf2::hud::MapView::Mini);
+      }
       if (built.empty()) continue;
       KeyScreen screen;
       screen.group = group;

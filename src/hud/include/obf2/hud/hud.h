@@ -281,6 +281,11 @@ class Builder {
   // кроку координати лишаються відносними — і HUD розсипається.
   void finish();
 
+  // Перемикає всі вузли карти на задане подання. Карта в грі одна, але
+  // показана по-різному: у бою мініатюра в кутку, на екрані появи —
+  // велика (setMaxiPos/setMaxiSize), у командира — своя.
+  void setMapView(MapView view);
+
   const std::vector<Node>& nodes() const { return nodes_; }
   std::vector<const Node*> group(std::string_view name) const;
   std::vector<std::string> groups() const;
