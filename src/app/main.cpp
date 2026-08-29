@@ -1743,6 +1743,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   // без нього жовті написи, підсвітка вкладок і кольорові смуги виходять
   // просто білими.
   std::map<int, obf2::hud::Color> hudTints;
+  // Копія контексту для перебудови живих вузлів у циклі малювання:
+  // сам hudContext живе у блоці завантаження рівня.
+  obf2::hud::Context hudDynamicContext;
   // Екрани, які видно, лише поки тримають клавішу: табло, рація, поява.
   // Геометрію печемо наперед — вона не змінюється, змінюється лише те,
   // чи малювати її цього кадру.
@@ -1923,7 +1926,13 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       const std::size_t slash = key.rfind('/');
       const std::string dir = slash == std::string::npos ? std::string() : key.substr(0, slash + 1);
       const std::string name = slash == std::string::npos ? key : key.substr(slash + 1);
-      LoadedFont loaded = loadFont(files, dir + "800/" + name);
+      // Частина шрифтів лежить у мовних теках, а не в корені: наприклад
+      // StandardTextBold_15 є тільки як English/StandardTextBold_15.
+      // Тому пробуємо чотири місця — мовне й загальне, кожне з `800`
+      // (набір для 800x600) і без нього.
+      LoadedFont loaded = loadFont(files, dir + "English/800/" + name);
+      if (!loaded.valid) loaded = loadFont(files, dir + "English/" + name);
+      if (!loaded.valid) loaded = loadFont(files, dir + "800/" + name);
       if (!loaded.valid) loaded = loadFont(files, key);
       const auto placed = hudFonts.emplace(key, std::move(loaded)).first;
       return obf2::hud::FontRef{placed->second.valid ? &placed->second.font : nullptr,
@@ -1951,6 +1960,8 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       const auto found = hudStrings.find(std::string(variable));
       return found == hudStrings.end() ? std::string_view{} : std::string_view(found->second);
     };
+
+    hudDynamicContext = hudContext;
 
     // HUD міряємо **справжнім** вікном, а не тим, що просили: екран міг
     // виявитися меншим, і вікно з'їхало б разом із запитом.
@@ -2466,7 +2477,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
             dynamic.shownText = text;
 
             obf2::hud::Node copy = node;
-            obf2::hud::Context single;
+            // Беремо загальний контекст, а не порожній: інакше живі
+            // підписи малюються типовим шрифтом замість свого
+            // (setTextNodeStyle) і без локалізації.
+            obf2::hud::Context single = hudDynamicContext;
             if (isBar) {
               single.variableValue = [&](std::string_view) { return value; };
             } else {
