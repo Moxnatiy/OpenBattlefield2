@@ -1,0 +1,251 @@
+diff --git a/windows/.cargo/config.toml b/windows/.cargo/config.toml
+index bcedbde..cd11411 100644
+--- a/windows/.cargo/config.toml
++++ b/windows/.cargo/config.toml
+@@ -35,9 +35,9 @@ linker = "lld-link"
+ rustflags = [
+     "-C", "target-cpu=nehalem",
+     "-C", "target-feature=-crt-static",
+-    "-Lnative=/opt/xwin/crt/lib/x86",
+-    "-Lnative=/opt/xwin/sdk/lib/um/x86",
+-    "-Lnative=/opt/xwin/sdk/lib/ucrt/x86",
++    "-Lnative=/Users/miami/OpenBattlefield2/reference/xwin/crt/lib/x86",
++    "-Lnative=/Users/miami/OpenBattlefield2/reference/xwin/sdk/lib/um/x86",
++    "-Lnative=/Users/miami/OpenBattlefield2/reference/xwin/sdk/lib/ucrt/x86",
+ ]
+ 
+ [target.x86_64-pc-windows-msvc]
+@@ -45,9 +45,9 @@ linker = "lld-link"
+ rustflags = [
+     "-C", "target-cpu=x86-64-v2",
+     "-C", "target-feature=-crt-static",
+-    "-Lnative=/opt/xwin/crt/lib/x86_64",
+-    "-Lnative=/opt/xwin/sdk/lib/um/x86_64",
+-    "-Lnative=/opt/xwin/sdk/lib/ucrt/x86_64",
++    "-Lnative=/Users/miami/OpenBattlefield2/reference/xwin/crt/lib/x86_64",
++    "-Lnative=/Users/miami/OpenBattlefield2/reference/xwin/sdk/lib/um/x86_64",
++    "-Lnative=/Users/miami/OpenBattlefield2/reference/xwin/sdk/lib/ucrt/x86_64",
+ ]
+ 
+ [env]
+@@ -72,10 +72,10 @@ rustflags = [
+ # environment variable with no composition, so the knob could only reach them by
+ # restating everything above in the Makefile. This is a fixed, small amount of
+ # code (snmalloc-sys and zstd-sys) whose frames are worth keeping walkable.
+-CFLAGS_i686-pc-windows-msvc     = "-march=nehalem -fno-omit-frame-pointer -idirafter /opt/xwin/crt/include -idirafter /opt/xwin/sdk/include/ucrt -idirafter /opt/xwin/sdk/include/um -idirafter /opt/xwin/sdk/include/shared"
+-CFLAGS_x86_64-pc-windows-msvc   = "-march=x86-64-v2 -fno-omit-frame-pointer -idirafter /opt/xwin/crt/include -idirafter /opt/xwin/sdk/include/ucrt -idirafter /opt/xwin/sdk/include/um -idirafter /opt/xwin/sdk/include/shared"
+-CXXFLAGS_i686-pc-windows-msvc   = "-march=nehalem -fno-omit-frame-pointer -idirafter /opt/xwin/crt/include -idirafter /opt/xwin/sdk/include/ucrt -idirafter /opt/xwin/sdk/include/um -idirafter /opt/xwin/sdk/include/shared"
+-CXXFLAGS_x86_64-pc-windows-msvc = "-march=x86-64-v2 -fno-omit-frame-pointer -idirafter /opt/xwin/crt/include -idirafter /opt/xwin/sdk/include/ucrt -idirafter /opt/xwin/sdk/include/um -idirafter /opt/xwin/sdk/include/shared"
++CFLAGS_i686-pc-windows-msvc     = "-march=nehalem -fno-omit-frame-pointer -idirafter /Users/miami/OpenBattlefield2/reference/xwin/crt/include -idirafter /Users/miami/OpenBattlefield2/reference/xwin/sdk/include/ucrt -idirafter /Users/miami/OpenBattlefield2/reference/xwin/sdk/include/um -idirafter /Users/miami/OpenBattlefield2/reference/xwin/sdk/include/shared"
++CFLAGS_x86_64-pc-windows-msvc   = "-march=x86-64-v2 -fno-omit-frame-pointer -idirafter /Users/miami/OpenBattlefield2/reference/xwin/crt/include -idirafter /Users/miami/OpenBattlefield2/reference/xwin/sdk/include/ucrt -idirafter /Users/miami/OpenBattlefield2/reference/xwin/sdk/include/um -idirafter /Users/miami/OpenBattlefield2/reference/xwin/sdk/include/shared"
++CXXFLAGS_i686-pc-windows-msvc   = "-march=nehalem -fno-omit-frame-pointer -idirafter /Users/miami/OpenBattlefield2/reference/xwin/crt/include -idirafter /Users/miami/OpenBattlefield2/reference/xwin/sdk/include/ucrt -idirafter /Users/miami/OpenBattlefield2/reference/xwin/sdk/include/um -idirafter /Users/miami/OpenBattlefield2/reference/xwin/sdk/include/shared"
++CXXFLAGS_x86_64-pc-windows-msvc = "-march=x86-64-v2 -fno-omit-frame-pointer -idirafter /Users/miami/OpenBattlefield2/reference/xwin/crt/include -idirafter /Users/miami/OpenBattlefield2/reference/xwin/sdk/include/ucrt -idirafter /Users/miami/OpenBattlefield2/reference/xwin/sdk/include/um -idirafter /Users/miami/OpenBattlefield2/reference/xwin/sdk/include/shared"
+ # The MSVC librarian, as a bare name resolved from PATH: `make setup-rust` puts an
+ # `llvm-lib` symlink in the cargo bin directory onto `llvm-ar`, which switches to
+ # lib.exe-compatible mode based on the name it is invoked under. That mode is what
+diff --git a/windows/d3d9/src/device.rs b/windows/d3d9/src/device.rs
+index 91a7468..fb5ffbb 100644
+--- a/windows/d3d9/src/device.rs
++++ b/windows/d3d9/src/device.rs
+@@ -8302,6 +8302,20 @@ extern "system" fn device_draw_primitive(
+         warn!(target: LOG_TARGET, "DrawPrimitive: no vertex buffer bound");
+         return D3DERR_INVALIDCALL;
+     };
++    // Габарит для дампу Ctrl+Shift+D — з того самого буфера, який піде
++    // на малювання.
++    if dev.frame_dump.active {
++        if let VertexSource::Bound { first, .. } = &vertex_source {
++            dev.frame_dump.geom = frame_dump::vertex_extent_bound(
++                first.backing_ptr,
++                first.backing_len,
++                first.offset,
++                first.stride,
++                start_vertex,
++                vtx_count,
++            );
++        }
++    }
+     emit_snapshot_deltas(&obj);
+     drop(snap);
+     let _push = CycleAddTimer::start(draw_push_op_ptr(perf_ptr));
+@@ -8474,6 +8488,20 @@ extern "system" fn device_draw_indexed_primitive(
+         return D3DERR_INVALIDCALL;
+     };
+ 
++    // Габарит для дампу Ctrl+Shift+D. Індексований виклик читає діапазон
++    // вершин, який гра оголосила в min_vertex_index/num_vertices.
++    if dev.frame_dump.active {
++        if let VertexSource::Bound { first, .. } = &vertex_source {
++            dev.frame_dump.geom = frame_dump::vertex_extent_bound(
++                first.backing_ptr,
++                first.backing_len,
++                first.offset,
++                first.stride,
++                _min_vertex_index,
++                _num_vertices,
++            );
++        }
++    }
+     emit_snapshot_deltas(&obj);
+     drop(snap);
+     let _push = CycleAddTimer::start(draw_push_op_ptr(perf_ptr));
+@@ -8691,6 +8719,18 @@ extern "system" fn device_draw_primitive_up(
+     // were just initialised by the copy above.
+     unsafe { vertex_copy.set_len(data_size) };
+ 
++    // Габарит малювання для дампу Ctrl+Shift+D: позиція — це перші два
++    // float кожної вершини, тож min/max по них і дає прямокутник.
++    if dev.frame_dump.active {
++        let count = if vertex_stride == 0 {
++            0
++        } else {
++            u32::try_from(vertex_copy.len() / vertex_stride as usize).unwrap_or(0)
++        };
++        dev.frame_dump.geom =
++            frame_dump::vertex_extent(vertex_copy.as_ptr().cast(), vertex_stride, count);
++    }
++
+     emit_snapshot_deltas(&obj);
+     drop(snap);
+     let _push = CycleAddTimer::start(draw_push_op_ptr(perf_ptr));
+@@ -9656,6 +9696,18 @@ extern "system" fn device_draw_indexed_primitive_up(
+         (metal_prim, index_copy, index_count)
+     };
+ 
++    // Габарит малювання для дампу Ctrl+Shift+D: позиція — це перші два
++    // float кожної вершини, тож min/max по них і дає прямокутник.
++    if dev.frame_dump.active {
++        let count = if vertex_stride == 0 {
++            0
++        } else {
++            u32::try_from(vertex_copy.len() / vertex_stride as usize).unwrap_or(0)
++        };
++        dev.frame_dump.geom =
++            frame_dump::vertex_extent(vertex_copy.as_ptr().cast(), vertex_stride, count);
++    }
++
+     let perf_ptr = DeviceInner::perf_ptr_of(obj.inner);
+     let snap = CycleAddTimer::start(draw_snapshot_ptr(perf_ptr));
+     emit_snapshot_deltas(&obj);
+diff --git a/windows/d3d9/src/device/frame_dump.rs b/windows/d3d9/src/device/frame_dump.rs
+index c45f49d..7ca9c65 100644
+--- a/windows/d3d9/src/device/frame_dump.rs
++++ b/windows/d3d9/src/device/frame_dump.rs
+@@ -35,6 +35,65 @@ use crate::{
+ /// Dump events name surfaces by texture id so they cross-reference the
+ /// per-draw lines, which print the same ids; the raw COM pointer alone
+ /// cannot be matched to anything.
++/// Screen-space extent of a draw, from its inline (`*UP`) vertex data.
++///
++/// Reads the first two floats of every vertex — the position slot in every
++/// FVF layout the game uses for 2D — and returns their range. Pre-transformed
++/// (`XYZRHW`) positions are already in pixels, so the result is the on-screen
++/// rectangle; for transformed geometry it is the object-space extent, which
++/// still tells the draws apart.
++pub fn vertex_extent(data: *const c_void, stride: u32, vertices: u32) -> String {
++    if data.is_null() || stride < 8 || vertices == 0 {
++        return String::new();
++    }
++    let base = data.cast::<u8>();
++    let (mut x0, mut y0) = (f32::MAX, f32::MAX);
++    let (mut x1, mut y1) = (f32::MIN, f32::MIN);
++    for i in 0..vertices.min(4096) {
++        // SAFETY: the D3D9 ABI guarantees `vertices * stride` bytes are
++        // readable from `data` for the duration of the call.
++        let at = unsafe { base.add(i as usize * stride as usize) };
++        let x = unsafe { at.cast::<f32>().read_unaligned() };
++        let y = unsafe { at.add(4).cast::<f32>().read_unaligned() };
++        if !x.is_finite() || !y.is_finite() {
++            return String::new();
++        }
++        x0 = x0.min(x);
++        y0 = y0.min(y);
++        x1 = x1.max(x);
++        y1 = y1.max(y);
++    }
++    format!("{x0:.1},{y0:.1} {:.1}x{:.1}", x1 - x0, y1 - y0)
++}
++
++/// Same extent, for a draw that reads a bound vertex buffer.
++///
++/// The game does not use the `*UP` entry points for its interface — every
++/// draw comes from an `IDirect3DVertexBuffer9` — so the stream binding is
++/// where the positions actually live. `backing_ptr` is the CPU-side page the
++/// buffer wraps, `offset` the `SetStreamSource` byte offset.
++pub fn vertex_extent_bound(
++    backing_ptr: u64,
++    backing_len: u64,
++    offset: u32,
++    stride: u32,
++    first_vertex: u32,
++    vertices: u32,
++) -> String {
++    if backing_ptr == 0 || stride < 8 || vertices == 0 {
++        return String::new();
++    }
++    let start = offset as u64 + u64::from(first_vertex) * u64::from(stride);
++    let need = u64::from(vertices) * u64::from(stride);
++    if start.saturating_add(need) > backing_len {
++        return String::new();
++    }
++    // SAFETY: the range was just bounds-checked against the buffer the
++    // device wraps, and the API thread owns it for the duration of the draw.
++    let base = unsafe { (backing_ptr as *const u8).add(start as usize) };
++    vertex_extent(base.cast(), stride, vertices)
++}
++
+ pub fn surface_label(surface: *mut c_void) -> String {
+     if surface.is_null() {
+         return String::from("null");
+@@ -89,6 +148,15 @@ pub struct FrameDump {
+     /// bound above slot 0: their contents decide occlusion-style effects,
+     /// and only a readback can say whether the bytes are sane.
+     pub readback: Vec<DumpReadback>,
++    /// Screen-space extent of the next draw, filled by the draw entry point.
++    ///
++    /// The dump already names every texture a draw samples, with its size;
++    /// what it could not say is *where* on screen the draw lands. For 2D UI
++    /// the game feeds pre-transformed vertices (position is the first two
++    /// floats of each vertex), so the extent is just their min/max. That
++    /// turns the dump into a table of "which picture, at which rectangle" —
++    /// exactly what a HUD reimplementation needs to compare against.
++    pub geom: String,
+ }
+ 
+ impl FrameDump {
+@@ -97,6 +165,7 @@ impl FrameDump {
+         draws: 0,
+         frames_remaining: 0,
+         readback: Vec::new(),
++        geom: String::new(),
+     };
+ 
+     /// Consecutive frames one Ctrl+Shift+D press captures.
+@@ -135,6 +204,7 @@ impl DeviceInner {
+             draws: 0,
+             frames_remaining: remaining.saturating_sub(1),
+             readback: Vec::new(),
++            geom: String::new(),
+         };
+         if self.frame_dump.active {
+             info!(
+@@ -494,7 +564,7 @@ impl DeviceInner {
+             "[dump] draw {seq}: rt={rt} ds={ds}/{:#x} vs={vs} ps={ps} \
+              z=[{},{},{}] blend=[{},{},{},{} sep={} {},{},{}] cull={} cw=[{:#x},{:#x},{:#x},{:#x}] \
+              alpha=[{},{},{}] stencil=[{},{},{:#x},{:#x},{:#x} {},{},{} two={} ccw={},{},{},{}] \
+-             bias=[{:#x},{:#x}] scissor={} tex=[{}]",
++             bias=[{:#x},{:#x}] scissor={} tex=[{}] geom=[{}]",
+             self.snapshot_cache.depth_stencil.bits(),
+             rs(D3DRS_ZENABLE),
+             rs(D3DRS_ZWRITEENABLE),
+@@ -532,7 +602,10 @@ impl DeviceInner {
+             rs(D3DRS_SLOPESCALEDEPTHBIAS),
+             rs(D3DRS_SCISSORTESTENABLE),
+             textures.trim_start(),
++            self.frame_dump.geom,
+         );
++        // Кожен виклик несе свій габарит; наступний заповнить його заново.
++        self.frame_dump.geom.clear();
+         for tex in note {
+             // SAFETY: collected above from live bound stages on this thread;
+             // nothing between there and here can release them.
