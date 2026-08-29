@@ -1915,7 +1915,20 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     for (const Layer& layer : {
              Layer{"BottomLeftAnimate", -1.0f, 563.0f, obf2::hud::Anchor::Left},
              Layer{"BottomLeftStatic", -1.0f, 563.0f, obf2::hud::Anchor::Left},
-             Layer{"BottomRightAnimate", 201.0f, 497.0f, obf2::hud::Anchor::Right},
+             // X цієї ділянки — виміряний, а не взятий із файлу. У файлі
+             // лежить лише схований стан (BottomRight_XPos = 503) і пара
+             // ToggleData 201/503; висунуте положення рахує вже дія під
+             // час гри, тож із даних його не видно. Знімок кадру
+             // оригіналу (Ctrl+Shift+D, див. docs/research/03-frame-dump.md)
+             // дає 336.5, і три різні вузли сходяться на ньому:
+             //
+             //   BottomRightBar  301 -> 637.5     ShotSelect 449 -> 785.5
+             //   безіменний 16x10 431 -> 767.5
+             //
+             // Значення стале в усіх трьох знятих кадрах, тобто це не
+             // проміжок анімації. Раніше тут стояло 201 — плашка набоїв
+             // від того сиділа на 135 пікселів лівіше, ніж в оригіналі.
+             Layer{"BottomRightAnimate", 336.5f, 497.0f, obf2::hud::Anchor::Right},
              Layer{"BottomRightStatic", 401.0f, 563.0f, obf2::hud::Anchor::Right},
          }) {
       obf2::hud::Screen layerScreen = hudScreen;
