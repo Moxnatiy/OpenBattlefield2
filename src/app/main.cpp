@@ -2143,14 +2143,27 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       lookTarget = eye + obf2::Vec3f{std::sin(yawRadians) * std::cos(pitchRadians),
                                      std::sin(pitchRadians),
                                      std::cos(yawRadians) * std::cos(pitchRadians)};
+    } else if (args.topDown) {
+      eye = obf2::Vec3f{scene.center.x, scene.center.y + distance, scene.center.z};
+    } else if (level && level->hasBeforeSpawnCamera) {
+      // Поки гравець не з'явився, камера стоїть там, де сказав рівень:
+      //
+      //   gameLogic.setBeforeSpawnCamera -50/185/-285 -16/-3/0
+      //
+      // (Levels/<рівень>/Init.con). Перша трійка — місце, друга — поворот
+      // у градусах. Доти ми просто крутили камеру навколо центра карти,
+      // і вигляд не мав нічого спільного з грою.
+      constexpr float kToRadians = 3.14159265358979323846f / 180.0f;
+      eye = level->beforeSpawnCameraPos;
+      const float yawRadians = level->beforeSpawnCameraRot.x * kToRadians;
+      const float pitchRadians = level->beforeSpawnCameraRot.y * kToRadians;
+      lookTarget = eye + obf2::Vec3f{std::sin(yawRadians) * std::cos(pitchRadians),
+                                     std::sin(pitchRadians),
+                                     std::cos(yawRadians) * std::cos(pitchRadians)};
     } else {
-      if (args.topDown) {
-        eye = obf2::Vec3f{scene.center.x, scene.center.y + distance, scene.center.z};
-      } else {
-        const float angle = static_cast<float>(frame) / 60.0f * 0.6f;
-        eye = obf2::Vec3f{scene.center.x + std::sin(angle) * distance, scene.center.y + eyeHeight,
-                          scene.center.z + std::cos(angle) * distance};
-      }
+      const float angle = static_cast<float>(frame) / 60.0f * 0.6f;
+      eye = obf2::Vec3f{scene.center.x + std::sin(angle) * distance, scene.center.y + eyeHeight,
+                        scene.center.z + std::cos(angle) * distance};
     }
 
     const float aspect =

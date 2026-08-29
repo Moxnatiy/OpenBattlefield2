@@ -55,6 +55,30 @@ class LevelBuilder {
       level_.terrain.seaLevel = command.argFloat(0).value_or(0.0f);
       return;
     }
+    // Камеру екрана появи задає сам рівень:
+    //   gameLogic.setBeforeSpawnCamera -50/185/-285 -16/-3/0
+    // Обидві трійки записані одним словом через скісну риску — місце і
+    // поворот у градусах.
+    if (path == "gamelogic.setbeforespawncamera") {
+      const auto triple = [&](std::size_t i, Vec3f& out) {
+        if (i >= command.args.size()) return false;
+        const std::string& text = command.args[i];
+        float v[3] = {0.0f, 0.0f, 0.0f};
+        std::size_t at = 0;
+        for (float& part : v) {
+          const std::size_t slash = text.find('/', at);
+          part = std::strtof(text.substr(at, slash - at).c_str(), nullptr);
+          if (slash == std::string::npos) break;
+          at = slash + 1;
+        }
+        out = Vec3f{v[0], v[1], v[2]};
+        return true;
+      };
+      if (triple(0, level_.beforeSpawnCameraPos) && triple(1, level_.beforeSpawnCameraRot)) {
+        level_.hasBeforeSpawnCamera = true;
+      }
+      return;
+    }
     // Нас цікавить лише центральний фрагмент кластера (0,0) — це власне
     // ігрова карта. Решта вісім — низькодетальне оточення на горизонті.
     if (path == "heightmap.setsize" && isPrimary()) {
@@ -318,6 +342,7 @@ std::optional<Level> loadLevel(FileSystem& files, std::string_view levelName, st
   // Порядок як в Init.con рівня. Аргумент BF2Editor вмикає редакторську
   // гілку — саме ту, що читає вихідні .raw замість скомпільованого блоба.
   const std::vector<std::string> editorArgs{"BF2Editor"};
+  interpreter.runFile(base + "/Init.con");
   interpreter.runFile(base + "/Heightdata.con");
   interpreter.runFile(base + "/Terrain.con", editorArgs);
   interpreter.runFile(base + "/StaticObjects.con", editorArgs);

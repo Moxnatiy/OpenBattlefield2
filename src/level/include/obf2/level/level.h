@@ -110,6 +110,17 @@ struct Level {
   // Висоти у світових одиницях, розмір size*size, рядки з півночі на південь.
   std::vector<float> heights;
 
+  // Камера екрана появи — її задає сам рівень в Init.con:
+  //
+  //   gameLogic.setBeforeSpawnCamera -50/185/-285 -16/-3/0
+  //
+  // Перша трійка — місце, друга — поворот у градусах (рискання, тангаж,
+  // крен). Поки гравець не з'явився, гра дивиться саме звідти, а не
+  // крутиться навколо карти.
+  bool hasBeforeSpawnCamera = false;
+  Vec3f beforeSpawnCameraPos;
+  Vec3f beforeSpawnCameraRot;
+
   float heightAt(int x, int z) const {
     if (x < 0 || z < 0 || x >= primary.size || z >= primary.size) return 0.0f;
     return heights[static_cast<std::size_t>(z) * primary.size + x];
