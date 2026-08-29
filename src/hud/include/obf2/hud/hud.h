@@ -170,6 +170,70 @@ struct Node {
   Color listBorderColor;
   float listBorder[4] = {0.0f, 0.0f, 0.0f, 0.0f};  // ліворуч, праворуч, згори, знизу
   float listRowHeight = 0.0f;
+  Color listSelectColor;                  // setListNodeSelectColor r g b a
+  bool hasListScrollbar = false;          // setListNodeScrollbar <ширина> <проміжок>
+  float listScrollbarWidth = 0.0f;
+  float listScrollbarGap = 0.0f;
+  Color listScrollbarColor;
+  Color listScrollbarBackground;
+  int listData = -1;             // setListNodeData — номер джерела рядків
+  float listRowSpacing = 0.0f;   // setListNodeRowSpacing
+  bool listOutline = false;      // setListNodeOutline
+  // setListNodeConCmd <номер> "<команда>" — що виконати на клацання.
+  std::vector<std::pair<int, std::string>> listCommands;
+
+  // Поле вводу (чат, назва загону).
+  std::string editFont;      // setEditNodeFont <шлях> <номер>
+  int editData = -1;         // setEditNodeData
+  int editString = -1;       // setEditNodeString
+  int editMaxLength = 0;     // setEditNodeMaxLength
+  Color editColor;           // setEditNodeColor r g b a
+  bool hasEditColor = false;
+
+  // Мітка об'єкта (захоплення цілі в техніці).
+  int markerLockOnType = 0;                          // setObjectMarkerNodeLockOnType
+  int markerWeapon = 0;                              // setObjectMarkerNodeWeapon
+  std::string markerLockText;                        // setObjectMarkerNodeLockText <n> <вузол>
+  float markerLockTextOffset[2] = {0.0f, 0.0f};      // setObjectMarkerNodeLockTextOffset
+
+  // Місця в техніці: setOccupiedNodeData <номер>, а пари координат
+  // приходять зі змінних — setOccupiedNodePosVariable <номер> <змінна>.
+  int occupiedData = -1;
+  std::vector<std::string> occupiedPosVariables;
+
+  // Компас: куди «прилипають» позначки й чим їх малювати.
+  float compassSnapOffset[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+  std::vector<std::string> compassSnapTextures;
+
+  // Вузол наведення (підказка під курсором).
+  float hoverMiddle[2] = {0.0f, 0.0f};
+  float hoverMaxValue = 0.0f;
+  float hoverWidth = 0.0f;
+  float hoverLength = 0.0f;
+
+  // Повзунок: який вузол їздить і яку змінну міняє.
+  std::string sliderChild;
+  std::string sliderData;
+
+  // Обведення тексту: окремий шрифт і зсув, яким його малюють під низом.
+  std::string outlineFont;                     // setTextNodeOutLine
+  float outlineOffset[2] = {0.0f, 0.0f};       // setTextNodeOutLineOffset
+
+  // Вибір об'єкта: розмір вказівника.
+  float pointerSize[2] = {0.0f, 0.0f};
+
+  // Крок між пунктами списку трансформацій (setTranformListNodeOffset).
+  float childOffsetX = 0.0f, childOffsetY = 0.0f;
+
+  // Шар малювання. `hudBuilder.newLayer` починає наступний: усе, створене
+  // після нього, лягає поверх попереднього незалежно від місця в дереві.
+  // У даних гри він трапляється один раз — перед картою.
+  int layer = 0;
+
+  // Карта: піктограми масштабу і шрифт підписів точок.
+  int zoomIcons = 0;
+  std::string cpFont;
+  Color cpFontColor;
 
   // Карта власного прямокутника при створенні не дістає — гра задає їй
   // три різні подання окремими командами (HudElementsMap.con):
@@ -226,6 +290,7 @@ class Builder {
   std::vector<Node> nodes_;
   std::map<std::string, int> unknownByName_;
   int activeIndex_ = -1;  // -1 = останній створений
+  int layer_ = 0;         // поточний шар, його зсуває hudBuilder.newLayer
   long long unknown_ = 0;
 };
 

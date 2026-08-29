@@ -280,6 +280,14 @@ std::vector<DrawPiece> buildTree(const Builder& builder, std::string_view rootGr
     }
   };
   walk(walk, rootGroup, 0);
+  // `hudBuilder.newLayer` починає новий шар: усе, створене після нього,
+  // лягає поверх попереднього незалежно від місця в дереві. Порядок
+  // усередині шару — це порядок обходу, тож сортування має бути стійким.
+  std::stable_sort(pieces.begin(), pieces.end(), [](const DrawPiece& a, const DrawPiece& b) {
+    const int left = a.node != nullptr ? a.node->layer : 0;
+    const int right = b.node != nullptr ? b.node->layer : 0;
+    return left < right;
+  });
   return pieces;
 }
 

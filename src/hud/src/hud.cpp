@@ -130,9 +130,15 @@ void Builder::feed(const con::Command& command) {
   //
   // Компас через це й виїжджав на пів екрана: ми читали його прямокутник
   // на одну позицію раніше, і замість 186x32 виходило 165x186.
+  if (method == "newlayer") {
+    ++layer_;
+    return;
+  }
+
   auto create = [&](NodeType type) {
     Node node;
     node.type = type;
+    node.layer = layer_;
     const bool shifted = type == NodeType::Bar || type == NodeType::Compass ||
                          type == NodeType::Occupied;
     const int skip = shifted ? 1 : 0;
@@ -161,7 +167,11 @@ void Builder::feed(const con::Command& command) {
   if (method == "createbarnode") { create(NodeType::Bar); return; }
   if (method == "createobjectmarkernode") { create(NodeType::ObjectMarker); return; }
   if (method == "createcompassnode") { create(NodeType::Compass); return; }
-  if (method == "createtransformlistnode") { create(NodeType::TransformList); return; }
+  // У DICE трапляється й опечатка «Transfom» — це та сама команда.
+  if (method == "createtransformlistnode" || method == "createtransfomlistnode") {
+    create(NodeType::TransformList);
+    return;
+  }
   // Вузли, які ми поки не малюємо, але тип у них свій: інакше вони всі
   // злипаються в «інше» і по дереву не видно, чого бракує.
   if (method == "createtransformnode") { create(NodeType::TransformList); return; }
@@ -328,8 +338,15 @@ void Builder::feed(const con::Command& command) {
   }
 
   // --- списки трансформацій: вузол стає нащадком іншого ---
-  if (method == "addtransformlistnode") {
+  if (method == "addtransformlistnode" || method == "addtransfomlistnode") {
     node->children.emplace_back(command.argStr(0));
+    return;
+  }
+  // setTranformListNodeOffset <x> <y> — крок між сусідніми пунктами
+  // списку. Без нього всі пункти лягають один на одного.
+  if (method == "settranformlistnodeoffset" || method == "settransformlistnodeoffset") {
+    node->childOffsetX = command.argFloat(0).value_or(0.0f);
+    node->childOffsetY = command.argFloat(1).value_or(0.0f);
     return;
   }
   if (method == "settranformlistnodeposvariable" || method == "setnodeposvariable") {
@@ -405,6 +422,125 @@ void Builder::feed(const con::Command& command) {
     out.b = command.argFloat(2).value_or(1.0f);
     out.a = command.argFloat(3).value_or(1.0f);
   };
+  // --- решта команд hudBuilder ---------------------------------------
+  //
+  // Форми зняті з даних гри (кількість аргументів у дужках). Кілька імен
+  // у DICE з друкарськими помилками — «Transfom» і «Tranform» замість
+  // «Transform»; це ті самі команди, тож і обробник той самий.
+  if (method == "setlistnodeselectcolor") { readColor(node->listSelectColor); return; }
+  if (method == "setlistnodescrollbarcolor") { readColor(node->listScrollbarColor); return; }
+  if (method == "setlistnodescrollbarbackgroundcolor") {
+    readColor(node->listScrollbarBackground);
+    return;
+  }
+  if (method == "setlistnodescrollbar") {
+    node->listScrollbarWidth = command.argFloat(0).value_or(0.0f);
+    node->listScrollbarGap = command.argFloat(1).value_or(0.0f);
+    node->hasListScrollbar = true;
+    return;
+  }
+  if (method == "setlistnodedata") {
+    node->listData = command.argInt(0).value_or(-1);
+    return;
+  }
+  if (method == "setlistnoderowspacing") {
+    node->listRowSpacing = command.argFloat(0).value_or(0.0f);
+    return;
+  }
+  if (method == "setlistnodeoutline") {
+    node->listOutline = command.argInt(0).value_or(0) != 0;
+    return;
+  }
+  if (method == "setlistnodeconcmd") {
+    node->listCommands.emplace_back(command.argInt(0).value_or(0),
+                                    std::string(command.argStr(1)));
+    return;
+  }
+  if (method == "seteditnodefont") { node->editFont = std::string(command.argStr(0)); return; }
+  if (method == "seteditnodedata") { node->editData = command.argInt(0).value_or(-1); return; }
+  if (method == "seteditnodestring") { node->editString = command.argInt(0).value_or(-1); return; }
+  if (method == "seteditnodemaxlength") {
+    node->editMaxLength = command.argInt(0).value_or(0);
+    return;
+  }
+  if (method == "seteditnodecolor") {
+    readColor(node->editColor);
+    node->hasEditColor = true;
+    return;
+  }
+  if (method == "setobjectmarkernodelockontype") {
+    node->markerLockOnType = command.argInt(0).value_or(0);
+    return;
+  }
+  if (method == "setobjectmarkernodeweapon") {
+    node->markerWeapon = command.argInt(0).value_or(0);
+    return;
+  }
+  if (method == "setobjectmarkernodelocktext") {
+    node->markerLockText = std::string(command.argStr(1));
+    return;
+  }
+  if (method == "setobjectmarkernodelocktextoffset") {
+    node->markerLockTextOffset[0] = command.argFloat(0).value_or(0.0f);
+    node->markerLockTextOffset[1] = command.argFloat(1).value_or(0.0f);
+    return;
+  }
+  if (method == "setoccupiednodedata") {
+    node->occupiedData = command.argInt(0).value_or(-1);
+    return;
+  }
+  if (method == "setoccupiednodeposvariable") {
+    const std::size_t slot = static_cast<std::size_t>(command.argInt(0).value_or(0));
+    if (node->occupiedPosVariables.size() <= slot) node->occupiedPosVariables.resize(slot + 1);
+    node->occupiedPosVariables[slot] = std::string(command.argStr(1));
+    return;
+  }
+  if (method == "setcompassnodesnapoffset") {
+    for (int i = 0; i < 4; ++i) {
+      node->compassSnapOffset[i] = command.argFloat(static_cast<std::size_t>(i)).value_or(0.0f);
+    }
+    return;
+  }
+  if (method == "setcompassnodesnaptexture") {
+    const std::size_t slot = static_cast<std::size_t>(command.argInt(0).value_or(0));
+    if (node->compassSnapTextures.size() <= slot) node->compassSnapTextures.resize(slot + 1);
+    node->compassSnapTextures[slot] = std::string(command.argStr(1));
+    return;
+  }
+  if (method == "sethoverinmiddlepos") {
+    node->hoverMiddle[0] = command.argFloat(0).value_or(0.0f);
+    node->hoverMiddle[1] = command.argFloat(1).value_or(0.0f);
+    return;
+  }
+  if (method == "sethovermaxvalue") {
+    node->hoverMaxValue = command.argFloat(0).value_or(0.0f);
+    return;
+  }
+  if (method == "sethoverwidthlength") {
+    node->hoverWidth = command.argFloat(0).value_or(0.0f);
+    node->hoverLength = command.argFloat(1).value_or(0.0f);
+    return;
+  }
+  if (method == "setslidernodechild") { node->sliderChild = std::string(command.argStr(0)); return; }
+  if (method == "setslidernodedata") { node->sliderData = std::string(command.argStr(0)); return; }
+  if (method == "settextnodeoutline") {
+    node->outlineFont = std::string(command.argStr(0));
+    return;
+  }
+  if (method == "settextnodeoutlineoffset") {
+    node->outlineOffset[0] = command.argFloat(0).value_or(0.0f);
+    node->outlineOffset[1] = command.argFloat(1).value_or(0.0f);
+    return;
+  }
+  if (method == "setobjectselectionnodepointersize") {
+    node->pointerSize[0] = command.argFloat(0).value_or(0.0f);
+    node->pointerSize[1] = command.argFloat(1).value_or(0.0f);
+    return;
+  }
+  if (method == "setzoomicons") { node->zoomIcons = command.argInt(0).value_or(0); return; }
+  if (method == "setcpfont") { node->cpFont = std::string(command.argStr(0)); return; }
+  if (method == "setcpfontcolor") { readColor(node->cpFontColor); return; }
+
   if (method == "setlistnodebackgroundcolor") {
     readColor(node->listBackground);
     node->hasListBackground = true;
