@@ -28,6 +28,7 @@ int main(int argc, char** argv) {
   obf2::con::Interpreter interpreter(
       files, [&](const obf2::con::Command& command) { builder.feed(command); });
   interpreter.runFile("Menu/HUD/HudSetup/HudSetupMain.con");
+  builder.finish();
 
   std::printf("вузлів: %zu, невідомих команд: %lld\n", builder.nodes().size(),
               builder.unknownCommands());
@@ -51,9 +52,12 @@ int main(int argc, char** argv) {
   }
 
   for (const auto* node : builder.group(argv[2])) {
-    std::printf("  %-10s %-32s %6.0f %6.0f %5.0f %5.0f", 
+    // Показуємо і власні координати (відносні до батька), і зведені —
+    // саме за розбіжністю видно, як глибоко вузол сидить у дереві.
+    std::printf("  %-10s %-30s віднос %6.0f %6.0f  абс %6.0f %6.0f  %5.0fx%-5.0f %s",
                 std::string(obf2::hud::nodeTypeName(node->type)).c_str(), node->name.c_str(),
-                node->x, node->y, node->width, node->height);
+                node->x, node->y, node->absX, node->absY, node->width, node->height,
+                node->area.c_str());
     if (!node->texture.empty()) std::printf("  tex=%s", node->texture.c_str());
     if (!node->text.empty()) std::printf("  text=\"%s\"", node->text.c_str());
     if (!node->command.empty()) std::printf("  cmd=%s", node->command.c_str());

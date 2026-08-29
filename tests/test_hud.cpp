@@ -25,6 +25,7 @@ hud::Builder build(const std::string& source) {
   hud::Builder builder;
   con::Interpreter interpreter(files, [&](const con::Command& c) { builder.feed(c); });
   interpreter.runFile("hud.con");
+  builder.finish();
   return builder;
 }
 
@@ -147,6 +148,38 @@ static void testNodeRectScalesFromReference() {
   CHECK(std::abs(rect.height - 30.0f) < 0.01f);
 }
 
+static void testChildCoordinatesAreRelativeToParent() {
+  // Головне правило HUD, записане в Readme.txt самих розробників:
+  // перший аргумент — батьківський вузол, а x/y відлічуються від його
+  // лівого верхнього кута. Доти ми брали їх як екранні, і все, що
+  // глибше за один рівень, розповзалося по екрану.
+  const hud::Builder builder = build(
+      "hudBuilder.createSplitNode Global Panel 300 200 100 100\n"
+      "hudBuilder.createPictureNode Panel Icon 10 5 16 16\n"
+      "hudBuilder.createSplitNode Panel Inner 40 20 50 50\n"
+      "hudBuilder.createPictureNode Inner Deep 1 2 8 8\n");
+
+  const hud::Node* icon = nullptr;
+  const hud::Node* deep = nullptr;
+  for (const hud::Node& node : builder.nodes()) {
+    if (node.name == "Icon") icon = &node;
+    if (node.name == "Deep") deep = &node;
+  }
+  CHECK(icon != nullptr);
+  CHECK(deep != nullptr);
+  if (icon != nullptr) {
+    CHECK(std::abs(icon->absX - 310.0f) < 0.01f);
+    CHECK(std::abs(icon->absY - 205.0f) < 0.01f);
+    CHECK_EQ(icon->area, std::string("Global"));
+  }
+  // Три рівні: 300+40+1 і 200+20+2.
+  if (deep != nullptr) {
+    CHECK(std::abs(deep->absX - 341.0f) < 0.01f);
+    CHECK(std::abs(deep->absY - 222.0f) < 0.01f);
+    CHECK_EQ(deep->area, std::string("Global"));
+  }
+}
+
 static void testButtonAtFindsButtonUnderCursor() {
   const hud::Builder builder = build(
       "hudBuilder.createPictureNode Menu Background 0 0 800 600\n"
@@ -214,6 +247,7 @@ TEST_MAIN({
   testBarNodeHasDirectionBeforeRect();
   testBarIsClippedByValue();
   testNodeRectScalesFromReference();
+  testChildCoordinatesAreRelativeToParent();
   testButtonAtFindsButtonUnderCursor();
   testPictureNode();
   testPropertiesGoToLastCreatedNode();

@@ -34,7 +34,12 @@ struct GeneralSettings {
   std::string playerName;
   bool viewIntroMovie = true;   // GeneralSettings.setViewIntroMovie
   int connectionType = 2;       // game.setConnection
-  int minimapTransparency = 20;
+  // Прозорість HUD і мінікарти. У грі це байт 0..255, а вузли HUD
+  // дістають його вже часткою: BF2.exe множить обидва поля на 1/255
+  // (0x8a4a64) і кладе у змінні MenuBackgroundAlpha та MenuMapAlpha
+  // (див. 0x4b68d3 і 0x4b6907). Типове значення профілю — 204.
+  int hudTransparency = 204;      // GeneralSettings.setHUDTransparency
+  int minimapTransparency = 204;  // GeneralSettings.setMinimapTransparency
   bool staticMinimap = true;
   bool toolTip = false;
   bool radioToolTip = true;

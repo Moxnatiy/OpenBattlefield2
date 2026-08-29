@@ -52,8 +52,18 @@ struct DrawPiece {
 // Як розв'язати те, що вузол не тримає в собі:
 //   * підпис за ключем локалізації;
 //   * значення змінної інтерфейсу (`setNodeShowVariable` тощо).
+// Шрифт, яким малювати вузол. `setTextNodeStyle` у даних гри — це шлях
+// до `.dif`, а не абстрактний стиль, і кегль зашитий у самій назві:
+// hudFontLocalBold_9, StandardTextBold_15, vehicleHudFont_6.
+struct FontRef {
+  const font::Font* font = nullptr;
+  std::string atlas;
+};
+
 struct Context {
   std::function<std::string_view(std::string_view key)> localize;
+  // Шрифт вузла за його стилем. Порожній результат — лишаємо загальний.
+  std::function<FontRef(std::string_view style)> fontFor;
   std::function<bool(std::string_view variable)> isVisible;
   std::function<std::string_view(std::string_view variable)> variableText;
   // Заповнення смуги 0..1 (`setBarNodeValueVariable`).

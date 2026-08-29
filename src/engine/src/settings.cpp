@@ -103,6 +103,9 @@ void Settings::bind(Console& console) {
   console.bind("GeneralSettings.setViewIntroMovie", [this](const con::Command& c) {
     general.viewIntroMovie = flagOf(c, general.viewIntroMovie);
   });
+  console.bind("GeneralSettings.setHUDTransparency", [this](const con::Command& c) {
+    general.hudTransparency = c.argInt(0).value_or(general.hudTransparency);
+  });
   console.bind("GeneralSettings.setMinimapTransparency", [this](const con::Command& c) {
     general.minimapTransparency = c.argInt(0).value_or(general.minimapTransparency);
   });

@@ -1470,6 +1470,8 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         ++index;
       }
     }
+    // Наше меню теж дерево: "MainMenu" — батько кнопок.
+    menuHud.finish();
     std::printf("  меню: %zu вузлів у групі MainMenu\n",
                 menuHud.group("MainMenu").size());
 
@@ -1733,8 +1735,18 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   std::map<std::string, bool> hudVariables;
   std::map<std::string, std::string> hudStrings;
   std::map<std::string, float> hudValues;
-  // Прозорість вузлів: те, що ми справді знаємо. Решта лишається видимою.
-  const std::map<std::string, float> hudAlpha = {{"MenuBackgroundAlpha", 0.0f}};
+  // Прозорість плашок. Це не наша вигадка й не нуль: BF2.exe бере
+  // прозорість із профілю гравця (GeneralSettings.setHUDTransparency /
+  // setMinimapTransparency, типово 204), множить на 1/255 — константа
+  // 0x8a4a64 — і кладе у змінні MenuBackgroundAlpha та MenuMapAlpha
+  // (0x4b68d3 і 0x4b6907). Доти ми ставили нуль, і широкі плашки під
+  // здоров'ям, витривалістю та набоями не малювалися зовсім.
+  const std::map<std::string, float> hudAlpha = {
+      {"MenuBackgroundAlpha",
+       static_cast<float>(engine.settings().general.hudTransparency) / 255.0f},
+      {"MenuMapAlpha",
+       static_cast<float>(engine.settings().general.minimapTransparency) / 255.0f},
+  };
   // Вузли, вміст яких змінюється в грі: підписи й смуги. Геометрію для них
   // перебудовуємо, але лише коли справді змінилося значення.
   struct DynamicNode {
@@ -1746,6 +1758,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   };
   std::vector<DynamicNode> hudDynamic;
   const LoadedFont hudFont = bootMode ? LoadedFont{} : loadFont(files, "Fonts/800/dynamicText_13");
+  // Шрифти вузлів, за їхнім стилем. Вантажимо на вимогу: у HUD їх з
+  // десяток, і читати всі 358 із архіву нема потреби.
+  std::map<std::string, LoadedFont> hudFonts;
   obf2::hud::Screen hudScreen;
   if (!bootMode && hudFont.valid) {
     // Словник: без нього на HUD видно ключі («HUD_TEXT_MENU_SCORE_ROUNDSWON»)
@@ -1756,6 +1771,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     obf2::con::Interpreter hudInterpreter(
         files, [&](const obf2::con::Command& command) { ingameHud.feed(command); });
     hudInterpreter.runFile("Menu/HUD/HudSetup/HudSetupMain.con");
+    // Зв'язати дерево: доти координати вузлів лишаються відносними до
+    // батька, і HUD розсипається по екрану.
+    ingameHud.finish();
 
     // Розкладка керування — з даних гри. Питаємо про дію, а яка це
     // клавіша, вирішує `Settings/Controls.con`.
@@ -1768,14 +1786,45 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     // інтерфейс командира, табло й кабіни всієї техніки.
     // ReferenceCross — це вирівнювальний хрест розробників, у грі він
     // вимкнений; решта — базовий набір, який видно в бою.
+    // ToggleScore — вкладка «Гравці» на табло. Що вона типова, видно в
+    // бінарі: у поле прапорця (Scoreboard+0x365) є рівно один запис
+    // сталої, `movb $0x1, 0x365(%esi)` за 0x7a48f7. Без неї тло лівої
+    // панелі (team1_byScore.tga) не малюється зовсім.
     for (const char* on : {"ShowIngameHud", "PlayerHealthShow", "PlayerStaminaShow",
                            "PrimaryAmmoShow", "PrimaryAmmoBarShow", "MapShow", "MapMinSize",
-                           "CPInterfaceEnabled"}) {
+                           "CPInterfaceEnabled", "ToggleScore"}) {
       hudVariables[on] = true;
     }
 
     obf2::hud::Context hudContext;
     hudContext.localize = [&](std::string_view key) { return engine.lexicon().text(key); };
+    // Шрифт кожного вузла — той, що названий у setTextNodeStyle. Шлях у
+    // даних записаний як "Fonts/hudFontLocalBold_9.dif" (подекуди зі
+    // зворотним слешем), а в архіві шрифти лежать двома наборами: у корені
+    // й у теці `800`. Ми міряємо HUD базовими 800x600, тож беремо `800`,
+    // а корінь лишається запасним.
+    hudContext.fontFor = [&](std::string_view style) -> obf2::hud::FontRef {
+      std::string key(style);
+      for (char& c : key) {
+        if (c == '\\') c = '/';
+      }
+      if (key.size() > 4 && key.compare(key.size() - 4, 4, ".dif") == 0) {
+        key.resize(key.size() - 4);
+      }
+      const auto cached = hudFonts.find(key);
+      if (cached != hudFonts.end()) {
+        return obf2::hud::FontRef{cached->second.valid ? &cached->second.font : nullptr,
+                                  cached->second.atlasPath};
+      }
+      const std::size_t slash = key.rfind('/');
+      const std::string dir = slash == std::string::npos ? std::string() : key.substr(0, slash + 1);
+      const std::string name = slash == std::string::npos ? key : key.substr(slash + 1);
+      LoadedFont loaded = loadFont(files, dir + "800/" + name);
+      if (!loaded.valid) loaded = loadFont(files, key);
+      const auto placed = hudFonts.emplace(key, std::move(loaded)).first;
+      return obf2::hud::FontRef{placed->second.valid ? &placed->second.font : nullptr,
+                                placed->second.atlasPath};
+    };
     hudContext.isVisible = [&](std::string_view variable) {
       if (variable == "1") return true;
       const auto found = hudVariables.find(std::string(variable));
@@ -1867,23 +1916,41 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       hudQuads.push_back(static_cast<int>(scene.meshes.size()) - 1);
     }
 
-    // Усередині такого екрана змінні показу вмикає сама поява екрана:
-    // рація вся висить на RadioInterfaceShow, і поки її не тримають, її
-    // й немає. Тому тут вимкненим вважаємо лише те, що ми знаємо як
-    // вимкнене, а не все незнайоме.
-    obf2::hud::Context keyContext = hudContext;
-    keyContext.isVisible = [&](std::string_view variable) {
-      if (variable == "0") return false;
-      const auto found = hudVariables.find(std::string(variable));
-      return found == hudVariables.end() || found->second;
+    // Кожен екран на клавішу відмикає рівно **одна** змінна — та, що
+    // стоїть на його корені в даних гри:
+    //
+    //   Scoreboard -> ScoreboardShow      RadioRose -> RadioInterfaceShow
+    //   SpawnMenu  -> SpawnShow           MapMenu   -> MapMenuShow
+    //
+    // Доти ми на цих екранах вважали ввімкненим усе незнайоме — і на табло
+    // разом вилазили обидві вкладки, обидва набори підписів і блок даних
+    // сервера, накладаючись один на одного. Правильно навпаки: правила ті
+    // самі, що й у бою, плюс сама ця змінна.
+    struct KeyScreenSetup {
+      const char* group;
+      const char* action;
+      const char* gate;
     };
-
-    for (const auto& [group, action] : {
-             std::pair{"Scoreboard", "c_GIShowScoreboard"},
-             std::pair{"RadioRose", "c_GIRadioComm"},
-             std::pair{"SpawnMenu", "c_GIEnter"},
-             std::pair{"MapMenu", "c_GIMapSize"},
+    for (const KeyScreenSetup& setup : {
+             KeyScreenSetup{"Scoreboard", "c_GIShowScoreboard", "ScoreboardShow"},
+             KeyScreenSetup{"RadioRose", "c_GIRadioComm", "RadioInterfaceShow"},
+             KeyScreenSetup{"SpawnMenu", "c_GIEnter", "SpawnShow"},
+             KeyScreenSetup{"MapMenu", "c_GIMapSize", "MapMenuShow"},
          }) {
+      const char* const group = setup.group;
+      const char* const action = setup.action;
+      obf2::hud::Context keyContext = hudContext;
+      const std::string gate = setup.gate;
+      keyContext.isVisible = [&, gate](std::string_view variable) {
+        if (variable == "1" || variable == gate) return true;
+        const auto found = hudVariables.find(std::string(variable));
+        return found != hudVariables.end() && found->second;
+      };
+      keyContext.variableValue = [&, gate](std::string_view variable) -> float {
+        if (variable == gate) return 1.0f;
+        const auto found = hudValues.find(std::string(variable));
+        return found == hudValues.end() ? 0.0f : found->second;
+      };
       auto built = obf2::hud::buildTree(ingameHud, group, hudFont.font, hudFont.atlasPath,
                                         hudScreen, keyContext);
       if (built.empty()) continue;

@@ -3,6 +3,7 @@
 #include "obf2/core/math.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace obf2::hud {
 namespace {
@@ -47,6 +48,45 @@ mesh::RenderMesh quad(const ScreenRect& rect, const Screen& screen, const std::s
 
 }  // namespace
 
+// Чи показувати вузол. Крім простої змінної (setNodeShowVariable) вузол
+// може нести ланцюжок умов із setNodeLogicShowVariable — кожна порівнює
+// змінну зі значенням, а дія каже, як приєднати результат:
+//
+//   EQUAL HudState 0        показувати, коли HudState дорівнює 0
+//   NOT   DisconnectMessageActive 1   ... коли НЕ дорівнює
+//   AND   ServerIsFavourite 1         ... і додатково
+//   OR    PauseMessageActive 1        ... або
+//
+// Невідома змінна дає 0 — саме тому `EQUAL HudState 0` типово істинне,
+// а `AND ServerIsFavourite 1` — ні.
+bool nodeVisible(const Node& node, const Context& context) {
+  bool result = true;
+  bool have = false;
+  if (!node.showVariable.empty() && context.isVisible) {
+    result = context.isVisible(node.showVariable);
+    have = true;
+  }
+  for (const ShowTest& test : node.showTests) {
+    const float value = context.variableValue ? context.variableValue(test.variable) : 0.0f;
+    bool term = std::abs(value - test.value) < 0.0001f;
+    if (test.op == "NOT" || test.op == "not") term = !term;
+    if (!have) {
+      // Без setNodeShowVariable перша умова і задає відповідь: приєднувати
+      // її нема до чого.
+      result = term;
+      have = true;
+      continue;
+    }
+    if (test.op == "OR" || test.op == "or") {
+      result = result || term;
+    } else {
+      result = result && term;
+    }
+  }
+  return result;
+}
+
+
 mesh::RenderMesh buildRect(const ScreenRect& rect, const Screen& screen,
                            const std::string& texture) {
   return quad(rect, screen, texture);
@@ -60,10 +100,11 @@ ScreenRect nodeRect(const Node& node, const Screen& screen) {
   const float padX = screen.anchor == Anchor::Center  ? spare * 0.5f
                      : screen.anchor == Anchor::Right ? spare
                                                       : 0.0f;
-  // setNodeOffset зсуває вузол від його ж місця — цим користуються
-  // підписи в меню наказів і мітки командира.
-  return ScreenRect{(node.x + node.offsetX + screen.originX) * scale + padX,
-                    (node.y + node.offsetY + screen.originY) * scale, node.width * scale,
+  // Беремо absX/absY, а не x/y: у грі координати вузла відлічуються від
+  // батька, і без суми по предках усе розсипається по екрану. Зсув
+  // setNodeOffset уже входить у цю суму (Builder::finish).
+  return ScreenRect{(node.absX + screen.originX) * scale + padX,
+                    (node.absY + screen.originY) * scale, node.width * scale,
                     node.height * scale};
 }
 
@@ -122,17 +163,32 @@ std::vector<DrawPiece> buildNode(const Node& node, const font::Font& font,
     if (context.localize) text = std::string(context.localize(text));
     if (text.empty()) return pieces;
 
+    // Кегль задає сам шрифт, а не висота вузла: `setTextNodeStyle` вказує
+    // на конкретний `.dif`, і розмір стоїть у його назві
+    // (hudFontLocalBold_9, StandardTextBold_15, vehicleHudFont_6). Доти ми
+    // розтягували будь-який рядок під висоту його рамки — від того написи
+    // на табло виходили вдвічі-втричі більші за оригінал.
+    const font::Font* face = &font;
+    std::string atlas = fontAtlas;
+    if (!node.style.empty() && context.fontFor) {
+      const FontRef chosen = context.fontFor(node.style);
+      if (chosen.font != nullptr) {
+        face = chosen.font;
+        atlas = chosen.atlas;
+      }
+    }
+
     font::TextLayout layout;
     layout.screenWidth = screen.width;
     layout.screenHeight = screen.height;
     layout.x = rect.x;
     layout.y = rect.y;
-    // Кегль підганяємо під висоту вузла: у даних вона і є розміром рядка.
-    layout.scale = font.size > 0.0f ? (node.height * scaleY) / font.size : 1.0f;
+    // Лишається тільки перерахунок з базових 800x600 у вікно.
+    layout.scale = scaleY;
 
-    auto geometry = font::buildText(font, text, layout, fontAtlas);
+    auto geometry = font::buildText(*face, text, layout, atlas);
     if (!geometry.indices.empty()) {
-      pieces.push_back(DrawPiece{std::move(geometry), fontAtlas, &node});
+      pieces.push_back(DrawPiece{std::move(geometry), atlas, &node});
     }
   }
   return pieces;
@@ -144,7 +200,7 @@ std::vector<DrawPiece> buildGroup(const Builder& builder, std::string_view group
   std::vector<DrawPiece> pieces;
   for (const Node* node : builder.group(group)) {
     // Вузол зі змінною показу малюємо лише тоді, коли вона ввімкнена.
-    if (!node->showVariable.empty() && context.isVisible && !context.isVisible(node->showVariable)) {
+    if (!nodeVisible(*node, context)) {
       continue;
     }
     for (auto& piece : buildNode(*node, font, fontAtlas, screen, context)) {
@@ -184,10 +240,7 @@ std::vector<DrawPiece> buildTree(const Builder& builder, std::string_view rootGr
     visited.emplace_back(group);
 
     for (const Node* node : builder.group(group)) {
-      if (!node->showVariable.empty() && context.isVisible &&
-          !context.isVisible(node->showVariable)) {
-        continue;
-      }
+      if (!nodeVisible(*node, context)) continue;
       if (node->type == NodeType::Split) {
         // Вузол-«розгалуження» сам нічого не малює: він підставляє групу,
         // назва якої збігається з його іменем.
@@ -198,6 +251,10 @@ std::vector<DrawPiece> buildTree(const Builder& builder, std::string_view rootGr
       for (auto& piece : buildNode(*node, font, fontAtlas, screen, context)) {
         pieces.push_back(std::move(piece));
       }
+      // Батьком може бути **будь-який** вузол, а не лише Split: у даних
+      // гри дітей мають ще 30 вузлів-перетворень і дві картинки. Поки ми
+      // спускалися тільки крізь Split, їхні піддерева не малювалися.
+      self(self, node->name, depth + 1);
     }
   };
   walk(walk, rootGroup, 0);
@@ -217,10 +274,7 @@ std::optional<Bounds> treeBounds(const Builder& builder, std::string_view rootGr
     }
     visited.emplace_back(group);
     for (const Node* node : builder.group(group)) {
-      if (!node->showVariable.empty() && context.isVisible &&
-          !context.isVisible(node->showVariable)) {
-        continue;
-      }
+      if (!nodeVisible(*node, context)) continue;
       if (node->type == NodeType::Split) {
         self(self, node->name, depth + 1);
         continue;

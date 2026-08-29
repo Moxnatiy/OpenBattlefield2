@@ -1,3 +1,4 @@
+#include <cctype>
 #include <cstdlib>
 #include "obf2/hud/hud.h"
 
@@ -52,6 +53,51 @@ Node* Builder::active() {
     return &nodes_[static_cast<std::size_t>(activeIndex_)];
   }
   return nodes_.empty() ? nullptr : &nodes_.back();
+}
+
+namespace {
+
+std::string lowered(std::string_view text) {
+  std::string out(text);
+  for (char& c : out) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  return out;
+}
+
+}  // namespace
+
+void Builder::finish() {
+  // Батька шукаємо за іменем: у даних гри він тільки так і вказаний.
+  std::map<std::string, int> byName;
+  for (std::size_t i = 0; i < nodes_.size(); ++i) {
+    byName.emplace(lowered(nodes_[i].name), static_cast<int>(i));
+  }
+  for (std::size_t i = 0; i < nodes_.size(); ++i) {
+    const auto found = byName.find(lowered(nodes_[i].group));
+    // Ділянка (Global, BottomLeftStatic…) вузлом не є, тож не знайдеться
+    // — це і означає корінь. Сам на себе вузол теж не батько.
+    nodes_[i].parent =
+        (found != byName.end() && found->second != static_cast<int>(i)) ? found->second : -1;
+  }
+  // Абсолютне положення — сума по предках. Лічильник кроків рятує від
+  // кільця: дані гри його не мають, але мод може.
+  for (std::size_t i = 0; i < nodes_.size(); ++i) {
+    float x = 0.0f;
+    float y = 0.0f;
+    std::string area = nodes_[i].group;
+    int at = static_cast<int>(i);
+    for (int step = 0; at >= 0 && step < 64; ++step) {
+      const Node& current = nodes_[static_cast<std::size_t>(at)];
+      // setNodeOffset зсуває вузол разом із його дітьми, тож входить
+      // у суму нарівні з x/y.
+      x += current.x + current.offsetX;
+      y += current.y + current.offsetY;
+      area = current.group;
+      at = current.parent;
+    }
+    nodes_[i].absX = x;
+    nodes_[i].absY = y;
+    nodes_[i].area = area;
+  }
 }
 
 void useMapView(Node& node, MapView view) {
@@ -210,8 +256,21 @@ void Builder::feed(const con::Command& command) {
     node->style = std::string(command.argStr(0));
     return;
   }
-  if (method == "setnodeshowvariable" || method == "setnodelogicshowvariable") {
+  if (method == "setnodeshowvariable") {
     node->showVariable = std::string(command.argStr(0));
+    return;
+  }
+  // `setNodeLogicShowVariable NOT DisconnectMessageActive 1` — це дія,
+  // змінна і значення, а не одне ім'я. У даних лише чотири дії, і всі з
+  // трьома аргументами.
+  if (method == "setnodelogicshowvariable") {
+    if (command.args.size() >= 3) {
+      ShowTest test;
+      test.op = std::string(command.argStr(0));
+      test.variable = std::string(command.argStr(1));
+      test.value = command.argFloat(2).value_or(1.0f);
+      node->showTests.push_back(std::move(test));
+    }
     return;
   }
   if (method == "setnodealphavariable") {

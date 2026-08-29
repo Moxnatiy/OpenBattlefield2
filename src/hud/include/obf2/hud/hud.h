@@ -71,6 +71,13 @@ enum class MapView { Mini, Maxi, Commander };
 struct Node;
 void useMapView(Node& node, MapView view);
 
+// Одна умова показу з setNodeLogicShowVariable.
+struct ShowTest {
+  std::string op;        // NOT | EQUAL | AND | OR
+  std::string variable;
+  float value = 1.0f;
+};
+
 struct MapRect {
   bool set = false;
   float x = 0.0f, y = 0.0f, width = 0.0f, height = 0.0f;
@@ -78,7 +85,15 @@ struct MapRect {
 
 struct Node {
   NodeType type = NodeType::Other;
-  std::string group;  // IngameHud, ScoreboardHud ...
+  // Перший аргумент кожної команди — це **батьківський вузол**, а не
+  // проста мітка групи. Так каже власний Readme.txt розробників у
+  // HUD/HudSetup: «When you place nodes in either of these areas they
+  // will gain relative coordinates from the area you placed the node
+  // in». Тобто HUD — дерево, і x/y відлічуються від лівого верхнього
+  // кута батька. Батьком може бути як ділянка (Global, TopLeft,
+  // BottomLeftStatic…), так і будь-який інший вузол: у даних гри дерево
+  // сягає восьми рівнів, а просто на ділянках висить лише шість вузлів.
+  std::string group;
   std::string name;
 
   // Координати у віртуальному екрані гри (див. kReferenceWidth/Height).
@@ -89,7 +104,12 @@ struct Node {
   std::string text;             // setTextNodeString
   std::string textVariable;     // setTextNodeStringVariable
   std::string style;            // setTextNodeStyle
-  std::string showVariable;     // умова показу
+  std::string showVariable;     // умова показу — setNodeShowVariable
+  // setNodeLogicShowVariable завжди має вигляд `дія змінна значення`:
+  // NOT (118), EQUAL (92), AND (44), OR (31). Це не ім'я змінної, як ми
+  // читали доти, а окрема умова, що приєднується до showVariable. Через
+  // ту помилку цілі гілки HUD не показувалися ніколи.
+  std::vector<ShowTest> showTests;
   std::string alphaVariable;
   std::string command;          // setButtonNodeConCmd — кнопка виконує команду
 
@@ -127,6 +147,13 @@ struct Node {
   int barSnapDir = 0;      // setBarNodeSnapDir — куди смуга «прилипає»
   float rotation = 0.0f;   // setPictureNodeRotation
 
+  // Заповнює Builder::finish(): індекс батька в nodes() (-1 — батьком є
+  // ділянка), назва ділянки-кореня і положення від її лівого верхнього
+  // кута, зібране з усіх предків.
+  int parent = -1;
+  std::string area;
+  float absX = 0.0f, absY = 0.0f;
+
   // Карта власного прямокутника при створенні не дістає — гра задає їй
   // три різні подання окремими командами (HudElementsMap.con):
   //
@@ -163,6 +190,11 @@ class Builder {
  public:
   // Підключається як обробник команд до con::Interpreter.
   void feed(const con::Command& command);
+
+  // Викликати після подачі всіх команд: саме тут дерево зв'язується і
+  // з'являються Node::parent, Node::area та Node::absX/absY. Без цього
+  // кроку координати лишаються відносними — і HUD розсипається.
+  void finish();
 
   const std::vector<Node>& nodes() const { return nodes_; }
   std::vector<const Node*> group(std::string_view name) const;
