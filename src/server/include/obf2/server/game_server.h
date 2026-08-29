@@ -112,6 +112,10 @@ struct ServerSettings {
   // Скільки секунд гравець чекає до появи. В оригіналі це залежить від
   // режиму й квитків; поки що стала.
   float respawnDelay = 3.0f;
+  // Скільки гравців потрібно, щоб раунд почався (`sv.numPlayersNeededToStart`,
+  // типово 2). Поки їх менше, гра тримає посеред екрана напис
+  // HUD_STARTOFROUND_NRPLAYERSNEEDED.
+  int playersNeededToStart = 2;
 
   // --- квитки (значення з даних і з коду оригіналу) ---
   //

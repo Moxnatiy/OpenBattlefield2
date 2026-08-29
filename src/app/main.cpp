@@ -1137,6 +1137,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         settingsConsole.bind("sv.spawnTime", [&](const obf2::con::Command& command) {
           serverSettings.respawnDelay = command.argFloat(0).value_or(serverSettings.respawnDelay);
         });
+        settingsConsole.bind("sv.numPlayersNeededToStart", [&](const obf2::con::Command& command) {
+          serverSettings.playersNeededToStart =
+              command.argInt(0).value_or(serverSettings.playersNeededToStart);
+        });
         obf2::con::Interpreter settingsInterpreter(
             files, [&](const obf2::con::Command& c) { settingsConsole.execute(c); });
         settingsInterpreter.runFile("GameLogicInit.con");
@@ -1813,6 +1817,39 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       hudVariables[on] = true;
     }
 
+    // --- екран появи: сім класів -------------------------------------
+    //
+    // Вузли Kit0..Kit6 у HudElementsSpawn.con нічого не показують самі:
+    // кожен висить на своїй змінній, а вміст приходить теж змінними —
+    // KitName<N>String (ключ підпису) і KitIcon<N>Path (піктограма).
+    // Порядок беремо з таблиці локалізації, де ключі йдуть саме так, як
+    // на екрані гри:
+    //
+    //   HUD_TEXT_MENU_SPAWN_KIT_SPECIALFORCES  SNIPER  ASSAULT  SUPPORT
+    //   ENGINEER  MEDIC  ANTITANK
+    struct KitSlot {
+      const char* nameKey;
+      const char* icon;
+    };
+    static const KitSlot kKits[] = {
+        {"HUD_TEXT_MENU_SPAWN_KIT_SPECIALFORCES", "Ingame/Kits/Icons/kit_Specops.tga"},
+        {"HUD_TEXT_MENU_SPAWN_KIT_SNIPER", "Ingame/Kits/Icons/kit_Sniper.tga"},
+        {"HUD_TEXT_MENU_SPAWN_KIT_ASSAULT", "Ingame/Kits/Icons/kit_Light_Assault.tga"},
+        {"HUD_TEXT_MENU_SPAWN_KIT_SUPPORT", "Ingame/Kits/Icons/kit_Heavy_Assault.tga"},
+        {"HUD_TEXT_MENU_SPAWN_KIT_ENGINEER", "Ingame/Kits/Icons/kit_Engineer.tga"},
+        {"HUD_TEXT_MENU_SPAWN_KIT_MEDIC", "Ingame/Kits/Icons/kit_Medic.tga"},
+        {"HUD_TEXT_MENU_SPAWN_KIT_ANTITANK", "Ingame/Kits/Icons/kit_ATAA.tga"},
+    };
+    hudVariables["KitsShow"] = true;
+    for (int slot = 0; slot < static_cast<int>(std::size(kKits)); ++slot) {
+      const std::string index = std::to_string(slot);
+      hudVariables["Kit" + index + "Show"] = true;
+      hudStrings["KitName" + index + "String"] = kKits[slot].nameKey;
+      hudStrings["KitIcon" + index + "Path"] = kKits[slot].icon;
+      // Вибраний клас підсвічується окремою гілкою вузла.
+      hudVariables["PlayerKitIcon" + index + "SelectShow"] = slot == args.kit;
+    }
+
     obf2::hud::Context hudContext;
     // Картинку карти рівня задає не HUD: у BF2.exe для неї є шаблон
     // `Levels/%s/Hud/Minimap/ingameMap.tga`.
@@ -2011,7 +2048,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
                                node.textVariable == "EnemyTicketsString");
       const bool cpBar = node.type == obf2::hud::NodeType::Bar &&
                          node.group == "CPInformationItems" && !node.valueVariable.empty();
-      if (!ticketText && !cpBar) continue;
+      // Напис посеред екрана: поки раунд чекає на гравців, текст у ньому
+      // з'являється і зникає, тож пекти його наперед не можна.
+      const bool centreMessage = node.textVariable == "DisconnectMessage";
+      if (!ticketText && !cpBar && !centreMessage) continue;
       hudDynamic.push_back(DynamicNode{&node, {}, -1.0f, {}, false});
     }
 
@@ -2289,6 +2329,26 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
           const float total = points.empty() ? 1.0f : static_cast<float>(points.size());
           hudValues["FriendlyCPs"] = static_cast<float>(ours) / total;
           hudValues["EnemyCPs"] = static_cast<float>(theirs) / total;
+
+          // Напис посеред екрана, поки раунд чекає на гравців. Вузол для
+          // нього — `GameInfo DisconnectMessage 0 200 800 40` зі змінними
+          // DisconnectMessage / DisconnectMessageActive; сам текст гра
+          // складає в коді (BF2.exe, 0x466f75): бере ключ
+          // HUD_STARTOFROUND_NRPLAYERSNEEDED і підставляє число замість
+          // мітки #NROFPLAYERS#.
+          const int missing = hostedServer->settings().playersNeededToStart -
+                              static_cast<int>(hostedServer->playerCount());
+          if (missing > 0) {
+            std::string text(engine.lexicon().text("HUD_STARTOFROUND_NRPLAYERSNEEDED"));
+            const std::string mark = "#NROFPLAYERS#";
+            if (const std::size_t at = text.find(mark); at != std::string::npos) {
+              text.replace(at, mark.size(), std::to_string(missing));
+            }
+            hudStrings["DisconnectMessage"] = text;
+            hudVariables["DisconnectMessageActive"] = true;
+          } else {
+            hudVariables["DisconnectMessageActive"] = false;
+          }
         }
 
         std::vector<obf2::gfx::MeshRenderer::DrawItem> hudItems;

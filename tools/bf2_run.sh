@@ -2,7 +2,8 @@
 # Піднімає оригінальний BF2.exe — для динамічного аналізу.
 #
 #   tools/bf2_run.sh                       меню
-#   BF2_LEVEL=dalian_plant tools/bf2_run.sh   одразу рівень
+#   BF2_LEVEL=dalian_plant tools/bf2_run.sh   одразу рівень (свій раунд)
+#   BF2_SERVER=192.168.100.100 tools/bf2_run.sh   до нашого сервера
 #   BF2_RES=1024x768 tools/bf2_run.sh         інша роздільність
 #   BF2_PLAIN=1 tools/bf2_run.sh              через CrossOver, без sidecar
 #
@@ -85,8 +86,17 @@ ARGS="$ARGS +playerName ${BF2_NAME:-defaultPlayer}"
 # +loadLevel), GSJoinAddress, playNow 1 або GSDedicated — перевірка
 # стоїть одним `if` перед запуском Flash-меню. Режим і кількість місць
 # рівню потрібні: без них раунд не за чим будувати.
-[ -n "$BF2_LEVEL" ] && ARGS="$ARGS +loadLevel $BF2_LEVEL \
-    +gameMode ${BF2_MODE:-gpm_cq} +maxPlayers ${BF2_PLAYERS:-16}"
+# Приєднання до справжнього сервера має перевагу над завантаженням рівня:
+# з непорожнім GSJoinAddress гра так само пропускає меню, але замість
+# власного раунду йде до чужого. Це те, що нам і потрібно — обидва
+# клієнти, оригінал і наш, на одному сервері.
+if [ -n "$BF2_SERVER" ]; then
+    ARGS="$ARGS +joinServer $BF2_SERVER +port ${BF2_PORT:-16567}"
+    [ -n "$BF2_PASSWORD" ] && ARGS="$ARGS +password $BF2_PASSWORD"
+elif [ -n "$BF2_LEVEL" ]; then
+    ARGS="$ARGS +loadLevel $BF2_LEVEL \
+        +gameMode ${BF2_MODE:-gpm_cq} +maxPlayers ${BF2_PLAYERS:-16}"
+fi
 
 if [ -n "$BF2_PLAIN" ] || [ ! -x "$WINE" ] || [ ! -x "$SIDECAR" ]; then
     CX="$HOME/Applications/CrossOver.app/Contents/SharedSupport/CrossOver"
