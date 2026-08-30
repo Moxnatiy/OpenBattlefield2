@@ -55,6 +55,22 @@ enum class ShowEffect {
   Blend,
 };
 
+// Один ефект разом із його числами. У даних гри це виглядає так:
+//
+//   hudBuilder.setNodeInTime 0.3
+//   hudBuilder.setNodeOutTime 0.15
+//   hudBuilder.addNodeAlphaShowEffect
+//   hudBuilder.addNodeMoveShowEffect -1.57 376
+//
+// Тобто вузол з'являється за inTime секунд і зникає за outTime, а
+// ефекти кажуть **як**: проявитися прозорістю і/або приїхати здалеку.
+// У виїзду два числа — напрям у радіанах і відстань у базових 800x600.
+struct ShowEffectInfo {
+  ShowEffect kind = ShowEffect::Alpha;
+  float angle = 0.0f;
+  float distance = 0.0f;
+};
+
 std::string_view nodeTypeName(NodeType type);
 
 struct Color {
@@ -266,7 +282,7 @@ struct Node {
   // бракує саме рендеру, а не розборові. Таблиця — hud_recorded.inc.
   std::map<std::string, std::vector<std::string>> extra;
 
-  std::vector<ShowEffect> showEffects;
+  std::vector<ShowEffectInfo> showEffects;
   // Імена вузлів, доданих до цього списку трансформацій.
   std::vector<std::string> children;
 };

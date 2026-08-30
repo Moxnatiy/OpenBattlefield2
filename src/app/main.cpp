@@ -1838,18 +1838,65 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         files, [&](const obf2::con::Command& command) { controls.feed(command); });
     controlInterpreter.runFile("Settings/Controls.con");
 
-    // Змінні показу: у даних це або стала 1/0, або назва стану інтерфейсу.
-    // Невідому назву вважаємо вимкненою — інакше на екран одразу виїхали б
-    // інтерфейс командира, табло й кабіни всієї техніки.
-    // ReferenceCross — це вирівнювальний хрест розробників, у грі він
-    // вимкнений; решта — базовий набір, який видно в бою.
+    // Змінні показу вмикає **стан HUD**, а не наш список. Таблиця
+    // станів знята з BF2.exe: дві таблиці переходів на 32 позиції
+    // (0x786f88 і 0x787008), 24 обробники, кожен ланцюжком трійок
+    // «push значення; рядок з іменем; setVariable». Повний перелік —
+    // docs/functions/hud-states.md.
+    struct HudState {
+      int id;
+      std::vector<const char*> on;
+    };
+    static const HudState kHudStates[] = {
+        {0, {"ShowIngameHud", "MapShow", "MapBorderShow"}},
+        {1, {"ShowIngameHud", "MapBorderAlternateShow", "SpawnShow", "KitsShow"}},
+        {2, {"MapShow"}},
+        {3, {"SquadInterfaceShow"}},
+        {4, {"RadioInterfaceShow"}},
+        {5, {"RadioVehicleInterfaceShow"}},
+        {6, {"SpottedInterfaceShow"}},
+        {7, {"SquadLeaderInterfaceShow"}},
+        {8, {"CommanderInterfaceShow"}},
+        {9, {"ScoreboardShow", "LevelsListShow"}},
+        {15, {"CommanderShow"}},
+        {16, {"CommanderRadioShow"}},
+        {17, {"MapShow", "SpawnShow", "MembersShow"}},
+        {18, {"MembersShow", "SpawnShow"}},
+        {19, {"MapMenuShow"}},
+        {20, {"SquadLeaderMenuShow"}},
+        {21, {"CommanderMenuShow"}},
+        {26, {"InviteListShow"}},
+        {27, {"ChoiceMenuShow"}},
+        {29, {"SetupShow"}},
+        {30, {"DemoCameraInterfaceShow"}},
+        {31, {"DemoRecInterfaceShow"}},
+    };
+    // Стан гасить усе, що нижче за нього в ланцюжку, і вмикає своє —
+    // тому спершу знімаємо всі змінні станів, а тоді ставимо потрібні.
+    const auto applyHudState = [&](int state) {
+      for (const HudState& entry : kHudStates) {
+        for (const char* name : entry.on) hudVariables[name] = false;
+      }
+      for (const HudState& entry : kHudStates) {
+        if (entry.id != state) continue;
+        for (const char* name : entry.on) hudVariables[name] = true;
+      }
+    };
+
+    // Бойовий HUD — це стан 0.
+    applyHudState(0);
+
     // ToggleScore — вкладка «Гравці» на табло. Що вона типова, видно в
     // бінарі: у поле прапорця (Scoreboard+0x365) є рівно один запис
-    // сталої, `movb $0x1, 0x365(%esi)` за 0x7a48f7. Без неї тло лівої
-    // панелі (team1_byScore.tga) не малюється зовсім.
-    for (const char* on : {"ShowIngameHud", "PlayerHealthShow", "PlayerStaminaShow",
-                           "PrimaryAmmoShow", "PrimaryAmmoBarShow", "MapShow", "MapMinSize",
-                           "CPInterfaceEnabled", "ToggleScore"}) {
+    // сталої, `movb $0x1, 0x365(%esi)` за 0x7a48f7.
+    hudVariables["ToggleScore"] = true;
+
+    // Джерело не знайдене. Ці змінні вмикає сама гра десь у логіці бою
+    // (здоров'я, набої, стан мінікарти), і в таблиці станів їх немає.
+    // Поки ставимо самі, щоб бойовий HUD було видно, — це борг, а не
+    // реверс.
+    for (const char* on : {"PlayerHealthShow", "PlayerStaminaShow", "PrimaryAmmoShow",
+                           "PrimaryAmmoBarShow", "MapMinSize", "CPInterfaceEnabled"}) {
       hudVariables[on] = true;
     }
 
@@ -1934,6 +1981,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     // Змінні екрана появи залежать від його стану, тож тримаємо їх в
     // одному місці й перераховуємо після кожної команди.
     applySpawnState = [&]() {
+      // Екран появи — це стан 1: він вмикає ShowIngameHud,
+      // MapBorderAlternateShow, SpawnShow і KitsShow (hud-states.md).
+      applyHudState(1);
       // Позначки карти залежать від команди, тож складаємо їх щоразу.
       // Прапорець стоїть на кожній точці, а кружечок вибору місця появи
       // — лише там, де точку тримає **наша** команда: у даних рівня
@@ -1957,11 +2007,16 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       }
       hudVariables["Team1Selected"] = selectedTeam != 2;
       hudVariables["Team2Selected"] = selectedTeam == 2;
-      // Кнопки DONE і SUICIDE висять на цій змінній: у грі вони
-      // з'являються разом із великою картою на екрані появи.
+      // Джерело не знайдене: у таблиці станів MapFullSizeAndSpawnShow
+      // немає, а хто її вмикає в грі — ще не знайдено. Без неї кнопок
+      // DONE і SUICIDE не видно. Борг.
       hudVariables["MapFullSizeAndSpawnShow"] = true;
+      // KitsShow / MembersShow перемикає SpawnManager.toggleMembers —
+      // це реверснута команда з hud-commands.md.
       hudVariables["KitsShow"] = !membersTab;
       hudVariables["MembersShow"] = membersTab;
+      // Вибраний клас — наслідок spawnManager.setPlayerKit, теж
+      // реверснутої команди.
       for (int slot = 0; slot < 7; ++slot) {
         hudVariables["PlayerKitIcon" + std::to_string(slot) + "SelectShow"] = slot == selectedKit;
       }
@@ -1969,6 +2024,8 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     applySpawnState();
     for (int slot = 0; slot < static_cast<int>(std::size(kKits)); ++slot) {
       const std::string index = std::to_string(slot);
+      // Джерело не знайдене: у грі Kit<N>Show вмикає логіка набору за
+      // тим, які класи доступні. Ми вмикаємо всі сім. Борг.
       hudVariables["Kit" + index + "Show"] = true;
       hudStrings["KitName" + index + "String"] = kKits[slot].nameKey;
       hudStrings["KitIcon" + index + "Path"] = kKits[slot].icon;

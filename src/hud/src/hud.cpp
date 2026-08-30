@@ -391,15 +391,20 @@ void Builder::feed(const con::Command& command) {
 
   // --- ефекти появи ---
   if (method == "addnodealphashoweffect") {
-    node->showEffects.push_back(ShowEffect::Alpha);
+    node->showEffects.push_back(ShowEffectInfo{ShowEffect::Alpha, 0.0f, 0.0f});
     return;
   }
+  // `addNodeMoveShowEffect <напрям> <відстань>`. У DICE трапляється й
+  // опечатка «addNoDemoveShowEffect» (10 разів), але в нижньому регістрі
+  // вона збігається з правильною назвою, тож окремої гілки не треба.
   if (method == "addnodemoveshoweffect") {
-    node->showEffects.push_back(ShowEffect::Move);
+    node->showEffects.push_back(ShowEffectInfo{ShowEffect::Move,
+                                               command.argFloat(0).value_or(0.0f),
+                                               command.argFloat(1).value_or(0.0f)});
     return;
   }
   if (method == "addnodeblendeffect") {
-    node->showEffects.push_back(ShowEffect::Blend);
+    node->showEffects.push_back(ShowEffectInfo{ShowEffect::Blend, 0.0f, 0.0f});
     return;
   }
 
