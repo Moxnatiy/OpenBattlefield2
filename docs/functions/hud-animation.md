@@ -126,3 +126,43 @@ name = gameLogic.teamName(team)
 `HUD_TEXT_MENU_SPAWN_ARMY_EU`. Та сама функція ставить і пару
 `FriendlyFlagIconPathString` / `EnemyFlagIconPathString` — її перші два
 аргументи це команда гравця і протилежна.
+
+## Рухомі кутові ділянки
+
+Широка плашка під здоров'ям — це вузол
+
+```
+hudBuilder.createPictureNode BottomLeftAnimateHud BottomLeftBar -103 -2 400 39
+hudBuilder.setPictureNodeTexture Ingame/Bars/healthBackGround.tga
+hudBuilder.setNodeAlphaVariable  MenuBackgroundAlpha
+```
+
+Змінної показу в нього **немає взагалі**, а `MenuBackgroundAlpha` типово
+0.7 (стала 0x3f333333 за 0x46928a, і той самий 0.7 стоїть у повзунку в
+`HudElementsPlayer.con`). Тобто самим прапорцем його не сховати — і в
+оригіналі його ховає інше: **від'їзд усієї ділянки**.
+
+У `Menu/Ingame` X цих ділянок — не стала, а змінна графа, і у файлі
+збережене саме сховане положення:
+
+| Змінна | У файлі | Що це |
+|---|---|---|
+| `BottomLeft/BottomLeft_XPos` | -295 | сховано |
+| `BottomLeft/BottomLeft_nextXPos` | -295 | сховано |
+| `BottomRight/BottomRight_XPos` | 503 | сховано |
+| `BottomRight/BottomRight_newXPos` | 503 | сховано |
+| `BottomRight/BottomRight_oldXPos` | 201 | показано |
+
+Веде їх `SetVariableSineAction` зі швидкістю 600, під умовою
+`AniPos && (BottomRight_alpha == BottomRight_oldAlpha || BottomRight_direction)`.
+
+Плашка 400x39 накриває і солдатську частину зліва, і транспортну справа
+(`BottomLeftSecondaryHealth` у `Vehicles/HudElementsVehicleBasic.con`
+починається з x = 149) — тому на екрані появи вона й виглядала як
+розтягнутий транспортний варіант. При X = -295 вона цілком за краєм
+екрана.
+
+**Джерело не знайдене:** хто саме пише `BottomLeft_nextXPos` і
+`BottomRight_direction`. Прив'язку видно (0x789480 зв'язує їх із полями
+об'єкта HUD за шаблоном «група + ім'я вузла»), але місце запису — ні.
+Поки ділянки їдуть за тією ж умовою, що й сам бойовий HUD.

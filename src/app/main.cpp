@@ -1771,6 +1771,19 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   bool hudDirty = false;
   bool ingameReported = false;
   std::function<void(bool, bool)> updateHudVariables;
+  // Рухомі кутові ділянки. У `Menu/Ingame` їхнє X — це не стала, а
+  // змінна графа, і у файлі збережене саме **сховане** положення:
+  // BottomLeft_XPos = -295, BottomRight_XPos = 503. Показане для правої
+  // теж є там же — BottomRight_oldXPos = 201. Веде їх
+  // SetVariableSineAction зі швидкістю 600.
+  //
+  // Через це в оригіналі за екраном появи не видно широкої плашки під
+  // здоров'ям: вузол BottomLeftBar (400x39, healthBackGround.tga) не має
+  // жодної змінної показу, його ховає саме від'їзд ділянки.
+  float bottomLeftX = -295.0f;
+  float bottomRightX = 503.0f;
+  float bottomLeftTarget = -295.0f;
+  float bottomRightTarget = 503.0f;
   // Поява й зникнення вузлів у часі — те, чим у грі керує граф MemeFile
   // (див. obf2/hud/animation.h).
   obf2::hud::Animator hudAnimator;
@@ -2021,6 +2034,17 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       set("PrimaryAmmoShow", hasPlayer);
       set("PrimaryAmmoBarShow", hasPlayer);
       set("PrimaryClipsShow", hasPlayer);
+      // Куди їдуть рухомі ділянки. Обидва кінці — з `Menu/Ingame`:
+      // сховане -295 і 503, показане 201 для правої. Для лівої показаного
+      // у файлі немає (обидва поля -295), тож там лишається наше -1.
+      //
+      // Джерело не знайдене: **хто** саме вмикає від'їзд. У графі це
+      // BottomLeft_nextXPos і BottomRight_direction, прив'язані до полів
+      // об'єкта HUD (0x789480, шаблон «BottomLeft» + ім'я вузла), але
+      // місце, що їх пише, ще не знайдене. Поки веземо їх за тією ж
+      // умовою, що й сам бойовий HUD, — це борг.
+      bottomLeftTarget = hasPlayer ? -1.0f : -295.0f;
+      bottomRightTarget = hasPlayer ? 336.5f : 503.0f;
       // 0x78adc5, 0x78ae8c проти 0x78af97: загін. Ми в загоні не буваємо.
       set("SquadInfoBarShow", false);
       set("ShowCommanderIcon", false);
@@ -2322,7 +2346,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       obf2::hud::Anchor anchor;  // до якого краю тулиться на широкому екрані
     };
     for (const Layer& layer : {
-             Layer{"BottomLeftAnimate", -1.0f, 563.0f, obf2::hud::Anchor::Left},
+             Layer{"BottomLeftAnimate", bottomLeftX, 563.0f, obf2::hud::Anchor::Left},
              Layer{"BottomLeftStatic", -1.0f, 563.0f, obf2::hud::Anchor::Left},
              // X цієї ділянки — виміряний, а не взятий із файлу. У файлі
              // лежить лише схований стан (BottomRight_XPos = 503) і пара
@@ -2337,7 +2361,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
              // Значення стале в усіх трьох знятих кадрах, тобто це не
              // проміжок анімації. Раніше тут стояло 201 — плашка набоїв
              // від того сиділа на 135 пікселів лівіше, ніж в оригіналі.
-             Layer{"BottomRightAnimate", 336.5f, 497.0f, obf2::hud::Anchor::Right},
+             Layer{"BottomRightAnimate", bottomRightX, 497.0f, obf2::hud::Anchor::Right},
              Layer{"BottomRightStatic", 401.0f, 563.0f, obf2::hud::Anchor::Right},
          }) {
       obf2::hud::Screen layerScreen = hudScreen;
@@ -2874,6 +2898,19 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
           lastAnimationTick = now;
           hudAnimator.advance(dt > 0.25f ? 0.25f : dt);
           if (hudAnimator.animating()) spawnDirty = true;
+          // Швидкість 600 — з самого файлу (SetVariableSineAction).
+          // Клас зветься Sine, тобто хід, найпевніше, згладжений, але
+          // самої кривої ми не реверсили, тож їдемо рівно на цій
+          // швидкості.
+          const float step = 600.0f * (dt > 0.25f ? 0.25f : dt);
+          const auto approach = [&](float& value, float target) {
+            if (value == target) return;
+            const float left = target - value;
+            value = std::abs(left) <= step ? target : value + (left > 0 ? step : -step);
+            hudDirty = true;
+          };
+          approach(bottomLeftX, bottomLeftTarget);
+          approach(bottomRightX, bottomRightTarget);
         }
         if (spawnDirty && rebuildSpawn) {
           spawnDirty = false;
