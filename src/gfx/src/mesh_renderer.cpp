@@ -206,6 +206,7 @@ MeshRenderer::~MeshRenderer() {
   if (placeholder_ != nullptr) SDL_ReleaseGPUTexture(gpu, placeholder_);
   if (overlayPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, overlayPipeline_);
   if (sampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, sampler_);
+  if (overlaySampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, overlaySampler_);
   if (pipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, pipeline_);
 }
 
@@ -322,6 +323,21 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   samplerInfo.max_lod = 1000.0f;
   renderer->sampler_ = SDL_CreateGPUSampler(gpu, &samplerInfo);
   if (renderer->sampler_ == nullptr) return fail("семплер");
+
+  // Інтерфейс — інша річ: кожен вузол це окрема картинка, розтягнута
+  // рівно на свій прямокутник, і повторення тут не потрібне взагалі.
+  // З ним білінійна вибірка на самому краю квада бере ще й піксель із
+  // протилежного боку текстури, і по контуру плашок з'являється темна
+  // смужка в один піксель — особливо коли вікно не рівно 800x600 і
+  // край не лягає на цілий піксель. Мипи теж зайві: інтерфейс ніколи
+  // не зменшується.
+  samplerInfo.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+  samplerInfo.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+  samplerInfo.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+  samplerInfo.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
+  samplerInfo.max_lod = 0.0f;
+  renderer->overlaySampler_ = SDL_CreateGPUSampler(gpu, &samplerInfo);
+  if (renderer->overlaySampler_ == nullptr) return fail("семплер інтерфейсу");
 
   // Заглушка для матеріалів, у яких текстури немає або вона не читається:
   // краще біла поверхня, ніж чорна діра чи падіння.
@@ -555,7 +571,7 @@ void MeshRenderer::renderOverlay(const Frame& frame, const std::vector<DrawItem>
       // В інтерфейсі заглушка не годиться: біла текстура на весь екран
       // просто сховала б кадр. Немає картинки — нічого не малюємо.
       if (range.texture == nullptr) continue;
-      SDL_GPUTextureSamplerBinding binding{range.texture, sampler_};
+      SDL_GPUTextureSamplerBinding binding{range.texture, overlaySampler_};
       SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
       SDL_DrawGPUIndexedPrimitives(pass, range.indexCount, 1, range.indexStart, 0, 0);
     }

@@ -110,6 +110,10 @@ class MeshRenderer {
   SDL_GPUGraphicsPipeline* pipeline_ = nullptr;
   SDL_GPUGraphicsPipeline* overlayPipeline_ = nullptr;
   SDL_GPUSampler* sampler_ = nullptr;
+  // Окремий семплер для інтерфейсу: там текстура ніколи не тайлиться, а
+  // повторення на краю квада затягує протилежний край і лишає темну
+  // смужку в один піксель.
+  SDL_GPUSampler* overlaySampler_ = nullptr;
   SDL_GPUTexture* placeholder_ = nullptr;  // біла 1x1 для матеріалів без текстури
   Fog fog_;
   Color terrainSun_{1.0f, 1.0f, 1.0f, 1.0f};
