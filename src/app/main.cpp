@@ -1769,6 +1769,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   // можна: посилання в лямбді стало б висячим.
   std::function<void()> applySpawnState;
   obf2::hud::Context spawnContext;
+  // Точки захоплення рівня — з них щоразу перебудовуються позначки на
+  // карті: прапорець стоїть на кожній, а кружечок вибору місця появи —
+  // лише на своїй.
+  std::vector<obf2::level::ControlPoint> hudControlPoints;
   // Екрани, які видно, лише поки тримають клавішу: табло, рація, поява.
   // Геометрію печемо наперед — вона не змінюється, змінюється лише те,
   // чи малювати її цього кадру.
@@ -1930,6 +1934,27 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     // Змінні екрана появи залежать від його стану, тож тримаємо їх в
     // одному місці й перераховуємо після кожної команди.
     applySpawnState = [&]() {
+      // Позначки карти залежать від команди, тож складаємо їх щоразу.
+      // Прапорець стоїть на кожній точці, а кружечок вибору місця появи
+      // — лише там, де точку тримає **наша** команда: у даних рівня
+      // Dalian_plant це видно прямо, ObjectTemplate.team дає 1 для
+      // powerplant, 2 для constructionsite, а reactors і mainentrance
+      // нейтральні. З'явитися на чужій чи нічийній не можна.
+      spawnContext.mapMarkers.clear();
+      spawnContext.spawnMarkers.clear();
+      for (const auto& point : hudControlPoints) {
+        obf2::hud::Context::MapMarker marker;
+        marker.worldX = point.position.x;
+        marker.worldZ = point.position.z;
+        marker.label = point.nameKey;
+        const char* faction = point.team == 1 ? "US" : (point.team == 2 ? "Ch" : "Neutral");
+        marker.texture = std::string("Ingame/Flags/Icons/Minimap/") + faction + "/miniMap_CP.tga";
+        spawnContext.mapMarkers.push_back(std::move(marker));
+        if (point.team == selectedTeam) {
+          spawnContext.spawnMarkers.push_back(
+              obf2::hud::Context::SpawnMarker{point.position.x, point.position.z, false});
+        }
+      }
       hudVariables["Team1Selected"] = selectedTeam != 2;
       hudVariables["Team2Selected"] = selectedTeam == 2;
       // Кнопки DONE і SUICIDE висять на цій змінній: у грі вони
@@ -1988,9 +2013,13 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
                   hudContext.mapV1);
 
       // Точки захоплення: місце, команда і ключ назви беремо з рівня —
-      // рівно те саме, що бачить сервер. Значок — за фракцією; теки
-      // лежать у HUD/Texture/Ingame/Flags/Icons/Minimap.
-      for (const auto& point : hudGameplay->controlPoints) {
+      // рівно те саме, що бачить сервер. Самі позначки складає
+      // applySpawnState, бо вони залежать від команди гравця.
+      hudControlPoints = hudGameplay->controlPoints;
+      // Основний HUD запікається один раз, тож прапорці для його
+      // мінікарти складаємо тут-таки. Кружечків вибору там немає — вони
+      // лише на екрані появи.
+      for (const auto& point : hudControlPoints) {
         obf2::hud::Context::MapMarker marker;
         marker.worldX = point.position.x;
         marker.worldZ = point.position.z;
@@ -1999,14 +2028,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         marker.texture = std::string("Ingame/Flags/Icons/Minimap/") + faction + "/miniMap_CP.tga";
         hudContext.mapMarkers.push_back(std::move(marker));
       }
-      // Кружечки вибору місця появи стоять на тих самих точках: у грі
-      // саме їх і натискають, щоб обрати, де з'явитися.
-      for (const auto& point : hudGameplay->controlPoints) {
-        hudContext.spawnMarkers.push_back(
-            obf2::hud::Context::SpawnMarker{point.position.x, point.position.z, false});
-      }
-      std::printf("  карта: позначок точок %zu, місць появи %zu\n",
-                  hudContext.mapMarkers.size(), hudContext.spawnMarkers.size());
+      std::printf("  карта: точок захоплення %zu\n", hudControlPoints.size());
     }
     hudContext.localize = [&](std::string_view key) { return engine.lexicon().text(key); };
     // Шрифт кожного вузла — той, що названий у setTextNodeStyle. Шлях у
