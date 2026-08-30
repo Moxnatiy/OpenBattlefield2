@@ -268,9 +268,31 @@ void Builder::feed(const con::Command& command) {
     if (node->texture.empty() || slot == 1) node->texture = std::move(path);
     return;
   }
-  if (method == "setpicturenodetexture" || method == "setbuttonnodetexture" ||
-      method == "setobjectmarkernodetexture") {
+  if (method == "setpicturenodetexture" || method == "setobjectmarkernodetexture") {
     node->texture = std::string(command.argStr(0));
+    return;
+  }
+  // У кнопки перед шляхом стоїть **стан**:
+  //
+  //   setButtonNodeTexture 1 Ingame/Respawn/kit_selected.tga   спокій
+  //   setButtonNodeTexture 2 Ingame/GeneralIcons/empty.tga     під курсором
+  //
+  // Ми ж брали перший аргумент — і текстурою кнопки ставало саме число
+  // «1» або «2», якого, звісно, немає.
+  if (method == "setbuttonnodetexture") {
+    const int state = command.argInt(0).value_or(1);
+    std::string path(command.argStr(1));
+    if (path.empty()) {
+      // Трапляється й коротка форма, без стану.
+      path = std::string(command.argStr(0));
+      node->texture = path;
+      return;
+    }
+    if (state == 2) {
+      node->hoverTexture = std::move(path);
+    } else {
+      node->texture = std::move(path);
+    }
     return;
   }
   if (method == "setpicturenodevariabletexture") {

@@ -2255,6 +2255,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
                                             hudFont.atlasPath, hudScreen, spawnContext);
       const std::size_t mapCount = mapPieces.size();
       for (auto& piece : mapPieces) built.push_back(std::move(piece));
+      reportRects("SpawnMenu", built);
       ingameHud.setMapView(obf2::hud::MapView::Mini);
       for (auto& piece : built) {
         if (auto uploaded = renderer->upload(piece.geometry, resolveTexture)) {
@@ -2604,10 +2605,13 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
             const obf2::hud::Node* hit = obf2::hud::buttonAt(
                 ingameHud, "SpawnMenu", hudScreen, clickX, clickY, &hudDynamicContext);
             if (hit != nullptr) {
-              // На кнопці кілька команд; натисканню належать ті, що з
-              // подією 0.
+              // На кнопці кілька команд, і кожна має свою подію. У даних
+              // їх чотири: 0 (247 разів), 1 (73), 3 (50) і 2 (11).
+              // Натисканню належать 0 і 3 — на трійці висять, зокрема,
+              // spawnManager.setPlayerTeam і scoreboard.setToggleShow;
+              // 1 і 2 — це наведення й відведення, там самі звуки.
               for (const auto& [event, line] : hit->commands) {
-                if (event != 0) continue;
+                if (event != 0 && event != 3) continue;
                 std::printf("  екран появи: %s -> %s\n", hit->name.c_str(), line.c_str());
                 if (!engine.console().executeLine(line)) {
                   std::printf("  екран появи: команда без обробника — %s\n", line.c_str());

@@ -99,7 +99,8 @@ struct Node {
   // Координати у віртуальному екрані гри (див. kReferenceWidth/Height).
   float x = 0.0f, y = 0.0f, width = 0.0f, height = 0.0f;
 
-  std::string texture;          // setPictureNodeTexture / setButtonNodeTexture
+  std::string texture;          // setPictureNodeTexture / setButtonNodeTexture (стан 1)
+  std::string hoverTexture;     // setButtonNodeTexture 2 — під курсором
   std::string textureVariable;  // setPictureNodeVariableTexture
   std::string text;             // setTextNodeString
   std::string textVariable;     // setTextNodeStringVariable
