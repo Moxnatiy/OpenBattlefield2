@@ -202,6 +202,52 @@ std::vector<DrawPiece> buildNode(const Node& node, const font::Font& font,
                                  context.mapV0, context.mapV1);
       pieces.push_back(DrawPiece{std::move(geometry), context.mapTexture, &node, node.color});
     }
+
+    // Позначки точок захоплення. Окремих вузлів для них у даних немає —
+    // карта малює їх сама, а шрифт і колір підпису бере зі свого вузла
+    // (`setCPFont`, `setCPFontColor`).
+    const float uSpan = context.mapU1 - context.mapU0;
+    const float vSpan = context.mapV1 - context.mapV0;
+    if (uSpan > 0.0f && vSpan > 0.0f) {
+      const float half = context.mapWorldSize * 0.5f;
+      const float icon = context.mapMarkerSize * scaleY;
+      for (const Context::MapMarker& marker : context.mapMarkers) {
+        const float u = (marker.worldX + half) / context.mapWorldSize;
+        const float v = (half - marker.worldZ) / context.mapWorldSize;
+        if (u < context.mapU0 || u > context.mapU1) continue;
+        if (v < context.mapV0 || v > context.mapV1) continue;
+        const float cx = rect.x + (u - context.mapU0) / uSpan * rect.width;
+        const float cy = rect.y + (v - context.mapV0) / vSpan * rect.height;
+        if (!marker.texture.empty()) {
+          const ScreenRect box{cx - icon * 0.5f, cy - icon * 0.5f, icon, icon};
+          pieces.push_back(DrawPiece{quad(box, screen, marker.texture), marker.texture, &node,
+                                     Color{}});
+        }
+        if (marker.label.empty() || !context.localize) continue;
+        const std::string text(context.localize(marker.label));
+        if (text.empty()) continue;
+        const font::Font* face = &font;
+        std::string atlas = fontAtlas;
+        if (!node.cpFont.empty() && context.fontFor) {
+          const FontRef chosen = context.fontFor(node.cpFont);
+          if (chosen.font != nullptr) {
+            face = chosen.font;
+            atlas = chosen.atlas;
+          }
+        }
+        font::TextLayout layout;
+        layout.screenWidth = screen.width;
+        layout.screenHeight = screen.height;
+        layout.scale = scaleY;
+        // Підпис стоїть під значком і по центру нього.
+        layout.x = cx - font::textWidth(*face, text, layout.scale) * 0.5f;
+        layout.y = cy + icon * 0.5f;
+        auto geometry = font::buildText(*face, text, layout, atlas);
+        if (!geometry.indices.empty()) {
+          pieces.push_back(DrawPiece{std::move(geometry), atlas, &node, node.cpFontColor});
+        }
+      }
+    }
     return pieces;
   }
 

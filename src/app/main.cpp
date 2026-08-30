@@ -1911,9 +1911,24 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       hudContext.mapU1 = toU(centerX + half);
       hudContext.mapV0 = toV(centerZ + half);
       hudContext.mapV1 = toV(centerZ - half);
+      hudContext.mapWorldSize = world;
       std::printf("  карта: бойова зона %.0f..%.0f / %.0f..%.0f, видно u %.3f..%.3f v %.3f..%.3f\n",
                   minX, maxX, minZ, maxZ, hudContext.mapU0, hudContext.mapU1, hudContext.mapV0,
                   hudContext.mapV1);
+
+      // Точки захоплення: місце, команда і ключ назви беремо з рівня —
+      // рівно те саме, що бачить сервер. Значок — за фракцією; теки
+      // лежать у HUD/Texture/Ingame/Flags/Icons/Minimap.
+      for (const auto& point : hudGameplay->controlPoints) {
+        obf2::hud::Context::MapMarker marker;
+        marker.worldX = point.position.x;
+        marker.worldZ = point.position.z;
+        marker.label = point.nameKey;
+        const char* faction = point.team == 1 ? "US" : (point.team == 2 ? "Ch" : "Neutral");
+        marker.texture = std::string("Ingame/Flags/Icons/Minimap/") + faction + "/miniMap_CP.tga";
+        hudContext.mapMarkers.push_back(std::move(marker));
+      }
+      std::printf("  карта: позначок точок %zu\n", hudContext.mapMarkers.size());
     }
     hudContext.localize = [&](std::string_view key) { return engine.lexicon().text(key); };
     // Шрифт кожного вузла — той, що названий у setTextNodeStyle. Шлях у

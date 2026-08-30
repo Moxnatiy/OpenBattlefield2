@@ -83,6 +83,22 @@ struct Context {
   // а квадрат навколо бойової зони. Знято з дампу кадру оригіналу —
   // див. docs/research/03-frame-dump.md. За замовчуванням уся картинка.
   float mapU0 = 0.0f, mapV0 = 0.0f, mapU1 = 1.0f, mapV1 = 1.0f;
+
+  // Позначки на карті: точки захоплення. Вузол карти малює їх сам —
+  // у даних для них немає окремих вузлів, лише шрифт і колір підпису
+  // (`setCPFont`, `setCPFontColor` на самому вузлі карти).
+  struct MapMarker {
+    float worldX = 0.0f;
+    float worldZ = 0.0f;
+    std::string texture;
+    std::string label;  // ключ локалізації
+  };
+  std::vector<MapMarker> mapMarkers;
+  // Розмір світу рівня в метрах — ним переводимо координати позначок
+  // у частки картинки.
+  float mapWorldSize = 2048.0f;
+  // Розмір значка в базових 800x600.
+  float mapMarkerSize = 16.0f;
 };
 
 // Геометрія одного вузла — картинка, смуга і/або підпис.
