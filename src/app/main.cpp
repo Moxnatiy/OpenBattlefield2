@@ -1986,7 +1986,14 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         marker.texture = std::string("Ingame/Flags/Icons/Minimap/") + faction + "/miniMap_CP.tga";
         hudContext.mapMarkers.push_back(std::move(marker));
       }
-      std::printf("  карта: позначок точок %zu\n", hudContext.mapMarkers.size());
+      // Кружечки вибору місця появи стоять на тих самих точках: у грі
+      // саме їх і натискають, щоб обрати, де з'явитися.
+      for (const auto& point : hudGameplay->controlPoints) {
+        hudContext.spawnMarkers.push_back(
+            obf2::hud::Context::SpawnMarker{point.position.x, point.position.z, false});
+      }
+      std::printf("  карта: позначок точок %zu, місць появи %zu\n",
+                  hudContext.mapMarkers.size(), hudContext.spawnMarkers.size());
     }
     hudContext.localize = [&](std::string_view key) { return engine.lexicon().text(key); };
     // Шрифт кожного вузла — той, що названий у setTextNodeStyle. Шлях у

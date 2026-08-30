@@ -247,6 +247,22 @@ std::vector<DrawPiece> buildNode(const Node& node, const font::Font& font,
           pieces.push_back(DrawPiece{std::move(geometry), atlas, &node, node.cpFontColor});
         }
       }
+
+      // Кружечки вибору місця появи — окремими текстурами.
+      for (const Context::SpawnMarker& spawn : context.spawnMarkers) {
+        const float u = (spawn.worldX + half) / context.mapWorldSize;
+        const float v = (half - spawn.worldZ) / context.mapWorldSize;
+        if (u < context.mapU0 || u > context.mapU1) continue;
+        if (v < context.mapV0 || v > context.mapV1) continue;
+        const float cx = rect.x + (u - context.mapU0) / uSpan * rect.width;
+        const float cy = rect.y + (v - context.mapV0) / vSpan * rect.height;
+        const float size = context.spawnMarkerSize * scaleY;
+        const std::string texture =
+            spawn.selected ? "Ingame/Minimap/Icons/spawn_Selected.dds"
+                           : "Ingame/Minimap/Icons/spawn_UnSelected.dds";
+        const ScreenRect box{cx - size * 0.5f, cy - size * 0.5f, size, size};
+        pieces.push_back(DrawPiece{quad(box, screen, texture), texture, &node, Color{}});
+      }
     }
     return pieces;
   }

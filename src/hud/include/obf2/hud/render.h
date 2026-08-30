@@ -94,6 +94,17 @@ struct Context {
     std::string label;  // ключ локалізації
   };
   std::vector<MapMarker> mapMarkers;
+  // Кружечки вибору місця появи. Текстури для них у грі окремі —
+  // Minimap/Icons/spawn_UnSelected і spawn_Selected (плюс варіанти
+  // Inactive і Squad). Малюються тим самим переведенням координат, що
+  // й прапорці.
+  struct SpawnMarker {
+    float worldX = 0.0f;
+    float worldZ = 0.0f;
+    bool selected = false;
+  };
+  std::vector<SpawnMarker> spawnMarkers;
+  float spawnMarkerSize = 16.0f;
   // Розмір світу рівня в метрах — ним переводимо координати позначок
   // у частки картинки.
   float mapWorldSize = 2048.0f;
