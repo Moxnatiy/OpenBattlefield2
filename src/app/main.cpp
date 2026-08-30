@@ -1773,6 +1773,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   bool hudDirty = false;
   bool ingameReported = false;
   std::function<void(bool, bool)> updateHudVariables;
+  std::function<void(int)> applyHudState;
   // Рухомі кутові ділянки. У `Menu/Ingame` їхнє X — це не стала, а
   // змінна графа, і у файлі збережене саме **сховане** положення:
   // BottomLeft_XPos = -295, BottomRight_XPos = 503. Показане для правої
@@ -1796,6 +1797,12 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   // можна: посилання в лямбді стало б висячим.
   std::function<void()> applySpawnState;
   obf2::hud::Context spawnContext;
+  // Той самий випадок, що й зі spawnContext: бойовий HUD тепер
+  // перебудовується з циклу кадрів, а лямбда тримає контекст посиланням.
+  // Поки він був місцевим у блоці налаштування, після виходу з блока
+  // rebuildIngame читав уже мертву пам'ять — шлях до картинки карти
+  // приходив сміттям, і мінікарта не малювалася.
+  obf2::hud::Context hudContext;
   // Точки захоплення рівня — з них щоразу перебудовуються позначки на
   // карті: прапорець стоїть на кожній, а кружечок вибору місця появи —
   // лише на своїй.
@@ -1900,13 +1907,19 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     };
     // Стан гасить усе, що нижче за нього в ланцюжку, і вмикає своє —
     // тому спершу знімаємо всі змінні станів, а тоді ставимо потрібні.
-    const auto applyHudState = [&](int state) {
+    applyHudState = [&](int state) {
+      const auto set = [&](const char* name, bool value) {
+        bool& slot = hudVariables[name];
+        if (slot == value) return;
+        slot = value;
+        hudDirty = true;
+      };
       for (const HudState& entry : kHudStates) {
-        for (const char* name : entry.on) hudVariables[name] = false;
+        for (const char* name : entry.on) set(name, false);
       }
       for (const HudState& entry : kHudStates) {
         if (entry.id != state) continue;
-        for (const char* name : entry.on) hudVariables[name] = true;
+        for (const char* name : entry.on) set(name, true);
       }
     };
 
@@ -2087,9 +2100,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     // Змінні екрана появи залежать від його стану, тож тримаємо їх в
     // одному місці й перераховуємо після кожної команди.
     applySpawnState = [&]() {
-      // Екран появи — це стан 1: він вмикає ShowIngameHud,
-      // MapBorderAlternateShow, SpawnShow і KitsShow (hud-states.md).
-      applyHudState(1);
+      // Стан HUD тут не чіпаємо: його ставить кадр за поточним станом
+      // гри. Раніше ми ставили тут стан 1 — і після DONE екран появи
+      // вмикав себе назад щоразу, коли перебудовувався.
       // Позначки карти залежать від команди, тож складаємо їх щоразу.
       // Прапорець стоїть на кожній точці, а кружечок вибору місця появи
       // — лише там, де точку тримає **наша** команда: у даних рівня
@@ -2160,7 +2173,6 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       // Підсвітку вибраного ставить applySpawnState.
     }
 
-    obf2::hud::Context hudContext;
     // Картинку карти рівня задає не HUD: у BF2.exe для неї є шаблон
     // `Levels/%s/Hud/Minimap/ingameMap.tga`.
     if (!args.levelName.empty()) {
@@ -2490,6 +2502,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         if (auto uploaded = renderer->upload(piece.geometry, resolveTexture)) {
           ingamePieces.push_back(OwnedPiece{*uploaded, piece.tint});
         }
+      }
+      if (ingameReported) {
+        std::printf("  HUD: бойовий перебудовано, шматків %zu\n", ingamePieces.size());
       }
       ingameReported = true;
     };
@@ -2862,6 +2877,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         // Карта на весь екран — це саме екран появи: у стані 1 сам
         // обробник вмикає MapBorderAlternateShow, а той у 0x4669ae
         // дорівнює запереченню MapMinSize.
+        if (applyHudState) applyHudState(hudState);
         if (updateHudVariables) updateHudVariables(spawned, spawnVisible);
 
         // Натискання на екрані появи. Кнопка не має власної логіки — вона
@@ -2938,7 +2954,8 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
           approach(bottomLeftX, bottomLeftTarget);
           approach(bottomRightX, bottomRightTarget);
         }
-        if (spawnDirty && rebuildSpawn) {
+        // Перебудовуємо екран появи лише поки він на екрані.
+        if (spawnDirty && spawnVisible && rebuildSpawn) {
           spawnDirty = false;
           rebuildSpawn();
         }
