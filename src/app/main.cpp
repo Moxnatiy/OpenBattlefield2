@@ -1751,6 +1751,24 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   // Копія контексту для перебудови живих вузлів у циклі малювання:
   // сам hudContext живе у блоці завантаження рівня.
   obf2::hud::Context hudDynamicContext;
+  // Стан екрана появи та його геометрія. Він єдиний перебудовується на
+  // ходу: вміст залежить від вибраного класу, команди й вкладки.
+  int selectedKit = 0;
+  int selectedTeam = 1;
+  bool membersTab = false;
+  bool spawnRequested = false;
+  bool spawnDirty = false;
+  struct OwnedPiece {
+    obf2::gfx::GpuMesh mesh;
+    obf2::hud::Color tint;
+  };
+  std::vector<OwnedPiece> spawnPieces;
+  std::function<void()> rebuildSpawn;
+  // Ці двоє потрібні перебудові, а вона викликається з циклу малювання —
+  // тобто вже поза блоком завантаження рівня. Тримати їх усередині не
+  // можна: посилання в лямбді стало б висячим.
+  std::function<void()> applySpawnState;
+  obf2::hud::Context spawnContext;
   // Екрани, які видно, лише поки тримають клавішу: табло, рація, поява.
   // Геометрію печемо наперед — вона не змінюється, змінюється лише те,
   // чи малювати її цього кадру.
@@ -1864,12 +1882,53 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         {"HUD_TEXT_MENU_SPAWN_KIT_ANTITANK", "Ingame/Kits/Icons/kit_ATAA.tga",
          "USRIF_MP5_A3.tga"},
     };
+    // --- бекенд екрана появи ---------------------------------------
+    //
+    // Кнопка в HUD не має власної логіки: вона виконує консольну команду
+    // з `setButtonNodeConCmd` (docs/functions/hud-commands.md). Для цього
+    // екрана їх сім, і ось вони. Стан тримаємо тут-таки, а зміна вимагає
+    // перебудови — геометрію ми печемо наперед.
+    selectedKit = args.kit;
+    selectedTeam = args.team == 2 ? 2 : 1;
+    {
+      obf2::engine::Console& console = engine.console();
+      console.bind("spawnManager.setPlayerKit", [&](const obf2::con::Command& command) {
+        selectedKit = command.argInt(0).value_or(selectedKit);
+        spawnDirty = true;
+      });
+      console.bind("spawnManager.setPlayerTeam", [&](const obf2::con::Command& command) {
+        selectedTeam = command.argInt(0).value_or(selectedTeam);
+        spawnDirty = true;
+      });
+      console.bind("SpawnManager.toggleMembers", [&](const obf2::con::Command& command) {
+        membersTab = command.argInt(0).value_or(0) != 0;
+        spawnDirty = true;
+      });
+      console.bind("hudManager.setDone", [&](const obf2::con::Command& command) {
+        spawnRequested = command.argInt(0).value_or(1) != 0;
+      });
+      // Ці дві ще не мають за чим працювати, але команду треба з'їсти —
+      // інакше консоль вважатиме її невідомою.
+      console.bind("spawnManager.selectNextUnlock", [](const obf2::con::Command&) {});
+      console.bind("spawnManager.commitSuicide", [](const obf2::con::Command&) {});
+      console.bind("sound.playSound", [](const obf2::con::Command&) {});
+    }
+
     // Вкладки команд угорі екрана появи. У даних гілка TeamSelectInfo
     // висить на Team1Selected, а всередині два блоки — Team1Selected і
     // Team2Selected.
-    hudVariables["Team1Selected"] = args.team != 2;
-    hudVariables["Team2Selected"] = args.team == 2;
-    hudVariables["KitsShow"] = true;
+    // Змінні екрана появи залежать від його стану, тож тримаємо їх в
+    // одному місці й перераховуємо після кожної команди.
+    applySpawnState = [&]() {
+      hudVariables["Team1Selected"] = selectedTeam != 2;
+      hudVariables["Team2Selected"] = selectedTeam == 2;
+      hudVariables["KitsShow"] = !membersTab;
+      hudVariables["MembersShow"] = membersTab;
+      for (int slot = 0; slot < 7; ++slot) {
+        hudVariables["PlayerKitIcon" + std::to_string(slot) + "SelectShow"] = slot == selectedKit;
+      }
+    };
+    applySpawnState();
     for (int slot = 0; slot < static_cast<int>(std::size(kKits)); ++slot) {
       const std::string index = std::to_string(slot);
       hudVariables["Kit" + index + "Show"] = true;
@@ -1877,8 +1936,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       hudStrings["KitIcon" + index + "Path"] = kKits[slot].icon;
       hudStrings["KitWeaponIcon" + index + "Path"] =
           std::string("Ingame/Weapons/Icons/Hud/Selection/") + kKits[slot].weapon;
-      // Вибраний клас підсвічується окремою гілкою вузла.
-      hudVariables["PlayerKitIcon" + index + "SelectShow"] = slot == args.kit;
+      // Підсвітку вибраного ставить applySpawnState.
     }
 
     obf2::hud::Context hudContext;
@@ -2128,9 +2186,6 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
              KeyScreenSetup{"Scoreboard", "c_GIShowScoreboard", "ScoreboardShow", nullptr,
                             obf2::hud::MapView::Mini, 9, true},
              KeyScreenSetup{"RadioRose", "c_GIRadioComm", "RadioInterfaceShow"},
-             // Стан 1: тримається сам, доки гравець не з'явився.
-             KeyScreenSetup{"SpawnMenu", "c_GIEnter", "SpawnShow", "MapSplit",
-                            obf2::hud::MapView::Maxi, 1, false},
              KeyScreenSetup{"MapMenu", "c_GIMapSize", "MapMenuShow"},
          }) {
       const char* const group = setup.group;
@@ -2179,6 +2234,37 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
                   std::string(controls.key(action)).c_str(), screen.quads.size());
       keyScreens.push_back(std::move(screen));
     }
+
+    // Екран появи будуємо окремо й тримаємо його меші при собі: після
+    // кожної команди (вибір класу, команди, вкладки) він перебудовується,
+    // а решта екранів лишається запеченою назавжди.
+    spawnContext = hudContext;
+    spawnContext.isVisible = [&](std::string_view variable) {
+      if (variable == "1" || variable == "SpawnShow") return true;
+      const auto found = hudVariables.find(std::string(variable));
+      return found != hudVariables.end() && found->second;
+    };
+    rebuildSpawn = [&]() {
+      for (OwnedPiece& piece : spawnPieces) renderer->release(piece.mesh);
+      spawnPieces.clear();
+      applySpawnState();
+      ingameHud.setMapView(obf2::hud::MapView::Maxi);
+      auto built = obf2::hud::buildTree(ingameHud, "SpawnMenu", hudFont.font, hudFont.atlasPath,
+                                        hudScreen, spawnContext);
+      auto mapPieces = obf2::hud::buildTree(ingameHud, "MapSplit", hudFont.font,
+                                            hudFont.atlasPath, hudScreen, spawnContext);
+      const std::size_t mapCount = mapPieces.size();
+      for (auto& piece : mapPieces) built.push_back(std::move(piece));
+      ingameHud.setMapView(obf2::hud::MapView::Mini);
+      for (auto& piece : built) {
+        if (auto uploaded = renderer->upload(piece.geometry, resolveTexture)) {
+          spawnPieces.push_back(OwnedPiece{*uploaded, piece.tint});
+        }
+      }
+      std::printf("  HUD: екран появи перебудовано, шматків %zu (карта %zu)\n",
+                  spawnPieces.size(), mapCount);
+    };
+    rebuildSpawn();
 
     // Живі вузли: усе, що бере значення зі змінної, яку ми вміємо заповнити.
     for (const auto& node : ingameHud.nodes()) {
@@ -2502,6 +2588,38 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         // справді на клавіші. Ми поки розрізняємо саме ці два випадки.
         const bool spawned = hostedClient != nullptr;
         const int hudState = spawned ? 0 : 1;
+        const bool spawnVisible = hudState == 1 || args.hudScreenName == "SpawnMenu";
+
+        // Натискання на екрані появи. Кнопка не має власної логіки — вона
+        // виконує консольну команду з setButtonNodeConCmd, тож усе, що
+        // тут треба, це знайти її під курсором і виконати.
+        if (spawnVisible && !spawnPieces.empty()) {
+          const auto input = device->readInput();
+          // --click --mouse дає одне синтетичне натискання: так екран
+          // перевіряється знімком, без рук.
+          const bool clicked = input.clicked || (args.click && frame == 1);
+          const float clickX = args.click ? args.mouseX : input.mouseX;
+          const float clickY = args.click ? args.mouseY : input.mouseY;
+          if (clicked) {
+            const obf2::hud::Node* hit = obf2::hud::buttonAt(
+                ingameHud, "SpawnMenu", hudScreen, clickX, clickY, &hudDynamicContext);
+            if (hit != nullptr) {
+              // На кнопці кілька команд; натисканню належать ті, що з
+              // подією 0.
+              for (const auto& [event, line] : hit->commands) {
+                if (event != 0) continue;
+                std::printf("  екран появи: %s -> %s\n", hit->name.c_str(), line.c_str());
+                if (!engine.console().executeLine(line)) {
+                  std::printf("  екран появи: команда без обробника — %s\n", line.c_str());
+                }
+              }
+            }
+          }
+        }
+        if (spawnDirty && rebuildSpawn) {
+          spawnDirty = false;
+          rebuildSpawn();
+        }
         for (const KeyScreen& screen : keyScreens) {
           const bool forced = screen.group == args.hudScreenName;
           bool visible = forced;
@@ -2530,6 +2648,16 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         };
         for (const int index : hudQuads) pushHud(index);
         for (const int index : extra) pushHud(index);
+        if (spawnVisible) {
+          for (const OwnedPiece& piece : spawnPieces) {
+            obf2::gfx::MeshRenderer::DrawItem item{&piece.mesh, obf2::Mat4::identity()};
+            item.tint[0] = piece.tint.r;
+            item.tint[1] = piece.tint.g;
+            item.tint[2] = piece.tint.b;
+            item.tint[3] = piece.tint.a;
+            hudItems.push_back(item);
+          }
+        }
 
         for (DynamicNode& dynamic : hudDynamic) {
           const obf2::hud::Node& node = *dynamic.node;
@@ -2613,6 +2741,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   for (auto& dynamic : hudDynamic) {
     if (dynamic.valid) renderer->release(dynamic.mesh);
   }
+  for (OwnedPiece& piece : spawnPieces) renderer->release(piece.mesh);
   for (auto& gpuMesh : gpuMeshes) renderer->release(gpuMesh);
   std::printf("кадрів намальовано: %d\n", frame);
   if (nextLevel != nullptr) *nextLevel = requestedLevel;

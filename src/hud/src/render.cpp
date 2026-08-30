@@ -449,25 +449,39 @@ std::optional<Bounds> treeBounds(const Builder& builder, std::string_view rootGr
 }
 
 const Node* buttonAt(const Builder& builder, std::string_view group, const Screen& screen,
-                     float mouseX, float mouseY) {
-  const auto nodes = builder.group(group);
-  // З кінця: пізніші вузли намальовані поверх, тож і мишу ловлять першими.
-  for (std::size_t i = nodes.size(); i-- > 0;) {
-    const Node* node = nodes[i];
-    if (node->type != NodeType::Button || node->command.empty()) continue;
-
-    ScreenRect rect = nodeRect(*node, screen);
-    if (node->hasMouseArea) {
-      Node area = *node;
-      area.x = node->mouseX;
-      area.y = node->mouseY;
-      area.width = node->mouseWidth;
-      area.height = node->mouseHeight;
-      rect = nodeRect(area, screen);
+                     float mouseX, float mouseY, const Context* context) {
+  // Кнопки екрана лежать глибоко в дереві (SelectKit0 сидить під
+  // Kit0NotSelected), тож обходимо його так само, як при малюванні, і
+  // з тими самими умовами показу: невидима кнопка миші не ловить.
+  const Node* found = nullptr;
+  std::vector<std::string> visited;
+  const auto walk = [&](auto&& self, std::string_view where, int depth) -> void {
+    if (depth > 24) return;
+    for (const std::string& seen : visited) {
+      if (seen == where) return;
     }
-    if (rect.contains(mouseX, mouseY)) return node;
-  }
-  return nullptr;
+    visited.emplace_back(where);
+    for (const Node* node : builder.group(where)) {
+      if (context != nullptr && !nodeVisible(*node, *context)) continue;
+      if (node->type == NodeType::Button && !node->command.empty()) {
+        ScreenRect rect = nodeRect(*node, screen);
+        if (node->hasMouseArea) {
+          // Ділянка миші задана зсувом від самого вузла, а не окремим
+          // місцем на екрані.
+          const float scale = static_cast<float>(screen.height) / kReferenceHeight;
+          rect.x += node->mouseX * scale;
+          rect.y += node->mouseY * scale;
+          rect.width = node->mouseWidth * scale;
+          rect.height = node->mouseHeight * scale;
+        }
+        // Пізніші вузли намальовані поверх, тож остання влучна і виграє.
+        if (rect.contains(mouseX, mouseY)) found = node;
+      }
+      self(self, node->name, depth + 1);
+    }
+  };
+  walk(walk, group, 0);
+  return found;
 }
 
 }  // namespace obf2::hud

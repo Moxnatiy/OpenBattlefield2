@@ -146,6 +146,6 @@ mesh::RenderMesh buildRect(const ScreenRect& rect, const Screen& screen,
 // Кнопка під курсором, або nullptr. Шукаємо з кінця: пізніші вузли
 // намальовані поверх, тому й ловлять мишу першими.
 const Node* buttonAt(const Builder& builder, std::string_view group, const Screen& screen,
-                     float mouseX, float mouseY);
+                     float mouseX, float mouseY, const Context* context = nullptr);
 
 }  // namespace obf2::hud

@@ -312,13 +312,35 @@ void Builder::feed(const con::Command& command) {
     return;
   }
   if (method == "setbuttonnodeconcmd") {
-    // Кнопка виконує консольну команду — так інтерфейс і керує грою.
-    std::string joined;
-    for (const std::string& argument : command.args) {
-      if (!joined.empty()) joined += " ";
-      joined += argument;
+    // Кнопка виконує консольні команди — так інтерфейс і керує грою.
+    // Форма: `setButtonNodeConCmd "<команда>" <подія>`, де подія 0 це
+    // натискання, а 1 — наведення. На одній кнопці їх кілька:
+    //
+    //   setButtonNodeConCmd "spawnManager.setPlayerKit 1" 0
+    //   setButtonNodeConCmd "sound.playSound kitSelect"   0
+    //   setButtonNodeConCmd "sound.playSound kitOver"     1
+    //
+    // Доти ми лишали останню — і кнопка вибору класу «виконувала» звук
+    // наведення замість вибору.
+    if (command.args.empty()) return;
+    const std::size_t last = command.args.size() - 1;
+    int event = 0;
+    std::size_t upto = command.args.size();
+    if (last > 0 && command.args[last].size() <= 2 &&
+        command.args[last].find_first_not_of("0123456789") == std::string::npos) {
+      event = std::atoi(command.args[last].c_str());
+      upto = last;
     }
-    node->command = joined;
+    std::string joined;
+    for (std::size_t i = 0; i < upto; ++i) {
+      if (!joined.empty()) joined += " ";
+      joined += command.args[i];
+    }
+    if (joined.empty()) return;
+    node->commands.emplace_back(event, joined);
+    // `command` лишається першою дією натискання — за нею кнопка й
+    // вважається дієвою.
+    if (event == 0 && node->command.empty()) node->command = joined;
     return;
   }
   if (method == "setnodecolor") {

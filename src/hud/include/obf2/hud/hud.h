@@ -116,7 +116,9 @@ struct Node {
   // ту помилку цілі гілки HUD не показувалися ніколи.
   std::vector<ShowTest> showTests;
   std::string alphaVariable;
-  std::string command;          // setButtonNodeConCmd — кнопка виконує команду
+  std::string command;          // перша дія натискання
+  // Усі команди кнопки з їхньою подією: 0 — натискання, 1 — наведення.
+  std::vector<std::pair<int, std::string>> commands;
 
   Color color;
   float inTime = 0.0f;
