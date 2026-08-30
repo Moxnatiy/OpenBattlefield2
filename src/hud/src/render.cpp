@@ -241,7 +241,9 @@ std::vector<DrawPiece> buildNode(const Node& node, const font::Font& font,
         layout.scale = scaleY;
         // Підпис стоїть під значком і по центру нього.
         layout.x = cx - font::textWidth(*face, text, layout.scale) * 0.5f;
-        layout.y = cy + icon * 0.5f;
+        // Зсув підпису — виміряний окремо від значка: у грі це просто
+        // відступ від центра точки, і від розміру значка він не залежить.
+        layout.y = cy + context.mapLabelOffset * scaleY;
         auto geometry = font::buildText(*face, text, layout, atlas);
         if (!geometry.indices.empty()) {
           pieces.push_back(DrawPiece{std::move(geometry), atlas, &node, node.cpFontColor});
