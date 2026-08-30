@@ -108,7 +108,12 @@ struct Context {
     bool selected = false;
   };
   std::vector<SpawnMarker> spawnMarkers;
-  // Так само не виміряний: власний розмір spawn_UnSelected.dds.
+  // Розмір кружечка місця появи — **виміряний із бінара**: у функції
+  // малювання значка (0x77f7c3 і 0x77f7ca) ширина й висота пишуться
+  // сталою 0x41800000, тобто 16.0. Там же поруч і вибір текстури:
+  // масив із восьми вказівників за 0x950..0x96c, база 0x960 для
+  // вибраного і 0x950 для невибраного, а індекс дає ще один прапорець
+  // (активна точка чи ні).
   float spawnMarkerSize = 16.0f;
   // Розмір світу рівня в метрах — ним переводимо координати позначок
   // у частки картинки.
@@ -177,6 +182,12 @@ mesh::RenderMesh buildRect(const ScreenRect& rect, const Screen& screen,
 // Обходимо все, зокрема й приховане: вузол, що зникає, теж має свій хід.
 void updateAnimator(const Builder& builder, std::string_view rootGroup, Animator& animator,
                     const Context& context, int maxDepth = 8);
+
+// Кружечок місця появи під курсором — номер у `context.spawnMarkers`.
+// Карта не має для них окремих вузлів, тож і мишу ловить сама.
+std::optional<std::size_t> spawnMarkerAt(const Builder& builder, std::string_view rootGroup,
+                                         const Screen& screen, const Context& context,
+                                         float mouseX, float mouseY, int maxDepth = 8);
 
 // Кнопка під курсором, або nullptr. Шукаємо з кінця: пізніші вузли
 // намальовані поверх, тому й ловлять мишу першими.

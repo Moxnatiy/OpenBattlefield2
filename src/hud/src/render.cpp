@@ -274,8 +274,11 @@ std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& fon
         const float cy = rect.y + (v - context.mapV0) / vSpan * rect.height;
         const float size = context.spawnMarkerSize * scaleY;
         const std::string texture =
-            spawn.selected ? "Ingame/Minimap/Icons/spawn_Selected.dds"
-                           : "Ingame/Minimap/Icons/spawn_UnSelected.dds";
+            // Шляхи — рядки з бінара (0x930724 і 0x93065c). Розширення
+            // там .tga, хоча в архіві лежить .dds; підміну робить наш
+            // пошук текстури, як і для решти HUD.
+            spawn.selected ? "Ingame/Minimap/Icons/spawn_Selected.tga"
+                           : "Ingame/Minimap/Icons/spawn_UnSelected.tga";
         const ScreenRect box{cx - size * 0.5f, cy - size * 0.5f, size, size};
         pieces.push_back(DrawPiece{quad(box, screen, texture), texture, &node, Color{}});
       }
@@ -490,6 +493,47 @@ std::optional<Bounds> treeBounds(const Builder& builder, std::string_view rootGr
   };
   walk(walk, rootGroup, 0);
   return out;
+}
+
+std::optional<std::size_t> spawnMarkerAt(const Builder& builder, std::string_view rootGroup,
+                                         const Screen& screen, const Context& context,
+                                         float mouseX, float mouseY, int maxDepth) {
+  const float uSpan = context.mapU1 - context.mapU0;
+  const float vSpan = context.mapV1 - context.mapV0;
+  if (uSpan <= 0.0f || vSpan <= 0.0f) return std::nullopt;
+  const float scaleY = static_cast<float>(screen.height) / kReferenceHeight;
+  const float half = context.mapWorldSize * 0.5f;
+  const float size = context.spawnMarkerSize * scaleY;
+
+  std::optional<std::size_t> found;
+  std::vector<std::string> visited;
+  const auto walk = [&](auto&& self, std::string_view group, int depth) -> void {
+    if (depth > maxDepth) return;
+    for (const std::string& seen : visited) {
+      if (seen == group) return;
+    }
+    visited.emplace_back(group);
+    for (const Node* node : builder.group(group)) {
+      if (nodeShowState(*node, context).progress <= 0.0f) continue;
+      if (node->type == NodeType::Map || node->type == NodeType::MiniMap) {
+        const ScreenRect rect = nodeRect(*node, screen, &context);
+        for (std::size_t i = 0; i < context.spawnMarkers.size(); ++i) {
+          const Context::SpawnMarker& spawn = context.spawnMarkers[i];
+          const float u = (spawn.worldX + half) / context.mapWorldSize;
+          const float v = (half - spawn.worldZ) / context.mapWorldSize;
+          if (u < context.mapU0 || u > context.mapU1) continue;
+          if (v < context.mapV0 || v > context.mapV1) continue;
+          const float cx = rect.x + (u - context.mapU0) / uSpan * rect.width;
+          const float cy = rect.y + (v - context.mapV0) / vSpan * rect.height;
+          const ScreenRect box{cx - size * 0.5f, cy - size * 0.5f, size, size};
+          if (box.contains(mouseX, mouseY)) found = i;
+        }
+      }
+      self(self, node->name, depth + 1);
+    }
+  };
+  walk(walk, rootGroup, 0);
+  return found;
 }
 
 void updateAnimator(const Builder& builder, std::string_view rootGroup, Animator& animator,

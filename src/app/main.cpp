@@ -1757,6 +1757,8 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   int selectedTeam = 1;
   bool membersTab = false;
   bool spawnRequested = false;
+  // Вибране місце появи — номер кружечка в spawnContext.spawnMarkers.
+  int selectedSpawn = -1;
   bool spawnDirty = false;
   struct OwnedPiece {
     obf2::gfx::GpuMesh mesh;
@@ -2110,8 +2112,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
                          (faction.empty() ? std::string("Neutral") : faction) + "/miniMap_CP.tga";
         spawnContext.mapMarkers.push_back(std::move(marker));
         if (point.team == selectedTeam) {
+          const bool chosen =
+              static_cast<int>(spawnContext.spawnMarkers.size()) == selectedSpawn;
           spawnContext.spawnMarkers.push_back(
-              obf2::hud::Context::SpawnMarker{point.position.x, point.position.z, false});
+              obf2::hud::Context::SpawnMarker{point.position.x, point.position.z, chosen});
         }
       }
       hudVariables["Team1Selected"] = selectedTeam != 2;
@@ -2203,8 +2207,11 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         marker.worldX = point.position.x;
         marker.worldZ = point.position.z;
         marker.label = point.nameKey;
-        const char* faction = point.team == 1 ? "US" : (point.team == 2 ? "Ch" : "Neutral");
-        marker.texture = std::string("Ingame/Flags/Icons/Minimap/") + faction + "/miniMap_CP.tga";
+        // Теку значка дає назва сторони з Init.con рівня — так само, як
+        // на великій карті (BF2.exe 0x74fb70).
+        const std::string faction = point.team == 0 ? "Neutral" : teamName(point.team);
+        marker.texture = "Ingame/Flags/Icons/Minimap/" +
+                         (faction.empty() ? std::string("Neutral") : faction) + "/miniMap_CP.tga";
         hudContext.mapMarkers.push_back(std::move(marker));
       }
       std::printf("  карта: точок захоплення %zu\n", hudControlPoints.size());
@@ -2518,8 +2525,8 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
           spawnPieces.push_back(OwnedPiece{*uploaded, piece.tint});
         }
       }
-      std::printf("  HUD: екран появи перебудовано, шматків %zu (карта %zu)\n",
-                  spawnPieces.size(), mapCount);
+      std::printf("  HUD: екран появи перебудовано, шматків %zu (карта %zu), кружечків %zu\n",
+                  spawnPieces.size(), mapCount, spawnContext.spawnMarkers.size());
     };
     rebuildSpawn();
 
@@ -2843,7 +2850,11 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         // (docs/functions/hud-states.md): стан 1 — екран появи, і він
         // стоїть сам, доки гравець не з'явився; стан 9 — табло, воно
         // справді на клавіші. Ми поки розрізняємо саме ці два випадки.
-        const bool spawned = hostedClient != nullptr;
+        // DONE закриває екран появи. У грі кнопка не «ховає меню», а
+        // просить сервер про появу, і стан перемикається вже за фактом
+        // появи гравця; поки сервер цього не вміє, закриваємо самі —
+        // інакше решту HUD не подивитися. Борг.
+        const bool spawned = hostedClient != nullptr || spawnRequested;
         const int hudState = spawned ? 0 : 1;
         const bool spawnVisible = hudState == 1 || args.hudScreenName == "SpawnMenu";
         // Стан HUD і похідні від нього змінні — щокадру, як у грі
@@ -2864,6 +2875,21 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
           const float clickX = args.click ? args.mouseX : input.mouseX;
           const float clickY = args.click ? args.mouseY : input.mouseY;
           if (clicked) {
+            // Спершу кружечки місць появи: у даних для них вузлів немає,
+            // карта ловить мишу сама. Текстуру вибраного гра бере з
+            // окремого масиву (BF2.exe 0x77f7eb проти 0x77f7fa —
+            // 0x960 для вибраного, 0x950 для ні).
+            // Карта на екрані появи — у великому поданні, тож і ловити
+            // мишу треба в ньому: у мініатюрі вузол стоїть в іншому місці.
+            ingameHud.setMapView(obf2::hud::MapView::Maxi);
+            const auto hitSpawn = obf2::hud::spawnMarkerAt(
+                ingameHud, "MapSplit", hudScreen, spawnContext, clickX, clickY);
+            ingameHud.setMapView(obf2::hud::MapView::Mini);
+            if (hitSpawn) {
+              selectedSpawn = static_cast<int>(*hitSpawn);
+              spawnDirty = true;
+              std::printf("  екран появи: місце %d\n", selectedSpawn);
+            }
             // Кнопки екрана появи лежать у двох гілках: власне SpawnMenu
             // і TopLayer, де сидять DONE та SUICIDE.
             const obf2::hud::Node* hit = nullptr;
