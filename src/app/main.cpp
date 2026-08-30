@@ -1763,6 +1763,14 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     obf2::hud::Color tint;
   };
   std::vector<OwnedPiece> spawnPieces;
+  // Бойовий HUD: не запечений назавжди, а перебудовний — його змінні
+  // рушій пише щокадру (0x78d0f0), а не раз при старті рівня.
+  std::vector<OwnedPiece> ingamePieces;
+  std::function<std::vector<obf2::hud::DrawPiece>()> buildIngamePieces;
+  std::function<void()> rebuildIngame;
+  bool hudDirty = false;
+  bool ingameReported = false;
+  std::function<void(bool, bool)> updateHudVariables;
   // Поява й зникнення вузлів у часі — те, чим у грі керує граф MemeFile
   // (див. obf2/hud/animation.h).
   obf2::hud::Animator hudAnimator;
@@ -1895,14 +1903,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     // сталої, `movb $0x1, 0x365(%esi)` за 0x7a48f7.
     hudVariables["ToggleScore"] = true;
 
-    // Джерело не знайдене. Ці змінні вмикає сама гра десь у логіці бою
-    // (здоров'я, набої, стан мінікарти), і в таблиці станів їх немає.
-    // Поки ставимо самі, щоб бойовий HUD було видно, — це борг, а не
-    // реверс.
-    for (const char* on : {"PlayerHealthShow", "PlayerStaminaShow", "PrimaryAmmoShow",
-                           "PrimaryAmmoBarShow", "MapMinSize", "CPInterfaceEnabled"}) {
-      hudVariables[on] = true;
-    }
+    // Джерело не знайдене: CPInterfaceEnabled (поле 0xa8 об'єкта HUD)
+    // пишуть у грі багато місць, і котре з них наше — ще не з'ясовано.
+    // Без нього не видно смуги точок захоплення. Борг.
+    hudVariables["CPInterfaceEnabled"] = true;
 
     // --- екран появи: сім класів -------------------------------------
     //
@@ -1978,6 +1982,50 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       console.bind("spawnManager.commitSuicide", [](const obf2::con::Command&) {});
       console.bind("sound.playSound", [](const obf2::con::Command&) {});
     }
+
+    // Похідні змінні HUD. У грі їх пише не список при старті, а дві
+    // функції щокадру, і кожна тут названа своєю адресою:
+    //
+    //   0x466930 — розмір карти і те, що з нього випливає;
+    //   0x78d0f0 — бойовий набір за поточним гравцем.
+    //
+    // Саме тому в оригіналі за екраном появи не видно смуг здоров'я й
+    // набоїв: гравця ще немає, і 0x78d2d9 гасить увесь набір.
+    updateHudVariables = [&](bool hasPlayer, bool mapFullSize) {
+      const auto set = [&](const char* name, bool value) {
+        bool& slot = hudVariables[name];
+        if (slot == value) return;
+        slot = value;
+        hudDirty = true;
+      };
+      // 0x466986: MapFullSize і MapMinSize — це два прапорці самого
+      // об'єкта карти (поля 0x68c і 0x68d), а 0x4669ae робить із другого
+      // MapBorderAlternateShow запереченням.
+      set("MapFullSize", mapFullSize);
+      set("MapMinSize", !mapFullSize);
+      set("MapBorderAlternateShow", mapFullSize);
+      // 0x466935 і 0x466950: складені змінні — просто «і» двох інших.
+      const bool spawn = hudVariables["SpawnShow"];
+      set("MapFullSizeAndSpawnShow", mapFullSize && spawn);
+      set("MapFullSizeAndNotSpawnShow", mapFullSize && !spawn);
+      // 0x78d154 вмикає, 0x78d2f1 гасить — за наявністю керованого
+      // гравця. Разом із ним гасяться і 0x78d2d9: SquadInfoBarShow,
+      // ShowCommanderIcon, ShowSquadIcon.
+      set("PlayerHealthShow", hasPlayer);
+      // 0x78acf1: у грі це ще й порівняння самої витривалості зі сталою
+      // (поле 0x1ac), тобто смуга з'являється, коли витривалість не
+      // повна. Самої витривалості в нас поки немає — лишається гравець.
+      set("PlayerStaminaShow", hasPlayer);
+      // 0x7a5bae, 0x7a5bb5, 0x7a8a18: набої вмикає оновлення зброї.
+      // Зброї ми поки не моделюємо, тож теж за гравцем. Борг.
+      set("PrimaryAmmoShow", hasPlayer);
+      set("PrimaryAmmoBarShow", hasPlayer);
+      set("PrimaryClipsShow", hasPlayer);
+      // 0x78adc5, 0x78ae8c проти 0x78af97: загін. Ми в загоні не буваємо.
+      set("SquadInfoBarShow", false);
+      set("ShowCommanderIcon", false);
+      set("ShowSquadIcon", false);
+    };
 
     // Назва сторони команди приходить із самого рівня:
     //   gameLogic.setTeamName 1 "CH"
@@ -2238,6 +2286,12 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       }
     };
 
+    // Бойовий HUD теж перебудовний. У грі його змінні пише не один раз
+    // при старті рівня, а щокадру — див. docs/functions/hud-states.md,
+    // розділ про об'єкт HUD: 0x78d0f0 бере поточного гравця і або вмикає
+    // PlayerHealthShow (0x78d154), або гасить весь набір (0x78d2d9).
+    // Тому дерево доводиться складати наново, а не пекти назавжди.
+    buildIngamePieces = [&]() {
     auto pieces = obf2::hud::buildTree(ingameHud, "Global", hudFont.font, hudFont.atlasPath,
                                        hudScreen, hudContext);
 
@@ -2296,18 +2350,16 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
                                               hudFont.atlasPath, layerScreen, hudContext);
       if (layerPieces.empty()) continue;
       reportRects(layer.group, layerPieces);
-      std::printf("  HUD: шар %-20s кут %.0f %.0f, шматків %zu\n", layer.group, layer.x,
-                  layer.y, layerPieces.size());
+      if (!ingameReported) {
+        std::printf("  HUD: шар %-20s кут %.0f %.0f, шматків %zu\n", layer.group, layer.x,
+                    layer.y, layerPieces.size());
+      }
       for (auto& piece : layerPieces) pieces.push_back(std::move(piece));
     }
 
     reportRects("Global", pieces);
-    for (auto& piece : pieces) {
-      scene.meshes.push_back(std::move(piece.geometry));
-      const int index = static_cast<int>(scene.meshes.size()) - 1;
-      hudQuads.push_back(index);
-      hudTints.emplace(index, piece.tint);
-    }
+    return pieces;
+    };
 
     // Кожен екран на клавішу відмикає рівно **одна** змінна — та, що
     // стоїть на його корені в даних гри:
@@ -2396,8 +2448,26 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     // Ефекти появи бачить і сам будівник геометрії: alpha множить
     // прозорість, move зсуває прямокутник.
     spawnContext.showState = [&](const obf2::hud::Node& node) { return hudAnimator.state(node); };
+    rebuildIngame = [&]() {
+      for (OwnedPiece& piece : ingamePieces) renderer->release(piece.mesh);
+      ingamePieces.clear();
+      for (const char* root : {"Global", "BottomLeftAnimate", "BottomLeftStatic",
+                               "BottomRightAnimate", "BottomRightStatic"}) {
+        obf2::hud::updateAnimator(ingameHud, root, hudAnimator, hudContext);
+      }
+      for (auto& piece : buildIngamePieces()) {
+        if (auto uploaded = renderer->upload(piece.geometry, resolveTexture)) {
+          ingamePieces.push_back(OwnedPiece{*uploaded, piece.tint});
+        }
+      }
+      ingameReported = true;
+    };
+    hudContext.showState = [&](const obf2::hud::Node& node) { return hudAnimator.state(node); };
+    rebuildIngame();
+
     rebuildSpawn = [&]() {
-      for (OwnedPiece& piece : spawnPieces) renderer->release(piece.mesh);
+      for (OwnedPiece& piece : ingamePieces) renderer->release(piece.mesh);
+  for (OwnedPiece& piece : spawnPieces) renderer->release(piece.mesh);
       spawnPieces.clear();
       applySpawnState();
       for (const char* root : {"SpawnMenu", "MapSplit", "TopLayer"}) {
@@ -2446,7 +2516,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     // --hud-screen list: що саме лягло на екран. Без цього доводиться
     // здогадуватися, який вузол з'їхав.
     if (args.hudScreenName == "list") {
-      for (const auto& piece : pieces) {
+      for (const auto& piece : buildIngamePieces()) {
         if (piece.node == nullptr) continue;
         std::printf("    %-10s %-28s %-22s %6.0f %6.0f %5.0f %5.0f  %s\n",
                     std::string(obf2::hud::nodeTypeName(piece.node->type)).c_str(),
@@ -2457,7 +2527,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     }
 
     std::printf("  HUD: %zu вузлів у дереві, шматків до малювання %zu, живих підписів %zu\n",
-                ingameHud.nodes().size(), pieces.size(), hudDynamic.size());
+                ingameHud.nodes().size(), ingamePieces.size(), hudDynamic.size());
 
     // Команди, яких ми ще не вміємо. Гра — це потік команд, тож найкорисніше
     // бачити саме те, що прийшло й лишилося без обробника.
@@ -2752,6 +2822,12 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         const bool spawned = hostedClient != nullptr;
         const int hudState = spawned ? 0 : 1;
         const bool spawnVisible = hudState == 1 || args.hudScreenName == "SpawnMenu";
+        // Стан HUD і похідні від нього змінні — щокадру, як у грі
+        // (0x786260 перемикає стан, 0x466930 і 0x78d0f0 рахують похідні).
+        // Карта на весь екран — це саме екран появи: у стані 1 сам
+        // обробник вмикає MapBorderAlternateShow, а той у 0x4669ae
+        // дорівнює запереченню MapMinSize.
+        if (updateHudVariables) updateHudVariables(spawned, spawnVisible);
 
         // Натискання на екрані появи. Кнопка не має власної логіки — вона
         // виконує консольну команду з setButtonNodeConCmd, тож усе, що
@@ -2803,6 +2879,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
           spawnDirty = false;
           rebuildSpawn();
         }
+        if (hudDirty && rebuildIngame) {
+          hudDirty = false;
+          rebuildIngame();
+        }
         for (const KeyScreen& screen : keyScreens) {
           const bool forced = screen.group == args.hudScreenName;
           bool visible = forced;
@@ -2829,7 +2909,14 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
           }
           hudItems.push_back(item);
         };
-        for (const int index : hudQuads) pushHud(index);
+        for (const OwnedPiece& piece : ingamePieces) {
+          obf2::gfx::MeshRenderer::DrawItem item{&piece.mesh, obf2::Mat4::identity()};
+          item.tint[0] = piece.tint.r;
+          item.tint[1] = piece.tint.g;
+          item.tint[2] = piece.tint.b;
+          item.tint[3] = piece.tint.a;
+          hudItems.push_back(item);
+        }
         for (const int index : extra) pushHud(index);
         if (spawnVisible) {
           for (const OwnedPiece& piece : spawnPieces) {
