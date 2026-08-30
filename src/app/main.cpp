@@ -2311,9 +2311,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
           x1 = std::max(x1, px);
           y1 = std::max(y1, py);
         }
-        std::printf("RECT %-14s %-30s %7.1f %7.1f %7.1f %7.1f %s\n", where,
+        std::printf("RECT %-14s %-30s %7.1f %7.1f %7.1f %7.1f %-46s [%s]\n", where,
                     piece.node->name.c_str(), x0, y0, x1 - x0, y1 - y0,
-                    piece.texture.c_str());
+                    piece.texture.c_str(), piece.node->showVariable.c_str());
       }
     };
 

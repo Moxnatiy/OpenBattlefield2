@@ -40,8 +40,10 @@ void Animator::advance(float dt) {
 ShowState Animator::state(const Node& node) const {
   ShowState out;
   const auto it = entries_.find(node.name);
-  // Про вузол ще не чули — показуємо як є.
-  out.progress = it == entries_.end() ? 1.0f : it->second.progress;
+  // Про вузол ще не чули — хай вирішує звичайна умова показу.
+  if (it == entries_.end()) return out;
+  out.known = true;
+  out.progress = it->second.progress;
   if (node.showEffects.empty()) {
     // Без ефекту перехід не має чим себе показати: вузол просто
     // з'являється і зникає.

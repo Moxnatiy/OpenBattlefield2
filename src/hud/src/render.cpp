@@ -144,6 +144,15 @@ ShowState nodeShowState(const Node& node, const Context& context) {
   return context.showState(node);
 }
 
+// Чи вузол на екрані. Умова показу задає **ціль**, аніматор — лише хід
+// до неї: поки вузол їде або згасає, він ще видимий. Про вузол, якого
+// аніматор не знає, відповідає сама умова.
+bool nodeShown(const Node& node, const Context& context) {
+  const ShowState show = nodeShowState(node, context);
+  if (!show.known) return nodeVisible(node, context);
+  return show.progress > 0.0f;
+}
+
 ScreenRect nodeRect(const Node& node, const Screen& screen, const Context* context) {
   // Масштаб однаковий по обох осях — по висоті. Розтягування по ширині
   // робило б з круглого овальне.
@@ -394,7 +403,7 @@ std::vector<DrawPiece> buildGroup(const Builder& builder, std::string_view group
   std::vector<DrawPiece> pieces;
   for (const Node* node : builder.group(group)) {
     // Вузол зі змінною показу малюємо лише тоді, коли вона ввімкнена.
-    if (nodeShowState(*node, context).progress <= 0.0f) continue;
+    if (!nodeShown(*node, context)) continue;
     for (auto& piece : buildNode(*node, font, fontAtlas, screen, context)) {
       pieces.push_back(std::move(piece));
     }
@@ -432,7 +441,7 @@ std::vector<DrawPiece> buildTree(const Builder& builder, std::string_view rootGr
     visited.emplace_back(group);
 
     for (const Node* node : builder.group(group)) {
-      if (nodeShowState(*node, context).progress <= 0.0f) continue;
+      if (!nodeShown(*node, context)) continue;
       if (node->type == NodeType::Split) {
         // Вузол-«розгалуження» сам нічого не малює: він підставляє групу,
         // назва якої збігається з його іменем.
@@ -514,7 +523,7 @@ std::optional<std::size_t> spawnMarkerAt(const Builder& builder, std::string_vie
     }
     visited.emplace_back(group);
     for (const Node* node : builder.group(group)) {
-      if (nodeShowState(*node, context).progress <= 0.0f) continue;
+      if (!nodeShown(*node, context)) continue;
       if (node->type == NodeType::Map || node->type == NodeType::MiniMap) {
         const ScreenRect rect = nodeRect(*node, screen, &context);
         for (std::size_t i = 0; i < context.spawnMarkers.size(); ++i) {
