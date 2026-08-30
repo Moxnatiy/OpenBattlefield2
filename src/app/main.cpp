@@ -1979,6 +1979,34 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       console.bind("sound.playSound", [](const obf2::con::Command&) {});
     }
 
+    // Назва сторони команди приходить із самого рівня:
+    //   gameLogic.setTeamName 1 "CH"
+    // Для Dalian_plant це CH і US — саме в такому порядку, тобто перша
+    // команда китайська. По всіх 22 рівнях набір назв рівно CH, EU, MEC,
+    // US, і теки значків у Menu_client.zip звуться так само.
+    const auto teamName = [&](int team) -> std::string {
+      if (!level || team < 0 || team > 2) return {};
+      return level->teamNames[team];
+    };
+    // Підпис вкладки. Реверс BF2.exe 0x787110: гра бере назву сторони і
+    // перекладає її на ключ локалізації, причому три випадки записані
+    // окремо, а решта складається з префікса.
+    const auto teamLabel = [&](int team) -> std::string {
+      const std::string name = teamName(team);
+      if (name.empty()) return {};
+      if (name == "MEC") return "HUD_TEXT_MENU_SPAWN_ARMY_MEC";
+      if (name == "US") return "HUD_TEXT_MENU_SPAWN_ARMY_USMC";
+      if (name == "CH") return "HUD_TEXT_MENU_SPAWN_ARMY_CHINA";
+      return "HUD_TEXT_MENU_SPAWN_ARMY_" + name;
+    };
+    // Прапорець на вкладці. Шаблон із бінара, 0x931030, підставляється
+    // тією ж назвою сторони (0x787320 і далі).
+    const auto teamFlagIcon = [&](int team) -> std::string {
+      const std::string name = teamName(team);
+      if (name.empty()) return {};
+      return "Ingame/Flags/Icons/Hud/Score/" + name + "/scoreBoard_Flag.tga";
+    };
+
     // Вкладки команд угорі екрана появи. У даних гілка TeamSelectInfo
     // висить на Team1Selected, а всередині два блоки — Team1Selected і
     // Team2Selected.
@@ -2001,8 +2029,13 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         marker.worldX = point.position.x;
         marker.worldZ = point.position.z;
         marker.label = point.nameKey;
-        const char* faction = point.team == 1 ? "US" : (point.team == 2 ? "Ch" : "Neutral");
-        marker.texture = std::string("Ingame/Flags/Icons/Minimap/") + faction + "/miniMap_CP.tga";
+        // Теку значка дає назва сторони, а не наш здогад: у BF2.exe
+        // 0x74fb70 шаблон `Ingame/Flags/Icons/Minimap/%s/miniMap_CP.tga`
+        // заповнює рядок, який повертає gameLogic->[0x48](номер команди),
+        // а для нуля там стоїть окремий рядок з Neutral.
+        const std::string faction = point.team == 0 ? "Neutral" : teamName(point.team);
+        marker.texture = "Ingame/Flags/Icons/Minimap/" +
+                         (faction.empty() ? std::string("Neutral") : faction) + "/miniMap_CP.tga";
         spawnContext.mapMarkers.push_back(std::move(marker));
         if (point.team == selectedTeam) {
           spawnContext.spawnMarkers.push_back(
@@ -2011,6 +2044,19 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       }
       hudVariables["Team1Selected"] = selectedTeam != 2;
       hudVariables["Team2Selected"] = selectedTeam == 2;
+      // Підписи й прапорці вкладок. У даних вони на змінних
+      // Team1NameString / Team1FlagIconPathString (HudElementsSpawn.con),
+      // а в бінарі їх заповнює одна й та сама 0x787260.
+      for (int team = 1; team <= 2; ++team) {
+        const std::string index = std::to_string(team);
+        hudStrings["Team" + index + "NameString"] =
+            std::string(engine.lexicon().text(teamLabel(team)));
+        hudStrings["Team" + index + "FlagIconPathString"] = teamFlagIcon(team);
+      }
+      // Та сама функція ставить і пару «своя/чужа»: перший її аргумент —
+      // команда гравця, другий — протилежна.
+      hudStrings["FriendlyFlagIconPathString"] = teamFlagIcon(selectedTeam);
+      hudStrings["EnemyFlagIconPathString"] = teamFlagIcon(selectedTeam == 2 ? 1 : 2);
       // Джерело не знайдене: у таблиці станів MapFullSizeAndSpawnShow
       // немає, а хто її вмикає в грі — ще не знайдено. Без неї кнопок
       // DONE і SUICIDE не видно. Борг.

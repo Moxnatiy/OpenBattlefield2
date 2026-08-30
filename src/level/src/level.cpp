@@ -55,6 +55,12 @@ class LevelBuilder {
       level_.terrain.seaLevel = command.argFloat(0).value_or(0.0f);
       return;
     }
+    //   gameLogic.setTeamName 1 "CH"
+    if (path == "gamelogic.setteamname") {
+      const int team = command.argInt(0).value_or(-1);
+      if (team >= 0 && team <= 2) level_.teamNames[team] = std::string(command.argStr(1));
+      return;
+    }
     // Камеру екрана появи задає сам рівень:
     //   gameLogic.setBeforeSpawnCamera -50/185/-285 -16/-3/0
     // Обидві трійки записані одним словом через скісну риску — місце і

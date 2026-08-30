@@ -75,3 +75,54 @@ hudBuilder.addNodeMoveShowEffect -1.57 376
 * Самі дії графа (`SetVariableSineAction` зі швидкістю 600,
   `SetVariableSoftAction` зі швидкістю 10 у `Menu/Ingame`) поки не
   виконуються: змінні HUD ми ставимо стрибком.
+
+## Сторона команди: звідки береться значок
+
+Це не HUD-дані, а рівень. `Init.con` кожного рівня має
+
+```
+gameLogic.setTeamName 1 "CH"
+gameLogic.setTeamName 2 "US"
+```
+
+і саме цей рядок гра підставляє в шаблони замість `%s`:
+
+| Шаблон | Адреса рядка | Де заповнюється |
+|---|---|---|
+| `Ingame/Flags/Icons/Minimap/%s/miniMap_CP.tga` | 0x925af8 | 0x74fb70 |
+| `Ingame/Flags/Icons/Minimap/%s/miniMap_CPBase.tga` | 0x925ac4 | 0x74fb70 |
+| `Ingame/Flags/Icons/Minimap/%s/miniMap_flag.tga` | 0x925b5c | 0x74fb70 |
+| `Ingame/Flags/Icons/Hud/Score/%s/scoreBoard_Flag.tga` | 0x931030 | 0x787260 |
+| `Levels/%s/Hud/Minimap/ingameMap.tga` | — | 0x74fb70 |
+
+Підставляється результат `gameLogic->vtbl[0x48](номер команди)` — за
+0x74fc58 виклик із 1, за 0x74fca0 з 2. Для нульової (нічийної) сторони в
+0x74fb70 стоїть окремий рядок з готовим `Neutral` (0x925b28).
+
+Назви команд по всіх 22 рівнях гри — рівно **CH, EU, MEC, US**, а теки
+значків у `Menu_client.zip` — **Ch, Eu, Mec, US, Neutral**. Тобто тека і
+є назвою сторони; жодного власного відображення «команда -> сторона» в
+грі немає, і робити його не треба.
+
+Для Dalian_plant це означає, що **перша команда китайська, а друга
+американська** — у нас було навпаки, і прапорці на карті стояли не на
+своїх точках.
+
+### Підпис вкладки
+
+`Team1NameString` / `Team2NameString` заповнює 0x787260 через 0x787110,
+і та функція — просто перелік:
+
+```
+name = gameLogic.teamName(team)
+"MEC" -> HUD_TEXT_MENU_SPAWN_ARMY_MEC
+"US"  -> HUD_TEXT_MENU_SPAWN_ARMY_USMC
+"CH"  -> HUD_TEXT_MENU_SPAWN_ARMY_CHINA
+інше, непорожнє -> "HUD_TEXT_MENU_SPAWN_ARMY_" + name
+порожнє -> порожній рядок
+```
+
+Тобто EU потрапляє в загальну гілку і дає
+`HUD_TEXT_MENU_SPAWN_ARMY_EU`. Та сама функція ставить і пару
+`FriendlyFlagIconPathString` / `EnemyFlagIconPathString` — її перші два
+аргументи це команда гравця і протилежна.

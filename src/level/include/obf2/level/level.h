@@ -118,6 +118,19 @@ struct Level {
   // крен). Поки гравець не з'явився, гра дивиться саме звідти, а не
   // крутиться навколо карти.
   bool hasBeforeSpawnCamera = false;
+
+  // Назви команд — теж із Init.con рівня:
+  //
+  //   gameLogic.setTeamName 1 "CH"
+  //   gameLogic.setTeamName 2 "US"
+  //
+  // Це не просто підпис: саме цим рядком гра підставляє %s у шаблон
+  // значка точки `Ingame/Flags/Icons/Minimap/%s/miniMap_CP.tga`
+  // (BF2.exe, 0x74fb70 — там виклик gameLogic->[0x48](1) і (2) прямо
+  // перед sprintf). Теки значків у грі звуться Ch, Eu, Mec, US,
+  // Neutral, і набір назв команд по всіх 22 рівнях — рівно CH, EU,
+  // MEC, US. Індекс 0 — нейтральна сторона.
+  std::string teamNames[3];
   Vec3f beforeSpawnCameraPos;
   Vec3f beforeSpawnCameraRot;
 
