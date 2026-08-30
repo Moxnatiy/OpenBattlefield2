@@ -1906,6 +1906,16 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       });
       console.bind("hudManager.setDone", [&](const obf2::con::Command& command) {
         spawnRequested = command.argInt(0).value_or(1) != 0;
+        std::printf("  екран появи: DONE — клас %d, команда %d%s\n", selectedKit, selectedTeam,
+                    spawnRequested ? ", просимо появу" : "");
+      });
+      console.bind("hudItems.setBool", [&](const obf2::con::Command& command) {
+        // `hudItems.setBool <ім'я> <0|1>` — так інтерфейс вмикає свої ж
+        // прапорці, зокрема SetSpawnPoint.
+        if (command.args.size() >= 2) {
+          hudVariables[std::string(command.argStr(0))] = command.argInt(1).value_or(0) != 0;
+          spawnDirty = true;
+        }
       });
       // Ці дві ще не мають за чим працювати, але команду треба з'їсти —
       // інакше консоль вважатиме її невідомою.
@@ -1922,6 +1932,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     applySpawnState = [&]() {
       hudVariables["Team1Selected"] = selectedTeam != 2;
       hudVariables["Team2Selected"] = selectedTeam == 2;
+      // Кнопки DONE і SUICIDE висять на цій змінній: у грі вони
+      // з'являються разом із великою картою на екрані появи.
+      hudVariables["MapFullSizeAndSpawnShow"] = true;
       hudVariables["KitsShow"] = !membersTab;
       hudVariables["MembersShow"] = membersTab;
       for (int slot = 0; slot < 7; ++slot) {
@@ -2262,6 +2275,13 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
                                             hudFont.atlasPath, hudScreen, spawnContext);
       const std::size_t mapCount = mapPieces.size();
       for (auto& piece : mapPieces) built.push_back(std::move(piece));
+      // TopLayer — це справжня ділянка з даних (`createSplitNode TopLayer
+      // TopLayerHud` у GeneralHudSettings.con), і саме в ній лежать
+      // кнопки DONE та SUICIDE: MapButtons -> DoneButton 666 539 124 17.
+      for (auto& piece : obf2::hud::buildTree(ingameHud, "TopLayer", hudFont.font,
+                                              hudFont.atlasPath, hudScreen, spawnContext)) {
+        built.push_back(std::move(piece));
+      }
       reportRects("SpawnMenu", built);
       ingameHud.setMapView(obf2::hud::MapView::Mini);
       for (auto& piece : built) {
@@ -2609,8 +2629,15 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
           const float clickX = args.click ? args.mouseX : input.mouseX;
           const float clickY = args.click ? args.mouseY : input.mouseY;
           if (clicked) {
-            const obf2::hud::Node* hit = obf2::hud::buttonAt(
-                ingameHud, "SpawnMenu", hudScreen, clickX, clickY, &hudDynamicContext);
+            // Кнопки екрана появи лежать у двох гілках: власне SpawnMenu
+            // і TopLayer, де сидять DONE та SUICIDE.
+            const obf2::hud::Node* hit = nullptr;
+            for (const char* root : {"SpawnMenu", "TopLayer"}) {
+              if (const obf2::hud::Node* found = obf2::hud::buttonAt(
+                      ingameHud, root, hudScreen, clickX, clickY, &spawnContext)) {
+                hit = found;
+              }
+            }
             if (hit != nullptr) {
               // На кнопці кілька команд, і кожна має свою подію. У даних
               // їх чотири: 0 (247 разів), 1 (73), 3 (50) і 2 (11).

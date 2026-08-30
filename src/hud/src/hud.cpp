@@ -361,8 +361,8 @@ void Builder::feed(const con::Command& command) {
     if (joined.empty()) return;
     node->commands.emplace_back(event, joined);
     // `command` лишається першою дією натискання — за нею кнопка й
-    // вважається дієвою.
-    if (event == 0 && node->command.empty()) node->command = joined;
+    // вважається дієвою. Натисканню належать події 0 і 3.
+    if ((event == 0 || event == 3) && node->command.empty()) node->command = joined;
     return;
   }
   if (method == "setnodecolor") {
