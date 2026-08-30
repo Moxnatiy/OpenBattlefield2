@@ -1763,6 +1763,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     obf2::hud::Color tint;
   };
   std::vector<OwnedPiece> spawnPieces;
+  // Поява й зникнення вузлів у часі — те, чим у грі керує граф MemeFile
+  // (див. obf2/hud/animation.h).
+  obf2::hud::Animator hudAnimator;
+  std::chrono::steady_clock::time_point lastAnimationTick = std::chrono::steady_clock::now();
   std::function<void()> rebuildSpawn;
   // Ці двоє потрібні перебудові, а вона викликається з циклу малювання —
   // тобто вже поза блоком завантаження рівня. Тримати їх усередині не
@@ -2343,10 +2347,16 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       const auto found = hudVariables.find(std::string(variable));
       return found != hudVariables.end() && found->second;
     };
+    // Ефекти появи бачить і сам будівник геометрії: alpha множить
+    // прозорість, move зсуває прямокутник.
+    spawnContext.showState = [&](const obf2::hud::Node& node) { return hudAnimator.state(node); };
     rebuildSpawn = [&]() {
       for (OwnedPiece& piece : spawnPieces) renderer->release(piece.mesh);
       spawnPieces.clear();
       applySpawnState();
+      for (const char* root : {"SpawnMenu", "MapSplit", "TopLayer"}) {
+        obf2::hud::updateAnimator(ingameHud, root, hudAnimator, spawnContext);
+      }
       ingameHud.setMapView(obf2::hud::MapView::Maxi);
       auto built = obf2::hud::buildTree(ingameHud, "SpawnMenu", hudFont.font, hudFont.atlasPath,
                                         hudScreen, spawnContext);
@@ -2732,6 +2742,16 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
               }
             }
           }
+        }
+        // Поки хоч один вузол їде або згасає, екран доводиться перепікати
+        // щокадру: геометрія в нас лежить у мешах на відеокарті.
+        {
+          const auto now = std::chrono::steady_clock::now();
+          const float dt =
+              std::chrono::duration<float>(now - lastAnimationTick).count();
+          lastAnimationTick = now;
+          hudAnimator.advance(dt > 0.25f ? 0.25f : dt);
+          if (hudAnimator.animating()) spawnDirty = true;
         }
         if (spawnDirty && rebuildSpawn) {
           spawnDirty = false;

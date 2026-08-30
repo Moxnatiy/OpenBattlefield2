@@ -4,6 +4,7 @@
 
 #include "check.h"
 #include "obf2/hud/hud.h"
+#include "obf2/hud/animation.h"
 #include "obf2/hud/render.h"
 
 using namespace obf2;
@@ -243,7 +244,45 @@ static void testBarIsClippedByValue() {
   CHECK(std::abs(vertices[1].uv[0] - 0.25f) < 0.01f);
 }
 
+// Поява й зникнення в часі. Кут -pi/2 з відстанню 376 має відсунути
+// вузол **униз** — саме так у грі виїжджає панель голосування за карту.
+static void testShowEffectsAnimate() {
+  hud::Builder builder = build(
+      "hudBuilder.createPictureNode Root Panel 332 377 188 18\n"
+      "hudBuilder.setNodeShowVariable VoteMapSelected\n"
+      "hudBuilder.setNodeInTime 0.4\n"
+      "hudBuilder.setNodeOutTime 0.2\n"
+      "hudBuilder.addNodeMoveShowEffect -1.57 376\n"
+      "hudBuilder.addNodeAlphaShowEffect\n");
+  CHECK_EQ(builder.nodes().size(), std::size_t(1));
+  if (builder.nodes().empty()) return;
+  const hud::Node& node = builder.nodes()[0];
+
+  hud::Animator animator;
+  // Перша поява — без переходу: інакше весь HUD в'їжджав би на старті.
+  animator.setVisible(node, true);
+  animator.advance(0.0f);
+  CHECK(std::abs(animator.state(node).progress - 1.0f) < 0.001f);
+  CHECK(!animator.animating());
+
+  // Ховаємо: за outTime = 0.2 половина шляху проходить за 0.1 с.
+  animator.setVisible(node, false);
+  animator.advance(0.1f);
+  const hud::ShowState half = animator.state(node);
+  CHECK(std::abs(half.progress - 0.5f) < 0.001f);
+  CHECK(std::abs(half.alpha - 0.5f) < 0.001f);
+  CHECK(std::abs(half.offsetX) < 0.5f);  // -1.57 це майже рівно -pi/2
+  CHECK(std::abs(half.offsetY - 188.0f) < 0.5f);
+  CHECK(animator.animating());
+
+  animator.advance(0.1f);
+  CHECK(std::abs(animator.state(node).progress) < 0.001f);
+  animator.advance(0.1f);
+  CHECK(!animator.animating());
+}
+
 TEST_MAIN({
+  testShowEffectsAnimate();
   testBarNodeHasDirectionBeforeRect();
   testBarIsClippedByValue();
   testNodeRectScalesFromReference();

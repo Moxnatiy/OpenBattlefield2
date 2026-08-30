@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "obf2/font/text.h"
+#include "obf2/hud/animation.h"
 #include "obf2/hud/hud.h"
 #include "obf2/mesh/bf2_mesh.h"
 
@@ -69,6 +70,9 @@ struct Context {
   // Шрифт вузла за його стилем. Порожній результат — лишаємо загальний.
   std::function<FontRef(std::string_view style)> fontFor;
   std::function<bool(std::string_view variable)> isVisible;
+  // Хід появи/зникання вузла (див. obf2/hud/animation.h). Порожньо —
+  // вузол малюється відразу в кінцевому стані.
+  std::function<ShowState(const Node&)> showState;
   std::function<std::string_view(std::string_view variable)> variableText;
   // Заповнення смуги 0..1 (`setBarNodeValueVariable`).
   std::function<float(std::string_view variable)> variableValue;
@@ -153,7 +157,7 @@ struct ScreenRect {
   }
 };
 
-ScreenRect nodeRect(const Node& node, const Screen& screen);
+ScreenRect nodeRect(const Node& node, const Screen& screen, const Context* context = nullptr);
 
 // Габарити цілого піддерева в базових 800x600 — потрібні, щоб притулити
 // кутовий шар до потрібного краю. Порожнє дерево дає nullopt.
@@ -168,6 +172,11 @@ std::optional<Bounds> treeBounds(const Builder& builder, std::string_view rootGr
 // кожну кнопку, тож у кадрі лишається сам малюнок.
 mesh::RenderMesh buildRect(const ScreenRect& rect, const Screen& screen,
                            const std::string& texture);
+
+// Повідомити аніматору, які вузли піддерева зараз мають бути видні.
+// Обходимо все, зокрема й приховане: вузол, що зникає, теж має свій хід.
+void updateAnimator(const Builder& builder, std::string_view rootGroup, Animator& animator,
+                    const Context& context, int maxDepth = 8);
 
 // Кнопка під курсором, або nullptr. Шукаємо з кінця: пізніші вузли
 // намальовані поверх, тому й ловлять мишу першими.

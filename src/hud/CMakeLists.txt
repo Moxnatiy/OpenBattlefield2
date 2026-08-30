@@ -1,5 +1,6 @@
 add_library(obf2_hud
   src/hud.cpp
+  src/animation.cpp
   src/render.cpp
 )
 add_library(obf2::hud ALIAS obf2_hud)

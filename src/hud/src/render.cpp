@@ -139,7 +139,12 @@ mesh::RenderMesh buildRect(const ScreenRect& rect, const Screen& screen,
   return quad(rect, screen, texture);
 }
 
-ScreenRect nodeRect(const Node& node, const Screen& screen) {
+ShowState nodeShowState(const Node& node, const Context& context) {
+  if (!context.showState) return ShowState{};
+  return context.showState(node);
+}
+
+ScreenRect nodeRect(const Node& node, const Screen& screen, const Context* context) {
   // Масштаб однаковий по обох осях — по висоті. Розтягування по ширині
   // робило б з круглого овальне.
   const float scale = static_cast<float>(screen.height) / kReferenceHeight;
@@ -150,19 +155,28 @@ ScreenRect nodeRect(const Node& node, const Screen& screen) {
   // Беремо absX/absY, а не x/y: у грі координати вузла відлічуються від
   // батька, і без суми по предках усе розсипається по екрану. Зсув
   // setNodeOffset уже входить у цю суму (Builder::finish).
-  return ScreenRect{(node.absX + screen.originX) * scale + padX,
-                    (node.absY + screen.originY) * scale, node.width * scale,
+  // Зсув ефекту руху — теж у базових 800x600, тож масштабується так само.
+  float shiftX = 0.0f, shiftY = 0.0f;
+  if (context != nullptr && context->showState) {
+    const ShowState show = context->showState(node);
+    shiftX = show.offsetX;
+    shiftY = show.offsetY;
+  }
+  return ScreenRect{(node.absX + shiftX + screen.originX) * scale + padX,
+                    (node.absY + shiftY + screen.originY) * scale, node.width * scale,
                     node.height * scale};
 }
 
-std::vector<DrawPiece> buildNode(const Node& node, const font::Font& font,
-                                 const std::string& fontAtlas, const Screen& screen,
-                                 const Context& context) {
+namespace {
+
+std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& font,
+                                         const std::string& fontAtlas, const Screen& screen,
+                                         const Context& context) {
   std::vector<DrawPiece> pieces;
   if (node.width <= 0.0f || node.height <= 0.0f) return pieces;
 
   const float scaleY = static_cast<float>(screen.height) / kReferenceHeight;
-  const ScreenRect rect = nodeRect(node, screen);
+  const ScreenRect rect = nodeRect(node, screen, &context);
 
   // Смуга: показуємо не всю картинку, а її частину за значенням змінної.
   if (node.type == NodeType::Bar) {
@@ -357,15 +371,27 @@ std::vector<DrawPiece> buildNode(const Node& node, const font::Font& font,
   return pieces;
 }
 
+}  // namespace
+
+std::vector<DrawPiece> buildNode(const Node& node, const font::Font& font,
+                                 const std::string& fontAtlas, const Screen& screen,
+                                 const Context& context) {
+  auto pieces = buildNodeGeometry(node, font, fontAtlas, screen, context);
+  // Alpha-ефект множить прозорість усього, що вузол намалював.
+  const float alpha = nodeShowState(node, context).alpha;
+  if (alpha < 1.0f) {
+    for (DrawPiece& piece : pieces) piece.tint.a *= alpha;
+  }
+  return pieces;
+}
+
 std::vector<DrawPiece> buildGroup(const Builder& builder, std::string_view group,
                                   const font::Font& font, const std::string& fontAtlas,
                                   const Screen& screen, const Context& context) {
   std::vector<DrawPiece> pieces;
   for (const Node* node : builder.group(group)) {
     // Вузол зі змінною показу малюємо лише тоді, коли вона ввімкнена.
-    if (!nodeVisible(*node, context)) {
-      continue;
-    }
+    if (nodeShowState(*node, context).progress <= 0.0f) continue;
     for (auto& piece : buildNode(*node, font, fontAtlas, screen, context)) {
       pieces.push_back(std::move(piece));
     }
@@ -403,7 +429,7 @@ std::vector<DrawPiece> buildTree(const Builder& builder, std::string_view rootGr
     visited.emplace_back(group);
 
     for (const Node* node : builder.group(group)) {
-      if (!nodeVisible(*node, context)) continue;
+      if (nodeShowState(*node, context).progress <= 0.0f) continue;
       if (node->type == NodeType::Split) {
         // Вузол-«розгалуження» сам нічого не малює: він підставляє групу,
         // назва якої збігається з його іменем.
@@ -466,6 +492,23 @@ std::optional<Bounds> treeBounds(const Builder& builder, std::string_view rootGr
   return out;
 }
 
+void updateAnimator(const Builder& builder, std::string_view rootGroup, Animator& animator,
+                    const Context& context, int maxDepth) {
+  std::vector<std::string> visited;
+  const auto walk = [&](auto&& self, std::string_view group, int depth) -> void {
+    if (depth > maxDepth) return;
+    for (const std::string& seen : visited) {
+      if (seen == group) return;
+    }
+    visited.emplace_back(group);
+    for (const Node* node : builder.group(group)) {
+      animator.setVisible(*node, nodeVisible(*node, context) && !hiddenByAlpha(*node, context));
+      self(self, node->name, depth + 1);
+    }
+  };
+  walk(walk, rootGroup, 0);
+}
+
 const Node* buttonAt(const Builder& builder, std::string_view group, const Screen& screen,
                      float mouseX, float mouseY, const Context* context) {
   // Кнопки екрана лежать глибоко в дереві (SelectKit0 сидить під
@@ -482,7 +525,7 @@ const Node* buttonAt(const Builder& builder, std::string_view group, const Scree
     for (const Node* node : builder.group(where)) {
       if (context != nullptr && !nodeVisible(*node, *context)) continue;
       if (node->type == NodeType::Button && !node->command.empty()) {
-        ScreenRect rect = nodeRect(*node, screen);
+        ScreenRect rect = nodeRect(*node, screen, context);
         if (node->hasMouseArea) {
           // Ділянка миші задана зсувом від самого вузла, а не окремим
           // місцем на екрані.
