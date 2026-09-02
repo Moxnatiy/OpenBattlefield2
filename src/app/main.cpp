@@ -662,8 +662,15 @@ struct RemoteWorld {
   // Кроки після рівня йдуть із паузами: мережеві події виконуються
   // наступним тактом, а перевірка вмісту — одразу, тож складати їх в
   // один пакет не можна.
-  enum class Step { Level, Content, Database, Team, Kit, Group, Done };
+  // `Ready` — це екран появи: рівень наш, база отримана, і далі рушій
+  // чекає, поки гравець натисне DONE. Тільки після цього йдуть три
+  // події вибору.
+  enum class Step { Level, Content, Database, Ready, Team, Kit, Group, Done };
   Step step = Step::Level;
+  // Що саме обрав гравець. Заповнює askSpawn — або екран появи, або
+  // командний рядок у безголовому запуску.
+  int chosenTeam = 1, chosenKit = 0, chosenGroup = 0;
+  bool asked = false;
   std::chrono::steady_clock::time_point lastStep = std::chrono::steady_clock::now();
   std::string levelName;
   int blockOrdinal = 0;
@@ -677,6 +684,22 @@ struct RemoteWorld {
   std::uint8_t batch = 0;
   bool answered = false;
 
+
+  // Гравець натиснув DONE. Далі машина сама відішле три події поспіль —
+  // саме в тому порядку, який ми перевірили на оригінальному сервері:
+  // NESelectTeam, NESelectKit, NESelectSpawnGroup.
+  void askSpawn(int team, int kit, int group) {
+    chosenTeam = team;
+    chosenKit = kit;
+    chosenGroup = group;
+    asked = true;
+    if (step == Step::Ready) {
+      step = Step::Team;
+      // Паузу між кроками витримуємо, а от першого кроку чекати нема
+      // чого: попередній був давно.
+      lastStep = std::chrono::steady_clock::now() - std::chrono::seconds(3);
+    }
+  }
 
   // Рукостискання: запит, відповідь сервера, підтвердження.
   bool connect() {
@@ -811,27 +834,32 @@ struct RemoteWorld {
                 id, next, batch++, obf2::net::bf2::kNetworkCategory,
                 obf2::net::bf2::kNetDatabaseComplete));
             std::printf("  крок: база гравців отримана\n");
-            step = Step::Team;
+            step = Step::Ready;
+            break;
+          case Step::Ready:
+            // Чекаємо на DONE. Якщо вибір уже зроблено (безголовий
+            // запуск ставить його ще до рукостискання) — рушаємо далі.
+            if (asked) step = Step::Team;
             break;
           case Step::Team:
             socket->send(obf2::net::bf2::writePostRemoteEvent(
                 id, next, batch++, obf2::net::bf2::kNetworkCategory,
-                obf2::net::bf2::kNetSelectTeam, args.team));
-            std::printf("  крок: команда %d\n", args.team);
+                obf2::net::bf2::kNetSelectTeam, chosenTeam));
+            std::printf("  крок: команда %d\n", chosenTeam);
             step = Step::Kit;
             break;
           case Step::Kit:
             socket->send(obf2::net::bf2::writePostRemoteEvent(
                 id, next, batch++, obf2::net::bf2::kNetworkCategory,
-                obf2::net::bf2::kNetSelectKit, args.kit));
-            std::printf("  крок: набір %d\n", args.kit);
+                obf2::net::bf2::kNetSelectKit, chosenKit));
+            std::printf("  крок: набір %d\n", chosenKit);
             step = Step::Group;
             break;
           case Step::Group:
             socket->send(obf2::net::bf2::writePostRemoteEvent(
                 id, next, batch++, obf2::net::bf2::kNetworkCategory,
-                obf2::net::bf2::kNetSelectSpawnGroup, args.spawnGroup));
-            std::printf("  крок: місце появи %d\n", args.spawnGroup);
+                obf2::net::bf2::kNetSelectSpawnGroup, chosenGroup));
+            std::printf("  крок: місце появи %d\n", chosenGroup);
             step = Step::Done;
             break;
           case Step::Done: break;
@@ -1028,6 +1056,9 @@ struct RemoteWorld {
 int runProbe(const Args& args, obf2::FileSystem& files) {
   RemoteWorld remote(args, files);
   if (!remote.connect()) return 1;
+  // У безголовому режимі екрана появи немає, тож вибір задає командний
+  // рядок і робимо його одразу.
+  remote.askSpawn(args.team, args.kit, args.spawnGroup);
   for (int i = 0; i < 90; ++i) remote.pump(500);
   remote.report();
   remote.disconnect();
@@ -1146,6 +1177,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
           serverSettings.playersNeededToStart =
               command.argInt(0).value_or(serverSettings.playersNeededToStart);
         });
+        // Екран появи в нас є, тож обхід для безголових запусків тут не
+        // потрібен: солдат з'явиться лише після DONE, як у рушії.
+        serverSettings.spawnOnJoin = false;
         obf2::con::Interpreter settingsInterpreter(
             files, [&](const obf2::con::Command& c) { settingsConsole.execute(c); });
         settingsInterpreter.runFile("GameLogicInit.con");
@@ -1759,6 +1793,11 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   bool spawnRequested = false;
   // Вибране місце появи — номер кружечка в spawnContext.spawnMarkers.
   int selectedSpawn = -1;
+  // Номер контрольної точки для кожного кружечка, у тому ж порядку.
+  // Саме його чекає сервер: у рушії гравець шле не координати, а номер
+  // групи, і група — це набір точок одного прапора
+  // (docs/functions/spawn.md).
+  std::vector<int> spawnMarkerPoints;
   bool spawnDirty = false;
   struct OwnedPiece {
     obf2::gfx::GpuMesh mesh;
@@ -1774,6 +1813,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   bool ingameReported = false;
   std::function<void(bool, bool)> updateHudVariables;
   std::function<void(int)> applyHudState;
+  // Що робить DONE. У власній грі це прямий запит до нашого сервера, у
+  // мережевій — три події рушія поспіль (NESelectTeam, NESelectKit,
+  // NESelectSpawnGroup, docs/functions/network-events.md).
+  std::function<void(int team, int kit, int group)> requestSpawn;
   // Рухомі кутові ділянки. У `Menu/Ingame` їхнє X — це не стала, а
   // змінна графа, і у файлі збережене саме **сховане** положення:
   // BottomLeft_XPos = -295, BottomRight_XPos = 503. Показане для правої
@@ -1993,8 +2036,16 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       });
       console.bind("hudManager.setDone", [&](const obf2::con::Command& command) {
         spawnRequested = command.argInt(0).value_or(1) != 0;
-        std::printf("  екран появи: DONE — клас %d, команда %d%s\n", selectedKit, selectedTeam,
-                    spawnRequested ? ", просимо появу" : "");
+        if (!spawnRequested) return;
+        // Номер групи появи — це номер контрольної точки обраного
+        // кружечка. Нуль означає «будь-яка своя», як і в сервері.
+        const int group =
+            selectedSpawn >= 0 && selectedSpawn < static_cast<int>(spawnMarkerPoints.size())
+                ? spawnMarkerPoints[static_cast<std::size_t>(selectedSpawn)]
+                : 0;
+        std::printf("  екран появи: DONE — команда %d, набір %d, точка %d\n", selectedTeam,
+                    selectedKit, group);
+        if (requestSpawn) requestSpawn(selectedTeam, selectedKit, group);
       });
       console.bind("hudItems.setBool", [&](const obf2::con::Command& command) {
         // `hudItems.setBool <ім'я> <0|1>` — так інтерфейс вмикає свої ж
@@ -2077,6 +2128,26 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       set("ShowSquadIcon", false);
     };
 
+    // Що робить DONE. Шляхи два, і обидва однаково «справжні»:
+    //
+    //   * власна гра — прямий запит до нашого сервера. Він поводиться
+    //     як рушій: солдат з'являється лише коли обране місце появи;
+    //   * справжній сервер BF2 — три події поспіль, NESelectTeam,
+    //     NESelectKit, NESelectSpawnGroup. Порядок і паузи між ними
+    //     перевірені на оригінальному сервері
+    //     (docs/functions/network-events.md).
+    requestSpawn = [&](int team, int kit, int group) {
+      if (hostedServer != nullptr && !hostedServer->players().empty()) {
+        hostedServer->requestSpawn(hostedServer->players().front().id, team, kit, group);
+        return;
+      }
+      if (remote != nullptr) {
+        remote->askSpawn(team, kit, group);
+        return;
+      }
+      std::printf("  екран появи: сервера немає, поява лише закриває екран\n");
+    };
+
     // Назва сторони команди приходить із самого рівня:
     //   gameLogic.setTeamName 1 "CH"
     // Для Dalian_plant це CH і US — саме в такому порядку, тобто перша
@@ -2122,6 +2193,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       // нейтральні. З'явитися на чужій чи нічийній не можна.
       spawnContext.mapMarkers.clear();
       spawnContext.spawnMarkers.clear();
+      spawnMarkerPoints.clear();
       for (const auto& point : hudControlPoints) {
         obf2::hud::Context::MapMarker marker;
         marker.worldX = point.position.x;
@@ -2140,6 +2212,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
               static_cast<int>(spawnContext.spawnMarkers.size()) == selectedSpawn;
           spawnContext.spawnMarkers.push_back(
               obf2::hud::Context::SpawnMarker{point.position.x, point.position.z, chosen});
+          spawnMarkerPoints.push_back(point.id);
         }
       }
       hudVariables["Team1Selected"] = selectedTeam != 2;
@@ -2657,14 +2730,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     auto acquired = device->beginFrame();
     if (!acquired) continue;
 
-    // --- камера ---
-    obf2::Vec3f eye;
-    obf2::Vec3f lookTarget = scene.center;
-
+    // Власна пара клієнт-сервер крутиться щокадру незалежно від того,
+    // чи гравець уже з'явився: інакше сервер не встиг би виконати сам
+    // запит на появу.
     if (hostedServer && hostedClient) {
-      // Гра від першої особи: ввід іде на сервер, сервер рухає солдата,
-      // а камера стоїть там, куди його поставив сервер. Тобто картинка
-      // залежить від сервера навіть в одиночній грі.
       const auto raw = device->readInput();
       constexpr float kMouseSensitivity = 0.15f;
       // Кут росте за годинниковою стрілкою (ліва система), тож рух миші
@@ -2688,6 +2757,18 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       hostedClient->tick(step);
       hostedServer->tick(step);
 
+      // Солдат з'являється не при під'єднанні, а після DONE, тож його
+      // номер доводиться перепитувати щокадру.
+      for (const auto& player : hostedServer->players()) localSoldierId = player.soldierId;
+    }
+
+    // --- камера ---
+    obf2::Vec3f eye;
+    obf2::Vec3f lookTarget = scene.center;
+
+    // Доки гравець не з'явився, від першої особи дивитися нема з чого:
+    // солдата ще немає. Тоді працює камера екрана появи з Init.con.
+    if (hostedServer && hostedClient && localSoldierId != 0) {
       eye = hostedClient->interpolatedPosition(localSoldierId);
       eye.y += 1.7f;  // зріст солдата: камера на рівні очей
 
@@ -2880,7 +2961,11 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         // просить сервер про появу, і стан перемикається вже за фактом
         // появи гравця; поки сервер цього не вміє, закриваємо самі —
         // інакше решту HUD не подивитися. Борг.
-        const bool spawned = hostedClient != nullptr || spawnRequested;
+        // «Гравець є» — це не «клієнт під'єднаний», а «сервер поставив
+        // йому солдата». Саме цим у рушії керується бойовий HUD
+        // (0x78d0f0 бере поточного гравця, і без нього гасить набір).
+        const bool spawned =
+            hostedServer != nullptr ? localSoldierId != 0 : spawnRequested;
         const int hudState = spawned ? 0 : 1;
         const bool spawnVisible = hudState == 1 || args.hudScreenName == "SpawnMenu";
         // Стан HUD і похідні від нього змінні — щокадру, як у грі
