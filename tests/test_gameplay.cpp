@@ -505,7 +505,80 @@ static void testSoldierWalksUpStep() {
   CHECK(std::abs(position.y - 0.3f) < 0.15f);   // і стоїть на сходинці
 }
 
+// Обране місце появи звужує вибір до однієї групи. Група в рушії — це
+// набір точок одного прапора (`SpawnGroup::getControlPointId`), а точка
+// всередині групи береться випадково (docs/functions/spawn.md).
+static void testSpawnGroupNarrowsTheChoice() {
+  server::ServerSettings settings;
+  settings.spawnOnJoin = false;  // перевіряємо саме шлях через DONE
+
+  server::GameServer gameServer(settings);
+  level::GameplayObjects gameplay;
+
+  // Два прапори однієї команди, у кожного своя точка появи.
+  for (int i = 0; i < 2; ++i) {
+    level::ControlPoint point;
+    point.id = 401 + i;
+    point.nameKey = "CPNAME_" + std::to_string(i);
+    point.position = Vec3f{static_cast<float>(i) * 500.0f, 0.0f, 0.0f};
+    point.team = 1;
+    gameplay.controlPoints.push_back(point);
+
+    level::SpawnPoint spawn;
+    spawn.templateName = "sp_" + std::to_string(i);
+    spawn.position = Vec3f{static_cast<float>(i) * 500.0f, 10.0f, 7.0f};
+    spawn.controlPointId = 401 + i;
+    gameplay.spawnPoints.push_back(spawn);
+  }
+  gameServer.setGameplay(std::move(gameplay));
+
+  auto [clientSide, serverSide] = net::LoopbackConnection::createPair();
+  gameServer.accept(std::move(serverSide));
+  server::GameClient client(std::move(clientSide), "ARNE");
+  client.connect();
+  pump(gameServer, client);
+  CHECK_EQ(gameServer.objects().size(), std::size_t(0));
+  if (gameServer.players().empty()) return;
+
+  // Просимо другий прапор — і маємо стати саме на його точку.
+  CHECK(gameServer.requestSpawn(gameServer.players().front().id, 1, 0, 402));
+  CHECK_EQ(gameServer.objects().size(), std::size_t(1));
+  if (gameServer.objects().empty()) return;
+  CHECK(std::abs(gameServer.objects().front().position.x - 500.0f) < 0.01f);
+}
+
+// Прапор, якого немає, не має лишити гравця без появи: беремо будь-яку
+// свою точку.
+static void testUnknownSpawnGroupFallsBack() {
+  server::ServerSettings settings;
+  settings.spawnOnJoin = false;
+  settings.spawnPosition = Vec3f{-999.0f, 0.0f, -999.0f};
+
+  server::GameServer gameServer(settings);
+  level::GameplayObjects gameplay = makeGameplay();
+  level::SpawnPoint spawn;
+  spawn.templateName = "base_1";
+  spawn.position = Vec3f{123.0f, 10.0f, 45.0f};
+  spawn.controlPointId = 401;
+  gameplay.spawnPoints.push_back(spawn);
+  gameServer.setGameplay(std::move(gameplay));
+
+  auto [clientSide, serverSide] = net::LoopbackConnection::createPair();
+  gameServer.accept(std::move(serverSide));
+  server::GameClient client(std::move(clientSide), "ARNE");
+  client.connect();
+  pump(gameServer, client);
+  if (gameServer.players().empty()) return;
+
+  CHECK(gameServer.requestSpawn(gameServer.players().front().id, 1, 0, 999));
+  CHECK_EQ(gameServer.objects().size(), std::size_t(1));
+  if (gameServer.objects().empty()) return;
+  CHECK(std::abs(gameServer.objects().front().position.x - 123.0f) < 0.01f);
+}
+
 TEST_MAIN({
+  testSpawnGroupNarrowsTheChoice();
+  testUnknownSpawnGroupFallsBack();
   testSoldierStandsOnObject();
   testSoldierWalksUpStep();
   testCollisionStillWorksAfterRespawn();
