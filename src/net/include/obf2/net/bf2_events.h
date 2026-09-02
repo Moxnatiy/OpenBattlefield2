@@ -86,12 +86,62 @@ inline constexpr std::uint32_t kMapInfoBlock = 5;
 
 std::optional<MapInfo> parseMapInfo(std::span<const std::byte> block);
 
+// Група появи з `CreateSpawnGroupEvent` (тип 57). Саме її номер чекає
+// подія `NESelectSpawnGroup`, коли гравець тисне DONE.
+//
+// Розкладка знята з `CreateSpawnGroupEvent::deSerialize` (0x424520 у
+// Linux-сервері) і звірена з конструктором, чия сигнатура збереглася в
+// символах:
+//
+//   CreateSpawnGroupEvent(unsigned char, unsigned short, int,
+//                         bool, bool, bool, unsigned char, unsigned char)
+//
+// Дротовий порядок інший, ніж у конструктора, — він видно з послідовності
+// читань і зсувів, куди вони лягають:
+//
+//   8 біт  -> +0x10  u8   перший аргумент
+//   4 біти -> +0x14  int  третій, з `group->[0x38]()`
+//   1 біт  -> +0x18  bool з `group->[0x58](0)`
+//   1 біт  -> +0x19  bool поле 0x9a групи
+//   1 біт  -> +0x1a  bool поле 0xa0 групи
+//   8 біт  -> +0x1b  u8   \ разом це `SpawnGroup::getUnsignedWorldPosition`
+//   8 біт  -> +0x1c  u8   /  — місце групи, спаковане у два байти
+//   16 біт -> +0x1e  u16  другий аргумент, поле 0x10 групи
+//
+// Хто зі створює, видно теж: `SpawnManager::createSpawnGroupOnClients`
+// (0x4b96e0).
+struct CreateSpawnGroup {
+  std::uint8_t first = 0;      // 8 біт
+  std::uint32_t small = 0;     // 4 біти
+  bool flag1 = false;
+  bool flag2 = false;
+  bool flag3 = false;
+  std::uint8_t worldX = 0;     // спаковане місце, вісь 1
+  std::uint8_t worldZ = 0;     // спаковане місце, вісь 2
+  std::uint16_t id = 0;        // 16 біт
+};
+
+// Розпакування місця групи. Пакує його `SpawnGroup::getUnsignedWorldPosition`
+// (0x4b94b0), і арифметика там така:
+//
+//   half = GLSWorldSizeX / 2                 (стала за замовчуванням 1024,
+//                                             рівень ставить свою)
+//   pos >  half  -> 255
+//   pos < -half  -> 0
+//   інакше  байт = (int)((pos + half) / (2*half) * 255)
+//
+// Множник 255 лежить сталою за 0xb355bc. Отже назад:
+inline float spawnGroupWorldPos(std::uint8_t packed, float worldSize) {
+  return static_cast<float>(packed) / 255.0f * worldSize - worldSize * 0.5f;
+}
+
 // Одна подія з пакета: номер типу і те з неї, що ми вже розбираємо.
 struct Event {
   std::uint32_t type = 0;
   std::optional<CreateObject> object;
   std::optional<CreatePlayer> player;
   std::optional<DataBlockPiece> block;
+  std::optional<CreateSpawnGroup> spawnGroup;
 };
 
 // Складає блоки з шматків, які приходять подіями.

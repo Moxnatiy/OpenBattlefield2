@@ -676,6 +676,7 @@ struct RemoteWorld {
   int blockOrdinal = 0;
   int pings = 0, dataPackets = 0, other = 0, challenges = 0;
   int eventCount = 0, objectCount = 0;
+  std::vector<obf2::net::bf2::CreateSpawnGroup> spawnGroups;
   std::uint8_t lastServerSequence = 0;
   int ghostPackets = 0, ghostRecords = 0;
   std::set<std::uint16_t> ghostObjects;
@@ -926,6 +927,20 @@ struct RemoteWorld {
                   levelName = info->levelName;
                 }
               }
+              continue;
+            }
+            if (event.spawnGroup) {
+              const auto& group = *event.spawnGroup;
+              spawnGroups.push_back(group);
+              // Розмір світу беремо з рівня, бо саме ним сервер пакує
+              // місце (GLSWorldSizeX/Z).
+              const float worldSize = 2048.0f;
+              std::printf(
+                  "  група появи: номер %u, перше %u, мале %u, прапорці %d%d%d, місце %.0f %.0f\n",
+                  group.id, group.first, group.small, group.flag1 ? 1 : 0, group.flag2 ? 1 : 0,
+                  group.flag3 ? 1 : 0,
+                  obf2::net::bf2::spawnGroupWorldPos(group.worldX, worldSize),
+                  obf2::net::bf2::spawnGroupWorldPos(group.worldZ, worldSize));
               continue;
             }
             if (event.object) {
@@ -1792,7 +1807,12 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   bool membersTab = false;
   bool spawnRequested = false;
   // Вибране місце появи — номер кружечка в spawnContext.spawnMarkers.
-  int selectedSpawn = -1;
+  //
+  // Типово вибраний перший свій — інакше DONE не мав би чого слати, а
+  // подія NESelectSpawnGroup із нулем для сервера означає «не обрано»
+  // (`Player::getSpawnGroup() > 0`). **Джерело не знайдене:** яку саме
+  // групу гра підставляє типово, ми не реверсили. Борг.
+  int selectedSpawn = 0;
   // Номер контрольної точки для кожного кружечка, у тому ж порядку.
   // Саме його чекає сервер: у рушії гравець шле не координати, а номер
   // групи, і група — це набір точок одного прапора
@@ -2142,7 +2162,38 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         return;
       }
       if (remote != nullptr) {
-        remote->askSpawn(team, kit, group);
+        // Сервер сам каже, які групи появи в нього є — подіями
+        // CreateSpawnGroupEvent одразу після реєстрації. Номер, який
+        // чекає NESelectSpawnGroup, це номер **звідти**, а не наш номер
+        // контрольної точки: у Dalian сервер шле 515..518 на чотири
+        // прапори, тоді як у даних рівня вони 401..404.
+        //
+        // Зіставляємо за місцем: група везе своє місце спакованим у два
+        // байти, і після розпакування воно лежить за десятки метрів від
+        // прапора — рівно як і має бути, бо місце групи це середнє її
+        // точок появи.
+        int wire = 0;
+        const obf2::level::ControlPoint* chosen = nullptr;
+        for (const auto& point : hudControlPoints) {
+          if (point.id == group) { chosen = &point; break; }
+        }
+        if (chosen != nullptr) {
+          float best = 1e9f;
+          for (const auto& sg : remote->spawnGroups) {
+            const float gx = obf2::net::bf2::spawnGroupWorldPos(sg.worldX, hudContext.mapWorldSize);
+            const float gz = obf2::net::bf2::spawnGroupWorldPos(sg.worldZ, hudContext.mapWorldSize);
+            const float dx = gx - chosen->position.x;
+            const float dz = gz - chosen->position.z;
+            const float distance = dx * dx + dz * dz;
+            if (distance < best) {
+              best = distance;
+              wire = sg.id;
+            }
+          }
+          std::printf("  екран появи: точка %d (%s) -> група сервера %d, за %.0f м\n", group,
+                      chosen->nameKey.c_str(), wire, std::sqrt(best));
+        }
+        remote->askSpawn(team, kit, wire);
         return;
       }
       std::printf("  екран появи: сервера немає, поява лише закриває екран\n");
@@ -2759,7 +2810,15 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
 
       // Солдат з'являється не при під'єднанні, а після DONE, тож його
       // номер доводиться перепитувати щокадру.
+      const std::uint32_t hadSoldier = localSoldierId;
       for (const auto& player : hostedServer->players()) localSoldierId = player.soldierId;
+      if (hadSoldier == 0 && localSoldierId != 0) {
+        for (const auto& object : hostedServer->objects()) {
+          if (object.id != localSoldierId) continue;
+          std::printf("  поява: солдат %u на %.1f %.1f %.1f\n", object.id, object.position.x,
+                      object.position.y, object.position.z);
+        }
+      }
     }
 
     // --- камера ---

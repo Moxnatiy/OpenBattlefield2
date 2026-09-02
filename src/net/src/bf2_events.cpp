@@ -190,6 +190,30 @@ std::optional<Event> readEvent(BitReader& reader) {
     event.block = std::move(piece);
     return event;
   }
+  if (*type == 57) {
+    CreateSpawnGroup group;
+    const auto first = reader.readBits(8);
+    const auto small = reader.readBits(4);
+    const auto flag1 = reader.readBits(1);
+    const auto flag2 = reader.readBits(1);
+    const auto flag3 = reader.readBits(1);
+    const auto worldX = reader.readBits(8);
+    const auto worldZ = reader.readBits(8);
+    const auto id = reader.readBits(16);
+    if (!first || !small || !flag1 || !flag2 || !flag3 || !worldX || !worldZ || !id) {
+      return std::nullopt;
+    }
+    group.first = static_cast<std::uint8_t>(*first);
+    group.small = *small;
+    group.flag1 = *flag1 != 0;
+    group.flag2 = *flag2 != 0;
+    group.flag3 = *flag3 != 0;
+    group.worldX = static_cast<std::uint8_t>(*worldX);
+    group.worldZ = static_cast<std::uint8_t>(*worldZ);
+    group.id = static_cast<std::uint16_t>(*id);
+    event.spawnGroup = group;
+    return event;
+  }
   if (*type == 5) {
     CreatePlayer player;
     const auto team = reader.readBits(3);
