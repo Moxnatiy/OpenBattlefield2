@@ -259,21 +259,29 @@ bool GameServer::spawnPointActive(const level::SpawnPoint& spawn, int team,
   return true;
 }
 
-const level::SpawnPoint* GameServer::pickSpawnPoint(int team, bool forHuman) const {
+const level::SpawnPoint* GameServer::pickSpawnPoint(int team, bool forHuman,
+                                                    int spawnGroup) const {
   // Спершу збираємо всі придатні, потім беремо випадкову — рівно так це
   // робить `SpawnGroup::getSpawnPoint`, а не по колу.
   std::vector<const level::SpawnPoint*> usable;
   for (const level::SpawnPoint& spawn : gameplay_.spawnPoints) {
+    // Гравець обрав прапор — беремо лише його групу. У рушії вибір і
+    // йде по групі: гравець шле її номер, а точку в ній сервер добирає
+    // сам (docs/functions/spawn.md).
+    if (spawnGroup != 0 && spawn.controlPointId != spawnGroup) continue;
     if (spawnPointActive(spawn, team, forHuman)) usable.push_back(&spawn);
   }
+  // Обрана група не має жодної придатної точки — беремо будь-яку свою,
+  // інакше гравець застряг би на екрані появи назавжди.
+  if (usable.empty() && spawnGroup != 0) return pickSpawnPoint(team, forHuman, 0);
   if (usable.empty()) return nullptr;
 
   std::uniform_int_distribution<std::size_t> pick(0, usable.size() - 1);
   return usable[pick(random_)];
 }
 
-Vec3f GameServer::chooseSpawn(int team) {
-  if (const level::SpawnPoint* spawn = pickSpawnPoint(team, true)) {
+Vec3f GameServer::chooseSpawn(int team, int spawnGroup) {
+  if (const level::SpawnPoint* spawn = pickSpawnPoint(team, true, spawnGroup)) {
     lastSpawnTime_[spawn] = worldTime_;
     return spawn->position + spawn->offset;
   }
@@ -506,11 +514,33 @@ void GameServer::endGame(int winner) {
   log_.push_back("раунд завершено, перемогла команда " + std::to_string(winner));
 }
 
+bool GameServer::requestSpawn(std::uint32_t playerId, int team, int kit, int spawnGroup) {
+  for (Player& player : players_) {
+    if (player.id != playerId) continue;
+    player.team = team == 2 ? 2 : 1;
+    player.kit = kit;
+    // Нуль тут означав би «ще не обрав», а гравець уже натиснув DONE.
+    // Тому «будь-яка своя точка» лишається нулем у `spawnGroup`, але
+    // сам факт вибору позначаємо появою солдата наступним тактом.
+    player.spawnGroup = spawnGroup;
+    if (player.soldierId == 0) {
+      player.soldierId = spawnSoldier(player);
+    } else if (!player.alive) {
+      player.respawnTimer = 0.0f;
+    }
+    log_.push_back("гравець \"" + player.name + "\" просить появу: команда " +
+                   std::to_string(player.team) + ", набір " + std::to_string(kit) +
+                   ", точка " + std::to_string(spawnGroup));
+    return true;
+  }
+  return false;
+}
+
 std::uint32_t GameServer::spawnSoldier(Player& player) {
   WorldObject soldier;
   soldier.id = nextObjectId_++;
   soldier.templateName = settings_.soldierTemplate;
-  soldier.position = chooseSpawn(player.team);
+  soldier.position = chooseSpawn(player.team, player.spawnGroup);
   soldier.dynamic = true;
   soldier.ownerPlayerId = player.id;
   objects_.push_back(std::move(soldier));
@@ -572,7 +602,7 @@ void GameServer::simulate(float step) {
     if (player.respawnTimer <= 0.0f) {
       WorldObject* soldier = findObject(player.soldierId);
       if (soldier != nullptr) {
-        soldier->position = chooseSpawn(player.team);
+        soldier->position = chooseSpawn(player.team, player.spawnGroup);
         soldier->velocity = Vec3f{};
         player.alive = true;
         player.health = settings_.soldierMaxHealth;
@@ -719,7 +749,14 @@ void GameServer::tick(float deltaSeconds) {
     // Стан світу йде лише після підтвердження — інакше клієнт отримав би
     // об'єкти ще до того, як дізнався свій id і рівень.
     if (player.acknowledged && !player.worldSent) {
-      if (player.soldierId == 0) player.soldierId = spawnSoldier(player);
+      // З'являємося лише коли гравець обрав місце. Це не наша умова:
+      // сервер рушія спавнить рівно тих, у кого
+      // `Player::getSpawnGroup() > 0` (`ServerGameLogic::uPlayingSpawning`).
+      // `spawnOnJoin` — наш обхід для тестів і безголових запусків, де
+      // екрана появи немає.
+      if (player.soldierId == 0 && (settings_.spawnOnJoin || player.spawnGroup > 0)) {
+        player.soldierId = spawnSoldier(player);
+      }
       sendWorld(player);
     }
   }

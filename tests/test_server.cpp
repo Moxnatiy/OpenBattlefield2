@@ -328,7 +328,51 @@ static void testStaleInputIsIgnored() {
   CHECK(afterMoving > 0.5f);
 }
 
+// Без вибору місця гравець не з'являється — так само, як у рушії, де
+// сервер спавнить рівно тих, у кого `Player::getSpawnGroup() > 0`.
+static void testSpawnWaitsForChoice() {
+  server::ServerSettings settings;
+  settings.levelName = "TestLevel";
+  // Вимикаємо наш обхід для безголових запусків: перевіряємо саме шлях
+  // через екран появи.
+  settings.spawnOnJoin = false;
+
+  server::GameServer gameServer(settings);
+  auto [clientSide, serverSide] = net::LoopbackConnection::createPair();
+  gameServer.accept(std::move(serverSide));
+
+  server::GameClient client(std::move(clientSide), "ARNE");
+  client.connect();
+  pump(gameServer, client);
+
+  CHECK_EQ(gameServer.players().size(), std::size_t(1));
+  if (gameServer.players().empty()) return;
+  // Рукостискання пройшло, а солдата немає: місце ще не обране. Світ у
+  // цьому тесті порожній, тож і пакета стану поки нема чим наповнити —
+  // клієнт лишається в Accepted.
+  CHECK(gameServer.players().front().acknowledged);
+  CHECK_EQ(gameServer.objects().size(), std::size_t(0));
+  CHECK(!gameServer.players().front().alive);
+
+  const std::uint32_t playerId = gameServer.players().front().id;
+  CHECK(gameServer.requestSpawn(playerId, 2, 3, 0));
+  pump(gameServer, client);
+
+  CHECK_EQ(gameServer.objects().size(), std::size_t(1));
+  // А тепер є що слати — і клієнт бачить світ.
+  CHECK(client.state() == server::ClientState::InWorld);
+  const server::Player& player = gameServer.players().front();
+  CHECK(player.alive);
+  CHECK_EQ(player.team, 2);
+  CHECK_EQ(player.kit, 3);
+
+  // Невідомий гравець — відмова, і нічого не з'явилося.
+  CHECK(!gameServer.requestSpawn(playerId + 100, 1, 0, 0));
+  CHECK_EQ(gameServer.objects().size(), std::size_t(1));
+}
+
 TEST_MAIN({
+  testSpawnWaitsForChoice();
   testLoopbackDeliversBothWays();
   testFullHandshakeAndWorldTransfer();
   testServerNamesThePlayer();

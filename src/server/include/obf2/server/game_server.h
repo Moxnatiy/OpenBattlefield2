@@ -74,6 +74,15 @@ struct Player {
   std::uint32_t soldierId = 0;     // об'єкт, яким гравець керує
 
   int team = 1;
+  // Обране місце появи — номер контрольної точки, з якої гравець просив
+  // з'явитися. Нуль означає «ще не обрав», і це не наша вигадка: у
+  // рушії сервер спавнить рівно тих, у кого `Player::getSpawnGroup() > 0`
+  // (`ServerGameLogic::uPlayingSpawning`), а виставляє це поле подія
+  // `NESelectSpawnGroup` — див. docs/functions/network-events.md.
+  int spawnGroup = 0;
+  // Обраний набір (`NESelectKit`). Поки лише запам'ятовуємо: спорядження
+  // наборів ще не розібране.
+  int kit = 0;
   bool alive = false;
   // Здоров'я з даних солдата (`ObjectTemplate.armor.maxHitPoints 100`).
   float health = 100.0f;
@@ -112,6 +121,13 @@ struct ServerSettings {
   // Скільки секунд гравець чекає до появи. В оригіналі це залежить від
   // режиму й квитків; поки що стала.
   float respawnDelay = 3.0f;
+  // З'являтися одразу після підтвердження, не чекаючи вибору місця.
+  // **Це наше, а не з рушія**: в оригіналі такого шляху немає взагалі,
+  // справжній клієнт завжди проходить екран появи і шле
+  // `NESelectSpawnGroup`. Прапорець потрібен тестам і безголовим
+  // запускам; застосунок гасить його, щойно показує екран появи.
+  bool spawnOnJoin = true;
+
   // Скільки гравців потрібно, щоб раунд почався (`sv.numPlayersNeededToStart`,
   // типово 2). Поки їх менше, гра тримає посеред екрана напис
   // HUD_STARTOFROUND_NRPLAYERSNEEDED.
@@ -193,6 +209,13 @@ class GameServer {
   // Так само, як onPlayerDeath у gpm_cq.py.
   void killPlayer(std::uint32_t playerId, std::string_view reason);
 
+  // Гравець натиснув DONE на екрані появи: команда, набір і номер
+  // контрольної точки, з якої він хоче з'явитися. Нуль у `spawnGroup`
+  // означає «будь-яка своя точка». Сам солдат з'явиться наступним
+  // тактом — так само, як у рушії, де це робить прохід
+  // `ServerGameLogic::uPlayingSpawning`, а не сама подія.
+  bool requestSpawn(std::uint32_t playerId, int team, int kit, int spawnGroup);
+
   // Приймає нове під'єднання. Сервер бере канал у власність.
   void accept(std::unique_ptr<net::Connection> connection);
 
@@ -233,9 +256,13 @@ class GameServer {
   void endGame(int winner);
   // Де з'явитися гравцеві: найближча точка своєї команди, інакше стартова.
   // Вибір точки появи за логікою рушія (див. docs/functions/spawn.md).
-  const level::SpawnPoint* pickSpawnPoint(int team, bool forHuman) const;
+  // `spawnGroup` — номер контрольної точки, якою обмежений вибір. Нуль
+  // знімає обмеження. Група в рушії — це і є набір точок одного прапора
+  // (`SpawnGroup::getControlPointId`), а всередині групи точка береться
+  // випадково (`SpawnGroup::getSpawnPoint`).
+  const level::SpawnPoint* pickSpawnPoint(int team, bool forHuman, int spawnGroup) const;
   bool spawnPointActive(const level::SpawnPoint& spawn, int team, bool forHuman) const;
-  Vec3f chooseSpawn(int team);
+  Vec3f chooseSpawn(int team, int spawnGroup);
   bool sendTo(Player& player, std::span<const std::byte> data);
 
   ServerSettings settings_;
