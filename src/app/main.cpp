@@ -65,6 +65,10 @@ struct Args {
   // --probe: тільки розбір протоколу, без вікна. Без нього --connect
   // відкриває світ, як і належить клієнтові.
   bool probe = false;
+  // --no-content: пропустити перевірку вмісту. Потрібне, щоб з'ясувати,
+  // чи саме вона змушує сервер розірвати з'єднання.
+  bool skipContent = false;
+  bool skipDatabase = false;
   std::string connectPassword;
   std::string playerName = "OpenBF2";  // --name: під яким іменем заходимо
   std::string calibrate;               // --calibrate <файл>: зіставити номери шаблонів
@@ -113,6 +117,8 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--topdown") args.topDown = true;
     else if (flag == "--connect" && i + 1 < argc) args.connectTo = argv[++i];
     else if (flag == "--probe") args.probe = true;
+    else if (flag == "--no-content") args.skipContent = true;
+    else if (flag == "--no-database") args.skipDatabase = true;
     else if (flag == "--width" && i + 1 < argc) args.width = std::atoi(argv[++i]);
     else if (flag == "--height" && i + 1 < argc) args.height = std::atoi(argv[++i]);
     else if (flag == "--hud-screen" && i + 1 < argc) args.hudScreenName = argv[++i];
@@ -679,6 +685,7 @@ struct RemoteWorld {
   std::vector<obf2::net::bf2::CreateSpawnGroup> spawnGroups;
   std::uint8_t lastServerSequence = 0;
   int ghostPackets = 0, ghostRecords = 0;
+  int ghostFlagSet = 0, ghostFlagClear = 0, ghostUnparsed = 0;
   std::set<std::uint16_t> ghostObjects;
   std::size_t dataBytes = 0;
   std::uint8_t sequence = 0;
@@ -796,6 +803,11 @@ struct RemoteWorld {
             step = Step::Content;
             break;
           case Step::Content: {
+            if (args.skipContent) {
+              std::printf("  крок: перевірку вмісту пропущено (--no-content)\n");
+              step = Step::Database;
+              break;
+            }
             const auto hashes =
               contentHashes(files, levelName, args.ordinal < 0 ? blockOrdinal : args.ordinal);
             if (!hashes) {
@@ -831,6 +843,11 @@ struct RemoteWorld {
             break;
           }
           case Step::Database:
+            if (args.skipDatabase) {
+              std::printf("  крок: базу гравців пропущено (--no-database)\n");
+              step = Step::Ready;
+              break;
+            }
             socket->send(obf2::net::bf2::writePostRemoteEvent(
                 id, next, batch++, obf2::net::bf2::kNetworkCategory,
                 obf2::net::bf2::kNetDatabaseComplete));
@@ -888,6 +905,11 @@ struct RemoteWorld {
           ++dataPackets;
           dataBytes += more->size();
 
+          if (const auto flag = obf2::net::bf2::ghostFlag(*more)) {
+            if (*flag) ++ghostFlagSet; else ++ghostFlagClear;
+          } else {
+            ++ghostUnparsed;
+          }
           if (const auto ghost = obf2::net::bf2::readGhostHeader(*more)) {
             ++ghostPackets;
             if (ghostPackets <= 3) {
@@ -1032,7 +1054,24 @@ struct RemoteWorld {
         default:
           ++other;
           if (other <= 4) {
-            std::printf("  інший пакет: тип %d\n", static_cast<int>(parsed->kind));
+            std::printf("  інший пакет: тип %d%s\n", static_cast<int>(parsed->kind),
+                        parsed->kind == obf2::net::bf2::PacketKind::Disconnect
+                            ? " (Disconnect!)" : "");
+            // Розрив — не «інший пакет», а відповідь сервера. Показуємо
+            // байти цілком: причина, якщо вона там є, лежить у них.
+            if (parsed->kind == obf2::net::bf2::PacketKind::Disconnect) {
+              std::string hex;
+              std::string text;
+              for (std::size_t k = 0; k < more->size() && k < 64; ++k) {
+                char pair[4];
+                const int byte = std::to_integer<int>((*more)[k]);
+                std::snprintf(pair, sizeof(pair), "%02x ", byte);
+                hex += pair;
+                text += (byte >= 32 && byte < 127) ? static_cast<char>(byte) : '.';
+              }
+              std::printf("    крок на цю мить: %d, байтів %zu\n    %s\n    %s\n",
+                          static_cast<int>(step), more->size(), hex.c_str(), text.c_str());
+            }
           }
           break;
       }
@@ -1048,6 +1087,8 @@ struct RemoteWorld {
     std::printf("  подій розібрано: %d, з них об'єктів світу: %d\n", eventCount, objectCount);
     std::printf("  пакетів із потоком привидів: %d, оновлень стану: %d, різних об'єктів: %zu\n",
                 ghostPackets, ghostRecords, ghostObjects.size());
+    std::printf("  прапорець привидів: стоїть %d, знято %d, не дочитали %d\n", ghostFlagSet,
+                ghostFlagClear, ghostUnparsed);
     if (!checked.empty()) {
       std::printf("  різних шаблонів: %zu\n", checked.size());
       for (const auto& [stage, count] : stageCounts) {

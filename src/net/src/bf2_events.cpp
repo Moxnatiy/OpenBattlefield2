@@ -391,6 +391,25 @@ std::vector<GhostRecord> readGhostRecords(std::span<const std::byte> packet) {
   return out;
 }
 
+std::optional<bool> ghostFlag(std::span<const std::byte> packet) {
+  BitReader reader(packet);
+  if (!enterPayload(reader)) return std::nullopt;
+  const auto hasEvents = reader.readBits(1);
+  if (!hasEvents) return std::nullopt;
+  if (*hasEvents == 1) {
+    const auto count = reader.readBits(8);
+    if (!count) return std::nullopt;
+    reader.skipBits(5 + 1);
+    for (std::uint32_t i = 0; i < *count; ++i) {
+      const auto type = reader.readBits(kEventTypeBits);
+      if (!type || !skipEvent(reader, *type)) return std::nullopt;
+    }
+  }
+  const auto hasGhosts = reader.readBits(1);
+  if (!hasGhosts) return std::nullopt;
+  return *hasGhosts != 0;
+}
+
 std::optional<GhostHeader> readGhostHeader(std::span<const std::byte> packet) {
   BitReader reader(packet);
   return enterGhosts(reader);
