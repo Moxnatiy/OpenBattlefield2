@@ -22,6 +22,7 @@
 #include "obf2/engine/engine.h"
 #include "obf2/font/text.h"
 #include "obf2/hud/render.h"
+#include "obf2/hud/spawn.h"
 #include "obf2/hud/states.h"
 #include "obf2/game/controls.h"
 #include "obf2/game/scene.h"
@@ -2008,34 +2009,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     // Вузли Kit0..Kit6 у HudElementsSpawn.con нічого не показують самі:
     // кожен висить на своїй змінній, а вміст приходить теж змінними —
     // KitName<N>String (ключ підпису) і KitIcon<N>Path (піктограма).
-    // Порядок беремо з таблиці локалізації, де ключі йдуть саме так, як
-    // на екрані гри:
-    //
-    //   HUD_TEXT_MENU_SPAWN_KIT_SPECIALFORCES  SNIPER  ASSAULT  SUPPORT
-    //   ENGINEER  MEDIC  ANTITANK
-    // Зброя в кожній панелі — теж змінна (KitWeaponIcon<N>Path). Яка
-    // саме, видно з набору: у `Objects_server.zip` кожен `Kits/US/*.con`
-    // перелічує свої шаблони, і рівно один із них має піктограму в
-    // `Weapons/Icons/Hud/Selection`. Звідти й беремо.
-    struct KitSlot {
-      const char* nameKey;
-      const char* icon;
-      const char* weapon;
-    };
-    static const KitSlot kKits[] = {
-        {"HUD_TEXT_MENU_SPAWN_KIT_SPECIALFORCES", "Ingame/Kits/Icons/kit_Specops.tga",
-         "USRIF_M4.tga"},
-        {"HUD_TEXT_MENU_SPAWN_KIT_SNIPER", "Ingame/Kits/Icons/kit_Sniper.tga", "USRIF_M24.tga"},
-        {"HUD_TEXT_MENU_SPAWN_KIT_ASSAULT", "Ingame/Kits/Icons/kit_Light_Assault.tga",
-         "USRIF_M203.tga"},
-        {"HUD_TEXT_MENU_SPAWN_KIT_SUPPORT", "Ingame/Kits/Icons/kit_Heavy_Assault.tga",
-         "USLMG_M249SAW.tga"},
-        {"HUD_TEXT_MENU_SPAWN_KIT_ENGINEER", "Ingame/Kits/Icons/kit_Engineer.tga",
-         "USRIF_Remington11-87.tga"},
-        {"HUD_TEXT_MENU_SPAWN_KIT_MEDIC", "Ingame/Kits/Icons/kit_Medic.tga", "USRIF_M16a2.tga"},
-        {"HUD_TEXT_MENU_SPAWN_KIT_ANTITANK", "Ingame/Kits/Icons/kit_ATAA.tga",
-         "USRIF_MP5_A3.tga"},
-    };
+    // Самий перелік — у `obf2/hud/spawn.h`.
+    const auto& kKits = obf2::hud::spawnKits();
+
     // --- бекенд екрана появи ---------------------------------------
     //
     // Кнопка в HUD не має власної логіки: вона виконує консольну команду
@@ -2182,24 +2158,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       if (!level || team < 0 || team > 2) return {};
       return level->teamNames[team];
     };
-    // Підпис вкладки. Реверс BF2.exe 0x787110: гра бере назву сторони і
-    // перекладає її на ключ локалізації, причому три випадки записані
-    // окремо, а решта складається з префікса.
-    const auto teamLabel = [&](int team) -> std::string {
-      const std::string name = teamName(team);
-      if (name.empty()) return {};
-      if (name == "MEC") return "HUD_TEXT_MENU_SPAWN_ARMY_MEC";
-      if (name == "US") return "HUD_TEXT_MENU_SPAWN_ARMY_USMC";
-      if (name == "CH") return "HUD_TEXT_MENU_SPAWN_ARMY_CHINA";
-      return "HUD_TEXT_MENU_SPAWN_ARMY_" + name;
-    };
-    // Прапорець на вкладці. Шаблон із бінара, 0x931030, підставляється
-    // тією ж назвою сторони (0x787320 і далі).
-    const auto teamFlagIcon = [&](int team) -> std::string {
-      const std::string name = teamName(team);
-      if (name.empty()) return {};
-      return "Ingame/Flags/Icons/Hud/Score/" + name + "/scoreBoard_Flag.tga";
-    };
+    // Перетворення назви сторони в ключі й шляхи живуть у
+    // `obf2/hud/spawn.h` разом зі своїм тестом.
+    const auto teamLabel = [&](int team) { return obf2::hud::armyLabelKey(teamName(team)); };
+    const auto teamFlagIcon = [&](int team) { return obf2::hud::teamFlagIcon(teamName(team)); };
 
     // Вкладки команд угорі екрана появи. У даних гілка TeamSelectInfo
     // висить на Team1Selected, а всередині два блоки — Team1Selected і
@@ -2224,13 +2186,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         marker.worldX = point.position.x;
         marker.worldZ = point.position.z;
         marker.label = point.nameKey;
-        // Теку значка дає назва сторони, а не наш здогад: у BF2.exe
-        // 0x74fb70 шаблон `Ingame/Flags/Icons/Minimap/%s/miniMap_CP.tga`
-        // заповнює рядок, який повертає gameLogic->[0x48](номер команди),
-        // а для нуля там стоїть окремий рядок з Neutral.
-        const std::string faction = point.team == 0 ? "Neutral" : teamName(point.team);
-        marker.texture = "Ingame/Flags/Icons/Minimap/" +
-                         (faction.empty() ? std::string("Neutral") : faction) + "/miniMap_CP.tga";
+        marker.texture = obf2::hud::controlPointIcon(point.team == 0 ? "" : teamName(point.team));
         spawnContext.mapMarkers.push_back(std::move(marker));
         if (point.team == selectedTeam) {
           const bool chosen =
@@ -2328,11 +2284,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         marker.worldX = point.position.x;
         marker.worldZ = point.position.z;
         marker.label = point.nameKey;
-        // Теку значка дає назва сторони з Init.con рівня — так само, як
-        // на великій карті (BF2.exe 0x74fb70).
-        const std::string faction = point.team == 0 ? "Neutral" : teamName(point.team);
-        marker.texture = "Ingame/Flags/Icons/Minimap/" +
-                         (faction.empty() ? std::string("Neutral") : faction) + "/miniMap_CP.tga";
+        marker.texture = obf2::hud::controlPointIcon(point.team == 0 ? "" : teamName(point.team));
         hudContext.mapMarkers.push_back(std::move(marker));
       }
       std::printf("  карта: точок захоплення %zu\n", hudControlPoints.size());
