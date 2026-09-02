@@ -22,6 +22,7 @@
 #include "obf2/engine/engine.h"
 #include "obf2/font/text.h"
 #include "obf2/hud/render.h"
+#include "obf2/hud/states.h"
 #include "obf2/game/controls.h"
 #include "obf2/game/scene.h"
 #include "obf2/gfx/mesh_renderer.h"
@@ -1933,7 +1934,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   };
   std::vector<KeyScreen> keyScreens;
   obf2::game::ControlMap controls;
-  std::map<std::string, bool> hudVariables;
+  obf2::hud::VariableMap hudVariables;
   std::map<std::string, std::string> hudStrings;
   std::map<std::string, float> hudValues;
   // Прозорість плашок. Це не наша вигадка й не нуль: BF2.exe бере
@@ -1982,55 +1983,11 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         files, [&](const obf2::con::Command& command) { controls.feed(command); });
     controlInterpreter.runFile("Settings/Controls.con");
 
-    // Змінні показу вмикає **стан HUD**, а не наш список. Таблиця
-    // станів знята з BF2.exe: дві таблиці переходів на 32 позиції
-    // (0x786f88 і 0x787008), 24 обробники, кожен ланцюжком трійок
-    // «push значення; рядок з іменем; setVariable». Повний перелік —
-    // docs/functions/hud-states.md.
-    struct HudState {
-      int id;
-      std::vector<const char*> on;
-    };
-    static const HudState kHudStates[] = {
-        {0, {"ShowIngameHud", "MapShow", "MapBorderShow"}},
-        {1, {"ShowIngameHud", "MapBorderAlternateShow", "SpawnShow", "KitsShow"}},
-        {2, {"MapShow"}},
-        {3, {"SquadInterfaceShow"}},
-        {4, {"RadioInterfaceShow"}},
-        {5, {"RadioVehicleInterfaceShow"}},
-        {6, {"SpottedInterfaceShow"}},
-        {7, {"SquadLeaderInterfaceShow"}},
-        {8, {"CommanderInterfaceShow"}},
-        {9, {"ScoreboardShow", "LevelsListShow"}},
-        {15, {"CommanderShow"}},
-        {16, {"CommanderRadioShow"}},
-        {17, {"MapShow", "SpawnShow", "MembersShow"}},
-        {18, {"MembersShow", "SpawnShow"}},
-        {19, {"MapMenuShow"}},
-        {20, {"SquadLeaderMenuShow"}},
-        {21, {"CommanderMenuShow"}},
-        {26, {"InviteListShow"}},
-        {27, {"ChoiceMenuShow"}},
-        {29, {"SetupShow"}},
-        {30, {"DemoCameraInterfaceShow"}},
-        {31, {"DemoRecInterfaceShow"}},
-    };
-    // Стан гасить усе, що нижче за нього в ланцюжку, і вмикає своє —
-    // тому спершу знімаємо всі змінні станів, а тоді ставимо потрібні.
+    // Таблиця станів і похідні змінні живуть у `obf2/hud/states.h`
+    // разом зі своїм тестом: там і сама таблиця з BF2.exe, і адреси
+    // тих місць, що пишуть кожну змінну.
     applyHudState = [&](int state) {
-      const auto set = [&](const char* name, bool value) {
-        bool& slot = hudVariables[name];
-        if (slot == value) return;
-        slot = value;
-        hudDirty = true;
-      };
-      for (const HudState& entry : kHudStates) {
-        for (const char* name : entry.on) set(name, false);
-      }
-      for (const HudState& entry : kHudStates) {
-        if (entry.id != state) continue;
-        for (const char* name : entry.on) set(name, true);
-      }
+      if (obf2::hud::applyState(hudVariables, state)) hudDirty = true;
     };
 
     // Бойовий HUD — це стан 0.
@@ -2138,35 +2095,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     // Саме тому в оригіналі за екраном появи не видно смуг здоров'я й
     // набоїв: гравця ще немає, і 0x78d2d9 гасить увесь набір.
     updateHudVariables = [&](bool hasPlayer, bool mapFullSize) {
-      const auto set = [&](const char* name, bool value) {
-        bool& slot = hudVariables[name];
-        if (slot == value) return;
-        slot = value;
+      if (obf2::hud::applyDerived(hudVariables, obf2::hud::WorldView{hasPlayer, mapFullSize})) {
         hudDirty = true;
-      };
-      // 0x466986: MapFullSize і MapMinSize — це два прапорці самого
-      // об'єкта карти (поля 0x68c і 0x68d), а 0x4669ae робить із другого
-      // MapBorderAlternateShow запереченням.
-      set("MapFullSize", mapFullSize);
-      set("MapMinSize", !mapFullSize);
-      set("MapBorderAlternateShow", mapFullSize);
-      // 0x466935 і 0x466950: складені змінні — просто «і» двох інших.
-      const bool spawn = hudVariables["SpawnShow"];
-      set("MapFullSizeAndSpawnShow", mapFullSize && spawn);
-      set("MapFullSizeAndNotSpawnShow", mapFullSize && !spawn);
-      // 0x78d154 вмикає, 0x78d2f1 гасить — за наявністю керованого
-      // гравця. Разом із ним гасяться і 0x78d2d9: SquadInfoBarShow,
-      // ShowCommanderIcon, ShowSquadIcon.
-      set("PlayerHealthShow", hasPlayer);
-      // 0x78acf1: у грі це ще й порівняння самої витривалості зі сталою
-      // (поле 0x1ac), тобто смуга з'являється, коли витривалість не
-      // повна. Самої витривалості в нас поки немає — лишається гравець.
-      set("PlayerStaminaShow", hasPlayer);
-      // 0x7a5bae, 0x7a5bb5, 0x7a8a18: набої вмикає оновлення зброї.
-      // Зброї ми поки не моделюємо, тож теж за гравцем. Борг.
-      set("PrimaryAmmoShow", hasPlayer);
-      set("PrimaryAmmoBarShow", hasPlayer);
-      set("PrimaryClipsShow", hasPlayer);
+      }
       // Куди їдуть рухомі ділянки. Сховані кінці — з `Menu/Ingame`:
       // -295 ліворуч і 503 праворуч. Праворуч висунуте положення
       // **виміряне** зі знімка кадру оригіналу — 336.5 (три вузли
@@ -2189,10 +2120,6 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       // умовою, що й сам бойовий HUD.
       bottomLeftTarget = hasPlayer ? -1.0f : -295.0f;
       bottomRightTarget = hasPlayer ? 336.5f : 503.0f;
-      // 0x78adc5, 0x78ae8c проти 0x78af97: загін. Ми в загоні не буваємо.
-      set("SquadInfoBarShow", false);
-      set("ShowCommanderIcon", false);
-      set("ShowSquadIcon", false);
     };
 
     // Що робить DONE. Шляхи два, і обидва однаково «справжні»:
