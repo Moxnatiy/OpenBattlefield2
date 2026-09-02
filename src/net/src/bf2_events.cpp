@@ -1,5 +1,6 @@
 #include "obf2/net/bf2_events.h"
 
+#include <cmath>
 #include <cstdio>
 #include <utility>
 #include <cstring>
@@ -294,6 +295,26 @@ std::optional<MapInfo> parseMapInfo(std::span<const std::byte> block) {
   info.size = static_cast<int>(*size);
   info.first = *first;
   return info;
+}
+
+std::uint16_t nearestSpawnGroup(const std::vector<CreateSpawnGroup>& groups, float worldX,
+                                float worldZ, float worldSize, float* distance) {
+  std::uint16_t best = 0;
+  float bestSquared = 0.0f;
+  bool found = false;
+  for (const CreateSpawnGroup& group : groups) {
+    const float gx = spawnGroupWorldPos(group.worldX, worldSize);
+    const float gz = spawnGroupWorldPos(group.worldZ, worldSize);
+    const float dx = gx - worldX;
+    const float dz = gz - worldZ;
+    const float squared = dx * dx + dz * dz;
+    if (found && squared >= bestSquared) continue;
+    found = true;
+    bestSquared = squared;
+    best = group.id;
+  }
+  if (distance != nullptr) *distance = found ? std::sqrt(bestSquared) : 0.0f;
+  return best;
 }
 
 std::optional<ServerMapInfo> parseMapInfoNetBuffer(std::span<const std::byte> block) {

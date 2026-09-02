@@ -2128,20 +2128,12 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
           if (point.id == group) { chosen = &point; break; }
         }
         if (chosen != nullptr) {
-          float best = 1e9f;
-          for (const auto& sg : remote->spawnGroups) {
-            const float gx = obf2::net::bf2::spawnGroupWorldPos(sg.worldX, hudContext.mapWorldSize);
-            const float gz = obf2::net::bf2::spawnGroupWorldPos(sg.worldZ, hudContext.mapWorldSize);
-            const float dx = gx - chosen->position.x;
-            const float dz = gz - chosen->position.z;
-            const float distance = dx * dx + dz * dz;
-            if (distance < best) {
-              best = distance;
-              wire = sg.id;
-            }
-          }
+          float away = 0.0f;
+          wire = obf2::net::bf2::nearestSpawnGroup(remote->spawnGroups, chosen->position.x,
+                                                   chosen->position.z, hudContext.mapWorldSize,
+                                                   &away);
           std::printf("  екран появи: точка %d (%s) -> група сервера %d, за %.0f м\n", group,
-                      chosen->nameKey.c_str(), wire, std::sqrt(best));
+                      chosen->nameKey.c_str(), wire, away);
         }
         remote->askSpawn(team, kit, wire);
         return;
