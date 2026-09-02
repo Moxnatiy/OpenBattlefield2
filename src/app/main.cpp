@@ -664,6 +664,13 @@ struct RemoteWorld {
   std::map<DrawStage, int> stageCounts;
   obf2::net::bf2::DataBlockAssembler blocks;
   bool levelReady = false;
+  // Чи ми справді закінчили вантажити рівень. `NELoadComplete` означає
+  // саме це, тож раніше слати його немає сенсу: поки йде завантаження,
+  // ми не відповідаємо на пінги, і сервер розриває з'єднання за
+  // мовчанку. Саме на цьому ми й губилися: у пробі вікна немає, вантажити
+  // нема чого, і там усе проходило.
+  bool clientLoaded = false;
+  std::chrono::steady_clock::time_point lastKeepAlive = std::chrono::steady_clock::now();
 
   // Кроки після рівня йдуть із паузами: мережеві події виконуються
   // наступним тактом, а перевірка вмісту — одразу, тож складати їх в
@@ -777,6 +784,36 @@ struct RemoteWorld {
     return true;
   }
 
+  // Підтримати розмову, поки ми зайняті чимось довгим. Завантаження
+  // рівня триває близько одинадцяти секунд, і весь цей час ми не
+  // відповідали на пінги — сервер устигав нас відключити ще до того, як
+  // ми казали `NELoadComplete`. Кроки ланцюжка тут не рухаємо навмисно:
+  // потрібні лише пінги.
+  //
+  // Викликати не частіше, ніж раз на пів секунди: сокет неблокуючий, але
+  // сам виклик усе одно коштує, а вантаження й так повільне.
+  void keepAlive() {
+    if (socket == nullptr) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (now - lastKeepAlive < std::chrono::milliseconds(500)) return;
+    lastKeepAlive = now;
+    for (int i = 0; i < 8; ++i) {
+      const auto more = socket->receive(0);
+      if (!more) break;
+      const auto parsed = obf2::net::bf2::readPacket(*more);
+      if (!parsed) continue;
+      if (parsed->extended) lastServerSequence = parsed->extended->sequence;
+      if (parsed->kind != obf2::net::bf2::PacketKind::PingRequest) continue;
+      obf2::net::bf2::ExtendedHeader header;
+      header.sequence = sequence++ & 0x3F;
+      header.ack = lastServerSequence;
+      header.ackBits = 0xFFFFFFFFu;
+      socket->send(obf2::net::bf2::writePingResponse(id, header,
+                                                     parsed->pingTime.value_or(0)));
+      ++pings;
+    }
+  }
+
   // Один оберт: рухаємо ланцюжок появи і читаємо, що прийшло. Чекати
   // довго можна лише поза кадром — у кадрі це були б завмирання.
   void pump(int timeoutMs) {
@@ -786,7 +823,7 @@ struct RemoteWorld {
       // мережеві події виконуються наступним тактом сервера, і якщо
       // надіслати наступний крок раніше, він застане старий стан.
       const auto now = std::chrono::steady_clock::now();
-      if (levelReady && step != Step::Done &&
+      if (levelReady && clientLoaded && step != Step::Done &&
           now - lastStep >= std::chrono::seconds(3)) {
         lastStep = now;
         obf2::net::bf2::ExtendedHeader next;
@@ -836,7 +873,8 @@ struct RemoteWorld {
               }
               return out;
             };
-            std::printf("  крок: перевірка вмісту\n    %s\n    %s\n    %s\n",
+            std::printf("  крок: перевірка вмісту, номер виклику %d\n    %s\n    %s\n    %s\n",
+                        args.ordinal < 0 ? blockOrdinal : args.ordinal,
                         show(hashes->misc).c_str(), show(hashes->archives).c_str(),
                         show(hashes->level).c_str());
             step = Step::Database;
@@ -1122,8 +1160,10 @@ struct RemoteWorld {
 int runProbe(const Args& args, obf2::FileSystem& files) {
   RemoteWorld remote(args, files);
   if (!remote.connect()) return 1;
-  // У безголовому режимі екрана появи немає, тож вибір задає командний
-  // рядок і робимо його одразу.
+  // У пробі вантажити нема чого: вікна немає, сцени немає.
+  remote.clientLoaded = true;
+  // Екрана появи теж немає, тож вибір задає командний рядок, і робимо
+  // його одразу.
   remote.askSpawn(args.team, args.kit, args.spawnGroup);
   // --frames тут задає, скільки обертів слухати: для коротких дослідів
   // (чи не розірве нас сервер на перевірці вмісту) вистачає тридцяти.
@@ -1197,8 +1237,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     std::printf("  доріг у сцені: %d\n", roadsPlaced);
     scene.add(obf2::level::buildWaterPlane(*level), obf2::Mat4::identity());
 
+    if (remote != nullptr) remote->keepAlive();
     registry = buildRegistry(files);
     std::printf("  реєстр: %zu шаблонів (%.1f с)\n", registry.size(), secondsSince(started));
+    if (remote != nullptr) remote->keepAlive();
 
     // --- одиночна гра = локальний сервер плюс клієнт ---
     //
@@ -1417,6 +1459,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     int placed = 0;
 
     for (const auto& object : placement) {
+      // Розставляння — найдовша частина завантаження. Поки воно триває,
+      // сервер має чути, що ми живі.
+      if (remote != nullptr) remote->keepAlive();
       auto found = meshIndexByTemplate.find(object.templateName);
       if (found == meshIndexByTemplate.end()) {
         auto built = buildObjectMesh(files, registry, object.templateName, args, false);
@@ -2801,6 +2846,14 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         &gpuMeshes[static_cast<std::size_t>(meshIndex)], transform});
     drawnTriangles += static_cast<long long>(scene.meshes[static_cast<std::size_t>(meshIndex)]
                                                  .indices.size() / 3);
+  }
+
+  // Рівень у GPU — тепер можна сказати серверові, що ми завантажилися,
+  // і далі відповідати на пінги щокадру.
+  if (remote != nullptr && !remote->clientLoaded) {
+    remote->clientLoaded = true;
+    remote->lastStep = std::chrono::steady_clock::now() - std::chrono::seconds(3);
+    std::printf("  зв'язок: рівень завантажено, продовжуємо розмову\n");
   }
 
   std::printf("у GPU: %zu унікальних мешів (%lld трикутників), %zu примірників "
