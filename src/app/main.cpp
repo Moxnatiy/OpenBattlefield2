@@ -688,10 +688,37 @@ struct RemoteWorld {
   bool answered = false;
 
 
-  // Гравець натиснув DONE.
-  void askSpawn(int team, int kit, int group) {
+  // Гравець натиснув DONE і показав на прапор. Номер групи тут ще не
+  // знаємо навмисно: групи приходять подіями після завантаження рівня, а
+  // кнопку можна натиснути й раніше. Тому запам'ятовуємо **місце**, а
+  // номер добираємо в мить відсилання — коли перелік уже точно є.
+  void askSpawn(int team, int kit, float worldX, float worldZ, float worldSize) {
+    chosenX = worldX;
+    chosenZ = worldZ;
+    chosenWorld = worldSize;
+    havePoint = true;
+    join.ask(obf2::net::bf2::JoinChoice{team, kit, 0});
+  }
+
+  // Те саме, але номер групи задано прямо. Це для безголового запуску:
+  // там екрана появи немає, і номер приходить із командного рядка.
+  void askSpawnGroup(int team, int kit, int group) {
+    havePoint = false;
+    directGroup = group;
     join.ask(obf2::net::bf2::JoinChoice{team, kit, group});
   }
+
+  // Номер групи для обраного місця. Нуль — місця не обрали або сервер
+  // про свої групи ще не сказав.
+  std::uint16_t chosenGroupId(float* away = nullptr) const {
+    if (!havePoint) return static_cast<std::uint16_t>(directGroup);
+    return obf2::net::bf2::nearestSpawnGroup(spawnGroups, chosenX, chosenZ, chosenWorld, away);
+  }
+
+  int directGroup = 0;
+
+  bool havePoint = false;
+  float chosenX = 0.0f, chosenZ = 0.0f, chosenWorld = 2048.0f;
 
   // Рукостискання: запит, відповідь сервера, підтвердження.
   bool connect() {
@@ -855,11 +882,14 @@ struct RemoteWorld {
             eventWith(obf2::net::bf2::kNetSelectKit, static_cast<std::uint32_t>(choice.kit));
             std::printf("  крок: набір %d\n", choice.kit);
             break;
-          case obf2::net::bf2::JoinStep::Group:
-            eventWith(obf2::net::bf2::kNetSelectSpawnGroup,
-                      static_cast<std::uint32_t>(choice.group));
-            std::printf("  крок: місце появи %d\n", choice.group);
+          case obf2::net::bf2::JoinStep::Group: {
+            float away = 0.0f;
+            const std::uint16_t wire = chosenGroupId(&away);
+            eventWith(obf2::net::bf2::kNetSelectSpawnGroup, wire);
+            std::printf("  крок: місце появи %u (за %.0f м, груп у переліку %zu)\n", wire, away,
+                        spawnGroups.size());
             break;
+          }
           case obf2::net::bf2::JoinStep::Ready:
           case obf2::net::bf2::JoinStep::Done:
             sent = false;
@@ -1114,7 +1144,7 @@ int runProbe(const Args& args, obf2::FileSystem& files) {
   remote.join.setClientLoaded();
   // Екрана появи теж немає, тож вибір задає командний рядок, і робимо
   // його одразу.
-  remote.askSpawn(args.team, args.kit, args.spawnGroup);
+  remote.askSpawnGroup(args.team, args.kit, args.spawnGroup);
   // --frames тут задає, скільки обертів слухати: для коротких дослідів
   // (чи не розірве нас сервер на перевірці вмісту) вистачає тридцяти.
   const int loops = args.frames > 0 ? args.frames : 90;
@@ -2112,30 +2142,25 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         return;
       }
       if (remote != nullptr) {
-        // Сервер сам каже, які групи появи в нього є — подіями
-        // CreateSpawnGroupEvent одразу після реєстрації. Номер, який
-        // чекає NESelectSpawnGroup, це номер **звідти**, а не наш номер
-        // контрольної точки: у Dalian сервер шле 515..518 на чотири
-        // прапори, тоді як у даних рівня вони 401..404.
-        //
-        // Зіставляємо за місцем: група везе своє місце спакованим у два
-        // байти, і після розпакування воно лежить за десятки метрів від
-        // прапора — рівно як і має бути, бо місце групи це середнє її
-        // точок появи.
-        int wire = 0;
+        // Серверу треба назвати **його** номер групи появи, а не наш
+        // номер контрольної точки: на Dalian сервер шле 515..518, тоді як
+        // у даних рівня прапори мають 401..404, і пов'язані вони ніяк.
+        // Спільне в них тільки місце, тож передаємо місце — а номер
+        // добере сам зв'язок, коли надійде час слати. Раніше ми добирали
+        // його тут-таки і на швидкому натисканні отримували нуль: групи
+        // приходять подіями вже після завантаження рівня.
         const obf2::level::ControlPoint* chosen = nullptr;
         for (const auto& point : hudControlPoints) {
           if (point.id == group) { chosen = &point; break; }
         }
-        if (chosen != nullptr) {
-          float away = 0.0f;
-          wire = obf2::net::bf2::nearestSpawnGroup(remote->spawnGroups, chosen->position.x,
-                                                   chosen->position.z, hudContext.mapWorldSize,
-                                                   &away);
-          std::printf("  екран появи: точка %d (%s) -> група сервера %d, за %.0f м\n", group,
-                      chosen->nameKey.c_str(), wire, away);
+        if (chosen == nullptr) {
+          std::printf("  екран появи: точки %d немає в переліку рівня\n", group);
+          return;
         }
-        remote->askSpawn(team, kit, wire);
+        std::printf("  екран появи: точка %d (%s) на %.0f %.0f\n", group,
+                    chosen->nameKey.c_str(), chosen->position.x, chosen->position.z);
+        remote->askSpawn(team, kit, chosen->position.x, chosen->position.z,
+                         hudContext.mapWorldSize);
         return;
       }
       std::printf("  екран появи: сервера немає, поява лише закриває екран\n");
