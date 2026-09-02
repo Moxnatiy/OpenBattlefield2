@@ -86,6 +86,36 @@ inline constexpr std::uint32_t kMapInfoBlock = 5;
 
 std::optional<MapInfo> parseMapInfo(std::span<const std::byte> block);
 
+// Блок типу 2 — це **справжній** `MapInfo`, той, що складає
+// `MapInfo::updateNetBuffer` (0x4168b0). Блок 5 поруч простіший і несе
+// лише назву рівня, режим і розмір.
+//
+// Порядок полів узято прямо з `updateNetBuffer`; числа там пишуться не
+// цілим словом, а знаком і 31 бітом:
+//
+//   u16 довжина + рядок   режим гри
+//   u16 довжина + рядок   шлях до рівнів
+//   u16 довжина + рядок   назва рівня
+//   1 біт знак + 31 біт   скільки місць
+//   1 біт                 чи є командир
+//   1 біт знак + 31 біт   **номер виклику**
+//
+// Номер виклику потрібен для перевірки вмісту: сервер обирає його
+// випадково при завантаженні рівня (`GameServer::loadPath`,
+// `rand() % 10`) і звіряє наші хеші саме з тим рядком файлів відбитків.
+inline constexpr std::uint32_t kMapInfoNetBuffer = 2;
+
+struct ServerMapInfo {
+  std::string gameMode;
+  std::string levelPath;
+  std::string levelName;
+  int maxPlayers = 0;
+  bool commanderEnabled = false;
+  int challengeOrdinal = -1;
+};
+
+std::optional<ServerMapInfo> parseMapInfoNetBuffer(std::span<const std::byte> block);
+
 // Група появи з `CreateSpawnGroupEvent` (тип 57). Саме її номер чекає
 // подія `NESelectSpawnGroup`, коли гравець тисне DONE.
 //

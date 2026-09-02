@@ -296,6 +296,52 @@ std::optional<MapInfo> parseMapInfo(std::span<const std::byte> block) {
   return info;
 }
 
+std::optional<ServerMapInfo> parseMapInfoNetBuffer(std::span<const std::byte> block) {
+  BitReader reader(block);
+
+  const auto text = [&reader]() -> std::optional<std::string> {
+    const auto length = reader.readBits(16);
+    if (!length || *length > 256) return std::nullopt;
+    std::string out;
+    for (std::uint32_t i = 0; i < *length; ++i) {
+      const auto byte = reader.readByte();
+      if (!byte) return std::nullopt;
+      out.push_back(static_cast<char>(*byte));
+    }
+    return out;
+  };
+  // Число зі знаком: один біт знака, далі 31 біт значення.
+  const auto number = [&reader]() -> std::optional<int> {
+    const auto sign = reader.readBits(1);
+    const auto value = reader.readBits(31);
+    if (!sign || !value) return std::nullopt;
+    const int out = static_cast<int>(*value);
+    return *sign ? -out : out;
+  };
+
+  ServerMapInfo info;
+  const auto mode = text();
+  const auto path = text();
+  const auto name = text();
+  if (!mode || !path || !name) return std::nullopt;
+  info.gameMode = *mode;
+  info.levelPath = *path;
+  info.levelName = *name;
+
+  const auto players = number();
+  if (!players) return std::nullopt;
+  info.maxPlayers = *players;
+
+  const auto commander = reader.readBits(1);
+  if (!commander) return std::nullopt;
+  info.commanderEnabled = *commander != 0;
+
+  const auto ordinal = number();
+  if (!ordinal) return std::nullopt;
+  info.challengeOrdinal = *ordinal;
+  return info;
+}
+
 std::vector<std::vector<std::byte>> loadCapture(const std::string& path) {
   std::vector<std::vector<std::byte>> packets;
   std::FILE* file = std::fopen(path.c_str(), "rb");

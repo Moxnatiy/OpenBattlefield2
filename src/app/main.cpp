@@ -929,14 +929,24 @@ struct RemoteWorld {
             ++eventCount;
             if (event.block) {
               const auto done = blocks.feed(*event.block);
+              // Блок 2 — справжній MapInfo. З нього беремо номер виклику:
+              // сервер кидає його при завантаженні рівня і саме з тим
+              // рядком відбитків звіряє нашу перевірку вмісту.
+              if (done && done->first == obf2::net::bf2::kMapInfoNetBuffer) {
+                if (const auto net = obf2::net::bf2::parseMapInfoNetBuffer(done->second)) {
+                  std::printf("  сервер: місць %d, командир %s, номер виклику %d\n",
+                              net->maxPlayers, net->commanderEnabled ? "є" : "нема",
+                              net->challengeOrdinal);
+                  if (args.ordinal < 0) blockOrdinal = net->challengeOrdinal;
+                }
+              }
               if (done && done->first == obf2::net::bf2::kMapInfoBlock && !levelReady) {
                 if (const auto info = obf2::net::bf2::parseMapInfo(done->second)) {
                   std::printf("  сервер грає %s, режим %s, розмір %d, перше число %u\n",
                               info->levelName.c_str(), info->gameMode.c_str(), info->size,
                               info->first);
-                  // Номер виклику беремо з блока, коли його не задали
-                  // руками: це єдине число, яке сервер тут присилає.
-                  if (args.ordinal < 0) blockOrdinal = static_cast<int>(info->first);
+                  // Номер виклику сюди більше не лізе: він у блоці 2,
+                  // а перше число блока 5 — це щось інше.
                   std::string levelError;
                   if (!obf2::level::mountLevel(files, args.modDir, info->levelName, &levelError)) {
                     std::printf("  рівень не змонтовано: %s\n", levelError.c_str());
@@ -1115,7 +1125,10 @@ int runProbe(const Args& args, obf2::FileSystem& files) {
   // У безголовому режимі екрана появи немає, тож вибір задає командний
   // рядок і робимо його одразу.
   remote.askSpawn(args.team, args.kit, args.spawnGroup);
-  for (int i = 0; i < 90; ++i) remote.pump(500);
+  // --frames тут задає, скільки обертів слухати: для коротких дослідів
+  // (чи не розірве нас сервер на перевірці вмісту) вистачає тридцяти.
+  const int loops = args.frames > 0 ? args.frames : 90;
+  for (int i = 0; i < loops; ++i) remote.pump(500);
   remote.report();
   remote.disconnect();
   return 0;
