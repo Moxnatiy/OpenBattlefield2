@@ -31,6 +31,7 @@
 #include <set>
 
 #include "obf2/net/bf2_events.h"
+#include "obf2/net/bf2_join.h"
 #include "obf2/net/md5.h"
 #include "obf2/net/bf2_protocol.h"
 #include "obf2/net/udp.h"
@@ -664,27 +665,12 @@ struct RemoteWorld {
   std::map<DrawStage, int> stageCounts;
   obf2::net::bf2::DataBlockAssembler blocks;
   bool levelReady = false;
-  // Чи ми справді закінчили вантажити рівень. `NELoadComplete` означає
-  // саме це, тож раніше слати його немає сенсу: поки йде завантаження,
-  // ми не відповідаємо на пінги, і сервер розриває з'єднання за
-  // мовчанку. Саме на цьому ми й губилися: у пробі вікна немає, вантажити
-  // нема чого, і там усе проходило.
-  bool clientLoaded = false;
   std::chrono::steady_clock::time_point lastKeepAlive = std::chrono::steady_clock::now();
 
-  // Кроки після рівня йдуть із паузами: мережеві події виконуються
-  // наступним тактом, а перевірка вмісту — одразу, тож складати їх в
-  // один пакет не можна.
-  // `Ready` — це екран появи: рівень наш, база отримана, і далі рушій
-  // чекає, поки гравець натисне DONE. Тільки після цього йдуть три
-  // події вибору.
-  enum class Step { Level, Content, Database, Ready, Team, Kit, Group, Done };
-  Step step = Step::Level;
-  // Що саме обрав гравець. Заповнює askSpawn — або екран появи, або
-  // командний рядок у безголовому запуску.
-  int chosenTeam = 1, chosenKit = 0, chosenGroup = 0;
-  bool asked = false;
-  std::chrono::steady_clock::time_point lastStep = std::chrono::steady_clock::now();
+  // Порядок приєднання живе окремо і має власний тест: усі правила про
+  // паузи, очікування завантаження й зупинку на екрані появи — там
+  // (`obf2/net/bf2_join.h`). Тут лишається тільки складання пакетів.
+  obf2::net::bf2::JoinSequence join;
   std::string levelName;
   int blockOrdinal = 0;
   int pings = 0, dataPackets = 0, other = 0, challenges = 0;
@@ -700,20 +686,9 @@ struct RemoteWorld {
   bool answered = false;
 
 
-  // Гравець натиснув DONE. Далі машина сама відішле три події поспіль —
-  // саме в тому порядку, який ми перевірили на оригінальному сервері:
-  // NESelectTeam, NESelectKit, NESelectSpawnGroup.
+  // Гравець натиснув DONE.
   void askSpawn(int team, int kit, int group) {
-    chosenTeam = team;
-    chosenKit = kit;
-    chosenGroup = group;
-    asked = true;
-    if (step == Step::Ready) {
-      step = Step::Team;
-      // Паузу між кроками витримуємо, а от першого кроку чекати нема
-      // чого: попередній був давно.
-      lastStep = std::chrono::steady_clock::now() - std::chrono::seconds(3);
-    }
+    join.ask(obf2::net::bf2::JoinChoice{team, kit, group});
   }
 
   // Рукостискання: запит, відповідь сервера, підтвердження.
@@ -817,53 +792,41 @@ struct RemoteWorld {
   // Один оберт: рухаємо ланцюжок появи і читаємо, що прийшло. Чекати
   // довго можна лише поза кадром — у кадрі це були б завмирання.
   void pump(int timeoutMs) {
-      // Наступний крок ланцюжка — раз на кілька обертів, щоб сервер
-      // устигав виконати попередній.
-      // Пауза між кроками — за годинником, а не за обертами циклу:
-      // мережеві події виконуються наступним тактом сервера, і якщо
-      // надіслати наступний крок раніше, він застане старий стан.
+      // Коли слати наступний крок, вирішує JoinSequence — усі правила
+      // про паузи й очікування там, разом із тестом. Тут лишається
+      // скласти пакет і відзвітувати, що ми його відіслали.
       const auto now = std::chrono::steady_clock::now();
-      if (levelReady && clientLoaded && step != Step::Done &&
-          now - lastStep >= std::chrono::seconds(3)) {
-        lastStep = now;
+      if (const auto todo = join.next(now)) {
         obf2::net::bf2::ExtendedHeader next;
         next.sequence = sequence++ & 0x3F;
         next.ack = lastServerSequence;
         next.ackBits = 0xFFFFFFFFu;
 
-        switch (step) {
-          case Step::Level:
-            socket->send(obf2::net::bf2::writePostRemoteEvent(
-                id, next, batch++, obf2::net::bf2::kNetworkCategory,
-                obf2::net::bf2::kNetLoadComplete));
+        const auto event = [&](std::uint32_t number) {
+          socket->send(obf2::net::bf2::writePostRemoteEvent(
+              id, next, batch++, obf2::net::bf2::kNetworkCategory, number));
+        };
+        const auto eventWith = [&](std::uint32_t number, std::uint32_t value) {
+          socket->send(obf2::net::bf2::writePostRemoteEvent(
+              id, next, batch++, obf2::net::bf2::kNetworkCategory, number, value));
+        };
+        const auto& choice = join.choice();
+        bool sent = true;
+
+        switch (*todo) {
+          case obf2::net::bf2::JoinStep::Level:
+            event(obf2::net::bf2::kNetLoadComplete);
             std::printf("  крок: рівень завантажено\n");
-            step = Step::Content;
             break;
-          case Step::Content: {
-            if (args.skipContent) {
-              std::printf("  крок: перевірку вмісту пропущено (--no-content)\n");
-              step = Step::Database;
-              break;
-            }
-            const auto hashes =
-              contentHashes(files, levelName, args.ordinal < 0 ? blockOrdinal : args.ordinal);
+          case obf2::net::bf2::JoinStep::Content: {
+            const int ordinal = args.ordinal < 0 ? blockOrdinal : args.ordinal;
+            const auto hashes = contentHashes(files, levelName, ordinal);
             if (!hashes) {
-              std::printf("  перевірку вмісту пропущено: %s\n", "немає відбитків");
-              step = Step::Team;
+              std::printf("  перевірку вмісту пропущено: немає відбитків\n");
               break;
             }
-            const auto packet = obf2::net::bf2::writeContentCheckEvent(
-                id, next, batch++, hashes->misc, hashes->archives, hashes->level);
-            {
-              std::string hex;
-              for (std::size_t k = 0; k < std::min<std::size_t>(packet.size(), 20); ++k) {
-                char pair[4];
-                std::snprintf(pair, sizeof(pair), "%02x ", std::to_integer<int>(packet[k]));
-                hex += pair;
-              }
-              std::printf("  пакет перевірки (%zu б): %s\n", packet.size(), hex.c_str());
-            }
-            socket->send(packet);
+            socket->send(obf2::net::bf2::writeContentCheckEvent(
+                id, next, batch++, hashes->misc, hashes->archives, hashes->level));
             const auto show = [](const std::array<std::byte, 16>& hash) {
               std::string out;
               for (const auto byte : hash) {
@@ -874,52 +837,33 @@ struct RemoteWorld {
               return out;
             };
             std::printf("  крок: перевірка вмісту, номер виклику %d\n    %s\n    %s\n    %s\n",
-                        args.ordinal < 0 ? blockOrdinal : args.ordinal,
-                        show(hashes->misc).c_str(), show(hashes->archives).c_str(),
+                        ordinal, show(hashes->misc).c_str(), show(hashes->archives).c_str(),
                         show(hashes->level).c_str());
-            step = Step::Database;
             break;
           }
-          case Step::Database:
-            if (args.skipDatabase) {
-              std::printf("  крок: базу гравців пропущено (--no-database)\n");
-              step = Step::Ready;
-              break;
-            }
-            socket->send(obf2::net::bf2::writePostRemoteEvent(
-                id, next, batch++, obf2::net::bf2::kNetworkCategory,
-                obf2::net::bf2::kNetDatabaseComplete));
+          case obf2::net::bf2::JoinStep::Database:
+            event(obf2::net::bf2::kNetDatabaseComplete);
             std::printf("  крок: база гравців отримана\n");
-            step = Step::Ready;
             break;
-          case Step::Ready:
-            // Чекаємо на DONE. Якщо вибір уже зроблено (безголовий
-            // запуск ставить його ще до рукостискання) — рушаємо далі.
-            if (asked) step = Step::Team;
+          case obf2::net::bf2::JoinStep::Team:
+            eventWith(obf2::net::bf2::kNetSelectTeam, static_cast<std::uint32_t>(choice.team));
+            std::printf("  крок: команда %d\n", choice.team);
             break;
-          case Step::Team:
-            socket->send(obf2::net::bf2::writePostRemoteEvent(
-                id, next, batch++, obf2::net::bf2::kNetworkCategory,
-                obf2::net::bf2::kNetSelectTeam, chosenTeam));
-            std::printf("  крок: команда %d\n", chosenTeam);
-            step = Step::Kit;
+          case obf2::net::bf2::JoinStep::Kit:
+            eventWith(obf2::net::bf2::kNetSelectKit, static_cast<std::uint32_t>(choice.kit));
+            std::printf("  крок: набір %d\n", choice.kit);
             break;
-          case Step::Kit:
-            socket->send(obf2::net::bf2::writePostRemoteEvent(
-                id, next, batch++, obf2::net::bf2::kNetworkCategory,
-                obf2::net::bf2::kNetSelectKit, chosenKit));
-            std::printf("  крок: набір %d\n", chosenKit);
-            step = Step::Group;
+          case obf2::net::bf2::JoinStep::Group:
+            eventWith(obf2::net::bf2::kNetSelectSpawnGroup,
+                      static_cast<std::uint32_t>(choice.group));
+            std::printf("  крок: місце появи %d\n", choice.group);
             break;
-          case Step::Group:
-            socket->send(obf2::net::bf2::writePostRemoteEvent(
-                id, next, batch++, obf2::net::bf2::kNetworkCategory,
-                obf2::net::bf2::kNetSelectSpawnGroup, chosenGroup));
-            std::printf("  крок: місце появи %d\n", chosenGroup);
-            step = Step::Done;
+          case obf2::net::bf2::JoinStep::Ready:
+          case obf2::net::bf2::JoinStep::Done:
+            sent = false;
             break;
-          case Step::Done: break;
         }
+        if (sent) join.commit(now);
       }
 
       const auto more = socket->receive(timeoutMs);
@@ -994,6 +938,9 @@ struct RemoteWorld {
                     std::printf("  рівень прочитано: відомих об'єктів %zu\n", known.size());
                   }
                   levelReady = true;
+                  join.setLevelReady();
+                  join.setSkipContent(args.skipContent);
+                  join.setSkipDatabase(args.skipDatabase);
                   levelName = info->levelName;
                 }
               }
@@ -1117,8 +1064,9 @@ struct RemoteWorld {
                 hex += pair;
                 text += (byte >= 32 && byte < 127) ? static_cast<char>(byte) : '.';
               }
-              std::printf("    крок на цю мить: %d, байтів %zu\n    %s\n    %s\n",
-                          static_cast<int>(step), more->size(), hex.c_str(), text.c_str());
+              std::printf("    крок на цю мить: %s, байтів %zu\n    %s\n    %s\n",
+                          obf2::net::bf2::joinStepName(join.step()), more->size(), hex.c_str(),
+                          text.c_str());
             }
           }
           break;
@@ -1161,7 +1109,7 @@ int runProbe(const Args& args, obf2::FileSystem& files) {
   RemoteWorld remote(args, files);
   if (!remote.connect()) return 1;
   // У пробі вантажити нема чого: вікна немає, сцени немає.
-  remote.clientLoaded = true;
+  remote.join.setClientLoaded();
   // Екрана появи теж немає, тож вибір задає командний рядок, і робимо
   // його одразу.
   remote.askSpawn(args.team, args.kit, args.spawnGroup);
@@ -2850,9 +2798,8 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
 
   // Рівень у GPU — тепер можна сказати серверові, що ми завантажилися,
   // і далі відповідати на пінги щокадру.
-  if (remote != nullptr && !remote->clientLoaded) {
-    remote->clientLoaded = true;
-    remote->lastStep = std::chrono::steady_clock::now() - std::chrono::seconds(3);
+  if (remote != nullptr) {
+    remote->join.setClientLoaded();
     std::printf("  зв'язок: рівень завантажено, продовжуємо розмову\n");
   }
 
