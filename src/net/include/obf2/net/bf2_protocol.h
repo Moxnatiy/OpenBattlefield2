@@ -185,6 +185,10 @@ inline constexpr std::uint32_t kNetDatabaseComplete = 4;
 inline constexpr std::uint32_t kNetSelectSpawnGroup = 6;
 inline constexpr std::uint32_t kNetSelectTeam = 7;
 inline constexpr std::uint32_t kNetSelectKit = 8;
+// Підтвердження від сервера: гравець з'явився. У знятому трафіку
+// оригіналу вона приходить за 100 мс після `NESelectSpawnGroup`, і це
+// найпряміша ознака, що поява вдалася.
+inline constexpr std::uint32_t kNetPlayerSpawned = 9;
 
 // `value` передається у корисних даних 32-бітним числом — так його
 // читають ті події, що несуть вибір (команда, набір, місце появи).

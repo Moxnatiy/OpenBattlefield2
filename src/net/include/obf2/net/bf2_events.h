@@ -141,14 +141,20 @@ std::optional<ServerMapInfo> parseMapInfoNetBuffer(std::span<const std::byte> bl
 // Хто зі створює, видно теж: `SpawnManager::createSpawnGroupOnClients`
 // (0x4b96e0).
 struct CreateSpawnGroup {
-  std::uint8_t first = 0;      // 8 біт
-  std::uint32_t small = 0;     // 4 біти
+  // Номер групи, яким її називає сервер. Саме його чекає
+  // `NESelectSpawnGroup` — перевірено знятим трафіком оригінального
+  // клієнта: він шле `NESelectSpawnGroup = 2` на другий прапор, а не
+  // 516 (мережевий номер) і не 402 (номер точки з рівня).
+  std::uint8_t id = 0;         // 8 біт
+  std::uint32_t team = 0;      // 4 біти
   bool flag1 = false;
   bool flag2 = false;
   bool flag3 = false;
   std::uint8_t worldX = 0;     // спаковане місце, вісь 1
   std::uint8_t worldZ = 0;     // спаковане місце, вісь 2
-  std::uint16_t id = 0;        // 16 біт
+  // Мережевий номер групи — ним її знає система об'єктів. Для вибору
+  // місця появи він **не** потрібен: оригінал шле не його.
+  std::uint16_t networkId = 0;  // 16 біт
 };
 
 // Розпакування місця групи. Пакує його `SpawnGroup::getUnsignedWorldPosition`
@@ -180,16 +186,27 @@ inline float spawnGroupWorldPos(std::uint8_t packed, float worldSize) {
 //
 // Нуль означає «не знайшли»: саме його сервер розуміє як «місце не
 // обране» (`Player::getSpawnGroup() > 0`).
-std::uint16_t nearestSpawnGroup(const std::vector<CreateSpawnGroup>& groups, float worldX,
-                                float worldZ, float worldSize, float* distance = nullptr);
+std::uint8_t nearestSpawnGroup(const std::vector<CreateSpawnGroup>& groups, float worldX,
+                               float worldZ, float worldSize, float* distance = nullptr);
 
 // Одна подія з пакета: номер типу і те з неї, що ми вже розбираємо.
+// Мережева подія, яку сервер підняв у нас (`PostRemoteEvent`, тип 11).
+// Ті, що несуть значення, везуть його чотирма байтами.
+struct RemoteEvent {
+  std::uint32_t category = 0;
+  std::uint32_t number = 0;
+  std::optional<std::int32_t> value;
+};
+
 struct Event {
   std::uint32_t type = 0;
   std::optional<CreateObject> object;
   std::optional<CreatePlayer> player;
   std::optional<DataBlockPiece> block;
   std::optional<CreateSpawnGroup> spawnGroup;
+  // `PostRemoteEvent` (тип 11): сервер шле їх нам так само, як ми йому.
+  // Найважливіша для нас — `NEPlayerSpawned`.
+  std::optional<RemoteEvent> remote;
 };
 
 // Складає блоки з шматків, які приходять подіями.

@@ -1006,6 +1006,17 @@ struct RemoteWorld {
               }
               continue;
             }
+            if (event.remote) {
+              const auto& remote = *event.remote;
+              if (remote.category == obf2::net::bf2::kNetworkCategory) {
+                std::printf("  сервер: подія %u%s\n", remote.number,
+                            remote.value ? (" = " + std::to_string(*remote.value)).c_str() : "");
+                if (remote.number == obf2::net::bf2::kNetPlayerSpawned) {
+                  std::printf("  ГРАВЕЦЬ З'ЯВИВСЯ\n");
+                }
+              }
+              continue;
+            }
             if (event.spawnGroup) {
               const auto& group = *event.spawnGroup;
               spawnGroups.push_back(group);
@@ -1013,8 +1024,9 @@ struct RemoteWorld {
               // місце (GLSWorldSizeX/Z).
               const float worldSize = 2048.0f;
               std::printf(
-                  "  група появи: номер %u, перше %u, мале %u, прапорці %d%d%d, місце %.0f %.0f\n",
-                  group.id, group.first, group.small, group.flag1 ? 1 : 0, group.flag2 ? 1 : 0,
+                  "  група появи: номер %u, команда %u, мережевий %u, прапорці %d%d%d, "
+                  "місце %.0f %.0f\n",
+                  group.id, group.team, group.networkId, group.flag1 ? 1 : 0, group.flag2 ? 1 : 0,
                   group.flag3 ? 1 : 0,
                   obf2::net::bf2::spawnGroupWorldPos(group.worldX, worldSize),
                   obf2::net::bf2::spawnGroupWorldPos(group.worldZ, worldSize));

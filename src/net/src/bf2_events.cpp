@@ -204,15 +204,38 @@ std::optional<Event> readEvent(BitReader& reader) {
     if (!first || !small || !flag1 || !flag2 || !flag3 || !worldX || !worldZ || !id) {
       return std::nullopt;
     }
-    group.first = static_cast<std::uint8_t>(*first);
-    group.small = *small;
+    group.id = static_cast<std::uint8_t>(*first);
+    group.team = *small;
     group.flag1 = *flag1 != 0;
     group.flag2 = *flag2 != 0;
     group.flag3 = *flag3 != 0;
     group.worldX = static_cast<std::uint8_t>(*worldX);
     group.worldZ = static_cast<std::uint8_t>(*worldZ);
-    group.id = static_cast<std::uint16_t>(*id);
+    group.networkId = static_cast<std::uint16_t>(*id);
     event.spawnGroup = group;
+    return event;
+  }
+  if (*type == 11) {
+    RemoteEvent remote;
+    const auto category = reader.readBits(4);
+    const auto number = reader.readBits(32);
+    const auto delay = reader.readBits(32);
+    const auto length = reader.readBits(8);
+    if (!category || !number || !delay || !length) return std::nullopt;
+    remote.category = *category;
+    remote.number = *number;
+    if (*length == 4) {
+      std::uint32_t raw = 0;
+      for (int i = 0; i < 4; ++i) {
+        const auto byte = reader.readBits(8);
+        if (!byte) return std::nullopt;
+        raw |= *byte << (i * 8);
+      }
+      remote.value = static_cast<std::int32_t>(raw);
+    } else if (!reader.skipBits(*length * 8)) {
+      return std::nullopt;
+    }
+    event.remote = remote;
     return event;
   }
   if (*type == 5) {
@@ -297,9 +320,9 @@ std::optional<MapInfo> parseMapInfo(std::span<const std::byte> block) {
   return info;
 }
 
-std::uint16_t nearestSpawnGroup(const std::vector<CreateSpawnGroup>& groups, float worldX,
-                                float worldZ, float worldSize, float* distance) {
-  std::uint16_t best = 0;
+std::uint8_t nearestSpawnGroup(const std::vector<CreateSpawnGroup>& groups, float worldX,
+                               float worldZ, float worldSize, float* distance) {
+  std::uint8_t best = 0;
   float bestSquared = 0.0f;
   bool found = false;
   for (const CreateSpawnGroup& group : groups) {

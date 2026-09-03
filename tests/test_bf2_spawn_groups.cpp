@@ -52,17 +52,19 @@ static void testEachFlagFindsItsGroup() {
   const auto groups = dalianGroups();
   struct Flag {
     float x, z;
-    std::uint16_t expected;
+    std::uint8_t expected;
   };
+  // Чекаємо **малий** номер групи: саме його шле оригінальний клієнт
+  // (у знятому трафіку `NESelectSpawnGroup = 2` на другий прапор).
   const Flag flags[] = {
-      {-92.3f, -260.8f, 515},   // powerplant
-      {-151.8f, -58.9f, 516},   // constructionsite
-      {88.0f, -40.0f, 517},     // reactors
-      {-254.0f, -210.0f, 518},  // mainentrance
+      {-92.3f, -260.8f, 1},   // powerplant
+      {-151.8f, -58.9f, 2},   // constructionsite
+      {88.0f, -40.0f, 3},     // reactors
+      {-254.0f, -210.0f, 4},  // mainentrance
   };
   for (const Flag& flag : flags) {
     float away = 0.0f;
-    const std::uint16_t id = nearestSpawnGroup(groups, flag.x, flag.z, kWorld, &away);
+    const std::uint8_t id = nearestSpawnGroup(groups, flag.x, flag.z, kWorld, &away);
     CHECK_EQ(id, flag.expected);
     // Група стоїть біля свого прапора, а не десь на карті.
     CHECK(away < 60.0f);
@@ -74,7 +76,7 @@ static void testEachFlagFindsItsGroup() {
 // повинно.
 static void testNoGroupsGivesZero() {
   float away = -1.0f;
-  CHECK_EQ(nearestSpawnGroup({}, 0.0f, 0.0f, kWorld, &away), std::uint16_t(0));
+  CHECK_EQ(nearestSpawnGroup({}, 0.0f, 0.0f, kWorld, &away), std::uint8_t(0));
   CHECK_EQ(away, 0.0f);
 }
 
@@ -87,7 +89,7 @@ static void testSquadGroupsInTheCentreDoNotWin() {
                       127, 127, static_cast<std::uint16_t>(578 + i)});
   }
   float away = 0.0f;
-  CHECK_EQ(nearestSpawnGroup(groups, -254.0f, -210.0f, kWorld, &away), std::uint16_t(518));
+  CHECK_EQ(nearestSpawnGroup(groups, -254.0f, -210.0f, kWorld, &away), std::uint8_t(4));
 }
 
 TEST_MAIN({
