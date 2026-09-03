@@ -31,14 +31,15 @@ namespace obf2::net::bf2 {
 
 // Що робимо на цьому кроці.
 enum class JoinStep {
-  Level,     // сказати «рівень завантажено»
-  Content,   // перевірка вмісту
-  Database,  // сказати «база гравців отримана»
-  Ready,     // екран появи: чекаємо, поки гравець натисне DONE
-  Team,      // NESelectTeam
-  Kit,       // NESelectKit
-  Group,     // NESelectSpawnGroup
-  Done,      // більше нічого не шлемо
+  Level,       // сказати «рівень завантажено»
+  Content,     // перевірка вмісту
+  Database,    // сказати «база гравців отримана»
+  Simulation,  // NEStartSimulation — «почати відлік»
+  Ready,       // екран появи: чекаємо, поки гравець натисне DONE
+  Team,        // NESelectTeam
+  Kit,         // NESelectKit
+  Group,       // NESelectSpawnGroup
+  Done,        // більше нічого не шлемо
 };
 
 const char* joinStepName(JoinStep step);
@@ -69,6 +70,9 @@ class JoinSequence {
   // Досліди: пропустити перевірку вмісту або повідомлення про базу.
   void setSkipContent(bool skip) { skipContent_ = skip; }
   void setSkipDatabase(bool skip) { skipDatabase_ = skip; }
+  // `NEStartSimulation` — «почати відлік». Чи потрібна вона для появи,
+  // ми ще з'ясовуємо, тож крок вимикається прапорцем.
+  void setSkipSimulation(bool skip) { skipSimulation_ = skip; }
 
   // Гравець натиснув DONE. Можна кликати ще до рукостискання — тоді
   // послідовність не спиниться на `Ready`.
@@ -103,6 +107,7 @@ class JoinSequence {
   bool clientLoaded_ = false;
   bool skipContent_ = false;
   bool skipDatabase_ = false;
+  bool skipSimulation_ = true;
   bool asked_ = false;
   JoinChoice choice_;
 };

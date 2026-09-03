@@ -178,7 +178,9 @@ std::vector<std::byte> writeDataBlockChunk(std::uint8_t connectionId, const Exte
 // і сервер не шле ні об'єктів світу, ні потоку привидів.
 inline constexpr std::uint32_t kPostRemoteEvent = 11;
 inline constexpr std::uint32_t kNetworkCategory = 6;
+inline constexpr std::uint32_t kNetDataBlockReady = 1;
 inline constexpr std::uint32_t kNetLoadComplete = 2;
+inline constexpr std::uint32_t kNetStartSimulation = 3;
 inline constexpr std::uint32_t kNetDatabaseComplete = 4;
 inline constexpr std::uint32_t kNetSelectSpawnGroup = 6;
 inline constexpr std::uint32_t kNetSelectTeam = 7;

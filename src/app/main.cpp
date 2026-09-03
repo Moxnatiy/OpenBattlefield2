@@ -72,6 +72,8 @@ struct Args {
   // чи саме вона змушує сервер розірвати з'єднання.
   bool skipContent = false;
   bool skipDatabase = false;
+  bool startSimulation = false;
+  bool blockReady = false;
   std::string connectPassword;
   std::string playerName = "OpenBF2";  // --name: під яким іменем заходимо
   std::string calibrate;               // --calibrate <файл>: зіставити номери шаблонів
@@ -122,6 +124,8 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--probe") args.probe = true;
     else if (flag == "--no-content") args.skipContent = true;
     else if (flag == "--no-database") args.skipDatabase = true;
+    else if (flag == "--start-sim") args.startSimulation = true;
+    else if (flag == "--block-ready") args.blockReady = true;
     else if (flag == "--width" && i + 1 < argc) args.width = std::atoi(argv[++i]);
     else if (flag == "--height" && i + 1 < argc) args.height = std::atoi(argv[++i]);
     else if (flag == "--hud-screen" && i + 1 < argc) args.hudScreenName = argv[++i];
@@ -681,6 +685,7 @@ struct RemoteWorld {
   std::uint8_t lastServerSequence = 0;
   int ghostPackets = 0, ghostRecords = 0;
   int ghostFlagSet = 0, ghostFlagClear = 0, ghostUnparsed = 0;
+  int ghostControlled = 0;
   std::set<std::uint16_t> ghostObjects;
   std::size_t dataBytes = 0;
   std::uint8_t sequence = 0;
@@ -874,6 +879,10 @@ struct RemoteWorld {
             event(obf2::net::bf2::kNetDatabaseComplete);
             std::printf("  крок: база гравців отримана\n");
             break;
+          case obf2::net::bf2::JoinStep::Simulation:
+            event(obf2::net::bf2::kNetStartSimulation);
+            std::printf("  крок: почати відлік\n");
+            break;
           case obf2::net::bf2::JoinStep::Team:
             eventWith(obf2::net::bf2::kNetSelectTeam, static_cast<std::uint32_t>(choice.team));
             std::printf("  крок: команда %d\n", choice.team);
@@ -926,6 +935,10 @@ struct RemoteWorld {
           }
           if (const auto ghost = obf2::net::bf2::readGhostHeader(*more)) {
             ++ghostPackets;
+            // Прапорець «є стан керованого об'єкта» — це найпряміша
+            // ознака, що сервер дав нам солдата: він означає, що в пакеті
+            // їде стан саме того об'єкта, яким ми керуємо.
+            if (ghost->controlObjectState) ++ghostControlled;
             if (ghostPackets <= 3) {
               std::printf("  привиди: час %u, записів %u%s\n", ghost->time, ghost->records,
                           ghost->controlObjectState ? ", є стан керованого об'єкта" : "");
@@ -943,6 +956,20 @@ struct RemoteWorld {
             ++eventCount;
             if (event.block) {
               const auto done = blocks.feed(*event.block);
+              // Дослід: підтвердити зібраний блок подією NEDataBlockReady.
+              // Справжній клієнт це, схоже, робить — сервер веде свій
+              // облік того, що клієнт уже отримав.
+              if (done && args.blockReady) {
+                obf2::net::bf2::ExtendedHeader ack;
+                ack.sequence = sequence++ & 0x3F;
+                ack.ack = lastServerSequence;
+                ack.ackBits = 0xFFFFFFFFu;
+                socket->send(obf2::net::bf2::writePostRemoteEvent(
+                    id, ack, batch++, obf2::net::bf2::kNetworkCategory,
+                    obf2::net::bf2::kNetDataBlockReady,
+                    static_cast<std::int32_t>(done->first)));
+                std::printf("  блок %u зібрано, підтверджено\n", done->first);
+              }
               // Блок 2 — справжній MapInfo. З нього беремо номер виклику:
               // сервер кидає його при завантаженні рівня і саме з тим
               // рядком відбитків звіряє нашу перевірку вмісту.
@@ -973,6 +1000,7 @@ struct RemoteWorld {
                   join.setLevelReady();
                   join.setSkipContent(args.skipContent);
                   join.setSkipDatabase(args.skipDatabase);
+                  join.setSkipSimulation(!args.startSimulation);
                   levelName = info->levelName;
                 }
               }
@@ -1117,6 +1145,7 @@ struct RemoteWorld {
                 ghostPackets, ghostRecords, ghostObjects.size());
     std::printf("  прапорець привидів: стоїть %d, знято %d, не дочитали %d\n", ghostFlagSet,
                 ghostFlagClear, ghostUnparsed);
+    std::printf("  пакетів зі станом керованого об'єкта: %d\n", ghostControlled);
     if (!checked.empty()) {
       std::printf("  різних шаблонів: %zu\n", checked.size());
       for (const auto& [stage, count] : stageCounts) {

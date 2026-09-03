@@ -7,6 +7,7 @@ const char* joinStepName(JoinStep step) {
     case JoinStep::Level: return "рівень завантажено";
     case JoinStep::Content: return "перевірка вмісту";
     case JoinStep::Database: return "база гравців отримана";
+    case JoinStep::Simulation: return "почати відлік";
     case JoinStep::Ready: return "екран появи";
     case JoinStep::Team: return "команда";
     case JoinStep::Kit: return "набір";
@@ -31,6 +32,10 @@ std::optional<JoinStep> JoinSequence::next(Clock::time_point now) {
       continue;
     }
     if (step_ == JoinStep::Database && skipDatabase_) {
+      step_ = JoinStep::Simulation;
+      continue;
+    }
+    if (step_ == JoinStep::Simulation && skipSimulation_) {
       step_ = JoinStep::Ready;
       continue;
     }
@@ -50,7 +55,8 @@ void JoinSequence::commit(Clock::time_point now) {
   switch (step_) {
     case JoinStep::Level: step_ = JoinStep::Content; break;
     case JoinStep::Content: step_ = JoinStep::Database; break;
-    case JoinStep::Database: step_ = JoinStep::Ready; break;
+    case JoinStep::Database: step_ = JoinStep::Simulation; break;
+    case JoinStep::Simulation: step_ = JoinStep::Ready; break;
     case JoinStep::Ready: step_ = JoinStep::Team; break;
     case JoinStep::Team: step_ = JoinStep::Kit; break;
     case JoinStep::Kit: step_ = JoinStep::Group; break;
