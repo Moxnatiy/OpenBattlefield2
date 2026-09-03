@@ -724,7 +724,10 @@ struct RemoteWorld {
 
   bool havePoint = false;
   float chosenX = 0.0f, chosenZ = 0.0f, chosenWorld = 2048.0f;
-  // Мережевий номер нашого солдата, коли сервер його створив.
+  // Наш номер гравця й команда — із `CreatePlayerEvent` за іменем.
+  int ourPlayer = -1;
+  int ourTeam = 0;
+  // Об'єкт, яким ми керуємо. Його називає `EnterVehicleEvent`.
   std::uint16_t ourSoldier = 0;
 
   // Де зараз наш солдат. Порожньо — ще не з'явилися.
@@ -1050,20 +1053,6 @@ struct RemoteWorld {
               // дивитися: свого солдата ми ще не знаємо, а от прапори
               // сервер присилає одразу — і саме біля них гравець з'являється.
               objects[event.object->networkId] = at;
-              // Об'єкт, що з'явився після нашого запиту появи, — це,
-              // найпевніше, наш солдат: сервер створює його саме тоді.
-              // **Здогад**, а не реверс: поля власника в CreateObjectEvent
-              // ми ще не розібрали. Перевірка одна — місце має бути біля
-              // обраного прапора; якщо ні, лишаємо як було.
-              if (join.asked() && ourSoldier == 0 && havePoint) {
-                const float dx = at.x - chosenX;
-                const float dz = at.z - chosenZ;
-                if (dx * dx + dz * dz < 120.0f * 120.0f) {
-                  ourSoldier = event.object->networkId;
-                  std::printf("  наш солдат: номер %u на %.0f %.0f %.0f\n", ourSoldier, at.x, at.y,
-                              at.z);
-                }
-              }
               if (known.empty()) {
                 if (objectCount <= 3) {
                   std::printf("  об'єкт: шаблон %u, номер %u, позиція %.1f %.1f %.1f\n",
@@ -1092,6 +1081,30 @@ struct RemoteWorld {
             if (event.player) {
               std::printf("  гравець: %s (номер %u, команда %u)\n",
                           event.player->name.c_str(), event.player->id, event.player->team);
+              // Свій номер гравця дізнаємося за іменем: сервер складає
+              // його як «тег клану + пробіл + ім'я», тож порівнюємо
+              // хвостом, а не цілим рядком.
+              const std::string& name = event.player->name;
+              const std::string& want = args.playerName;
+              if (ourPlayer < 0 && !want.empty() && name.size() >= want.size() &&
+                  name.compare(name.size() - want.size(), want.size(), want) == 0) {
+                ourPlayer = static_cast<int>(event.player->id);
+                ourTeam = static_cast<int>(event.player->team);
+                std::printf("  це ми: номер %d, команда %d\n", ourPlayer, ourTeam);
+              }
+            }
+            // Хто чим керує. Солдат у BF2 «займається» як техніка, і
+            // саме цією подією сервер каже, який об'єкт наш.
+            if (event.enter) {
+              if (ourPlayer >= 0 && static_cast<int>(event.enter->player) == ourPlayer) {
+                ourSoldier = event.enter->object;
+                std::printf("  наш об'єкт: %u\n", ourSoldier);
+              }
+            }
+            if (event.exitPlayer && ourPlayer >= 0 &&
+                static_cast<int>(*event.exitPlayer) == ourPlayer) {
+              ourSoldier = 0;
+              std::printf("  ми вийшли з об'єкта\n");
             }
           }
           if (parsed->challenge) {
@@ -3061,6 +3074,16 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         // Карта на весь екран — це саме екран появи: у стані 1 сам
         // обробник вмикає MapBorderAlternateShow, а той у 0x4669ae
         // дорівнює запереченню MapMinSize.
+        // Команду призначає сервер, а не наш вибір: у знятому трафіку
+        // оригінальний клієнт `NESelectTeam` навіть не шле — приймає ту,
+        // яку дав сервер у CreatePlayerEvent. Тож щойно ми її дізналися,
+        // екран появи має показувати кружечки саме на її прапорах.
+        if (remote != nullptr && remote->ourTeam > 0 && selectedTeam != remote->ourTeam) {
+          selectedTeam = remote->ourTeam;
+          selectedSpawn = 0;
+          spawnDirty = true;
+          std::printf("  екран появи: сервер дав команду %d\n", selectedTeam);
+        }
         if (applyHudState) applyHudState(hudState);
         if (updateHudVariables) updateHudVariables(spawned, spawnVisible);
 

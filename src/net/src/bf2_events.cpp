@@ -215,6 +215,25 @@ std::optional<Event> readEvent(BitReader& reader) {
     event.spawnGroup = group;
     return event;
   }
+  if (*type == 9) {
+    EnterVehicle enter;
+    const auto player = reader.readBits(8);
+    const auto object = reader.readBits(16);
+    const auto flag = reader.readBits(1);
+    if (!player || !object || !flag) return std::nullopt;
+    enter.player = *player;
+    enter.object = static_cast<std::uint16_t>(*object);
+    enter.flag = *flag != 0;
+    event.enter = enter;
+    return event;
+  }
+  if (*type == 10) {
+    const auto player = reader.readBits(8);
+    const auto flag = reader.readBits(1);
+    if (!player || !flag) return std::nullopt;
+    event.exitPlayer = *player;
+    return event;
+  }
   if (*type == 11) {
     RemoteEvent remote;
     const auto category = reader.readBits(4);

@@ -190,6 +190,22 @@ std::uint8_t nearestSpawnGroup(const std::vector<CreateSpawnGroup>& groups, floa
                                float worldZ, float worldSize, float* distance = nullptr);
 
 // Одна подія з пакета: номер типу і те з неї, що ми вже розбираємо.
+// Хто чим керує (`EnterVehicleEvent`, тип 9) і хто вийшов
+// (`ExitVehicleEvent`, тип 10).
+//
+// Солдат у BF2 — теж керований об'єкт, і гравець «займає» його так само,
+// як техніку. Саме цією подією клієнт і дізнається, який об'єкт його:
+// у знятому трафіку сервер відповідає на появу одним пакетом —
+// `CreateObjectEvent` (номер 1794), одразу за ним
+// `EnterVehicleEvent: гравець 1 -> об'єкт 1794`, далі набір і
+// `NEPlayerSpawned = 1`. Свій номер гравця ми знаємо з
+// `CreatePlayerEvent`, тож зіставлення однозначне.
+struct EnterVehicle {
+  std::uint32_t player = 0;
+  std::uint16_t object = 0;
+  bool flag = false;
+};
+
 // Мережева подія, яку сервер підняв у нас (`PostRemoteEvent`, тип 11).
 // Ті, що несуть значення, везуть його чотирма байтами.
 struct RemoteEvent {
@@ -207,6 +223,9 @@ struct Event {
   // `PostRemoteEvent` (тип 11): сервер шле їх нам так само, як ми йому.
   // Найважливіша для нас — `NEPlayerSpawned`.
   std::optional<RemoteEvent> remote;
+  std::optional<EnterVehicle> enter;
+  // `ExitVehicleEvent` (тип 10): номер гравця, який вийшов.
+  std::optional<std::uint32_t> exitPlayer;
 };
 
 // Складає блоки з шматків, які приходять подіями.

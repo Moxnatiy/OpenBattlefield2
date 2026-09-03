@@ -119,14 +119,36 @@ def udp_payload(frame, dlt):
     return (f"{src}:{sport}", f"{dst}:{dport}", udp[8:])
 
 
-# Назви ігрових подій — з таблиці, знятої з бінаря (bf2_events.inc).
-GAME_EVENTS = {
-    0: "StringManagerEvent", 1: "ChallengeEvent", 2: "ChallengeResponseEvent",
-    3: "ConnectionTypeEvent", 4: "DataBlockEvent", 5: "CreatePlayerEvent",
-    6: "CreateObjectEvent", 11: "PostRemoteEvent", 18: "PlayerInputEvent",
-    19: "CommanderEvent", 20: "RadioMessageEvent", 31: "CreateKitEvent",
-    57: "CreateSpawnGroupEvent",
-}
+def load_event_table():
+    """Таблиця подій із того самого `bf2_events.inc`, що й у нашому коді.
+
+    Дублювати її тут було б помилкою: вона згенерована з бінаря, і два
+    списки неминуче розійшлися б.
+    """
+    import os
+    import re
+    here = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(here, "..", "..", "src", "net", "src", "bf2_events.inc")
+    names, widths, branchy = {}, {}, set()
+    for line in open(path, encoding="utf-8"):
+        flat = re.match(r'BF2_EVENT\((\d+),\s*"([^"]+)",\s*(.+)\)', line)
+        if flat:
+            number = int(flat.group(1))
+            names[number] = flat.group(2)
+            widths[number] = [int(x) for x in flat.group(3).split(",")]
+            continue
+        other = re.match(r'BF2_EVENT_(BRANCHY|EMPTY)\((\d+),\s*"([^"]+)"\)', line)
+        if other:
+            number = int(other.group(2))
+            names[number] = other.group(3)
+            if other.group(1) == "BRANCHY":
+                branchy.add(number)
+            else:
+                widths[number] = []
+    return names, widths, branchy
+
+
+GAME_EVENTS, EVENT_WIDTHS, EVENT_BRANCHY = load_event_table()
 
 
 def describe_events(payload):
@@ -156,30 +178,77 @@ def describe_events(payload):
         if kind_id is None:
             break
         name = GAME_EVENTS.get(kind_id, f"подія {kind_id}")
-        if kind_id == 3:              # ConnectionTypeEvent: 3 біти
-            out.append(f"{name} = {bits.read(3)}")
+
+        # Події з рівним переліком полів проходимо за таблицею; ті, у
+        # яких поля лежать за умовою, розбираємо руками — рівно так само,
+        # як це робить наш `skipEvent`.
+        if kind_id == 11:             # PostRemoteEvent
+            category = bits.read(4)
+            number = bits.read(32)
+            bits.read(32)             # затримка (float)
+            length = bits.read(8)
+            value = None
+            if length == 4:
+                value = 0
+                for i in range(4):
+                    byte = bits.read(8)
+                    if byte is None:
+                        break
+                    value |= byte << (i * 8)
+            elif length:
+                for _ in range(length):
+                    bits.read(8)
+            label = NET_EVENTS.get(number, str(number)) if category == 6 \
+                else f"кат {category} № {number}"
+            out.append(label + (f" = {value}" if value is not None else ""))
             continue
-        if kind_id != 11:
+        if kind_id == 9:              # EnterVehicleEvent: гравець і об'єкт
+            player = bits.read(8)
+            obj = bits.read(16)
+            flag = bits.read(1)
+            out.append(f"{name}: гравець {player} -> об'єкт {obj} ({flag})")
+            continue
+        if kind_id == 10:             # ExitVehicleEvent
+            out.append(f"{name}: гравець {bits.read(8)} ({bits.read(1)})")
+            continue
+        if kind_id == 7:              # DestroyObjectEvent
+            out.append(f"{name}: об'єкт {bits.read(16)}")
+            continue
+        if kind_id == 4:              # DataBlockEvent
+            if bits.read(1) == 1:
+                out.append(f"{name}: заголовок тип {bits.read(32)} розмір {bits.read(32)}")
+            else:
+                length = bits.read(8) or 0
+                for _ in range(length):
+                    bits.read(8)
+                out.append(f"{name}: шматок {length}б")
+            continue
+        if kind_id == 0:              # StringManagerEvent
+            if bits.read(1) != 0:
+                bits.read(6)
             out.append(name)
-            break                     # решту без таблиці розмірів не пройти
-        category = bits.read(4)
-        number = bits.read(32)
-        bits.read(32)                 # затримка (float)
-        length = bits.read(8)
-        value = None
-        if length == 4:
-            value = 0
-            for i in range(4):
-                byte = bits.read(8)
-                if byte is None:
-                    break
-                value |= byte << (i * 8)
-        elif length:
-            for _ in range(length):
+            continue
+        if kind_id == 6:              # CreateObjectEvent
+            template = bits.read(32)
+            network = bits.read(16)
+            bits.read(2)
+            branch = bits.read(1)
+            if branch == 1:
                 bits.read(8)
-        label = NET_EVENTS.get(number, str(number)) if category == 6 \
-            else f"кат {category} № {number}"
-        out.append(label + (f" = {value}" if value is not None else " (без значення)"))
+                out.append(f"{name}: шаблон {template}, номер {network}")
+            else:
+                if bits.read(1) == 1:
+                    bits.read(96)
+                if bits.read(1) == 1:
+                    bits.read(96)
+                out.append(f"{name}: шаблон {template}, номер {network}")
+            continue
+        if kind_id in EVENT_BRANCHY:
+            out.append(name + " (розбір попереду)")
+            break
+        for width in EVENT_WIDTHS.get(kind_id, []):
+            bits.read(width)
+        out.append(name)
     return out
 
 
