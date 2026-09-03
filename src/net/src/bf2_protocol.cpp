@@ -213,6 +213,56 @@ std::vector<std::byte> writePlayerActions(std::uint8_t connectionId, const Exten
   return finishDataPacket(buffer, writer);
 }
 
+std::optional<PlayerActions> readPlayerActions(std::span<const std::byte> packet) {
+  BitReader reader(packet);
+
+  const auto kind = reader.readBits(4);
+  if (!kind || *kind != static_cast<std::uint32_t>(PacketKind::Data)) return std::nullopt;
+  // номер з'єднання, sequence, ack, ackBits і довжина корисної частини
+  if (!reader.skipBits(8 + 6 + 6 + 32 + 16)) return std::nullopt;
+
+  const auto hasActions = reader.readBits(1);
+  if (!hasActions || *hasActions != 1) return std::nullopt;
+
+  const auto count = reader.readBits(4);
+  const auto number = reader.readBits(9);
+  if (!count || !number) return std::nullopt;
+
+  // Число зі знаком: біт знака, далі значення.
+  const auto readSigned = [&reader](int width) -> std::optional<std::int32_t> {
+    const auto sign = reader.readBits(1);
+    const auto value = reader.readBits(width);
+    if (!sign || !value) return std::nullopt;
+    const auto magnitude = static_cast<std::int32_t>(*value);
+    return *sign == 1 ? -magnitude : magnitude;
+  };
+
+  PlayerActions out;
+  out.number = *number;
+  if (*count > 0) {
+    const auto tick = readSigned(31);
+    if (!tick) return std::nullopt;
+    out.tick = *tick;
+  }
+
+  for (std::uint32_t i = 0; i < *count; ++i) {
+    PlayerAction action;
+    for (std::int16_t& axis : action.axes) {
+      const auto value = readSigned(15);
+      if (!value) return std::nullopt;
+      axis = static_cast<std::int16_t>(*value);
+    }
+    const auto buttons = reader.readBits(32);
+    const auto spare = reader.readBits(9);
+    const auto flag = reader.readBits(1);
+    if (!buttons || !spare || !flag) return std::nullopt;
+    action.buttons = *buttons;
+    action.flag = *flag != 0;
+    out.actions.push_back(action);
+  }
+  return out;
+}
+
 std::vector<std::byte> writePostRemoteEvent(std::uint8_t connectionId,
                                             const ExtendedHeader& header, std::uint8_t batch,
                                             std::uint32_t category, std::uint32_t event,

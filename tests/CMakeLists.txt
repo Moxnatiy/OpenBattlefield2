@@ -29,6 +29,9 @@ obf2_add_test(test_bf2_protocol obf2_net)
 obf2_add_test(test_bf2_join obf2_net)
 obf2_add_test(test_bf2_spawn_groups obf2_net)
 obf2_add_test(test_bf2_actions obf2_net)
+# Тест читає справжні пакети оригінального клієнта з tests/data.
+target_compile_definitions(test_bf2_actions PRIVATE
+  OBF2_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
 obf2_add_test(test_bf2_events obf2_net)
 # Тест читає спіймані з живого сервера пакети з tests/data.
 target_compile_definitions(test_bf2_events PRIVATE

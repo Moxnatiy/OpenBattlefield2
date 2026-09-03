@@ -225,10 +225,25 @@ inline constexpr std::int16_t kAxisFull = 99;
 // Єдина кнопка, яку вдалося назвати: спринт.
 inline constexpr std::uint32_t kButtonSprint = 32;
 
+// Увесь потік дій із пакета.
+struct PlayerActions {
+  std::uint32_t number = 0;  // 9 бітів на початку
+  std::int32_t tick = 0;     // лічильник вводу
+  std::vector<PlayerAction> actions;
+};
+
 // Пакет із самими діями: подій у ньому немає.
 std::vector<std::byte> writePlayerActions(std::uint8_t connectionId, const ExtendedHeader& header,
                                           std::uint32_t tick, const PlayerAction* actions,
                                           std::size_t count, std::uint32_t number = 0);
+
+// Прочитати потік дій із пакета даних. nullopt — це не пакет даних або
+// дій у ньому немає.
+//
+// Потрібен не лише для тестів: тим самим розбирачем ми читаємо і власні
+// пакети, і зняті з оригінального клієнта, тож розкладка описана в
+// одному місці, а не переписується щоразу заново.
+std::optional<PlayerActions> readPlayerActions(std::span<const std::byte> packet);
 
 // `value` передається у корисних даних 32-бітним числом — так його
 // читають ті події, що несуть вибір (команда, набір, місце появи).
