@@ -724,6 +724,16 @@ struct RemoteWorld {
 
   bool havePoint = false;
   float chosenX = 0.0f, chosenZ = 0.0f, chosenWorld = 2048.0f;
+  // Мережевий номер нашого солдата, коли сервер його створив.
+  std::uint16_t ourSoldier = 0;
+
+  // Де зараз наш солдат. Порожньо — ще не з'явилися.
+  std::optional<obf2::Vec3f> soldierPosition() const {
+    if (ourSoldier == 0) return std::nullopt;
+    const auto found = objects.find(ourSoldier);
+    if (found == objects.end()) return std::nullopt;
+    return found->second;
+  }
 
   // Рукостискання: запит, відповідь сервера, підтвердження.
   bool connect() {
@@ -1040,6 +1050,20 @@ struct RemoteWorld {
               // дивитися: свого солдата ми ще не знаємо, а от прапори
               // сервер присилає одразу — і саме біля них гравець з'являється.
               objects[event.object->networkId] = at;
+              // Об'єкт, що з'явився після нашого запиту появи, — це,
+              // найпевніше, наш солдат: сервер створює його саме тоді.
+              // **Здогад**, а не реверс: поля власника в CreateObjectEvent
+              // ми ще не розібрали. Перевірка одна — місце має бути біля
+              // обраного прапора; якщо ні, лишаємо як було.
+              if (join.asked() && ourSoldier == 0 && havePoint) {
+                const float dx = at.x - chosenX;
+                const float dz = at.z - chosenZ;
+                if (dx * dx + dz * dz < 120.0f * 120.0f) {
+                  ourSoldier = event.object->networkId;
+                  std::printf("  наш солдат: номер %u на %.0f %.0f %.0f\n", ourSoldier, at.x, at.y,
+                              at.z);
+                }
+              }
               if (known.empty()) {
                 if (objectCount <= 3) {
                   std::printf("  об'єкт: шаблон %u, номер %u, позиція %.1f %.1f %.1f\n",
@@ -2818,9 +2842,23 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
 
     // Доки гравець не з'явився, від першої особи дивитися нема з чого:
     // солдата ще немає. Тоді працює камера екрана появи з Init.con.
-    if (hostedServer && hostedClient && localSoldierId != 0) {
-      eye = hostedClient->interpolatedPosition(localSoldierId);
+    const auto remoteSoldier =
+        remote != nullptr ? remote->soldierPosition() : std::optional<obf2::Vec3f>{};
+    if ((hostedServer && hostedClient && localSoldierId != 0) || remoteSoldier) {
+      // Місце солдата дає той, хто ним володіє: у власній грі наш сервер,
+      // на справжньому — той сервер.
+      eye = remoteSoldier ? *remoteSoldier : hostedClient->interpolatedPosition(localSoldierId);
       eye.y += 1.7f;  // зріст солдата: камера на рівні очей
+
+      // Мишу читаємо й на справжньому сервері: рухати солдата ми ще не
+      // вміємо (потік дій гравця не розібраний), але роззирнутися можна.
+      if (remoteSoldier) {
+        const auto raw = device->readInput();
+        constexpr float kMouseSensitivity = 0.15f;
+        yaw += raw.mouseDeltaX * kMouseSensitivity;
+        pitch -= raw.mouseDeltaY * kMouseSensitivity;
+        pitch = std::max(-89.0f, std::min(89.0f, pitch));
+      }
 
       constexpr float kToRadians = 3.14159265358979323846f / 180.0f;
       const float yawRadians = yaw * kToRadians;
@@ -2860,7 +2898,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     // ближче за неї, зникає — і крізь стіну, до якої підійшов упритул,
     // видно наскрізь. Для оглядача моделей камера й так далеко, тому там
     // лишаємо пропорційну — вона дає кращу точність глибини.
-    const bool firstPerson = hostedServer != nullptr;
+    const bool firstPerson = hostedServer != nullptr || remoteSoldier.has_value();
     const float nearPlane = firstPerson ? 0.1f : scene.radius * 0.002f + 0.05f;
 
     // Далекість беремо з даних рівня: за кінцем туману видимість нульова,
