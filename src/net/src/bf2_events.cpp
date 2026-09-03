@@ -519,6 +519,29 @@ std::optional<bool> ghostFlag(std::span<const std::byte> packet) {
   return *hasGhosts != 0;
 }
 
+std::optional<ControlObjectState> readControlObjectState(std::span<const std::byte> packet) {
+  BitReader reader(packet);
+  const auto header = enterGhosts(reader);
+  if (!header || !header->controlObjectState) return std::nullopt;
+
+  ControlObjectState out;
+  const auto first = reader.readBits(12);
+  if (!first) return std::nullopt;
+  out.first = *first;
+
+  // Лічильник: знак і 31 біт, як і числа в блоці MapInfo.
+  const auto sign = reader.readBits(1);
+  const auto value = reader.readBits(31);
+  if (!sign || !value) return std::nullopt;
+  out.counter = static_cast<std::int32_t>(*value);
+  if (*sign == 1) out.counter = -out.counter;
+
+  const auto position = readVector(reader);
+  if (!position) return std::nullopt;
+  out.position = *position;
+  return out;
+}
+
 std::optional<GhostHeader> readGhostHeader(std::span<const std::byte> packet) {
   BitReader reader(packet);
   return enterGhosts(reader);

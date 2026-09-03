@@ -21,8 +21,13 @@ std::optional<JoinStep> JoinSequence::next(Clock::time_point now) {
   if (step_ == JoinStep::Done) return std::nullopt;
   // Доки сервер не сказав, який рівень він грає, слати нема чого.
   if (!levelReady_ || !clientLoaded_) return std::nullopt;
-  // Перший крок іде без чекання — паузу тримаємо лише між кроками.
-  if (started_ && now - last_ < kStepDelay) return std::nullopt;
+  // Перший крок іде без чекання — паузу тримаємо лише між кроками. Після
+  // екрана появи паузи немає взагалі: три події вибору йдуть поспіль.
+  const bool afterChoice = step_ == JoinStep::Team || step_ == JoinStep::Kit ||
+                           step_ == JoinStep::Group;
+  const auto wait = afterChoice ? std::chrono::duration_cast<Clock::duration>(kChoiceDelay)
+                                : std::chrono::duration_cast<Clock::duration>(kStepDelay);
+  if (started_ && now - last_ < wait) return std::nullopt;
 
   // Кроки, які самі нічого не шлють, проходимо тут-таки — інакше на
   // кожен із них марно згорала б ціла пауза.

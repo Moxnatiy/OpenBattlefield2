@@ -686,6 +686,7 @@ struct RemoteWorld {
   int ghostPackets = 0, ghostRecords = 0;
   int ghostFlagSet = 0, ghostFlagClear = 0, ghostUnparsed = 0;
   int ghostControlled = 0;
+  int controlStates = 0;
   std::set<std::uint16_t> ghostObjects;
   std::size_t dataBytes = 0;
   std::uint8_t sequence = 0;
@@ -946,6 +947,16 @@ struct RemoteWorld {
           } else {
             ++ghostUnparsed;
           }
+          // Наше власне місце сервер шле окремо від решти привидів —
+          // станом керованого об'єкта.
+          if (const auto state = obf2::net::bf2::readControlObjectState(*more)) {
+            if (controlStates < 3) {
+              std::printf("  наше місце: %.1f %.1f %.1f (лічильник %d)\n", state->position.x,
+                          state->position.y, state->position.z, state->counter);
+            }
+            ++controlStates;
+            if (ourSoldier != 0) objects[ourSoldier] = state->position;
+          }
           if (const auto ghost = obf2::net::bf2::readGhostHeader(*more)) {
             ++ghostPackets;
             // Прапорець «є стан керованого об'єкта» — це найпряміша
@@ -1194,7 +1205,12 @@ struct RemoteWorld {
                 ghostPackets, ghostRecords, ghostObjects.size());
     std::printf("  прапорець привидів: стоїть %d, знято %d, не дочитали %d\n", ghostFlagSet,
                 ghostFlagClear, ghostUnparsed);
-    std::printf("  пакетів зі станом керованого об'єкта: %d\n", ghostControlled);
+    std::printf("  пакетів зі станом керованого об'єкта: %d, розібрано %d\n",
+                ghostControlled, controlStates);
+    if (ourSoldier != 0) {
+      std::printf("  наш об'єкт %u у записах привидів: %s\n", ourSoldier,
+                  ghostObjects.count(ourSoldier) ? "є" : "немає");
+    }
     if (!checked.empty()) {
       std::printf("  різних шаблонів: %zu\n", checked.size());
       for (const auto& [stage, count] : stageCounts) {
