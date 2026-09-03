@@ -190,6 +190,46 @@ inline constexpr std::uint32_t kNetSelectKit = 8;
 // найпряміша ознака, що поява вдалася.
 inline constexpr std::uint32_t kNetPlayerSpawned = 9;
 
+// Один набір дій гравця — те, що клієнт шле серверу тридцять разів на
+// секунду. Розкладка з `PlayerActionManager::processReceivedPacket`
+// (0x44d670) і звірена зі знятим трафіком оригіналу:
+//
+//   1 біт                 чи є дії
+//   4 біти                скільки наборів у пакеті (оригінал шле три)
+//   9 бітів               номер (у дампі змінюється; призначення не
+//                         з'ясоване)
+//   1 біт знак + 31 біт   лічильник вводу, росте на одиницю за пакет
+//   далі на кожен набір:
+//      6 разів: 1 біт знака + 15 бітів значення
+//      32 біти  маска кнопок
+//      9 бітів  (у дампі завжди нуль)
+//      1 біт    прапорець (у дампі одиниця)
+//
+// Що означають осі, видно з дампу: коли гравець біг уперед, третя ось
+// стояла на 99, а решта на нулі; п'ята й шоста весь час дрібно
+// смикалися — це миша. Маска кнопок у ті самі секунди дорівнювала 32,
+// коли гравець тримав спринт, і нулю, коли відпускав.
+struct PlayerAction {
+  std::int16_t axes[6] = {0, 0, 0, 0, 0, 0};
+  std::uint32_t buttons = 0;
+  bool flag = true;
+};
+
+// Осі, які ми впізнали. Решта трьох у знятому трафіку жодного разу не
+// відхилилася від нуля, тож їх не називаємо.
+inline constexpr int kAxisForward = 3;
+inline constexpr int kAxisMouseX = 4;
+inline constexpr int kAxisMouseY = 5;
+// Повний хід уперед у дампі — рівно 99.
+inline constexpr std::int16_t kAxisFull = 99;
+// Єдина кнопка, яку вдалося назвати: спринт.
+inline constexpr std::uint32_t kButtonSprint = 32;
+
+// Пакет із самими діями: подій у ньому немає.
+std::vector<std::byte> writePlayerActions(std::uint8_t connectionId, const ExtendedHeader& header,
+                                          std::uint32_t tick, const PlayerAction* actions,
+                                          std::size_t count, std::uint32_t number = 0);
+
 // `value` передається у корисних даних 32-бітним числом — так його
 // читають ті події, що несуть вибір (команда, набір, місце появи).
 std::vector<std::byte> writePostRemoteEvent(std::uint8_t connectionId,

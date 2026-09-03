@@ -725,6 +725,28 @@ struct RemoteWorld {
 
   bool havePoint = false;
   float chosenX = 0.0f, chosenZ = 0.0f, chosenWorld = 2048.0f;
+  // Ввід, який шлемо серверу. Тримаємо його тут, бо шле його цикл
+  // кадрів, а складає — той, хто читає клавіатуру й мишу.
+  obf2::net::bf2::PlayerAction action;
+  std::uint32_t actionTick = 0;
+  std::chrono::steady_clock::time_point lastAction = std::chrono::steady_clock::now();
+
+  // Відіслати поточний ввід. Оригінал робить це тридцять разів на
+  // секунду й кладе в пакет три останні набори — на випадок втрати.
+  void sendActions() {
+    if (socket == nullptr || ourSoldier == 0) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (now - lastAction < std::chrono::milliseconds(33)) return;
+    lastAction = now;
+
+    obf2::net::bf2::ExtendedHeader header;
+    header.sequence = sequence++ & 0x3F;
+    header.ack = lastServerSequence;
+    header.ackBits = 0xFFFFFFFFu;
+    const obf2::net::bf2::PlayerAction three[3] = {action, action, action};
+    socket->send(obf2::net::bf2::writePlayerActions(id, header, actionTick++, three, 3));
+  }
+
   // Наш номер гравця й команда — із `CreatePlayerEvent` за іменем.
   int ourPlayer = -1;
   int ourTeam = 0;
@@ -2820,7 +2842,11 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     // Сервер шле пінги й чекає відповіді: якщо мовчати кадр за кадром,
     // він нас відключить. Тому зв'язок крутиться разом із картинкою, а
     // чекання тримаємо коротким — інакше це були б завмирання.
-    if (remote != nullptr) remote->pump(1);
+    if (remote != nullptr) {
+      remote->pump(1);
+      // Ввід іде окремо від решти розмови й зі своєю частотою.
+      remote->sendActions();
+    }
 
     auto acquired = device->beginFrame();
     if (!acquired) continue;
@@ -2879,14 +2905,23 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       eye = remoteSoldier ? *remoteSoldier : hostedClient->interpolatedPosition(localSoldierId);
       eye.y += 1.7f;  // зріст солдата: камера на рівні очей
 
-      // Мишу читаємо й на справжньому сервері: рухати солдата ми ще не
-      // вміємо (потік дій гравця не розібраний), але роззирнутися можна.
-      if (remoteSoldier) {
+      // На справжньому сервері ввід іде туди ж, куди й у власній грі, —
+      // тільки в іншому вигляді: потоком дій гравця.
+      if (remoteSoldier && remote != nullptr) {
         const auto raw = device->readInput();
         constexpr float kMouseSensitivity = 0.15f;
         yaw += raw.mouseDeltaX * kMouseSensitivity;
         pitch -= raw.mouseDeltaY * kMouseSensitivity;
         pitch = std::max(-89.0f, std::min(89.0f, pitch));
+
+        obf2::net::bf2::PlayerAction& out = remote->action;
+        out = obf2::net::bf2::PlayerAction{};
+        // Повний хід уперед у дампі — 99, тож наш ±1 множимо на нього.
+        out.axes[obf2::net::bf2::kAxisForward] =
+            static_cast<std::int16_t>(raw.moveForward * obf2::net::bf2::kAxisFull);
+        out.axes[obf2::net::bf2::kAxisMouseX] = static_cast<std::int16_t>(raw.mouseDeltaX);
+        out.axes[obf2::net::bf2::kAxisMouseY] = static_cast<std::int16_t>(raw.mouseDeltaY);
+        if (raw.sprint) out.buttons |= obf2::net::bf2::kButtonSprint;
       }
 
       constexpr float kToRadians = 3.14159265358979323846f / 180.0f;

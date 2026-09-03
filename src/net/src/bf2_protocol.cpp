@@ -183,6 +183,36 @@ std::vector<std::byte> writeDataBlockChunk(std::uint8_t connectionId, const Exte
   return finishDataPacket(buffer, writer);
 }
 
+std::vector<std::byte> writePlayerActions(std::uint8_t connectionId, const ExtendedHeader& header,
+                                          std::uint32_t tick, const PlayerAction* actions,
+                                          std::size_t count, std::uint32_t number) {
+  std::vector<std::byte> buffer(128);
+  BitWriter writer(buffer);
+  writeDataHeader(writer, connectionId, header);
+
+  writer.writeBits(1, 1);  // дії є
+  writer.writeBits(static_cast<std::uint32_t>(count) & 0xF, 4);
+  writer.writeBits(number & 0x1FF, 9);
+  if (count > 0) {
+    writer.writeBits(0, 1);  // знак лічильника
+    writer.writeBits(tick & 0x7FFFFFFFu, 31);
+  }
+  for (std::size_t i = 0; i < count; ++i) {
+    const PlayerAction& action = actions[i];
+    for (const std::int16_t axis : action.axes) {
+      const bool negative = axis < 0;
+      writer.writeBits(negative ? 1 : 0, 1);
+      writer.writeBits(static_cast<std::uint32_t>(negative ? -axis : axis) & 0x7FFF, 15);
+    }
+    writer.writeBits(action.buttons, 32);
+    writer.writeBits(0, 9);
+    writer.writeBits(action.flag ? 1 : 0, 1);
+  }
+
+  writer.writeBits(0, 1);  // подій немає
+  return finishDataPacket(buffer, writer);
+}
+
 std::vector<std::byte> writePostRemoteEvent(std::uint8_t connectionId,
                                             const ExtendedHeader& header, std::uint8_t batch,
                                             std::uint32_t category, std::uint32_t event,

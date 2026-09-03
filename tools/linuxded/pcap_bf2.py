@@ -151,6 +151,53 @@ def load_event_table():
 GAME_EVENTS, EVENT_WIDTHS, EVENT_BRANCHY = load_event_table()
 
 
+def read_actions(bits):
+    """Потік дій гравця, якщо він у пакеті є.
+
+    Розкладка з `PlayerActionManager::processReceivedPacket` (0x44d670):
+
+        1 біт                  чи є дії
+        4 біти                 скільки записів
+        9 біт                  номер
+        1 біт знак + 31 біт    число (спільне для всіх записів)
+        далі кожен запис:
+            6 разів: 1 біт знака + 15 бітів значення
+            32 біти  маска кнопок
+            9 бітів  номер запису
+            1 біт    прапорець
+
+    Розмір запису в пам'яті — 28 байтів, і зсуви (+4..+0xe слова,
+    +0x10 u32, +0x14 u32, +0x18 байт) сходяться з цим переліком точно.
+    """
+    if bits.read(1) != 1:
+        return None
+    count = bits.read(4)
+    number = bits.read(9)
+    if count is None or number is None:
+        return None
+    common = None
+    if count > 0:
+        sign = bits.read(1)
+        value = bits.read(31)
+        if value is None:
+            return None
+        common = -value if sign == 1 else value
+    records = []
+    for _ in range(count or 0):
+        axes = []
+        for _ in range(6):
+            sign = bits.read(1)
+            value = bits.read(15)
+            if value is None:
+                return {"count": count, "number": number, "common": common, "records": records}
+            axes.append(-value if sign == 1 else value)
+        buttons = bits.read(32)
+        tick = bits.read(9)
+        flag = bits.read(1)
+        records.append({"axes": axes, "buttons": buttons, "tick": tick, "flag": flag})
+    return {"count": count, "number": number, "common": common, "records": records}
+
+
 def describe_events(payload):
     """Події з пакета даних. Повертає перелік рядків.
 
