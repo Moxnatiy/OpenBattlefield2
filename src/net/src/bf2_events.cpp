@@ -539,6 +539,10 @@ std::optional<ControlObjectState> readControlObjectState(std::span<const std::by
   const auto position = readVector(reader);
   if (!position) return std::nullopt;
   out.position = *position;
+
+  const auto networkId = reader.readBits(16);
+  if (!networkId) return std::nullopt;
+  out.networkId = static_cast<std::uint16_t>(*networkId);
   return out;
 }
 

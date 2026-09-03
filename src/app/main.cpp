@@ -816,6 +816,9 @@ struct RemoteWorld {
   // виправлення від сервера приймаємо як істину.
   obf2::server::BodyState body;
   bool bodyReady = false;
+  int corrections = 0;
+  float correctionSum = 0.0f;
+  float correctionMax = 0.0f;
   const obf2::level::Level* terrain = nullptr;
   const obf2::server::CollisionWorld* collision = nullptr;
   obf2::server::PhysicsConstants physics;
@@ -823,6 +826,16 @@ struct RemoteWorld {
 
   // Виправлення від сервера: ставимо тіло туди, де його бачить сервер.
   void correct(const obf2::Vec3f& position) {
+    // Наскільки ми розійшлися з сервером. Це міра якості передбачення:
+    // поки розходження дрібне, різкої підміни місця не видно, і
+    // згладжувати нема чого.
+    if (bodyReady) {
+      const obf2::Vec3f delta = position - body.position;
+      const float distance = std::sqrt(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z);
+      correctionSum += distance;
+      correctionMax = std::max(correctionMax, distance);
+      ++corrections;
+    }
     body.position = position;
     if (!bodyReady) body.velocity = obf2::Vec3f{};
     bodyReady = true;
@@ -885,6 +898,9 @@ struct RemoteWorld {
   int ourTeam = 0;
   // Об'єкт, яким ми керуємо. Його називає `EnterVehicleEvent`.
   std::uint16_t ourSoldier = 0;
+  // Об'єкт, про який сервер шле стан керованого об'єкта. До появи це не
+  // солдат, а камера екрана появи.
+  std::uint16_t controlObject = 0;
 
   // Де зараз наш солдат. Порожньо — ще не з'явилися.
   std::optional<obf2::Vec3f> soldierPosition() const {
@@ -998,7 +1014,12 @@ struct RemoteWorld {
 
   // Один оберт: рухаємо ланцюжок появи і читаємо, що прийшло. Чекати
   // довго можна лише поза кадром — у кадрі це були б завмирання.
-  void pump(int timeoutMs) {
+  // Один оберт розмови: відіслати те, що назріло, і **розібрати один
+  // пакет**. Повертає, чи пакет був, — бо викликати це треба доти, доки
+  // черга не спорожніє. Черга сокета не зникає сама: якщо за кадр брати
+  // з неї один пакет, а сервер шле більше, вона росте, і ми дивимося на
+  // світ таким, яким він був кілька секунд тому.
+  bool pump(int timeoutMs) {
       // Коли слати наступний крок, вирішує JoinSequence — усі правила
       // про паузи й очікування там, разом із тестом. Тут лишається
       // скласти пакет і відзвітувати, що ми його відіслали.
@@ -1081,9 +1102,9 @@ struct RemoteWorld {
       }
 
       const auto more = socket->receive(timeoutMs);
-      if (!more) return;
+      if (!more) return false;
       const auto parsed = obf2::net::bf2::readPacket(*more);
-      if (!parsed) return;
+      if (!parsed) return true;
       if (parsed->extended) lastServerSequence = parsed->extended->sequence;
 
       switch (parsed->kind) {
@@ -1110,14 +1131,29 @@ struct RemoteWorld {
           // станом керованого об'єкта.
           if (const auto state = obf2::net::bf2::readControlObjectState(*more)) {
             if (controlStates < 3) {
-              std::printf("  наше місце: %.1f %.1f %.1f (лічильник %d)\n", state->position.x,
-                          state->position.y, state->position.z, state->counter);
+              std::printf("  наше місце: %.1f %.1f %.1f (лічильник %d, об'єкт %u)\n",
+                          state->position.x, state->position.y, state->position.z, state->counter,
+                          state->networkId);
             }
             ++controlStates;
+            // Номер керованого об'єкта сервер каже прямо. Але керований
+            // об'єкт — не завжди солдат: до появи це камера екрана появи
+            // (на Dalian номер 257 із місцем `setBeforeSpawnCamera`).
+            // Рушій розрізняє їх викликом `getSoldier` одразу після
+            // `getObject`, а ми його ще не вміємо — тому номер поки лише
+            // звіряємо з подією посадки, а не заміняємо ним її.
+            if (state->networkId != controlObject) {
+              controlObject = state->networkId;
+              std::printf("  керований об'єкт: %u%s\n", controlObject,
+                          (ourSoldier != 0 && controlObject != ourSoldier) ? " (не наш солдат!)"
+                                                                          : "");
+            }
             if (ourSoldier != 0) objects[ourSoldier] = state->position;
             // Сервер — істина: ставимо тіло туди, де він нас бачить, а
-            // далі знову рахуємо самі.
-            correct(state->position);
+            // далі знову рахуємо самі. Але тільки коли керований об'єкт —
+            // це наш солдат: місцем камери екрана появи тіло рухати нема
+            // чого, і саме воно давало стрибок на всю карту при появі.
+            if (ourSoldier != 0 && state->networkId == ourSoldier) correct(state->position);
           }
           if (const auto ghost = obf2::net::bf2::readGhostHeader(*more)) {
             ++ghostPackets;
@@ -1353,6 +1389,7 @@ struct RemoteWorld {
           }
           break;
       }
+      return true;
   }
 
   void report() {
@@ -1369,6 +1406,10 @@ struct RemoteWorld {
                 ghostFlagClear, ghostUnparsed);
     std::printf("  пакетів зі станом керованого об'єкта: %d, розібрано %d\n",
                 ghostControlled, controlStates);
+    if (corrections > 0) {
+      std::printf("  виправлень від сервера: %d, розходження в середньому %.2f м, найбільше %.2f м\n",
+                  corrections, correctionSum / static_cast<float>(corrections), correctionMax);
+    }
     if (ourSoldier != 0) {
       std::printf("  наш об'єкт %u у записах привидів: %s\n", ourSoldier,
                   ghostObjects.count(ourSoldier) ? "є" : "немає");
@@ -2936,12 +2977,33 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   }
 
   int frame = 0;
+  // Скільки часу минуло від попереднього кадру. Передбачення руху має
+  // рахувати саме його: із твердою 1/60 солдат ішов би повільніше за
+  // камеру на швидкій машині й швидше на повільній, і рух смикався б
+  // рівно настільки, наскільки кадри нерівні.
+  auto lastFrameStart = std::chrono::steady_clock::now();
+  float frameStep = 1.0f / 60.0f;
   while (device->pumpEvents()) {
+    {
+      const auto nowFrame = std::chrono::steady_clock::now();
+      frameStep = std::chrono::duration<float>(nowFrame - lastFrameStart).count();
+      lastFrameStart = nowFrame;
+      // Довгий кадр (завантаження, вікно перетягли) не має перетворитися
+      // на стрибок через півкарти.
+      frameStep = std::min(frameStep, 0.1f);
+    }
     // Сервер шле пінги й чекає відповіді: якщо мовчати кадр за кадром,
     // він нас відключить. Тому зв'язок крутиться разом із картинкою, а
     // чекання тримаємо коротким — інакше це були б завмирання.
     if (remote != nullptr) {
+      // Вибираємо **всю** чергу, а не один пакет за кадр. Інакше вона
+      // росте: сервер шле привидів частіше, ніж ми малюємо кадри, і
+      // кожне «наше місце» приходить із запізненням, яке накопичується.
+      // Саме це виглядало як гігантська затримка й ривки: ми ставили
+      // солдата туди, де він був кілька секунд тому.
       remote->pump(1);
+      while (remote->pump(0)) {
+      }
       // Ввід іде окремо від решти розмови й зі своєю частотою.
       remote->sendActions();
     }
@@ -3023,7 +3085,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
 
         // І одразу рахуємо власний рух: чекати на виправлення сервера
         // означало б ривки раз на кілька десятих секунди.
-        remote->predict(1.0f / 60.0f, yaw);
+        remote->predict(frameStep, yaw);
         eye = *remote->soldierPosition();
         eye.y += 1.7f;
       }

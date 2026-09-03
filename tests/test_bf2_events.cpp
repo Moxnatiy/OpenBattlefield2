@@ -122,8 +122,34 @@ void testGhostStreamIsWalkable() {
   CHECK(perObject.size() >= 10);
 }
 
+// Стан керованого об'єкта: сервер сам каже, яким об'єктом ми керуємо.
+// Номер їде 16 бітами одразу за трійкою чисел, і рушій віддає його в
+// `NetworkManager::getObject` (0x445dc3) — тобто це не здогад.
+void testControlObjectStateNamesItsObject() {
+  const auto packets = loadCapture(std::string(OBF2_TEST_DATA) + "/bf2-ghosts.bin");
+  CHECK(!packets.empty());
+
+  std::map<std::uint16_t, int> perObject;
+  std::int32_t previousCounter = -1;
+  for (const auto& packet : packets) {
+    const auto state = obf2::net::bf2::readControlObjectState(packet);
+    if (!state) continue;
+    ++perObject[state->networkId];
+    // Керований об'єкт існує, тобто нульового номера тут бути не може.
+    CHECK(state->networkId != 0);
+    // Лічильник у знятому потоці лише росте.
+    CHECK(state->counter >= previousCounter);
+    previousCounter = state->counter;
+  }
+
+  CHECK(!perObject.empty());
+  // За один зняток об'єкт не міняється: ми весь час керуємо тим самим.
+  CHECK_EQ(perObject.size(), std::size_t(1));
+}
+
 TEST_MAIN({
   testWorldCaptureIsFullyDecoded();
   testHeightsAreOnTheTerrain();
   testGhostStreamIsWalkable();
+  testControlObjectStateNamesItsObject();
 });
