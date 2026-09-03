@@ -552,27 +552,9 @@ std::uint32_t GameServer::spawnSoldier(Player& player) {
 }
 
 float GameServer::groundHeightAt(const Vec3f& position) const {
-  if (terrain_ == nullptr || terrain_->heights.empty()) return 0.0f;
-
-  // Білінійна вибірка з карти висот: без неї солдат стрибав би сходинками
-  // по вузлах сітки.
-  const float half = terrain_->halfExtent();
-  const float gx = position.x / terrain_->primary.scale.x + half;
-  const float gz = position.z / terrain_->primary.scale.z + half;
-
-  const int x0 = static_cast<int>(std::floor(gx));
-  const int z0 = static_cast<int>(std::floor(gz));
-  const float tx = gx - static_cast<float>(x0);
-  const float tz = gz - static_cast<float>(z0);
-
-  const float h00 = terrain_->heightAt(x0, z0);
-  const float h10 = terrain_->heightAt(x0 + 1, z0);
-  const float h01 = terrain_->heightAt(x0, z0 + 1);
-  const float h11 = terrain_->heightAt(x0 + 1, z0 + 1);
-
-  const float top = h00 + (h10 - h00) * tx;
-  const float bottom = h01 + (h11 - h01) * tx;
-  return top + (bottom - top) * tz;
+  // Сама вибірка живе в рівні: нею користується і клієнт, коли передбачає
+  // рух свого солдата.
+  return terrain_ == nullptr ? 0.0f : terrain_->groundHeightAt(position);
 }
 
 void GameServer::simulate(float step) {

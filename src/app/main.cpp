@@ -30,6 +30,7 @@
 #include "obf2/level/gameplay.h"
 #include "obf2/level/level.h"
 #include "obf2/server/game_client.h"
+#include "obf2/server/physics.h"
 #include <set>
 
 #include "obf2/net/bf2_events.h"
@@ -441,6 +442,80 @@ std::string findMenuBackground(obf2::FileSystem& files) {
 // наново — вже у грі.
 // Усе, що ми знаємо про рівень: назва шаблона й де він стоїть.
 // Сервер шле об'єкти без назв, лише номерами, тож впізнаємо їх за місцем.
+// Константи руху солдата з даних гри. Потрібні обом шляхам: і власному
+// серверу, і передбаченню руху на справжньому — інакше наше передбачення
+// розходилося б із тим, що рахує сервер.
+obf2::server::PhysicsConstants loadPhysics(obf2::FileSystem& files) {
+  obf2::server::PhysicsConstants constants;
+  obf2::engine::Console console;
+  constants.bind(console);
+  obf2::con::Interpreter interpreter(files,
+                                     [&](const obf2::con::Command& c) { console.execute(c); });
+  interpreter.runFile("objects/soldiers/common/common.con");
+  return constants;
+}
+
+// Колізійний світ із розставлених об'єктів.
+//
+// Потрібен обом шляхам: власному серверу — щоб рухати тіла, і клієнту на
+// справжньому сервері — щоб передбачення руху не провалювалося крізь
+// підлогу будівлі. Доки він жив усередині гілки `--hosted`, клієнт знав
+// лише терен.
+std::unique_ptr<obf2::server::CollisionWorld> buildCollisionWorld(
+    obf2::FileSystem& files, const obf2::game::Registry& registry,
+    const std::vector<obf2::level::StaticObject>& objects) {
+  auto world = std::make_unique<obf2::server::CollisionWorld>();
+  int withCollision = 0, withoutCollision = 0;
+  std::unordered_map<std::string, std::shared_ptr<obf2::mesh::CollisionMesh>> cache;
+
+  for (const auto& object : objects) {
+    auto cached = cache.find(object.templateName);
+    if (cached == cache.end()) {
+      std::shared_ptr<obf2::mesh::CollisionMesh> loaded;
+      if (const auto* root = registry.find(object.templateName)) {
+        // Ім'я меша зіткнень — окрема властивість шаблону.
+        const std::string_view name = root->text("collisionMesh");
+        if (!name.empty()) {
+          const std::string path = resolveCollisionPath(files, root->file, std::string(name));
+          if (!path.empty()) {
+            if (const auto bytes = files.read(path)) {
+              if (auto mesh = obf2::mesh::loadCollisionMesh(*bytes)) {
+                loaded = std::make_shared<obf2::mesh::CollisionMesh>(std::move(*mesh));
+              }
+            }
+          }
+        }
+      }
+      cached = cache.emplace(object.templateName, std::move(loaded)).first;
+    }
+    if (cached->second == nullptr) {
+      ++withoutCollision;
+      continue;
+    }
+    const auto* layer = cached->second->layer(obf2::mesh::ColType::Soldier);
+    if (layer == nullptr) {
+      ++withoutCollision;
+      continue;
+    }
+
+    // Рослинність приходить готовою матрицею, решта — позиція з кутами.
+    obf2::Mat4 transform = object.transform;
+    if (!object.hasTransform) {
+      transform = obf2::translation(object.position);
+      if (object.hasRotation) {
+        transform = transform * obf2::rotationYawPitchRoll(object.rotation.x, object.rotation.y,
+                                                           object.rotation.z);
+      }
+    }
+    world->addLayer(*layer, transform);
+    ++withCollision;
+  }
+
+  std::printf("  зіткнення: %d об'єктів, %zu трикутників у %zu комірках (без геометрії %d)\n",
+              withCollision, world->triangleCount(), world->cellCount(), withoutCollision);
+  return world;
+}
+
 struct KnownObject {
   std::string name;
   obf2::Vec3f position;
@@ -731,6 +806,60 @@ struct RemoteWorld {
   std::uint32_t actionTick = 0;
   std::chrono::steady_clock::time_point lastAction = std::chrono::steady_clock::now();
 
+  // Передбачення власного руху.
+  //
+  // Сервер не шле нам позицію нашого ж солдата щотакту — лише зрідка
+  // виправляє (`PlayerControlObjectNetworkable::predict`). Якщо чекати
+  // тих виправлень, рух виглядає як ривки раз на кілька десятих секунди,
+  // а між ними солдат стоїть у повітрі там, де його лишило попереднє.
+  // Тому рух рахуємо самі — тією ж фізикою, що й наш сервер, — а
+  // виправлення від сервера приймаємо як істину.
+  obf2::server::BodyState body;
+  bool bodyReady = false;
+  const obf2::level::Level* terrain = nullptr;
+  const obf2::server::CollisionWorld* collision = nullptr;
+  obf2::server::PhysicsConstants physics;
+  float maxSpeed = 3.9f;  // phy-soldier-run-speed; заповнюється з даних гри
+
+  // Виправлення від сервера: ставимо тіло туди, де його бачить сервер.
+  void correct(const obf2::Vec3f& position) {
+    body.position = position;
+    if (!bodyReady) body.velocity = obf2::Vec3f{};
+    bodyReady = true;
+  }
+
+  // Один крок передбачення. `yaw` — куди дивиться гравець.
+  void predict(float step, float yawDegrees) {
+    if (!bodyReady || terrain == nullptr) return;
+    constexpr float kToRadians = 3.14159265358979323846f / 180.0f;
+    const float yaw = yawDegrees * kToRadians;
+
+    // Вісь уперед у потоці дій — це ±99; нам потрібен напрямок 0..1.
+    const float forward =
+        static_cast<float>(action.axes[obf2::net::bf2::kAxisForward]) /
+        static_cast<float>(obf2::net::bf2::kAxisFull);
+    // Нульовий кут дивиться вздовж +Z — так само, як рахує сервер.
+    const obf2::Vec3f wish{std::sin(yaw) * forward, 0.0f, std::cos(yaw) * forward};
+
+    const bool sprint = (action.buttons & obf2::net::bf2::kButtonSprint) != 0;
+    const float speed = sprint ? physics.sprintSpeed : maxSpeed;
+
+    // Земля — це не тільки рельєф: на підлогу будівлі й на сходи теж
+    // треба спиратися. Беремо вищу з двох, як це робить наш сервер.
+    float ground = terrain->groundHeightAt(body.position);
+    if (collision != nullptr) {
+      obf2::Vec3f from = body.position;
+      from.y += physics.stepHeight();
+      float surface = 0.0f;
+      if (collision->groundHeight(from, physics.stepHeight() + 2.0f, physics.feetContactNormal,
+                                  &surface) &&
+          surface > ground) {
+        ground = surface;
+      }
+    }
+    obf2::server::stepSoldier(body, wish, speed, false, physics, ground, step);
+  }
+
   // Відіслати поточний ввід. Оригінал робить це тридцять разів на
   // секунду й кладе в пакет три останні набори — на випадок втрати.
   void sendActions() {
@@ -760,6 +889,10 @@ struct RemoteWorld {
   // Де зараз наш солдат. Порожньо — ще не з'явилися.
   std::optional<obf2::Vec3f> soldierPosition() const {
     if (ourSoldier == 0) return std::nullopt;
+    // Показуємо передбачене місце, а не останнє виправлення: між
+    // виправленнями минають десяті секунди, і без передбачення рух
+    // виглядав би ривками.
+    if (bodyReady) return body.position;
     const auto found = objects.find(ourSoldier);
     if (found == objects.end()) return std::nullopt;
     return found->second;
@@ -982,6 +1115,9 @@ struct RemoteWorld {
             }
             ++controlStates;
             if (ourSoldier != 0) objects[ourSoldier] = state->position;
+            // Сервер — істина: ставимо тіло туди, де він нас бачить, а
+            // далі знову рахуємо самі.
+            correct(state->position);
           }
           if (const auto ghost = obf2::net::bf2::readGhostHeader(*more)) {
             ++ghostPackets;
@@ -1297,6 +1433,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   // Сервер і клієнт живуть увесь час, а не лише під час завантаження: в
   // одиночній грі саме вони й рухають світ.
   std::unique_ptr<obf2::server::GameServer> hostedServer;
+  // Геометрія зіткнень для передбачення руху на справжньому сервері.
+  // Своїм сервером володіє він сам, а тут вона наша.
+  std::unique_ptr<obf2::server::CollisionWorld> remoteCollision;
   std::unique_ptr<obf2::server::GameClient> hostedClient;
   std::uint32_t localSoldierId = 0;
 
@@ -1429,12 +1568,6 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       // Рельєф для зіткнення з землею: без нього солдат падає без кінця.
       gameServer.setTerrain(&*level);
 
-      // Геометрія зіткнень: для кожного статичного об'єкта беремо шар
-      // солдата з .collisionmesh і переводимо у світові координати.
-      auto collisionWorld = std::make_unique<obf2::server::CollisionWorld>();
-      int withCollision = 0, withoutCollision = 0;
-      std::unordered_map<std::string, std::shared_ptr<obf2::mesh::CollisionMesh>> collisionCache;
-
       // Техніка теж має зупиняти солдата: вона стоїть у світі сервера, а
       // не в статиці рівня, тому додаємо її окремо.
       std::vector<obf2::level::StaticObject> collisionObjects = level->objects;
@@ -1448,55 +1581,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         collisionObjects.push_back(std::move(vehicle));
       }
 
-      for (const auto& object : collisionObjects) {
-        auto cached = collisionCache.find(object.templateName);
-        if (cached == collisionCache.end()) {
-          std::shared_ptr<obf2::mesh::CollisionMesh> loaded;
-          if (const auto* root = registry.find(object.templateName)) {
-            // Ім'я меша зіткнень — окрема властивість шаблону.
-            const std::string_view name = root->text("collisionMesh");
-            if (!name.empty()) {
-              const std::string path =
-                  resolveCollisionPath(files, root->file, std::string(name));
-              if (!path.empty()) {
-                if (const auto bytes = files.read(path)) {
-                  if (auto mesh = obf2::mesh::loadCollisionMesh(*bytes)) {
-                    loaded = std::make_shared<obf2::mesh::CollisionMesh>(std::move(*mesh));
-                  }
-                }
-              }
-            }
-          }
-          cached = collisionCache.emplace(object.templateName, std::move(loaded)).first;
-        }
-        if (cached->second == nullptr) {
-          ++withoutCollision;
-          continue;
-        }
-
-        const auto* layer = cached->second->layer(obf2::mesh::ColType::Soldier);
-        if (layer == nullptr) {
-          ++withoutCollision;
-          continue;
-        }
-
-        // Рослинність приходить готовою матрицею, решта — позиція з кутами.
-        obf2::Mat4 transform = object.transform;
-        if (!object.hasTransform) {
-          transform = obf2::translation(object.position);
-          if (object.hasRotation) {
-            transform = transform * obf2::rotationYawPitchRoll(object.rotation.x, object.rotation.y,
-                                                               object.rotation.z);
-          }
-        }
-        collisionWorld->addLayer(*layer, transform);
-        ++withCollision;
-      }
-
-      std::printf("  зіткнення: %d об'єктів, %zu трикутників у %zu комірках (без геометрії %d)\n",
-                  withCollision, collisionWorld->triangleCount(), collisionWorld->cellCount(),
-                  withoutCollision);
-      gameServer.setCollision(std::move(collisionWorld));
+      gameServer.setCollision(buildCollisionWorld(files, registry, collisionObjects));
 
       auto [clientSide, serverSide] = obf2::net::LoopbackConnection::createPair();
       gameServer.accept(std::move(serverSide));
@@ -2816,6 +2901,15 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   // і далі відповідати на пінги щокадру.
   if (remote != nullptr) {
     remote->join.setClientLoaded();
+    // Передбаченню руху потрібен той самий терен і ті самі константи, що
+    // й серверу: інакше воно розходилося б із ним щокроку.
+    remote->terrain = level ? &*level : nullptr;
+    remote->physics = loadPhysics(files);
+    remote->maxSpeed = remote->physics.runSpeed;
+    if (level) {
+      remoteCollision = buildCollisionWorld(files, registry, level->objects);
+      remote->collision = remoteCollision.get();
+    }
     std::printf("  зв'язок: рівень завантажено, продовжуємо розмову\n");
   }
 
@@ -2926,6 +3020,12 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         out.axes[obf2::net::bf2::kAxisMouseX] = static_cast<std::int16_t>(raw.mouseDeltaX);
         out.axes[obf2::net::bf2::kAxisMouseY] = static_cast<std::int16_t>(raw.mouseDeltaY);
         if (raw.sprint) out.buttons |= obf2::net::bf2::kButtonSprint;
+
+        // І одразу рахуємо власний рух: чекати на виправлення сервера
+        // означало б ривки раз на кілька десятих секунди.
+        remote->predict(1.0f / 60.0f, yaw);
+        eye = *remote->soldierPosition();
+        eye.y += 1.7f;
       }
 
       constexpr float kToRadians = 3.14159265358979323846f / 180.0f;

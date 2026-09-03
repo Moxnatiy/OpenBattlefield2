@@ -143,6 +143,14 @@ struct Level {
   float worldX(int x) const { return (static_cast<float>(x) - halfExtent()) * primary.scale.x; }
   float worldZ(int z) const { return (static_cast<float>(z) - halfExtent()) * primary.scale.z; }
   float halfExtent() const { return static_cast<float>(primary.size - 1) * 0.5f; }
+
+  // Висота терену під точкою — білінійною вибіркою з карти висот.
+  //
+  // Без згладжування солдат стрибав би сходинками по вузлах сітки. Це
+  // потрібно і серверу (він рухає тіла), і клієнту (він передбачає рух
+  // свого солдата, поки чекає на виправлення від сервера), тож живе тут,
+  // біля самої карти висот.
+  float groundHeightAt(const Vec3f& position) const;
 };
 
 // Монтує server.zip і client.zip рівня у точку Levels/<name>.

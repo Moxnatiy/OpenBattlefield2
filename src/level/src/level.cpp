@@ -586,3 +586,29 @@ mesh::RenderMesh buildWaterPlane(const Level& level) {
 }
 
 }  // namespace obf2::level
+
+namespace obf2::level {
+
+float Level::groundHeightAt(const Vec3f& position) const {
+  if (heights.empty()) return 0.0f;
+
+  const float half = halfExtent();
+  const float gx = position.x / primary.scale.x + half;
+  const float gz = position.z / primary.scale.z + half;
+
+  const int x0 = static_cast<int>(std::floor(gx));
+  const int z0 = static_cast<int>(std::floor(gz));
+  const float tx = gx - static_cast<float>(x0);
+  const float tz = gz - static_cast<float>(z0);
+
+  const float h00 = heightAt(x0, z0);
+  const float h10 = heightAt(x0 + 1, z0);
+  const float h01 = heightAt(x0, z0 + 1);
+  const float h11 = heightAt(x0 + 1, z0 + 1);
+
+  const float top = h00 + (h10 - h00) * tx;
+  const float bottom = h01 + (h11 - h01) * tx;
+  return top + (bottom - top) * tz;
+}
+
+}  // namespace obf2::level
