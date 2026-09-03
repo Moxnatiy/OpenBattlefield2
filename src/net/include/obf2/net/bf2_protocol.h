@@ -232,17 +232,49 @@ struct PlayerActions {
   std::vector<PlayerAction> actions;
 };
 
+// Розкладка потоку дій — **один опис на обидва напрями**.
+//
+// Те саме тіло і читає, і пише: різницю робить курсор (`ReadCursor` чи
+// `WriteCursor` із `bitstream.h`). Доки опис один, складач і розбирач не
+// можуть розійтися — а поки їх було двоє, кожне поле доводилося
+// вписувати двічі.
+//
+// Поля — з `PlayerActionManager::processReceivedPacket` (0x44d670).
+template <typename Cursor>
+bool serializePlayerActions(Cursor& cursor, PlayerActions& stream) {
+  std::uint32_t count = static_cast<std::uint32_t>(stream.actions.size());
+  if (!cursor.bits(count, 4)) return false;
+  if (!cursor.bits(stream.number, 9)) return false;
+  // На читанні це створює потрібну кількість наборів, на записі не
+  // змінює нічого: там count уже дорівнює розміру.
+  if (count > 15) return false;
+  stream.actions.resize(count);
+
+  if (count > 0 && !cursor.signedBits(stream.tick, 31)) return false;
+
+  for (PlayerAction& action : stream.actions) {
+    for (std::int16_t& axis : action.axes) {
+      std::int32_t value = axis;
+      if (!cursor.signedBits(value, 15)) return false;
+      axis = static_cast<std::int16_t>(value);
+    }
+    if (!cursor.bits(action.buttons, 32)) return false;
+    std::uint32_t spare = 0;  // у знятому трафіку завжди нуль
+    if (!cursor.bits(spare, 9)) return false;
+    if (!cursor.flag(action.flag)) return false;
+  }
+  return true;
+}
+
 // Пакет із самими діями: подій у ньому немає.
 std::vector<std::byte> writePlayerActions(std::uint8_t connectionId, const ExtendedHeader& header,
-                                          std::uint32_t tick, const PlayerAction* actions,
-                                          std::size_t count, std::uint32_t number = 0);
+                                          const PlayerActions& stream);
 
 // Прочитати потік дій із пакета даних. nullopt — це не пакет даних або
 // дій у ньому немає.
 //
-// Потрібен не лише для тестів: тим самим розбирачем ми читаємо і власні
-// пакети, і зняті з оригінального клієнта, тож розкладка описана в
-// одному місці, а не переписується щоразу заново.
+// Тим самим розбирачем ми читаємо і власні пакети, і зняті з
+// оригінального клієнта.
 std::optional<PlayerActions> readPlayerActions(std::span<const std::byte> packet);
 
 // `value` передається у корисних даних 32-бітним числом — так його

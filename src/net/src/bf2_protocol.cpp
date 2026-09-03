@@ -184,30 +184,15 @@ std::vector<std::byte> writeDataBlockChunk(std::uint8_t connectionId, const Exte
 }
 
 std::vector<std::byte> writePlayerActions(std::uint8_t connectionId, const ExtendedHeader& header,
-                                          std::uint32_t tick, const PlayerAction* actions,
-                                          std::size_t count, std::uint32_t number) {
+                                          const PlayerActions& stream) {
   std::vector<std::byte> buffer(128);
   BitWriter writer(buffer);
   writeDataHeader(writer, connectionId, header);
 
   writer.writeBits(1, 1);  // дії є
-  writer.writeBits(static_cast<std::uint32_t>(count) & 0xF, 4);
-  writer.writeBits(number & 0x1FF, 9);
-  if (count > 0) {
-    writer.writeBits(0, 1);  // знак лічильника
-    writer.writeBits(tick & 0x7FFFFFFFu, 31);
-  }
-  for (std::size_t i = 0; i < count; ++i) {
-    const PlayerAction& action = actions[i];
-    for (const std::int16_t axis : action.axes) {
-      const bool negative = axis < 0;
-      writer.writeBits(negative ? 1 : 0, 1);
-      writer.writeBits(static_cast<std::uint32_t>(negative ? -axis : axis) & 0x7FFF, 15);
-    }
-    writer.writeBits(action.buttons, 32);
-    writer.writeBits(0, 9);
-    writer.writeBits(action.flag ? 1 : 0, 1);
-  }
+  WriteCursor cursor(writer);
+  PlayerActions copy = stream;  // курсор працює зі змінним посиланням
+  serializePlayerActions(cursor, copy);
 
   writer.writeBits(0, 1);  // подій немає
   return finishDataPacket(buffer, writer);
@@ -224,42 +209,9 @@ std::optional<PlayerActions> readPlayerActions(std::span<const std::byte> packet
   const auto hasActions = reader.readBits(1);
   if (!hasActions || *hasActions != 1) return std::nullopt;
 
-  const auto count = reader.readBits(4);
-  const auto number = reader.readBits(9);
-  if (!count || !number) return std::nullopt;
-
-  // Число зі знаком: біт знака, далі значення.
-  const auto readSigned = [&reader](int width) -> std::optional<std::int32_t> {
-    const auto sign = reader.readBits(1);
-    const auto value = reader.readBits(width);
-    if (!sign || !value) return std::nullopt;
-    const auto magnitude = static_cast<std::int32_t>(*value);
-    return *sign == 1 ? -magnitude : magnitude;
-  };
-
   PlayerActions out;
-  out.number = *number;
-  if (*count > 0) {
-    const auto tick = readSigned(31);
-    if (!tick) return std::nullopt;
-    out.tick = *tick;
-  }
-
-  for (std::uint32_t i = 0; i < *count; ++i) {
-    PlayerAction action;
-    for (std::int16_t& axis : action.axes) {
-      const auto value = readSigned(15);
-      if (!value) return std::nullopt;
-      axis = static_cast<std::int16_t>(*value);
-    }
-    const auto buttons = reader.readBits(32);
-    const auto spare = reader.readBits(9);
-    const auto flag = reader.readBits(1);
-    if (!buttons || !spare || !flag) return std::nullopt;
-    action.buttons = *buttons;
-    action.flag = *flag != 0;
-    out.actions.push_back(action);
-  }
+  ReadCursor cursor(reader);
+  if (!serializePlayerActions(cursor, out)) return std::nullopt;
   return out;
 }
 

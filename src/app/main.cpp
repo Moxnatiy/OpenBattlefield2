@@ -743,8 +743,12 @@ struct RemoteWorld {
     header.sequence = sequence++ & 0x3F;
     header.ack = lastServerSequence;
     header.ackBits = 0xFFFFFFFFu;
-    const obf2::net::bf2::PlayerAction three[3] = {action, action, action};
-    socket->send(obf2::net::bf2::writePlayerActions(id, header, actionTick++, three, 3));
+    // Три однакові набори — так само, як оригінал: пакет може загубитися,
+    // і сусідній привезе те саме.
+    obf2::net::bf2::PlayerActions stream;
+    stream.tick = static_cast<std::int32_t>(actionTick++);
+    stream.actions.assign(3, action);
+    socket->send(obf2::net::bf2::writePlayerActions(id, header, stream));
   }
 
   // Наш номер гравця й команда — із `CreatePlayerEvent` за іменем.

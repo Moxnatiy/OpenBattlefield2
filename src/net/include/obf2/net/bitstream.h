@@ -135,4 +135,73 @@ class BitWriter {
   bool ok_ = true;
 };
 
+// --- один опис розкладки на обидва напрями --------------------------
+//
+// Складач і розбирач протоколу неминуче описують ту саму розкладку, і
+// поки їх двоє, вони розходяться: досить забути поле в одному з них.
+// Тому пишемо розкладку **один раз** — функцією, яка бере курсор і
+// проходить по полях, — а напрям вибирає сам курсор.
+//
+// Виглядає це так:
+//
+//   template <typename Cursor>
+//   bool serialize(Cursor& cursor, PlayerActions& actions) {
+//     if (!cursor.bits(actions.number, 9)) return false;
+//     ...
+//   }
+//
+// і те саме тіло працює як `readPlayerActions`, і як `writePlayerActions`.
+// Так само чинить і сам рушій: у кожної його події є пара
+// `serialize`/`deSerialize`, і поля в них ідуть однаково.
+class ReadCursor {
+ public:
+  explicit ReadCursor(BitReader& reader) : reader_(reader) {}
+
+  static constexpr bool reading = true;
+
+  bool bits(std::uint32_t& value, unsigned width) {
+    const auto got = reader_.readBits(width);
+    if (!got) return false;
+    value = *got;
+    return true;
+  }
+  bool flag(bool& value) {
+    std::uint32_t raw = 0;
+    if (!bits(raw, 1)) return false;
+    value = raw != 0;
+    return true;
+  }
+  // Число зі знаком: біт знака, далі значення. Саме так рушій пише всі
+  // цілі зі знаком — і в блоці MapInfo, і в потоці дій гравця.
+  bool signedBits(std::int32_t& value, unsigned width) {
+    std::uint32_t sign = 0;
+    std::uint32_t magnitude = 0;
+    if (!bits(sign, 1) || !bits(magnitude, width)) return false;
+    value = static_cast<std::int32_t>(magnitude);
+    if (sign) value = -value;
+    return true;
+  }
+
+ private:
+  BitReader& reader_;
+};
+
+class WriteCursor {
+ public:
+  explicit WriteCursor(BitWriter& writer) : writer_(writer) {}
+
+  static constexpr bool reading = false;
+
+  bool bits(std::uint32_t& value, unsigned width) { return writer_.writeBits(value, width); }
+  bool flag(bool& value) { return writer_.writeBits(value ? 1 : 0, 1); }
+  bool signedBits(std::int32_t& value, unsigned width) {
+    const bool negative = value < 0;
+    const auto magnitude = static_cast<std::uint32_t>(negative ? -value : value);
+    return writer_.writeBits(negative ? 1 : 0, 1) && writer_.writeBits(magnitude, width);
+  }
+
+ private:
+  BitWriter& writer_;
+};
+
 }  // namespace obf2::net

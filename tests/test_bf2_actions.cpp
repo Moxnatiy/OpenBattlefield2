@@ -43,8 +43,11 @@ static void testRoundTrip() {
   action.axes[kAxisMouseY] = 40;
   action.buttons = kButtonSprint;
 
-  const PlayerAction three[3] = {action, action, action};
-  const auto packet = writePlayerActions(9, header, 172, three, 3, 200);
+  PlayerActions stream;
+  stream.number = 200;
+  stream.tick = 172;
+  stream.actions.assign(3, action);
+  const auto packet = writePlayerActions(9, header, stream);
 
   const auto read = readPlayerActions(packet);
   CHECK(read.has_value());
@@ -73,7 +76,10 @@ static void testNegativeAxes() {
   action.axes[kAxisForward] = -kAxisFull;
   action.axes[kAxisMouseX] = -127;
 
-  const auto packet = writePlayerActions(1, header, 1, &action, 1);
+  PlayerActions stream;
+  stream.tick = 1;
+  stream.actions.push_back(action);
+  const auto packet = writePlayerActions(1, header, stream);
   const auto read = readPlayerActions(packet);
   CHECK(read.has_value());
   if (!read || read->actions.empty()) return;
