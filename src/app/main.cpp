@@ -1009,6 +1009,18 @@ struct RemoteWorld {
   obf2::Vec3f compressionReference;
   int positionUpdates = 0;
   int soldierMaskLogged = 0;
+  int soldierRejected = 0;
+  // Слід чужого солдата: скільки оновлень, наскільки поїхало від першого
+  // місця і як високо над землею. Стоїть він чи ходить, над землею він
+  // має лишатися на нулі — це і є міра правильності розбору.
+  struct Track {
+    bool started = false;
+    obf2::Vec3f first;
+    int updates = 0;
+    float travelled = 0.0f;
+    float aboveGround = 0.0f;
+  };
+  std::map<std::uint16_t, Track> soldierTracks;
   int soldierMoveLogged = 0;
 
   // Команда кожного гравця (`CreatePlayerEvent`) і об'єкт, який гравець
@@ -1361,11 +1373,56 @@ struct RemoteWorld {
               }
               // Місце з оновлення стану. Тепер заповнювачі не стоять там,
               // де об'єкт створено, а їдуть за ним.
+              // Розкладку солдата ми ще не дочитали: за маскою йдуть
+              // десятки полів за умовами (bitfields.py --blocks на
+              // `SoldierNetworkable::setNetUpdate` показує їх усі), і
+              // місце лежить не одразу за маскою. Тому прочитане місце
+              // солдата буває сміттям — і його видно: числа на кшталт
+              // -6.7e27 або висота -128 при рельєфі 154.
+              //
+              // Поки розбір не дороблено, **не показуємо того, чого не
+              // вміємо прочитати**: місце приймається лише якщо воно
+              // скінченне, лежить у межах карти і не далі кількох метрів
+              // від землі. Скільки відкинуто — видно у звіті, щоб борг не
+              // сховався за фільтром.
+              if (record.position && objectOwner.count(record.networkId) != 0) {
+                const obf2::Vec3f& at = *record.position;
+                const bool finite = std::isfinite(at.x) && std::isfinite(at.y) &&
+                                    std::isfinite(at.z);
+                const float ground =
+                    terrain != nullptr ? terrain->groundHeightAt(at) : at.y;
+                const bool sane = finite && std::abs(at.x) < 1024.0f && std::abs(at.z) < 1024.0f &&
+                                  std::abs(at.y - ground) < 5.0f;
+                if (!sane) {
+                  ++soldierRejected;
+                  continue;
+                }
+              }
               if (record.position && record.networkId != ourSoldier) {
-                if (objectOwner.count(record.networkId) != 0 && soldierMoveLogged < 10) {
-                  ++soldierMoveLogged;
-                  std::printf("  чужий солдат %u -> %.1f %.1f %.1f\n", record.networkId,
-                              record.position->x, record.position->y, record.position->z);
+                if (objectOwner.count(record.networkId) != 0) {
+                  // Міра розсинхрону. Солдат стоїть на землі, тож
+                  // відхилення від висоти рельєфу — це чиста помилка
+                  // розбору, а не рух. Заразом рахуємо, як далеко місце
+                  // поїхало від першого відомого.
+                  Track& track = soldierTracks[record.networkId];
+                  if (!track.started) {
+                    track.started = true;
+                    track.first = *record.position;
+                  }
+                  ++track.updates;
+                  const obf2::Vec3f d = *record.position - track.first;
+                  track.travelled =
+                      std::max(track.travelled, std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z));
+                  if (terrain != nullptr) {
+                    const float ground = terrain->groundHeightAt(*record.position);
+                    track.aboveGround += record.position->y - ground;
+                  }
+                  if (soldierMoveLogged < 10) {
+                    ++soldierMoveLogged;
+                    std::printf("  чужий солдат %u -> %.1f %.1f %.1f%s\n", record.networkId,
+                                record.position->x, record.position->y, record.position->z,
+                                record.baseline ? "  (повний стан)" : "");
+                  }
                 }
                 dynamicObjects[record.networkId] = *record.position;
                 ++positionUpdates;
@@ -1646,6 +1703,16 @@ struct RemoteWorld {
     std::printf("  об'єктів, створених у грі (чужі солдати й техніка): %zu, "
                 "оновлень місця з потоку привидів: %d\n",
                 dynamicObjects.size(), positionUpdates);
+    if (soldierRejected > 0) {
+      std::printf("  місць солдатів відкинуто як нечитані: %d (розкладка ще не дочитана)\n",
+                  soldierRejected);
+    }
+    for (const auto& [id, track] : soldierTracks) {
+      std::printf("  слід солдата %u: оновлень %d, поїхав на %.1f м, над землею в середньому "
+                  "%.2f м\n",
+                  id, track.updates, track.travelled,
+                  track.updates > 0 ? track.aboveGround / static_cast<float>(track.updates) : 0.0f);
+    }
     for (const auto& [object, player] : objectOwner) {
       std::printf("  гравець %u -> об'єкт %u: у записах привидів %s\n", player, object,
                   ghostObjects.count(object) ? "Є" : "НЕМАЄ");
