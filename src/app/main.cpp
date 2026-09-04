@@ -926,6 +926,10 @@ struct RemoteWorld {
   // привидів, а їх ми ще не розбираємо, тож заповнювач стоятиме там, де
   // об'єкт з'явився. Це борг, і його видно на екрані.
   std::map<std::uint16_t, obf2::Vec3f> dynamicObjects;
+  // Опорна точка для стиснених векторів: її дає стан керованого об'єкта,
+  // і відносно неї пакуються місця всіх об'єктів у потоці привидів.
+  obf2::Vec3f compressionReference;
+  int positionUpdates = 0;
 
   // Об'єкт, яким ми керуємо. Його називає `EnterVehicleEvent`.
   std::uint16_t ourSoldier = 0;
@@ -1172,6 +1176,8 @@ struct RemoteWorld {
                           state->compressionReference.z, state->counter, state->networkId);
             }
             ++controlStates;
+            // Опорна точка стиснення на весь подальший потік.
+            compressionReference = state->compressionReference;
             // Номер керованого об'єкта сервер каже прямо. Але керований
             // об'єкт — не завжди солдат: до появи це камера екрана появи
             // (на Dalian номер 257 із місцем `setBeforeSpawnCamera`).
@@ -1217,9 +1223,21 @@ struct RemoteWorld {
               std::printf("  привиди: час %u, записів %u%s\n", ghost->time, ghost->records,
                           ghost->controlObjectState ? ", є стан керованого об'єкта" : "");
             }
-            for (const auto& record : obf2::net::bf2::readGhostRecords(*more)) {
+            for (const auto& record : obf2::net::bf2::readGhostRecords(*more,
+                                                                      compressionReference)) {
               ++ghostRecords;
               ghostObjects.insert(record.networkId);
+              // Об'єкт зник — вид 3.
+              if (record.kind == 3) {
+                dynamicObjects.erase(record.networkId);
+                continue;
+              }
+              // Місце з оновлення стану. Тепер заповнювачі не стоять там,
+              // де об'єкт створено, а їдуть за ним.
+              if (record.position && record.networkId != ourSoldier) {
+                dynamicObjects[record.networkId] = *record.position;
+                ++positionUpdates;
+              }
             }
           }
 
@@ -1472,8 +1490,9 @@ struct RemoteWorld {
       std::printf("    по осях: x %.2f, y %.2f (зі знаком), z %.2f\n", correctionAxis.x / n,
                   correctionAxis.y / n, correctionAxis.z / n);
     }
-    std::printf("  об'єктів, створених у грі (чужі солдати й техніка): %zu\n",
-                dynamicObjects.size());
+    std::printf("  об'єктів, створених у грі (чужі солдати й техніка): %zu, "
+                "оновлень місця з потоку привидів: %d\n",
+                dynamicObjects.size(), positionUpdates);
     if (ourSoldier != 0) {
       std::printf("  наш об'єкт %u у записах привидів: %s\n", ourSoldier,
                   ghostObjects.count(ourSoldier) ? "є" : "немає");

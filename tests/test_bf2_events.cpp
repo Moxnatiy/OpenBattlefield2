@@ -5,6 +5,7 @@
 // на сервері з картою dalian_plant. Тримати його в репозиторії дешево, а
 // перевірка виходить така, якої не дає жоден синтетичний пакет: якщо
 // хоч в одній події зіб'ється довжина, наступна прочитається як сміття.
+#include <cmath>
 #include <cstdio>
 #include <map>
 #include <cstring>
@@ -147,9 +148,44 @@ void testControlObjectStateNamesItsObject() {
   CHECK_EQ(perObject.size(), std::size_t(1));
 }
 
+// Місце об'єкта у вмісті запису: 19 біт маски, і якщо в ній стоїть біт 1
+// — стиснений вектор. Опорна точка приходить у стані керованого об'єкта
+// того самого пакета.
+void testGhostRecordsCarryPositions() {
+  const auto packets = loadCapture(std::string(OBF2_TEST_DATA) + "/bf2-ghosts.bin");
+  CHECK(!packets.empty());
+
+  obf2::Vec3f reference;
+  int withPosition = 0;
+  int onTheMap = 0;
+  for (const auto& packet : packets) {
+    if (const auto state = obf2::net::bf2::readControlObjectState(packet)) {
+      reference = state->compressionReference;
+      continue;
+    }
+    for (const auto& record : obf2::net::bf2::readGhostRecords(packet, reference)) {
+      if (!record.position) continue;
+      ++withPosition;
+      // Dalian — 2048 метрів у поперечнику, тож будь-яке місце на ньому
+      // лежить у цих межах. Сміття вилетіло б за них одразу.
+      const obf2::Vec3f& at = *record.position;
+      if (std::abs(at.x) < 1024.0f && std::abs(at.z) < 1024.0f && at.y > -100.0f &&
+          at.y < 1000.0f) {
+        ++onTheMap;
+      }
+    }
+  }
+
+  CHECK(withPosition > 0);
+  // Якби розкладка була не та, числа розліталися б: збіг мав би бути
+  // рідкістю, а не правилом.
+  CHECK_EQ(onTheMap, withPosition);
+}
+
 TEST_MAIN({
   testWorldCaptureIsFullyDecoded();
   testHeightsAreOnTheTerrain();
   testGhostStreamIsWalkable();
   testControlObjectStateNamesItsObject();
+  testGhostRecordsCarryPositions();
 });

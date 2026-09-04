@@ -319,7 +319,31 @@ struct GhostRecord {
   std::uint32_t kind = 0;
   std::uint16_t networkId = 0;
   std::uint32_t payloadBits = 0;
+  bool baseline = false;         // прапорець перед довжиною
+  std::uint32_t stateMask = 0;   // 19 біт: які поля їдуть у вмісті
+  // Місце, якщо в масці стоїть kObjectStatePosition.
+  std::optional<Vec3f> position;
 };
+
+// Вміст запису читає мережевий клас об'єкта. Для всього, що має місце в
+// світі, це `SimpleObjectNetworkable::setNetUpdate` (лінукс-сервер,
+// 0x5d78a0), і починається він завжди однаково:
+//
+//   19 біт   маска стану — які поля є в цьому оновленні
+//   якщо в масці стоїть біт 1:
+//       стиснений вектор — місце об'єкта
+//
+// Маска читається за 0x5d7a17 (`readBits(..., 0x13)`), біт 1
+// перевіряється першим (`testb $0x2` за 0x5d7a35), і в його гілці стоїть
+// `BitStream::readCompressedVector` (0x5d845b). Точність — стала 0.0005
+// із `.rodata` за 0xb47194, а не наш підбір.
+//
+// Які взагалі поля має цей клас, каже `getGhostStateMask` (0x5d6990):
+// вона повертає 0x5849b. Решту полів ми ще не розбирали — і не мусимо:
+// довжина запису дає пропустити хвіст, як це робить сам рушій.
+inline constexpr unsigned kObjectStateMaskBits = 19;
+inline constexpr std::uint32_t kObjectStatePosition = 0x2;
+inline constexpr float kObjectPositionPrecision = 0.0005f;
 
 // Ширина поля довжини. У рушії вона обчислюється на льоту, а на дроті
 // це рівно одинадцять бітів: із нею весь спійманий зразок розбирається
@@ -334,7 +358,10 @@ std::optional<GhostHeader> readGhostHeader(std::span<const std::byte> packet);
 // Записи потоку привидів. Порожньо, якщо привидів немає або в пакеті
 // стоїть прапорець стану керованого об'єкта — той стан іде перед
 // записами і поки не розібраний.
-std::vector<GhostRecord> readGhostRecords(std::span<const std::byte> packet);
+// reference — опорна точка для стиснених векторів. Її задає стан
+// керованого об'єкта в цьому ж пакеті (`setCompressionVector`).
+std::vector<GhostRecord> readGhostRecords(std::span<const std::byte> packet,
+                                          const Vec3f& reference = Vec3f{});
 
 // Проходить пакет даних і повертає всі події з нього.
 // Порожньо — це не пакет даних або він обірвався на першій же події.

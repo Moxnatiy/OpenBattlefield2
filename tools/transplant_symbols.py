@@ -174,7 +174,30 @@ def as_identifier(name):
     return re.sub(r"[^A-Za-z0-9_]", "_", head)
 
 
+def print_source_map():
+    """Адреса перевірки -> вихідний файл і рядок, без Linux-сервера.
+
+    Має сенс саме для `BF2_r.exe`: це збірка з відлагоджувальними
+    перевірками, і їх там 3111 проти 335 у звичайному клієнті, з 448
+    різних вихідних файлів. Імені функції вона не дає, але дає, з якого
+    файлу код, — а цього часто досить, щоб знайти потрібну функцію:
+    «читання стану простого об'єкта» лежить у `SimpleObjectNetworkable.cpp`
+    і більше ніде.
+    """
+    windows = windows_asserts()
+    print("# Перевірки Debug у %s: адреса -> вихідний файл і рядок." % WINDOWS)
+    print("# Знято tools/transplant_symbols.py --source-map.")
+    print("# Усього перевірок: %d, різних файлів: %d"
+          % (len(windows), len({name for name, _ in windows})))
+    print()
+    for (name, line), address in sorted(windows.items(), key=lambda kv: kv[1]):
+        print("0x%08x  %s:%d" % (address, name, line))
+
+
 def main():
+    if "--source-map" in sys.argv:
+        print_source_map()
+        return
     table = linux_asserts()
     print("# Перевірки Debug у Linux-сервері: файл, рядок, функція.")
     print("# Пара «файл + рядок» однакова в BF2.exe, тож за нею можна")

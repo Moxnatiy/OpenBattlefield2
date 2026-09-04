@@ -473,7 +473,8 @@ std::optional<GhostHeader> enterGhosts(BitReader& reader) {
 
 }  // namespace
 
-std::vector<GhostRecord> readGhostRecords(std::span<const std::byte> packet) {
+std::vector<GhostRecord> readGhostRecords(std::span<const std::byte> packet,
+                                          const Vec3f& reference) {
   std::vector<GhostRecord> out;
   BitReader reader(packet);
   const auto header = enterGhosts(reader);
@@ -492,8 +493,28 @@ std::vector<GhostRecord> readGhostRecords(std::span<const std::byte> packet) {
       const auto flag = reader.readBits(1);
       const auto length = reader.readBits(kGhostLengthBits);
       if (!flag || !length) break;
+      record.baseline = *flag != 0;
       record.payloadBits = *length;
+
+      // Головний прохід іде **тільки** за довжиною — так рушій проходить
+      // повз об'єкт, якого не знає. Вміст читаємо окремим читачем: якщо
+      // ми в ньому помилимося, потік від цього не зіб'ється.
+      const std::size_t payloadStart = reader.bitPosition();
       if (!reader.skipBits(*length)) break;
+
+      BitReader payload(packet);
+      if (payload.skipBits(payloadStart)) {
+        const auto mask = payload.readBits(kObjectStateMaskBits);
+        if (mask) {
+          record.stateMask = *mask;
+          if ((*mask & kObjectStatePosition) != 0) {
+            const auto at = payload.readCompressedVector(reference, kObjectPositionPrecision);
+            // Місце береться лише тоді, коли воно вмістилося у вміст:
+            // інакше ми прочитали не те й видали б за позицію сміття.
+            if (at && payload.bitPosition() <= payloadStart + *length) record.position = *at;
+          }
+        }
+      }
     }
     out.push_back(record);
   }
