@@ -1324,8 +1324,18 @@ struct RemoteWorld {
             const auto isSoldier = [this](std::uint16_t id) {
               return objectOwner.find(id) != objectOwner.end();
             };
+            // Опора для стисненого вектора — останнє відоме місце цього
+            // ж об'єкта. Поки об'єкта не бачили, править точка з
+            // `CreateObjectEvent`; якщо й тієї немає — опора потоку.
+            const auto referenceFor = [this](std::uint16_t id) {
+              const auto found = dynamicObjects.find(id);
+              if (found != dynamicObjects.end()) return found->second;
+              const auto born = objects.find(id);
+              if (born != objects.end()) return born->second;
+              return compressionReference;
+            };
             for (const auto& record :
-                 obf2::net::bf2::readGhostRecords(*more, compressionReference, isSoldier)) {
+                 obf2::net::bf2::readGhostRecords(*more, referenceFor, isSoldier)) {
               ++ghostRecords;
               ghostObjects.insert(record.networkId);
               // Перевірка розкладки, а не здогад: маска солдата мусить

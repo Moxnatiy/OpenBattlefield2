@@ -163,7 +163,8 @@ void testGhostRecordsCarryPositions() {
       reference = state->compressionReference;
       continue;
     }
-    for (const auto& record : obf2::net::bf2::readGhostRecords(packet, reference)) {
+    const auto base = [&](std::uint16_t) { return reference; };
+    for (const auto& record : obf2::net::bf2::readGhostRecords(packet, base)) {
       if (!record.position) continue;
       ++withPosition;
       // Dalian — 2048 метрів у поперечнику, тож будь-яке місце на ньому
