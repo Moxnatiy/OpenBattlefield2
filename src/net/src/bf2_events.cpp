@@ -582,6 +582,22 @@ std::vector<GhostRecord> readGhostRecords(
             // Місце береться лише тоді, коли воно вмістилося у вміст:
             // інакше ми прочитали не те й видали б за позицію сміття.
             if (at && payload.bitPosition() <= payloadStart + *length) record.position = *at;
+            else ok = false;
+          }
+
+          // Далі — швидкість і кути. Читаємо їх не заради самих полів, а
+          // тому що рискання йде **після** швидкості: без пропуску
+          // швидкості кут вийшов би не той.
+          if (ok && soldier) {
+            if ((*mask & kSoldierStateVelocity) != 0) {
+              ok = payload.readCompressedVector(Vec3f{}, kSoldierVelocityPrecision).has_value();
+            }
+            if (ok && (*mask & kSoldierStateYaw) != 0) {
+              const auto packed = payload.readBits(kSoldierAngleBits);
+              if (packed && payload.bitPosition() <= payloadStart + *length) {
+                record.yaw = soldierAngle(*packed, kSoldierYawRange);
+              }
+            }
           }
         }
       }

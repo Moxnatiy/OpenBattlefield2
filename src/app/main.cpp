@@ -1011,6 +1011,8 @@ struct RemoteWorld {
   // привидів, а їх ми ще не розбираємо, тож заповнювач стоятиме там, де
   // об'єкт з'явився. Це борг, і його видно на екрані.
   std::map<std::uint16_t, obf2::Vec3f> dynamicObjects;
+  // Куди дивиться чужий солдат, у градусах (маска стану, біт 0x2).
+  std::map<std::uint16_t, float> dynamicYaw;
   // Опорна точка для стиснених векторів: її дає стан керованого об'єкта,
   // і відносно неї пакуються місця всіх об'єктів у потоці привидів.
   obf2::Vec3f compressionReference;
@@ -1436,6 +1438,7 @@ struct RemoteWorld {
                   }
                 }
                 dynamicObjects[record.networkId] = *record.position;
+                if (record.yaw) dynamicYaw[record.networkId] = *record.yaw;
                 ++positionUpdates;
               }
             }
@@ -3630,8 +3633,14 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           // а об'єкт — `EnterVehicleEvent`. Нуль означає «не гравець».
           const int team = remote->objectTeam(id);
           const int which = team == 0 ? 0 : (team == remote->ourTeam ? 1 : 2);
-          withOthers.push_back(
-              obf2::gfx::MeshRenderer::DrawItem{&boxes[which], obf2::translation(at)});
+          // Заповнювач повертаємо за прочитаним кутом: рискання їде в
+          // тому ж стані, дванадцятьма бітами.
+          obf2::Mat4 place = obf2::translation(at);
+          const auto facing = remote->dynamicYaw.find(id);
+          if (facing != remote->dynamicYaw.end()) {
+            place = place * obf2::rotationY(facing->second * 3.14159265f / 180.0f);
+          }
+          withOthers.push_back(obf2::gfx::MeshRenderer::DrawItem{&boxes[which], place});
         }
         toDraw = &withOthers;
       }

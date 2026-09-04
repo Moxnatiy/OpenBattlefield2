@@ -324,6 +324,8 @@ struct GhostRecord {
   std::uint32_t stateMask = 0;   // 19 біт: які поля їдуть у вмісті
   // Місце, якщо в масці стоїть kObjectStatePosition.
   std::optional<Vec3f> position;
+  // Куди дивиться солдат, у градусах (маска 0x2).
+  std::optional<float> yaw;
 };
 
 // Вміст запису читає мережевий клас об'єкта. Для всього, що має місце в
@@ -391,6 +393,18 @@ inline constexpr std::uint32_t kSoldierStateHasByte = 0x40;    // 8 біт + 1 �
 inline constexpr std::uint32_t kSoldierStateHasPair = 0x20;    // 3 біти + 3 біти
 inline constexpr std::uint32_t kSoldierStateRagdoll = 0x8000;  // інша гілка
 inline constexpr float kSoldierPositionPrecision = 0.001f;
+inline constexpr std::uint32_t kSoldierStateVelocity = 0x80;   // стиснений вектор
+inline constexpr float kSoldierVelocityPrecision = 0.01f;
+inline constexpr std::uint32_t kSoldierStateYaw = 0x2;         // 12 біт -> ±360°
+
+// Кути їдуть дванадцятьма бітами, розгорнутими в діапазон. Арифметика з
+// клієнта дослівно: `(v * 2/4095 - 1) * межа`, де межа для рискання 360.
+inline constexpr unsigned kSoldierAngleBits = 12;
+inline constexpr float kSoldierYawRange = 360.0f;
+inline float soldierAngle(std::uint32_t packed, float range) {
+  const float unit = static_cast<float>(packed) * (2.0f / 4095.0f) - 1.0f;
+  return unit * range;
+}
 // `dice::hfe::nullVec` — саме він стоїть опорою в розкладці солдата.
 inline constexpr Vec3f kNullVec{};
 
