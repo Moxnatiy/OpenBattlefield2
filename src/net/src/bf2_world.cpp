@@ -21,15 +21,16 @@ Vec3f WorldView::referenceFor(std::uint16_t id) const {
   return compressionReference_;
 }
 
-bool WorldView::looksSane(const Vec3f& at) const {
+bool WorldView::looksSane(const Vec3f& at, bool soldier) const {
   if (!std::isfinite(at.x) || !std::isfinite(at.y) || !std::isfinite(at.z)) return false;
   // Карти BF2 не більші за 2048 метрів у поперечнику (`GLSWorldSizeX`,
   // типове 2048 — див. spawnGroupWorldPos), тож усе поза цим — сміття.
   if (std::abs(at.x) > 1024.0f || std::abs(at.z) > 1024.0f) return false;
-  if (!ground_) return true;
-  // Солдат стоїть на землі. Мережеве місце в нього на метр вище рельєфу
-  // (виміряно на живому сервері; звідки саме той метр — ще не з'ясовано),
-  // тож допуск беремо з запасом.
+
+  // Перевірку по землі робимо **лише для солдата**: він на ній стоїть.
+  // Техніка й майно бувають і на дахах, і на кранах — там перевищення в
+  // десятки метрів звичайне, і відкидати їх було б помилкою.
+  if (!soldier || !ground_) return true;
   const float above = at.y - ground_(at);
   return above > -5.0f && above < 5.0f;
 }
@@ -94,7 +95,7 @@ void WorldView::feed(std::span<const std::byte> packet) {
       continue;
     }
     if (!record.position) continue;
-    if (!looksSane(*record.position)) {
+    if (!looksSane(*record.position, isSoldier(record.networkId))) {
       ++rejected_;
       continue;
     }

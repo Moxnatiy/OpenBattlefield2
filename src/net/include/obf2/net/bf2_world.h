@@ -81,7 +81,7 @@ class WorldView {
  private:
   bool isSoldier(std::uint16_t id) const;
   Vec3f referenceFor(std::uint16_t id) const;
-  bool looksSane(const Vec3f& at) const;
+  bool looksSane(const Vec3f& at, bool soldier) const;
 
   std::string ownName_;
   int ownPlayer_ = -1;
