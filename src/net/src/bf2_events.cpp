@@ -567,7 +567,17 @@ std::vector<GhostRecord> readGhostRecords(
         const auto mask = payload.readBits(maskBits);
         if (mask) {
           record.stateMask = *mask;
-          if ((*mask & positionBit) != 0) {
+
+          // Поля, що лежать **перед** місцем. Пропустити їх обов'язково:
+          // без цього читання зсувається, і замість місця виходить сміття.
+          bool ok = true;
+          if (soldier) {
+            if ((*mask & kSoldierStateRagdoll) != 0) ok = false;  // інша гілка
+            if (ok && (*mask & kSoldierStateHasByte) != 0) ok = payload.skipBits(8 + 1);
+            if (ok && (*mask & kSoldierStateHasPair) != 0) ok = payload.skipBits(3 + 3);
+          }
+
+          if (ok && (*mask & positionBit) != 0) {
             const auto at = payload.readCompressedVector(origin, precision);
             // Місце береться лише тоді, коли воно вмістилося у вміст:
             // інакше ми прочитали не те й видали б за позицію сміття.

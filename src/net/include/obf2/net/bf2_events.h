@@ -363,9 +363,34 @@ inline constexpr float kObjectPositionPrecision = 0.0005f;
 // Через це чужі солдати в нас і не рухалися: ми читали їх розкладкою
 // простого об'єкта. Хто з об'єктів солдат, ми знаємо напевно — сервер
 // сам каже це подіями `CreatePlayerEvent` і `EnterVehicleEvent`.
+// Розкладка початку стану солдата — з клієнта, з декомпіляції
+// `SoldierNetworkable::setNetUpdate` (`BF2.exe`, 0x62d4e0):
+//
+//   маска                     21 біт      (0x62d5xx, читання на 0x15)
+//   якщо маска & 0x40         8 біт, далі 1 біт
+//   якщо маска & 0x20         3 біти, далі 3 біти  (діапазон 0..4)
+//   якщо маска & 0x8000       інша гілка — стан ragdoll, ми її не читаємо
+//   якщо маска & 0x1          **місце**: стиснений вектор, точність 0.001
+//
+// Далі йдуть швидкість (0x80), кути (0x2 -> рискання, 0x4 -> тангаж,
+// 0x8, 0x10 — по 12 біт, розгорнуті в ±360/±90/±180/±90) і ще з десяток
+// полів; вони нам поки не потрібні, і читати їх не треба — за місцем
+// одразу можна спинитися.
+//
+// Дві речі, на яких ми до цього спіткнулися:
+//
+// * місце вмикає **біт 0**, а не 7. Раніше ми брали біт 7 (це швидкість)
+//   і читали не з того місця — виходили числа на кшталт -6.7e27;
+// * опора — **вектор стиснення потоку**, той самий, що ставить стан
+//   керованого об'єкта. Видно з `FUN_0062bd60`: він кличе читання
+//   вектора з полем `потік+0x54`, тобто з внутрішнім вектором стиснення,
+//   а не з переданим нулем (нуль передають сусідні поля, 0x62bdb0).
 inline constexpr unsigned kSoldierStateMaskBits = 21;
-inline constexpr std::uint32_t kSoldierStatePosition = 0x80;
-inline constexpr float kSoldierPositionPrecision = 0.01f;
+inline constexpr std::uint32_t kSoldierStatePosition = 0x1;
+inline constexpr std::uint32_t kSoldierStateHasByte = 0x40;    // 8 біт + 1 біт
+inline constexpr std::uint32_t kSoldierStateHasPair = 0x20;    // 3 біти + 3 біти
+inline constexpr std::uint32_t kSoldierStateRagdoll = 0x8000;  // інша гілка
+inline constexpr float kSoldierPositionPrecision = 0.001f;
 // `dice::hfe::nullVec` — саме він стоїть опорою в розкладці солдата.
 inline constexpr Vec3f kNullVec{};
 

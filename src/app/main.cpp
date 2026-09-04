@@ -1354,6 +1354,10 @@ struct RemoteWorld {
             // ж об'єкта. Поки об'єкта не бачили, править точка з
             // `CreateObjectEvent`; якщо й тієї немає — опора потоку.
             const auto referenceFor = [this](std::uint16_t id) {
+              // Солдат рахується від **вектора стиснення потоку** — того
+              // самого, що ставить стан керованого об'єкта (`BF2.exe`,
+              // 0x62bd60 читає вектор із поля `потік+0x54`).
+              if (objectOwner.count(id) != 0) return compressionReference;
               const auto found = dynamicObjects.find(id);
               if (found != dynamicObjects.end()) return found->second;
               const auto born = objects.find(id);
@@ -3733,7 +3737,11 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
         // виконує консольну команду, і ми виконуємо консольну команду.
         // Тільки коли екран уже зібраний — інакше вибір нема на чому
         // робити.
-        if (!args.execLines.empty() && spawnVisible && !spawnPieces.empty() && !execDone) {
+        // Чекаємо не лише на зібраний екран, а й на кружечки місць
+        // появи: вони приходять подіями вже після завантаження рівня, і
+        // без них вибирати нема з чого.
+        if (!args.execLines.empty() && spawnVisible && !spawnPieces.empty() &&
+            !spawnMarkerPoints.empty() && !execDone) {
           execDone = true;
           for (const std::string& line : args.execLines) {
             std::printf("  консоль: %s\n", line.c_str());
