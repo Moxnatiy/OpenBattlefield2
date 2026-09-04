@@ -3,7 +3,9 @@
 // Рушій рахує фізику тактами по `WorldPref::mTickTime` = 1/30 с
 // (лінукс-сервер, `.data` за 0xf68c50). Ми довго рахували крок завдовжки
 // з кадр — і той самий стрибок на 120 кадрах виходив інакшим, ніж на 60.
+#include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 #include "obf2/server/soldier_move.h"
 #include "check.h"
@@ -72,7 +74,39 @@ void testAccumulatorKeepsTheRemainder() {
 
 }  // namespace
 
+// Стрибок має ті висоту й тривалість, що дають сталі рушія: початкова
+// швидкість 6.0 (0xb355c8) і тяжіння 14.73 (0x6d6ae4).
+void testJumpMatchesEngineConstants() {
+  PhysicsConstants physics;
+  BodyState body;
+  body.onGround = true;
+  SwimState swim;
+
+  float highest = 0.0f;
+  float airborne = 0.0f;
+  for (int tick = 0; tick < 200; ++tick) {
+    const bool jump = tick == 0;
+    moveSoldier(body, swim, Vec3f{}, physics.runSpeed, jump, physics, nullptr, nullptr, kTickTime);
+    highest = std::max(highest, body.position.y);
+    if (!body.onGround) airborne += kTickTime;
+    else if (tick > 0 && airborne > 0.0f) break;
+  }
+
+  // Неперервна формула дає 6^2/(2*14.73) = 1.222 м і 2*6/14.73 = 0.815 с.
+  // Рушій, як і ми, інтегрує тактами по 1/30, і від дискретності вершина
+  // виходить трохи вище — близько 1.31 м. Порівнюємо саме з тим, що дає
+  // такт, а не з ідеальною формулою.
+  CHECK(highest > 1.25f && highest < 1.40f);
+  CHECK(airborne > 0.75f && airborne < 0.92f);
+
+  // І окремо — те, заради чого це міряється: зі старими вигаданими
+  // числами (тяжіння 9.81, поштовх 5.0) солдат висів би в повітрі понад
+  // секунду. Саме це й було видно як «задовгий стрибок».
+  CHECK(airborne < 1.0f);
+}
+
 TEST_MAIN({
   testMovementDoesNotDependOnFrameRate();
+  testJumpMatchesEngineConstants();
   testAccumulatorKeepsTheRemainder();
 });

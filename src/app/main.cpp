@@ -75,6 +75,12 @@ struct Args {
   // який читає `loadCapture` (u32 довжина, далі байти). Знятий трафік —
   // єдине, на чому можна перевіряти розбір протоколу тестом.
   std::string recordTo;
+  // --exec "<рядок>": виконати консольну команду, щойно екран появи
+  // готовий. Кнопки цього екрана й так не мають власної логіки — вони
+  // виконують консольні команди (`setButtonNodeConCmd`), тож це той
+  // самий шлях, яким іде натискання, тільки без наведення миші в
+  // піксель. Прапорець можна повторювати.
+  std::vector<std::string> execLines;
   std::string connectTo;      // --connect <хост[:порт]>: справжній сервер BF2
   // --probe: тільки розбір протоколу, без вікна. Без нього --connect
   // відкриває світ, як і належить клієнтові.
@@ -147,6 +153,7 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--calibrate" && i + 1 < argc) args.calibrate = argv[++i];
     else if (flag == "--ordinal" && i + 1 < argc) args.ordinal = std::atoi(argv[++i]);
     else if (flag == "--record" && i + 1 < argc) args.recordTo = argv[++i];
+    else if (flag == "--exec" && i + 1 < argc) args.execLines.emplace_back(argv[++i]);
     else if (flag == "--team" && i + 1 < argc) args.team = std::atoi(argv[++i]);
     else if (flag == "--kit" && i + 1 < argc) args.kit = std::atoi(argv[++i]);
     else if (flag == "--group" && i + 1 < argc) args.spawnGroup = std::atoi(argv[++i]);
@@ -2400,7 +2407,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   // Що робить DONE. У власній грі це прямий запит до нашого сервера, у
   // мережевій — три події рушія поспіль (NESelectTeam, NESelectKit,
   // NESelectSpawnGroup, docs/functions/network-events.md).
-  std::function<void(int team, int kit, int group)> requestSpawn;
+  // Повертає, чи запит справді пішов серверу: якщо ні, екран появи
+// має лишитися на місці (інакше виходить застигла картинка).
+std::function<bool(int team, int kit, int group)> requestSpawn;
   // Рухомі кутові ділянки. У `Menu/Ingame` їхнє X — це не стала, а
   // змінна графа, і у файлі збережене саме **сховане** положення:
   // BottomLeft_XPos = -295, BottomRight_XPos = 503. Показане для правої
@@ -2550,17 +2559,32 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         spawnDirty = true;
       });
       console.bind("hudManager.setDone", [&](const obf2::con::Command& command) {
-        spawnRequested = command.argInt(0).value_or(1) != 0;
-        if (!spawnRequested) return;
+        if (command.argInt(0).value_or(1) == 0) {
+          spawnRequested = false;
+          return;
+        }
         // Номер групи появи — це номер контрольної точки обраного
-        // кружечка. Нуль означає «будь-яка своя», як і в сервері.
+        // кружечка.
+        const bool haveMarker =
+            selectedSpawn >= 0 && selectedSpawn < static_cast<int>(spawnMarkerPoints.size());
         const int group =
-            selectedSpawn >= 0 && selectedSpawn < static_cast<int>(spawnMarkerPoints.size())
-                ? spawnMarkerPoints[static_cast<std::size_t>(selectedSpawn)]
-                : 0;
+            haveMarker ? spawnMarkerPoints[static_cast<std::size_t>(selectedSpawn)] : 0;
         std::printf("  екран появи: DONE — команда %d, набір %d, точка %d\n", selectedTeam,
                     selectedKit, group);
-        if (requestSpawn) requestSpawn(selectedTeam, selectedKit, group);
+
+        // **Екран закриваємо лише тоді, коли запит справді пішов.**
+        // Раніше ми ставили `spawnRequested` першим ділом, і коли місце
+        // виявлялося невибраним, запит не йшов — а екран уже зникав.
+        // Виходила застигла картинка без гравця, з якої нема виходу: це
+        // і є «зависло після DONE».
+        if (!haveMarker || !requestSpawn) {
+          std::printf("    місце появи не обране — запит не пішов, екран лишається\n");
+          return;
+        }
+        spawnRequested = requestSpawn(selectedTeam, selectedKit, group);
+        if (!spawnRequested) {
+          std::printf("    запит не пішов — екран лишається\n");
+        }
       });
       console.bind("hudItems.setBool", [&](const obf2::con::Command& command) {
         // `hudItems.setBool <ім'я> <0|1>` — так інтерфейс вмикає свої ж
@@ -2572,6 +2596,16 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       });
       // Ці дві ще не мають за чим працювати, але команду треба з'їсти —
       // інакше консоль вважатиме її невідомою.
+      // Наша власна команда, не з рушія: кружечки місць появи вузлів у
+      // даних не мають, їх ловить сама карта, тож консольного імені для
+      // них у грі немає. Потрібна вона для перевірок — щоб вибирати
+      // місце появи командою, а не наведенням миші в піксель.
+      console.bind("openbf2.selectSpawn", [&](const obf2::con::Command& command) {
+        selectedSpawn = command.argInt(0).value_or(0);
+        spawnDirty = true;
+        std::printf("  екран появи: обрано кружечок %d із %zu\n", selectedSpawn,
+                    spawnMarkerPoints.size());
+      });
       console.bind("spawnManager.selectNextUnlock", [](const obf2::con::Command&) {});
       console.bind("spawnManager.commitSuicide", [](const obf2::con::Command&) {});
       console.bind("sound.playSound", [](const obf2::con::Command&) {});
@@ -2621,10 +2655,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     //     NESelectKit, NESelectSpawnGroup. Порядок і паузи між ними
     //     перевірені на оригінальному сервері
     //     (docs/functions/network-events.md).
-    requestSpawn = [&](int team, int kit, int group) {
+    requestSpawn = [&](int team, int kit, int group) -> bool {
       if (hostedServer != nullptr && !hostedServer->players().empty()) {
         hostedServer->requestSpawn(hostedServer->players().front().id, team, kit, group);
-        return;
+        return true;
       }
       if (remote != nullptr) {
         // Серверу треба назвати **його** номер групи появи, а не наш
@@ -2640,15 +2674,16 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         }
         if (chosen == nullptr) {
           std::printf("  екран появи: точки %d немає в переліку рівня\n", group);
-          return;
+          return false;
         }
         std::printf("  екран появи: точка %d (%s) на %.0f %.0f\n", group,
                     chosen->nameKey.c_str(), chosen->position.x, chosen->position.z);
         remote->askSpawn(team, kit, chosen->position.x, chosen->position.z,
                          hudContext.mapWorldSize);
-        return;
+        return true;
       }
       std::printf("  екран появи: сервера немає, поява лише закриває екран\n");
+      return true;
     };
 
     // Назва сторони команди приходить із самого рівня:
@@ -3239,6 +3274,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   }
 
   int frame = 0;
+  bool execDone = false;  // --exec виконуємо один раз
   // Скільки часу минуло від попереднього кадру. Передбачення руху має
   // рахувати саме його: із твердою 1/60 солдат ішов би повільніше за
   // камеру на швидкій машині й швидше на повільній, і рух смикався б
@@ -3603,6 +3639,20 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         // Натискання на екрані появи. Кнопка не має власної логіки — вона
         // виконує консольну команду з setButtonNodeConCmd, тож усе, що
         // тут треба, це знайти її під курсором і виконати.
+        // `--exec` тим самим шляхом, що й натискання кнопки: кнопка
+        // виконує консольну команду, і ми виконуємо консольну команду.
+        // Тільки коли екран уже зібраний — інакше вибір нема на чому
+        // робити.
+        if (!args.execLines.empty() && spawnVisible && !spawnPieces.empty() && !execDone) {
+          execDone = true;
+          for (const std::string& line : args.execLines) {
+            std::printf("  консоль: %s\n", line.c_str());
+            if (!engine.console().executeLine(line)) {
+              std::printf("    команду не впізнано\n");
+            }
+          }
+        }
+
         if (spawnVisible && !spawnPieces.empty()) {
           const auto input = device->readInput();
           // --click --mouse дає одне синтетичне натискання: так екран
