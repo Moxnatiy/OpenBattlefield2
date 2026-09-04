@@ -71,6 +71,12 @@ struct Args {
   // собі він не потрібен у грі, але без нього заповнювач чужих солдатів
   // ніяк не перевірити на порожньому сервері.
   bool showOwnBox = false;
+  // --mouse-scale: скільки одиниць осі дає один піксель миші. Ланка
+  // «пікселі -> вісь» живе в `ControlMap` клієнта і **ще не розібрана**,
+  // тож це число НЕ виміряне — воно грає роль чутливості й лишається
+  // налаштуванням. Усе, що йде далі (вісь -> кут, вісь -> дріт), уже з
+  // бінаря, тому камера й сервер не розходяться, хоч би яким воно було.
+  float mouseScale = 0.02f;
   // --record <файл>: зберегти все, що прислав сервер, у тому ж форматі,
   // який читає `loadCapture` (u32 довжина, далі байти). Знятий трафік —
   // єдине, на чому можна перевіряти розбір протоколу тестом.
@@ -154,6 +160,7 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--ordinal" && i + 1 < argc) args.ordinal = std::atoi(argv[++i]);
     else if (flag == "--record" && i + 1 < argc) args.recordTo = argv[++i];
     else if (flag == "--exec" && i + 1 < argc) args.execLines.emplace_back(argv[++i]);
+    else if (flag == "--mouse-scale" && i + 1 < argc) args.mouseScale = std::atof(argv[++i]);
     else if (flag == "--team" && i + 1 < argc) args.team = std::atoi(argv[++i]);
     else if (flag == "--kit" && i + 1 < argc) args.kit = std::atoi(argv[++i]);
     else if (flag == "--group" && i + 1 < argc) args.spawnGroup = std::atoi(argv[++i]);
@@ -3381,12 +3388,13 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     // запит на появу.
     if (hostedServer && hostedClient) {
       const auto raw = device->readInput();
-      constexpr float kMouseSensitivity = 0.15f;
-      // Кут росте за годинниковою стрілкою (ліва система), тож рух миші
-      // вправо має його **збільшувати**. З правостороннім конвеєром знак
-      // був протилежний, і після переходу керування виявилося дзеркальним.
-      yaw += raw.mouseDeltaX * kMouseSensitivity;
-      pitch -= raw.mouseDeltaY * kMouseSensitivity;
+      // Той самий ланцюг, що й на справжньому сервері: пікселі -> вісь ->
+      // кут, множник огляду з даних (`phy-soldier-look-factor-*`, типово
+      // 5.0). Кут росте за годинниковою стрілкою (ліва система), тож рух
+      // миші вправо має його **збільшувати**.
+      const obf2::server::PhysicsConstants& look = hostedServer->settings().physics;
+      yaw += raw.mouseDeltaX * args.mouseScale * look.lookFactorX;
+      pitch -= raw.mouseDeltaY * args.mouseScale * look.lookFactorY;
       pitch = std::max(-89.0f, std::min(89.0f, pitch));
 
       obf2::net::PlayerInput input;
@@ -3434,13 +3442,30 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       // тільки в іншому вигляді: потоком дій гравця.
       if (remoteSoldier && remote != nullptr) {
         const auto raw = device->readInput();
-        constexpr float kMouseSensitivity = 0.15f;
-        yaw += raw.mouseDeltaX * kMouseSensitivity;
-        pitch -= raw.mouseDeltaY * kMouseSensitivity;
+
+        // Ланцюг рушія: **пікселі -> вісь -> кут**, і всі три ланки мають
+        // бути одні й ті самі для камери й для того, що ми шлемо серверу.
+        // Саме цього й не було: камера крутилася на `пікселі * 0.15`, а
+        // серверу ми слали сирі пікселі, які він множив на 5.0. Виходило
+        // розходження в тридцять разів — звідси й «оберт на 360 не дає
+        // 360», і те, що солдат опинявся не там, куди дивишся.
+        //
+        //   вісь  = пікселі * чутливість
+        //   кут   += вісь * phy-soldier-look-factor-*   (0x5a99a0)
+        //   дріт  = вісь * 100                          (0x5bc5f0)
+        const obf2::server::PhysicsConstants& look = remote->physics;
+        const float axisX = raw.mouseDeltaX * args.mouseScale;
+        const float axisY = raw.mouseDeltaY * args.mouseScale;
+        yaw += axisX * look.lookFactorX;
+        pitch -= axisY * look.lookFactorY;
         pitch = std::max(-89.0f, std::min(89.0f, pitch));
 
         obf2::net::bf2::PlayerAction& out = remote->action;
         out = obf2::net::bf2::PlayerAction{};
+        out.axes[obf2::net::bf2::kAxisMouseX] =
+            static_cast<std::int16_t>(axisX * obf2::net::bf2::kAxisWireScale);
+        out.axes[obf2::net::bf2::kAxisMouseY] =
+            static_cast<std::int16_t>(axisY * obf2::net::bf2::kAxisWireScale);
         // Повний хід уперед у дампі — 99, тож наш ±1 множимо на нього.
         out.axes[obf2::net::bf2::kAxisThrottle] =
             static_cast<std::int16_t>(raw.moveForward * obf2::net::bf2::kAxisFull);
@@ -3448,8 +3473,6 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
         // `c_PIYaw`, окремої осі для кроку вбік рушій не має.
         out.axes[obf2::net::bf2::kAxisYaw] =
             static_cast<std::int16_t>(raw.moveRight * obf2::net::bf2::kAxisFull);
-        out.axes[obf2::net::bf2::kAxisMouseX] = static_cast<std::int16_t>(raw.mouseDeltaX);
-        out.axes[obf2::net::bf2::kAxisMouseY] = static_cast<std::int16_t>(raw.mouseDeltaY);
         if (raw.sprint) out.buttons |= obf2::net::bf2::kButtonSprint;
         if (raw.jump) out.buttons |= obf2::net::bf2::kButtonAction;
         if (raw.fire) out.buttons |= obf2::net::bf2::kButtonFire;

@@ -30,6 +30,8 @@ void PhysicsConstants::bind(engine::Console& console) {
     else if (name == "phy-soldier-deceleration") deceleration = *value;
     else if (name == "phy-soldier-air-movement-factor") airMovementFactor = *value;
     else if (name == "phy-soldier-speed-factor") speedFactor = *value;
+    else if (name == "phy-soldier-look-factor-x") lookFactorX = *value;
+    else if (name == "phy-soldier-look-factor-y") lookFactorY = *value;
     else if (name == "phy-soldier-jump-factor") jumpFactor = *value;
   });
 }

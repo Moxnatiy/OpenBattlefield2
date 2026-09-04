@@ -34,6 +34,21 @@ struct PhysicsConstants {
   // Наскільки керованим лишається рух у повітрі: 0.05 — майже ніяк.
   float airMovementFactor = 0.05f;
   float speedFactor = 1.0f;
+
+  // Множники огляду: рушій додає кут як `вісь * множник`.
+  //
+  //   yaw   += вісь_x * lookFactorX
+  //   pitch += вісь_y * lookFactorY
+  //
+  // У клієнті це видно прямо (`BF2.exe`, 0x5a99a0): дві глобальні float-
+  // сталі за 0x9ec248 і 0x9ec344, обидві читаються з `Vars` із типовим
+  // 5.0 (0x853aa0 і 0x853ac0, `PUSH 0x40a00000`), а між ними стоїть ще
+  // множник прицілу (0x5a61a0), який поза збільшенням дорівнює 1.0.
+  //
+  // Кут — у градусах: за радіанами повний оберт вимагав би суми осей 1.26,
+  // тобто найдрібнішого поруху мишею.
+  float lookFactorX = 5.0f;  // phy-soldier-look-factor-x
+  float lookFactorY = 5.0f;  // phy-soldier-look-factor-y
   // `phy-soldier-jump-factor`. У рушії типове 0.98 (стала за 0xb4e8d4 в
   // тому ж переліку `Vars::getFloat`), але дані гри ставлять 1.0
   // (`objects/soldiers/common/common.con`), і виграють дані.
