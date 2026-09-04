@@ -981,6 +981,7 @@ struct RemoteWorld {
   // і відносно неї пакуються місця всіх об'єктів у потоці привидів.
   obf2::Vec3f compressionReference;
   int positionUpdates = 0;
+  int soldierMaskLogged = 0;
 
   // Команда кожного гравця (`CreatePlayerEvent`) і об'єкт, який гравець
   // зайняв (`EnterVehicleEvent`). Разом вони кажуть, чий солдат стоїть
@@ -1291,10 +1292,25 @@ struct RemoteWorld {
               std::printf("  привиди: час %u, записів %u%s\n", ghost->time, ghost->records,
                           ghost->controlObjectState ? ", є стан керованого об'єкта" : "");
             }
-            for (const auto& record : obf2::net::bf2::readGhostRecords(*more,
-                                                                      compressionReference)) {
+            // Хто з об'єктів солдат — знаємо напевно: сервер сам сказав
+            // це подією посадки. Без цього солдата читало б розкладкою
+            // простого об'єкта, і чужі гравці стояли б на місці.
+            const auto isSoldier = [this](std::uint16_t id) {
+              return objectOwner.find(id) != objectOwner.end();
+            };
+            for (const auto& record :
+                 obf2::net::bf2::readGhostRecords(*more, compressionReference, isSoldier)) {
               ++ghostRecords;
               ghostObjects.insert(record.networkId);
+              // Перевірка розкладки, а не здогад: маска солдата мусить
+              // бути підмножиною `getGhostStateMask` = 0x1950ff. Зайві
+              // біти означають, що ми читаємо не те.
+              if (objectOwner.count(record.networkId) != 0 && soldierMaskLogged < 8) {
+                ++soldierMaskLogged;
+                std::printf("  солдат %u: маска %#x%s, довжина %u біт%s\n", record.networkId,
+                            record.stateMask, (record.stateMask & ~0x1950ffu) ? " (ЗАЙВІ БІТИ)" : "",
+                            record.payloadBits, record.position ? ", є місце" : "");
+              }
               // Об'єкт зник — вид 3.
               if (record.kind == 3) {
                 dynamicObjects.erase(record.networkId);

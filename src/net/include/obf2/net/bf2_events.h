@@ -14,6 +14,7 @@
 // умовою, і довжина залежить від вмісту. Такі позначені окремо, і розбір
 // для них написано руками.
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -345,6 +346,29 @@ inline constexpr unsigned kObjectStateMaskBits = 19;
 inline constexpr std::uint32_t kObjectStatePosition = 0x2;
 inline constexpr float kObjectPositionPrecision = 0.0005f;
 
+// **Солдат читається інакше, і це не дрібниця.** Мережевий клас у нього
+// свій — `SoldierNetworkable` (0x5dc640), і в нього:
+//
+//   * маска не 19 біт, а **21** (`readBits(..., 0x15)` за 0x5dc719).
+//     Ширина маски — це кількість бітів у `getGhostStateMask`, а вона в
+//     кожного класу своя: у простого об'єкта 0x5849b, у солдата
+//     0x1950ff (0x5dabe0);
+//   * місце вмикає **біт 7**, а не біт 1 (`testb %dl, %dl; js` за
+//     0x5dc941 — перевірка знакового біта молодшого байта маски);
+//   * опорна точка — не потік і не попереднє місце, а
+//     `dice::hfe::nullVec`, тобто **нуль** (0x5dd367). Тож місце солдата
+//     приходить по суті абсолютним;
+//   * точність — 0.01 (стала за 0xb6d934), а не 0.0005.
+//
+// Через це чужі солдати в нас і не рухалися: ми читали їх розкладкою
+// простого об'єкта. Хто з об'єктів солдат, ми знаємо напевно — сервер
+// сам каже це подіями `CreatePlayerEvent` і `EnterVehicleEvent`.
+inline constexpr unsigned kSoldierStateMaskBits = 21;
+inline constexpr std::uint32_t kSoldierStatePosition = 0x80;
+inline constexpr float kSoldierPositionPrecision = 0.01f;
+// `dice::hfe::nullVec` — саме він стоїть опорою в розкладці солдата.
+inline constexpr Vec3f kNullVec{};
+
 // Ширина поля довжини. У рушії вона обчислюється на льоту, а на дроті
 // це рівно одинадцять бітів: із нею весь спійманий зразок розбирається
 // до останнього байта, з будь-якою іншою — жоден пакет.
@@ -358,10 +382,13 @@ std::optional<GhostHeader> readGhostHeader(std::span<const std::byte> packet);
 // Записи потоку привидів. Порожньо, якщо привидів немає або в пакеті
 // стоїть прапорець стану керованого об'єкта — той стан іде перед
 // записами і поки не розібраний.
-// reference — опорна точка для стиснених векторів. Її задає стан
-// керованого об'єкта в цьому ж пакеті (`setCompressionVector`).
-std::vector<GhostRecord> readGhostRecords(std::span<const std::byte> packet,
-                                          const Vec3f& reference = Vec3f{});
+// reference — опорна точка для стиснених векторів простих об'єктів. Її
+// задає стан керованого об'єкта в цьому ж пакеті (`setCompressionVector`).
+// isSoldier — чи цей номер належить солдатові гравця: у солдата інша
+// розкладка (див. вище), і без цього він читається як сміття.
+std::vector<GhostRecord> readGhostRecords(
+    std::span<const std::byte> packet, const Vec3f& reference = Vec3f{},
+    const std::function<bool(std::uint16_t)>& isSoldier = {});
 
 // Проходить пакет даних і повертає всі події з нього.
 // Порожньо — це не пакет даних або він обірвався на першій же події.

@@ -474,7 +474,8 @@ std::optional<GhostHeader> enterGhosts(BitReader& reader) {
 }  // namespace
 
 std::vector<GhostRecord> readGhostRecords(std::span<const std::byte> packet,
-                                          const Vec3f& reference) {
+                                          const Vec3f& reference,
+                                          const std::function<bool(std::uint16_t)>& isSoldier) {
   std::vector<GhostRecord> out;
   BitReader reader(packet);
   const auto header = enterGhosts(reader);
@@ -502,13 +503,22 @@ std::vector<GhostRecord> readGhostRecords(std::span<const std::byte> packet,
       const std::size_t payloadStart = reader.bitPosition();
       if (!reader.skipBits(*length)) break;
 
+      // Розкладка вмісту залежить від мережевого класу об'єкта, і для
+      // солдата вона інша: маска ширша, місце вмикає інший біт, опора
+      // нульова, точність груба.
+      const bool soldier = isSoldier && isSoldier(record.networkId);
+      const unsigned maskBits = soldier ? kSoldierStateMaskBits : kObjectStateMaskBits;
+      const std::uint32_t positionBit = soldier ? kSoldierStatePosition : kObjectStatePosition;
+      const float precision = soldier ? kSoldierPositionPrecision : kObjectPositionPrecision;
+      const Vec3f& origin = soldier ? kNullVec : reference;
+
       BitReader payload(packet);
       if (payload.skipBits(payloadStart)) {
-        const auto mask = payload.readBits(kObjectStateMaskBits);
+        const auto mask = payload.readBits(maskBits);
         if (mask) {
           record.stateMask = *mask;
-          if ((*mask & kObjectStatePosition) != 0) {
-            const auto at = payload.readCompressedVector(reference, kObjectPositionPrecision);
+          if ((*mask & positionBit) != 0) {
+            const auto at = payload.readCompressedVector(origin, precision);
             // Місце береться лише тоді, коли воно вмістилося у вміст:
             // інакше ми прочитали не те й видали б за позицію сміття.
             if (at && payload.bitPosition() <= payloadStart + *length) record.position = *at;
