@@ -674,6 +674,30 @@ int runCalibrate(const Args& args, obf2::FileSystem& files) {
   for (const auto& [id, name] : mapping) {
     std::printf("  %6u  %s\n", id, name.c_str());
   }
+
+  // Перевірка здогаду про походження номерів.
+  //
+  // Сервер шле номер шаблона, а не ім'я, і жодним блоком переліку не
+  // передає (у розмові їх лише три: 0, 2 і 5). Рушій бере шаблон із
+  // `ObjectTemplateManager::getTemplate(unsigned)` — а це `std::map` за
+  // номером (лінукс-сервер, 0x6a1110), тобто номери роздаються десь при
+  // завантаженні і мають збігтися на обох боках.
+  //
+  // Найпростіше припущення: номер — це порядок створення шаблона. Воно
+  // перевіряється, а не приймається на віру: у нас є пари «номер -> ім'я»,
+  // здобуті зіставленням за місцем, і власний перелік у порядку
+  // створення. Якщо припущення хибне — це видно тут-таки.
+  {
+    obf2::game::Registry registry = buildRegistry(files);
+    const std::vector<const obf2::game::ObjectTemplate*> ordered = registry.all();
+    int hit = 0, miss = 0;
+    for (const auto& [id, name] : mapping) {
+      if (id >= ordered.size()) { ++miss; continue; }
+      if (ordered[id]->name == name) ++hit; else ++miss;
+    }
+    std::printf("номер = порядок створення шаблона? збіглося %d, ні %d (наших шаблонів %zu)\n",
+                hit, miss, ordered.size());
+  }
   if (!unmatched.empty()) {
     std::printf("не впізнано %zu номерів:\n", unmatched.size());
     for (const auto& [id, at] : unmatched) {
@@ -770,6 +794,7 @@ struct RemoteWorld {
   int ghostControlled = 0;
   int controlStates = 0;
   std::set<std::uint16_t> ghostObjects;
+  std::set<std::uint32_t> seenBlocks;
   std::size_t dataBytes = 0;
   std::uint8_t sequence = 0;
   std::uint8_t batch = 0;
@@ -1248,6 +1273,17 @@ struct RemoteWorld {
             ++eventCount;
             if (event.block) {
               const auto done = blocks.feed(*event.block);
+              if (done && seenBlocks.insert(done->first).second) {
+                // Що взагалі сервер шле блоками: серед них шукаємо той,
+                // що зіставляє номери шаблонів з іменами.
+                std::string head;
+                for (std::size_t k = 0; k < done->second.size() && k < 24; ++k) {
+                  const int byte = std::to_integer<int>(done->second[k]);
+                  head += (byte >= 32 && byte < 127) ? static_cast<char>(byte) : '.';
+                }
+                std::printf("  блок %u: %zu байтів  %s\n", done->first, done->second.size(),
+                            head.c_str());
+              }
               // Дослід: підтвердити зібраний блок подією NEDataBlockReady.
               // Справжній клієнт це, схоже, робить — сервер веде свій
               // облік того, що клієнт уже отримав.
