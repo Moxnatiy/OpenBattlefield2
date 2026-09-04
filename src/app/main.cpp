@@ -71,6 +71,10 @@ struct Args {
   // собі він не потрібен у грі, але без нього заповнювач чужих солдатів
   // ніяк не перевірити на порожньому сервері.
   bool showOwnBox = false;
+  // --record <файл>: зберегти все, що прислав сервер, у тому ж форматі,
+  // який читає `loadCapture` (u32 довжина, далі байти). Знятий трафік —
+  // єдине, на чому можна перевіряти розбір протоколу тестом.
+  std::string recordTo;
   std::string connectTo;      // --connect <хост[:порт]>: справжній сервер BF2
   // --probe: тільки розбір протоколу, без вікна. Без нього --connect
   // відкриває світ, як і належить клієнтові.
@@ -142,6 +146,7 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--name" && i + 1 < argc) args.playerName = argv[++i];
     else if (flag == "--calibrate" && i + 1 < argc) args.calibrate = argv[++i];
     else if (flag == "--ordinal" && i + 1 < argc) args.ordinal = std::atoi(argv[++i]);
+    else if (flag == "--record" && i + 1 < argc) args.recordTo = argv[++i];
     else if (flag == "--team" && i + 1 < argc) args.team = std::atoi(argv[++i]);
     else if (flag == "--kit" && i + 1 < argc) args.kit = std::atoi(argv[++i]);
     else if (flag == "--group" && i + 1 < argc) args.spawnGroup = std::atoi(argv[++i]);
@@ -781,7 +786,22 @@ std::optional<ContentHashes> contentHashes(obf2::FileSystem& files, const std::s
 // крутиться в кадровому циклі. Саме так робить і оригінал — сесія не
 // закінчується на тому, що сервер нас прийняв.
 struct RemoteWorld {
-  RemoteWorld(const Args& a, obf2::FileSystem& f) : args(a), files(f) {}
+  RemoteWorld(const Args& a, obf2::FileSystem& f) : args(a), files(f) {
+    if (!args.recordTo.empty()) {
+      recording = std::fopen(args.recordTo.c_str(), "wb");
+      if (recording == nullptr) {
+        std::printf("  не вдалося писати зняток у %s\n", args.recordTo.c_str());
+      }
+    }
+  }
+  ~RemoteWorld() {
+    if (recording != nullptr) std::fclose(recording);
+  }
+  RemoteWorld(const RemoteWorld&) = delete;
+  RemoteWorld& operator=(const RemoteWorld&) = delete;
+
+  // Куди писати знятий трафік (--record). Порожньо — не пишемо.
+  std::FILE* recording = nullptr;
 
   const Args& args;
   obf2::FileSystem& files;
@@ -982,6 +1002,7 @@ struct RemoteWorld {
   obf2::Vec3f compressionReference;
   int positionUpdates = 0;
   int soldierMaskLogged = 0;
+  int soldierMoveLogged = 0;
 
   // Команда кожного гравця (`CreatePlayerEvent`) і об'єкт, який гравець
   // зайняв (`EnterVehicleEvent`). Разом вони кажуть, чий солдат стоїть
@@ -1211,6 +1232,11 @@ struct RemoteWorld {
 
       const auto more = socket->receive(timeoutMs);
       if (!more) return false;
+      if (recording != nullptr) {
+        const auto length = static_cast<std::uint32_t>(more->size());
+        std::fwrite(&length, sizeof(length), 1, recording);
+        std::fwrite(more->data(), 1, more->size(), recording);
+      }
       const auto parsed = obf2::net::bf2::readPacket(*more);
       if (!parsed) return true;
       if (parsed->extended) lastServerSequence = parsed->extended->sequence;
@@ -1319,6 +1345,11 @@ struct RemoteWorld {
               // Місце з оновлення стану. Тепер заповнювачі не стоять там,
               // де об'єкт створено, а їдуть за ним.
               if (record.position && record.networkId != ourSoldier) {
+                if (objectOwner.count(record.networkId) != 0 && soldierMoveLogged < 10) {
+                  ++soldierMoveLogged;
+                  std::printf("  чужий солдат %u -> %.1f %.1f %.1f\n", record.networkId,
+                              record.position->x, record.position->y, record.position->z);
+                }
                 dynamicObjects[record.networkId] = *record.position;
                 ++positionUpdates;
               }
@@ -1598,6 +1629,10 @@ struct RemoteWorld {
     std::printf("  об'єктів, створених у грі (чужі солдати й техніка): %zu, "
                 "оновлень місця з потоку привидів: %d\n",
                 dynamicObjects.size(), positionUpdates);
+    for (const auto& [object, player] : objectOwner) {
+      std::printf("  гравець %u -> об'єкт %u: у записах привидів %s\n", player, object,
+                  ghostObjects.count(object) ? "Є" : "НЕМАЄ");
+    }
     for (const auto& [id, at] : dynamicObjects) {
       const int team = objectTeam(id);
       std::printf("    об'єкт %5u  %8.1f %7.1f %8.1f  %s\n", id, at.x, at.y, at.z,

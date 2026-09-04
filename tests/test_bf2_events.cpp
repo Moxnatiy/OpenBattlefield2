@@ -182,10 +182,42 @@ void testGhostRecordsCarryPositions() {
   CHECK_EQ(onTheMap, withPosition);
 }
 
+// Пакети зі станом керованого об'єкта — це майже весь потік після появи
+// гравця. Прохід повз цей стан виписано з бінаря, але перевіряють його
+// дані: після проходу має прочитатися рівно стільки записів, скільки
+// назвав заголовок.
+void testControlObjectStateIsSkippable() {
+  // Окремий зняток: цей знято вже після появи гравця й із надісланим
+  // вводом, тож стан керованого об'єкта в ньому майже в кожному пакеті.
+  //   openbf2 --connect <хост> --level dalian_plant --frames 6000 \
+  //           --click --mouse 727 546 --record tests/data/bf2-spawned.bin
+  const auto packets = loadCapture(std::string(OBF2_TEST_DATA) + "/bf2-spawned.bin");
+  CHECK(!packets.empty());
+
+  int withControl = 0, walked = 0;
+  for (const auto& packet : packets) {
+    const auto header = obf2::net::bf2::readGhostHeader(packet);
+    if (!header || !header->controlObjectState || header->records == 0) continue;
+    ++withControl;
+    const auto found = obf2::net::bf2::readGhostRecords(packet);
+    if (found.size() == std::size_t(header->records)) ++walked;
+  }
+
+  std::printf("  пакетів зі станом керованого об'єкта: %d, пройдено до кінця: %d\n", withControl,
+              walked);
+  CHECK(withControl > 100);
+  // Один пакет зі ста бере гілку, якої ми ще не з'ясували (у функції є
+  // читання по 10 бітів у циклі за 0x44633a). Такий пакет просто не дає
+  // записів — це втрата одного оновлення, а не збитий потік. Поки
+  // вимагаємо, щоб проходило хоча б 95 зі 100.
+  CHECK(walked * 100 >= withControl * 95);
+}
+
 TEST_MAIN({
   testWorldCaptureIsFullyDecoded();
   testHeightsAreOnTheTerrain();
   testGhostStreamIsWalkable();
   testControlObjectStateNamesItsObject();
   testGhostRecordsCarryPositions();
+  testControlObjectStateIsSkippable();
 });

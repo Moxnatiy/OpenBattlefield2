@@ -441,6 +441,52 @@ namespace {
 
 // Спільне для заголовка й записів: дійти до потоку привидів, пройшовши
 // потік дій гравця й усі події.
+// Пройти стан керованого об'єкта, не розбираючи його.
+//
+// Прохід виписано з `GhostManager::readControlObjectState` (0x445c30)
+// знаряддям `tools/linuxded/bitfields.py --blocks`, гілка за гілкою:
+//
+//   12                     число на початку
+//   1 + 31                 лічильник (знак і величина; при знаку 0x445cbf,
+//                          без знака 0x445ed0 — обидві гілки по 31 біт)
+//   32, 32, 32             опорна точка стиснення -> setCompressionVector
+//   16                     мережевий номер керованого об'єкта
+//   1                      прапорець A; якщо 1 -> ще 16 біт (0x445f93)
+//   1                      прапорець B (0x445db3, після getObject)
+//                          якщо 1 -> 1 біт (0x445f33), і якщо той 1 -> 16 (0x445f66)
+//   1                      прапорець C (0x445e52)
+//   3                      обидві гілки читають по 3 біти (0x445e80 / 0x445fde)
+//
+// Далі у функції є ще читання по 10 бітів у циклі (0x44633a), але воно
+// під умовою, якої ми ще не з'ясували. Тому прохід **перевіряється
+// даними**: після нього мають прочитатися рівно `records` записів, і
+// пакет має закінчитися. Не зійшлося — кажемо, що не вміємо, і не
+// вдаємо, ніби прочитали.
+bool skipControlObjectState(BitReader& reader) {
+  if (!reader.skipBits(12)) return false;
+
+  const auto sign = reader.readBits(1);
+  if (!sign || !reader.skipBits(31)) return false;
+  if (!reader.skipBits(32 * 3)) return false;  // опорна точка
+  if (!reader.skipBits(16)) return false;      // мережевий номер
+
+  const auto flagA = reader.readBits(1);
+  if (!flagA) return false;
+  if (*flagA == 1 && !reader.skipBits(16)) return false;
+
+  const auto flagB = reader.readBits(1);
+  if (!flagB) return false;
+  if (*flagB == 1) {
+    const auto more = reader.readBits(1);
+    if (!more) return false;
+    if (*more == 1 && !reader.skipBits(16)) return false;
+  }
+
+  const auto flagC = reader.readBits(1);
+  if (!flagC || !reader.skipBits(3)) return false;
+  return true;
+}
+
 std::optional<GhostHeader> enterGhosts(BitReader& reader) {
   if (!enterPayload(reader)) return std::nullopt;
 
@@ -479,7 +525,11 @@ std::vector<GhostRecord> readGhostRecords(std::span<const std::byte> packet,
   std::vector<GhostRecord> out;
   BitReader reader(packet);
   const auto header = enterGhosts(reader);
-  if (!header || header->controlObjectState) return out;
+  if (!header) return out;
+  // Стан керованого об'єкта лежить перед записами. Раніше ми такі пакети
+  // просто кидали — а після появи гравця він їде майже в кожному, і разом
+  // із ними ми викидали майже весь потік.
+  if (header->controlObjectState && !skipControlObjectState(reader)) return out;
 
   for (std::uint8_t i = 0; i < header->records; ++i) {
     const auto kind = reader.readBits(2);
