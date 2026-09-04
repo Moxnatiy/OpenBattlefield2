@@ -817,6 +817,7 @@ struct RemoteWorld {
   // виправлення від сервера приймаємо як істину.
   obf2::server::BodyState body;
   obf2::server::SwimState swim;
+  obf2::server::TickAccumulator tick;
   bool bodyReady = false;
   int corrections = 0;
   float correctionSum = 0.0f;
@@ -881,7 +882,14 @@ struct RemoteWorld {
     // Рух — тією самою функцією, що й на сервері: земля, вода, стіни.
     // Поки в клієнта була власна скорочена копія, він знав лише висоту
     // землі — і солдат проходив крізь об'єкти.
-    obf2::server::moveSoldier(body, swim, wish, speed, jump, physics, terrain, collision, step);
+    //
+    // І тільки цілими тактами по 1/30 с (`WorldPref::mTickTime`). Крок
+    // завдовжки з кадр робив рух і стрибок різними на 60 і на 120 кадрах.
+    const int ticks = tick.take(step);
+    for (int i = 0; i < ticks; ++i) {
+      obf2::server::moveSoldier(body, swim, wish, speed, jump, physics, terrain, collision,
+                                obf2::server::kTickTime);
+    }
   }
 
   // Відіслати поточний ввід. Оригінал робить це тридцять разів на

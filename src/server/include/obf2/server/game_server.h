@@ -97,8 +97,9 @@ struct ServerSettings {
   std::string gameMode = "gpm_cq";
   int maxPlayers = 16;
 
-  // Частота симуляції. BF2 крутив сервер на 30 тактах; фіксований крок
-  // потрібен, щоб рух не залежав від навантаження машини.
+  // Частота симуляції. Не «звична» стала: `WorldPref::mTickTime` лежить
+  // у `.data` лінукс-сервера за 0xf68c50 і дорівнює 0.0333333333333333
+  // (double), тобто рівно 1/30 с. Див. `obf2::server::kTickTime`.
   float tickRate = 30.0f;
 
   // Швидкості солдата беруться з констант рушія (`phy-soldier-run-speed`
