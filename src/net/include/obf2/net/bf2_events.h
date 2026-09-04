@@ -187,8 +187,12 @@ inline float spawnGroupWorldPos(std::uint8_t packed, float worldSize) {
 //
 // Нуль означає «не знайшли»: саме його сервер розуміє як «місце не
 // обране» (`Player::getSpawnGroup() > 0`).
+// team — наша команда. Групи іншої команди пропускаються: сервер спавнить
+// гравця лише у своїй, і запит на чужу просто нічого не робить — саме
+// через це поява інколи «не спрацьовувала».
 std::uint8_t nearestSpawnGroup(const std::vector<CreateSpawnGroup>& groups, float worldX,
-                               float worldZ, float worldSize, float* distance = nullptr);
+                               float worldZ, float worldSize, float* distance = nullptr,
+                               int team = 0);
 
 // Одна подія з пакета: номер типу і те з неї, що ми вже розбираємо.
 // Хто чим керує (`EnterVehicleEvent`, тип 9) і хто вийшов

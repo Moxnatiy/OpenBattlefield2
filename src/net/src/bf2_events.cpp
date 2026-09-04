@@ -340,11 +340,15 @@ std::optional<MapInfo> parseMapInfo(std::span<const std::byte> block) {
 }
 
 std::uint8_t nearestSpawnGroup(const std::vector<CreateSpawnGroup>& groups, float worldX,
-                               float worldZ, float worldSize, float* distance) {
+                               float worldZ, float worldSize, float* distance, int team) {
   std::uint8_t best = 0;
   float bestSquared = 0.0f;
   bool found = false;
   for (const CreateSpawnGroup& group : groups) {
+    // Групи чужої команди не годяться: сервер спавнить гравця лише в
+    // своїй (`ServerGameLogic::uPlayingSpawning` бере групу гравця, а
+    // ту ставить `NESelectSpawnGroup`). Нуль у групі — нейтральна.
+    if (team > 0 && group.team != 0 && static_cast<int>(group.team) != team) continue;
     const float gx = spawnGroupWorldPos(group.worldX, worldSize);
     const float gz = spawnGroupWorldPos(group.worldZ, worldSize);
     const float dx = gx - worldX;

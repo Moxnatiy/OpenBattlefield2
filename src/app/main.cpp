@@ -887,7 +887,9 @@ struct RemoteWorld {
   // про свої групи ще не сказав.
   std::uint16_t chosenGroupId(float* away = nullptr) const {
     if (!havePoint) return static_cast<std::uint16_t>(directGroup);
-    return obf2::net::bf2::nearestSpawnGroup(spawnGroups, chosenX, chosenZ, chosenWorld, away);
+    // Тільки свої групи: чужу сервер просто проігнорує, і гравець не з'явиться.
+    return obf2::net::bf2::nearestSpawnGroup(spawnGroups, chosenX, chosenZ, chosenWorld,
+                                             away, world.ownTeam());
   }
 
   int directGroup = 0;
@@ -1237,8 +1239,8 @@ struct RemoteWorld {
             float away = 0.0f;
             const std::uint16_t wire = chosenGroupId(&away);
             eventWith(obf2::net::bf2::kNetSelectSpawnGroup, wire);
-            std::printf("  крок: місце появи %u (за %.0f м, груп у переліку %zu)\n", wire, away,
-                        spawnGroups.size());
+            std::printf("  крок: місце появи %u (за %.0f м, груп у переліку %zu, наша команда %d)\n",
+                        wire, away, spawnGroups.size(), world.ownTeam());
             break;
           }
           case obf2::net::bf2::JoinStep::Ready:
@@ -1337,10 +1339,13 @@ struct RemoteWorld {
               std::printf("  привиди: час %u, записів %u%s\n", ghost->time, ghost->records,
                           ghost->controlObjectState ? ", є стан керованого об'єкта" : "");
             }
-            // Розбір самих записів живе в `obf2::net::bf2::WorldView`
-            // (`src/net/src/bf2_world.cpp`): там немає ні вікна, ні часу,
-            // самі лише пакети, тому воно перевіряється тестом на знятому
-            // трафіку, а не «на око в грі».
+          }
+
+          // Стан світу — з **кожного** пакета даних, а не лише з тих, де
+          // є привиди: гравці й об'єкти приходять подіями задовго до
+          // першого запису потоку. Розбір живе в
+          // `obf2::net::bf2::WorldView` (`src/net/src/bf2_world.cpp`).
+          {
             const int before = world.positionUpdates();
             world.feed(*more);
             positionUpdates += world.positionUpdates() - before;
@@ -2584,6 +2589,18 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       // даних не мають, їх ловить сама карта, тож консольного імені для
       // них у грі немає. Потрібна вона для перевірок — щоб вибирати
       // місце появи командою, а не наведенням миші в піксель.
+      // `openbf2.spawnAt <номер групи>` — попросити появу прямо за
+      // номером групи, який назвав сервер (`CreateSpawnGroupEvent`, тип
+      // 57). Потрібна для перевірок: кружечки на карті ми ще ставимо за
+      // даними рівня, і вони не завжди збігаються з тим, чия група
+      // насправді, — а сервер спавнить лише у своїй.
+      console.bind("openbf2.spawnAt", [&](const obf2::con::Command& command) {
+        const int group = command.argInt(0).value_or(0);
+        if (remote == nullptr || group <= 0) return;
+        std::printf("  екран появи: пряма поява в групі %d\n", group);
+        remote->askSpawnGroup(selectedTeam, selectedKit, group);
+        spawnRequested = true;
+      });
       console.bind("openbf2.selectSpawn", [&](const obf2::con::Command& command) {
         selectedSpawn = command.argInt(0).value_or(0);
         spawnDirty = true;
@@ -3658,8 +3675,15 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
         // Чекаємо не лише на зібраний екран, а й на кружечки місць
         // появи: вони приходять подіями вже після завантаження рівня, і
         // без них вибирати нема з чого.
+        // Чекаємо ще й на те, щоб екран був зібраний для **нашої**
+        // команди: до відповіді сервера він показує прапори тієї, що
+        // стоїть за замовчуванням, і вибір потрапив би в чужу групу
+        // появи — а на чужу сервер не спавнить.
+        const bool teamKnown =
+            remote == nullptr || (remote->world.ownTeam() > 0 &&
+                                  selectedTeam == remote->world.ownTeam());
         if (!args.execLines.empty() && spawnVisible && !spawnPieces.empty() &&
-            !spawnMarkerPoints.empty() && !execDone) {
+            !spawnMarkerPoints.empty() && teamKnown && !execDone) {
           execDone = true;
           for (const std::string& line : args.execLines) {
             std::printf("  консоль: %s\n", line.c_str());
