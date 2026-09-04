@@ -66,3 +66,30 @@ python tools/dwarf/dump_vars.py "Game Files/OtherFiles/linuxded/bin/ia-32/bf2" s
 | `soldier-prone-inwater-limit` | 1.1 | глибина, за якої не можна лежати |
 
 Повний вивід — `docs/reference/soldier-vars.txt`.
+
+## Множники повороту
+
+`Soldier::handlePlayerInput` множить ввід огляду на два глобальні
+множники (лінукс-сервер, 0x54f63c і 0x54f666):
+
+```
+поворот_x = ввід_x * g_soldierLookAroundX
+поворот_y = ввід_y * g_soldierLookAroundY
+```
+
+Обидва читаються з `Vars` у статичному ініціалізаторі (0x5476f8 і
+0x54770a) з **типовим значенням 5.0** (стала за 0xb34b64):
+
+* `phy-soldier-look-factor-x`
+* `phy-soldier-look-factor-y`
+
+У даних гри цих змінних немає, тож лишається типове 5.0.
+
+Окремо, у `Settings/Controls.con` є `ControlMap.mouseSensitivity` — 1.7
+для піхотної розкладки і 3 для іншої.
+
+**Чого бракує.** Це ще не дає повного переліку: між рухом миші в пікселях
+і значенням осі стоїть `ControlMap`, і його масштаб живе в клієнті
+(`BF2.exe`), а не в сервері. Доки він не розібраний, наш множник
+чутливості лишається **невиміряним**: повний оберт мишею дає в нас не
+повний оберт на екрані.
