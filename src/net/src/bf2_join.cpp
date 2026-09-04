@@ -25,8 +25,13 @@ std::optional<JoinStep> JoinSequence::next(Clock::time_point now) {
   // екрана появи паузи немає взагалі: три події вибору йдуть поспіль.
   const bool afterChoice = step_ == JoinStep::Team || step_ == JoinStep::Kit ||
                            step_ == JoinStep::Group;
-  const auto wait = afterChoice ? std::chrono::duration_cast<Clock::duration>(kChoiceDelay)
-                                : std::chrono::duration_cast<Clock::duration>(kStepDelay);
+  // Перевірка вмісту йде разом із «рівень завантажено», без паузи: у
+  // дампі це один пакет. Пауза перед нею робила неможливе — перевірка
+  // приходила після появи гравця.
+  const auto delay = step_ == JoinStep::Content ? kContentDelay
+                     : afterChoice              ? kChoiceDelay
+                                                : kStepDelay;
+  const auto wait = std::chrono::duration_cast<Clock::duration>(delay);
   if (started_ && now - last_ < wait) return std::nullopt;
 
   // Кроки, які самі нічого не шлють, проходимо тут-таки — інакше на

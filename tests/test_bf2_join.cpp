@@ -45,8 +45,11 @@ static void testWaitsForLevelAndLoad() {
   if (step) CHECK(*step == JoinStep::Level);
 }
 
-// Пауза між кроками: два кроки поспіль сервер застає в старому стані.
-static void testStepsAreSpacedApart() {
+// Перевірка вмісту йде разом із «рівень завантажено», а пауза стоїть
+// уже перед повідомленням про базу гравців. Так це в знятому трафіку
+// оригіналу, і саме так воно й має бути за змістом: сервер питає про
+// вміст тоді, коли клієнт щойно його прочитав.
+static void testContentGoesWithLoadComplete() {
   JoinSequence join;
   join.setLevelReady();
   join.setClientLoaded();
@@ -54,12 +57,21 @@ static void testStepsAreSpacedApart() {
   Clock::time_point at{};
   const auto first = join.next(at);
   CHECK(first.has_value());
+  if (first) CHECK(*first == JoinStep::Level);
   join.commit(at);
 
-  // Одразу після кроку — ще рано.
+  // Тієї ж миті — перевірка вмісту, без чекання.
+  const auto second = join.next(at);
+  CHECK(second.has_value());
+  if (second) CHECK(*second == JoinStep::Content);
+  join.commit(at);
+
+  // А от база гравців чекає свої 1.1 с.
   CHECK(!join.next(at).has_value());
-  CHECK(!join.next(at + std::chrono::seconds(2)).has_value());
-  CHECK(join.next(after(at)).has_value());
+  CHECK(!join.next(at + std::chrono::milliseconds(900)).has_value());
+  const auto third = join.next(after(at));
+  CHECK(third.has_value());
+  if (third) CHECK(*third == JoinStep::Database);
 }
 
 // Без DONE послідовність спиняється на екрані появи й далі не йде.
@@ -129,7 +141,7 @@ static void testSkippedStepsCostNoDelay() {
 
 TEST_MAIN({
   testWaitsForLevelAndLoad();
-  testStepsAreSpacedApart();
+  testContentGoesWithLoadComplete();
   testStopsAtSpawnScreen();
   testChoiceMadeEarlyDoesNotStop();
   testSkippedStepsCostNoDelay();
