@@ -1,6 +1,7 @@
 add_library(obf2_mesh
   src/bf2_mesh.cpp
   src/collision.cpp
+  src/primitives.cpp
   src/skeleton.cpp
   src/animation.cpp
   src/skinning.cpp

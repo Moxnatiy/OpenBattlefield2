@@ -42,6 +42,7 @@
 #include "obf2/server/game_server.h"
 #include "obf2/mesh/bf2_mesh.h"
 #include "obf2/mesh/collision.h"
+#include "obf2/mesh/primitives.h"
 #include "obf2/mesh/skinning.h"
 #include "obf2/server/collision_world.h"
 #include "obf2/texture/dds.h"
@@ -66,6 +67,10 @@ struct Args {
   // --topdown: строго згори, +X праворуч, -Z вгору. Потрібно, щоб звіряти
   // орієнтацію світу з власною мінімапою рівня.
   bool topDown = false;
+  // --own-box: намалювати заповнювач і на місці власного солдата. Сам по
+  // собі він не потрібен у грі, але без нього заповнювач чужих солдатів
+  // ніяк не перевірити на порожньому сервері.
+  bool showOwnBox = false;
   std::string connectTo;      // --connect <хост[:порт]>: справжній сервер BF2
   // --probe: тільки розбір протоколу, без вікна. Без нього --connect
   // відкриває світ, як і належить клієнтові.
@@ -122,6 +127,7 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--hosted") args.hosted = true;
     else if (flag == "--verbose-menu") args.verboseMenu = true;
     else if (flag == "--topdown") args.topDown = true;
+    else if (flag == "--own-box") args.showOwnBox = true;
     else if (flag == "--connect" && i + 1 < argc) args.connectTo = argv[++i];
     else if (flag == "--probe") args.probe = true;
     else if (flag == "--no-content") args.skipContent = true;
@@ -915,6 +921,12 @@ struct RemoteWorld {
   // Наш номер гравця й команда — із `CreatePlayerEvent` за іменем.
   int ourPlayer = -1;
   int ourTeam = 0;
+  // Об'єкти, створені сервером уже в грі: чужі солдати й техніка. Місце
+  // тут — те, з яким об'єкт **створено**. Рухаються вони записами потоку
+  // привидів, а їх ми ще не розбираємо, тож заповнювач стоятиме там, де
+  // об'єкт з'явився. Це борг, і його видно на екрані.
+  std::map<std::uint16_t, obf2::Vec3f> dynamicObjects;
+
   // Об'єкт, яким ми керуємо. Його називає `EnterVehicleEvent`.
   std::uint16_t ourSoldier = 0;
   // Об'єкт, про який сервер шле стан керованого об'єкта. До появи це не
@@ -1312,6 +1324,12 @@ struct RemoteWorld {
               }
               const KnownObject* match = nearestKnown(known, at);
               if (match == nullptr) {
+                // Об'єкт, якого немає в розстановці рівня, — це щось
+                // живе: солдат іншого гравця або техніка, яку сервер
+                // створив уже в грі. Ким саме він є, ми ще не знаємо:
+                // зіставлення номера шаблона з іменем не розібране. Тому
+                // запам'ятовуємо місце й показуємо заповнювачем.
+                dynamicObjects[event.object->networkId] = at;
                 std::printf("  не впізнано: шаблон %u @ %.1f %.1f %.1f\n",
                             event.object->templateId, at.x, at.y, at.z);
                 continue;
@@ -1454,6 +1472,8 @@ struct RemoteWorld {
       std::printf("    по осях: x %.2f, y %.2f (зі знаком), z %.2f\n", correctionAxis.x / n,
                   correctionAxis.y / n, correctionAxis.z / n);
     }
+    std::printf("  об'єктів, створених у грі (чужі солдати й техніка): %zu\n",
+                dynamicObjects.size());
     if (ourSoldier != 0) {
       std::printf("  наш об'єкт %u у записах привидів: %s\n", ourSoldier,
                   ghostObjects.count(ourSoldier) ? "є" : "немає");
@@ -2971,6 +2991,21 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     triangles += static_cast<long long>(scene.meshes[i].indices.size() / 3);
   }
 
+  // Заповнювач для чужих солдатів. Розмір — не на око: це колізійна форма
+  // солдата з даних гри (`coll-soldier-radius` 0.25 і
+  // `coll-soldier-stand-height` 1.7), тобто 0.5 x 1.7 x 0.5.
+  obf2::gfx::GpuMesh enemyBox;
+  bool enemyBoxReady = false;
+  if (remote != nullptr) {
+    const obf2::server::PhysicsConstants& shape = remote->physics;
+    const obf2::mesh::RenderMesh box = obf2::mesh::buildBox(
+        obf2::mesh::Vec3{shape.radius * 2.0f, shape.standHeight, shape.radius * 2.0f}, "#c03030");
+    if (auto uploaded = renderer->upload(box, resolveTexture)) {
+      enemyBox = *uploaded;
+      enemyBoxReady = true;
+    }
+  }
+
   std::vector<obf2::gfx::MeshRenderer::DrawItem> items;
   items.reserve(scene.instances.size());
   long long drawnTriangles = 0;
@@ -3272,7 +3307,20 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       }
       renderer->renderOverlay(*acquired, screen, obf2::gfx::Color{0.0f, 0.0f, 0.0f, 1.0f});
     } else {
-      renderer->renderScene(*acquired, items, projection * view,
+      // Чужі об'єкти домальовуємо до готового переліку: сцена рівня
+      // складається один раз, а ці з'являються й зникають у грі.
+      const std::vector<obf2::gfx::MeshRenderer::DrawItem>* toDraw = &items;
+      std::vector<obf2::gfx::MeshRenderer::DrawItem> withOthers;
+      if (remote != nullptr && enemyBoxReady && !remote->dynamicObjects.empty()) {
+        withOthers = items;
+        for (const auto& [id, at] : remote->dynamicObjects) {
+          if (id == remote->ourSoldier && !args.showOwnBox) continue;  // себе зсередини не малюємо
+          withOthers.push_back(
+              obf2::gfx::MeshRenderer::DrawItem{&enemyBox, obf2::translation(at)});
+        }
+        toDraw = &withOthers;
+      }
+      renderer->renderScene(*acquired, *toDraw, projection * view,
                             obf2::gfx::Color{0.42f, 0.55f, 0.68f, 1.0f});
 
       // HUD іде другим проходом поверх готового кадру — без очищення цілі.
