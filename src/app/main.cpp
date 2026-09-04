@@ -35,6 +35,7 @@
 #include <set>
 
 #include "obf2/net/bf2_events.h"
+#include "obf2/net/bf2_world.h"
 #include "obf2/net/bf2_join.h"
 #include "obf2/net/md5.h"
 #include "obf2/net/bf2_protocol.h"
@@ -801,6 +802,7 @@ std::optional<ContentHashes> contentHashes(obf2::FileSystem& files, const std::s
 // закінчується на тому, що сервер нас прийняв.
 struct RemoteWorld {
   RemoteWorld(const Args& a, obf2::FileSystem& f) : args(a), files(f) {
+    world.setOwnName(args.playerName);
     if (!args.recordTo.empty()) {
       recording = std::fopen(args.recordTo.c_str(), "wb");
       if (recording == nullptr) {
@@ -1010,27 +1012,16 @@ struct RemoteWorld {
   // тут — те, з яким об'єкт **створено**. Рухаються вони записами потоку
   // привидів, а їх ми ще не розбираємо, тож заповнювач стоятиме там, де
   // об'єкт з'явився. Це борг, і його видно на екрані.
-  std::map<std::uint16_t, obf2::Vec3f> dynamicObjects;
-  // Куди дивиться чужий солдат, у градусах (маска стану, біт 0x2).
-  std::map<std::uint16_t, float> dynamicYaw;
+  // Стан світу з пакетів: гравці, об'єкти, їхні місця й кути. Живе в
+  // `obf2::net::bf2::WorldView` (`src/net/src/bf2_world.cpp`).
+  obf2::net::bf2::WorldView world;
   // Опорна точка для стиснених векторів: її дає стан керованого об'єкта,
   // і відносно неї пакуються місця всіх об'єктів у потоці привидів.
   obf2::Vec3f compressionReference;
   int positionUpdates = 0;
-  int soldierMaskLogged = 0;
-  int soldierRejected = 0;
   // Слід чужого солдата: скільки оновлень, наскільки поїхало від першого
   // місця і як високо над землею. Стоїть він чи ходить, над землею він
   // має лишатися на нулі — це і є міра правильності розбору.
-  struct Track {
-    bool started = false;
-    obf2::Vec3f first;
-    int updates = 0;
-    float travelled = 0.0f;
-    float aboveGround = 0.0f;
-  };
-  std::map<std::uint16_t, Track> soldierTracks;
-  int soldierMoveLogged = 0;
 
   // Команда кожного гравця (`CreatePlayerEvent`) і об'єкт, який гравець
   // зайняв (`EnterVehicleEvent`). Разом вони кажуть, чий солдат стоїть
@@ -1346,102 +1337,13 @@ struct RemoteWorld {
               std::printf("  привиди: час %u, записів %u%s\n", ghost->time, ghost->records,
                           ghost->controlObjectState ? ", є стан керованого об'єкта" : "");
             }
-            // Хто з об'єктів солдат — знаємо напевно: сервер сам сказав
-            // це подією посадки. Без цього солдата читало б розкладкою
-            // простого об'єкта, і чужі гравці стояли б на місці.
-            const auto isSoldier = [this](std::uint16_t id) {
-              return objectOwner.find(id) != objectOwner.end();
-            };
-            // Опора для стисненого вектора — останнє відоме місце цього
-            // ж об'єкта. Поки об'єкта не бачили, править точка з
-            // `CreateObjectEvent`; якщо й тієї немає — опора потоку.
-            const auto referenceFor = [this](std::uint16_t id) {
-              // Солдат рахується від **вектора стиснення потоку** — того
-              // самого, що ставить стан керованого об'єкта (`BF2.exe`,
-              // 0x62bd60 читає вектор із поля `потік+0x54`).
-              if (objectOwner.count(id) != 0) return compressionReference;
-              const auto found = dynamicObjects.find(id);
-              if (found != dynamicObjects.end()) return found->second;
-              const auto born = objects.find(id);
-              if (born != objects.end()) return born->second;
-              return compressionReference;
-            };
-            for (const auto& record :
-                 obf2::net::bf2::readGhostRecords(*more, referenceFor, isSoldier)) {
-              ++ghostRecords;
-              ghostObjects.insert(record.networkId);
-              // Перевірка розкладки, а не здогад: маска солдата мусить
-              // бути підмножиною `getGhostStateMask` = 0x1950ff. Зайві
-              // біти означають, що ми читаємо не те.
-              if (objectOwner.count(record.networkId) != 0 && soldierMaskLogged < 8) {
-                ++soldierMaskLogged;
-                std::printf("  солдат %u: маска %#x%s, довжина %u біт%s\n", record.networkId,
-                            record.stateMask, (record.stateMask & ~0x1950ffu) ? " (ЗАЙВІ БІТИ)" : "",
-                            record.payloadBits, record.position ? ", є місце" : "");
-              }
-              // Об'єкт зник — вид 3.
-              if (record.kind == 3) {
-                dynamicObjects.erase(record.networkId);
-                continue;
-              }
-              // Місце з оновлення стану. Тепер заповнювачі не стоять там,
-              // де об'єкт створено, а їдуть за ним.
-              // Розкладку солдата ми ще не дочитали: за маскою йдуть
-              // десятки полів за умовами (bitfields.py --blocks на
-              // `SoldierNetworkable::setNetUpdate` показує їх усі), і
-              // місце лежить не одразу за маскою. Тому прочитане місце
-              // солдата буває сміттям — і його видно: числа на кшталт
-              // -6.7e27 або висота -128 при рельєфі 154.
-              //
-              // Поки розбір не дороблено, **не показуємо того, чого не
-              // вміємо прочитати**: місце приймається лише якщо воно
-              // скінченне, лежить у межах карти і не далі кількох метрів
-              // від землі. Скільки відкинуто — видно у звіті, щоб борг не
-              // сховався за фільтром.
-              if (record.position && objectOwner.count(record.networkId) != 0) {
-                const obf2::Vec3f& at = *record.position;
-                const bool finite = std::isfinite(at.x) && std::isfinite(at.y) &&
-                                    std::isfinite(at.z);
-                const float ground =
-                    terrain != nullptr ? terrain->groundHeightAt(at) : at.y;
-                const bool sane = finite && std::abs(at.x) < 1024.0f && std::abs(at.z) < 1024.0f &&
-                                  std::abs(at.y - ground) < 5.0f;
-                if (!sane) {
-                  ++soldierRejected;
-                  continue;
-                }
-              }
-              if (record.position && record.networkId != ourSoldier) {
-                if (objectOwner.count(record.networkId) != 0) {
-                  // Міра розсинхрону. Солдат стоїть на землі, тож
-                  // відхилення від висоти рельєфу — це чиста помилка
-                  // розбору, а не рух. Заразом рахуємо, як далеко місце
-                  // поїхало від першого відомого.
-                  Track& track = soldierTracks[record.networkId];
-                  if (!track.started) {
-                    track.started = true;
-                    track.first = *record.position;
-                  }
-                  ++track.updates;
-                  const obf2::Vec3f d = *record.position - track.first;
-                  track.travelled =
-                      std::max(track.travelled, std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z));
-                  if (terrain != nullptr) {
-                    const float ground = terrain->groundHeightAt(*record.position);
-                    track.aboveGround += record.position->y - ground;
-                  }
-                  if (soldierMoveLogged < 10) {
-                    ++soldierMoveLogged;
-                    std::printf("  чужий солдат %u -> %.1f %.1f %.1f%s\n", record.networkId,
-                                record.position->x, record.position->y, record.position->z,
-                                record.baseline ? "  (повний стан)" : "");
-                  }
-                }
-                dynamicObjects[record.networkId] = *record.position;
-                if (record.yaw) dynamicYaw[record.networkId] = *record.yaw;
-                ++positionUpdates;
-              }
-            }
+            // Розбір самих записів живе в `obf2::net::bf2::WorldView`
+            // (`src/net/src/bf2_world.cpp`): там немає ні вікна, ні часу,
+            // самі лише пакети, тому воно перевіряється тестом на знятому
+            // трафіку, а не «на око в грі».
+            const int before = world.positionUpdates();
+            world.feed(*more);
+            positionUpdates += world.positionUpdates() - before;
           }
 
           // Розбираємо всі події з пакета: за таблицею розмірів кожну
@@ -1561,7 +1463,6 @@ struct RemoteWorld {
                 // створив уже в грі. Ким саме він є, ми ще не знаємо:
                 // зіставлення номера шаблона з іменем не розібране. Тому
                 // запам'ятовуємо місце й показуємо заповнювачем.
-                dynamicObjects[event.object->networkId] = at;
                 std::printf("  не впізнано: шаблон %u @ %.1f %.1f %.1f\n",
                             event.object->templateId, at.x, at.y, at.z);
                 continue;
@@ -1716,26 +1617,28 @@ struct RemoteWorld {
     }
     std::printf("  об'єктів, створених у грі (чужі солдати й техніка): %zu, "
                 "оновлень місця з потоку привидів: %d\n",
-                dynamicObjects.size(), positionUpdates);
-    if (soldierRejected > 0) {
-      std::printf("  місць солдатів відкинуто як нечитані: %d (розкладка ще не дочитана)\n",
-                  soldierRejected);
+                world.objects().size(), positionUpdates);
+    if (world.rejected() > 0) {
+      std::printf("  місць відкинуто як нечитані: %d\n", world.rejected());
     }
-    for (const auto& [id, track] : soldierTracks) {
+    for (const auto& [id, object] : world.objects()) {
+      if (object.team == 0 || object.updates == 0) continue;
       std::printf("  слід солдата %u: оновлень %d, поїхав на %.1f м, над землею в середньому "
                   "%.2f м\n",
-                  id, track.updates, track.travelled,
-                  track.updates > 0 ? track.aboveGround / static_cast<float>(track.updates) : 0.0f);
+                  id, object.updates, object.travelled,
+                  object.aboveGround / static_cast<float>(object.updates));
     }
     for (const auto& [object, player] : objectOwner) {
       std::printf("  гравець %u -> об'єкт %u: у записах привидів %s\n", player, object,
                   ghostObjects.count(object) ? "Є" : "НЕМАЄ");
     }
-    for (const auto& [id, at] : dynamicObjects) {
-      const int team = objectTeam(id);
-      std::printf("    об'єкт %5u  %8.1f %7.1f %8.1f  %s\n", id, at.x, at.y, at.z,
-                  team == 0 ? "не гравець"
-                            : (team == ourTeam ? "свій солдат" : "СОЛДАТ СУПРОТИВНИКА"));
+    for (const auto& [id, object] : world.objects()) {
+      const obf2::Vec3f& at = object.position;
+      std::printf("    об'єкт %5u  %8.1f %7.1f %8.1f  %s%s\n", id, at.x, at.y, at.z,
+                  object.team == 0 ? "не гравець"
+                                   : (object.team == world.ownTeam() ? "свій солдат"
+                                                                     : "СОЛДАТ СУПРОТИВНИКА"),
+                  object.fromGhostStream ? " (з потоку)" : "");
     }
     if (ourSoldier != 0) {
       std::printf("  наш об'єкт %u у записах привидів: %s\n", ourSoldier,
@@ -3321,6 +3224,13 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     // Передбаченню руху потрібен той самий терен і ті самі константи, що
     // й серверу: інакше воно розходилося б із ним щокроку.
     remote->terrain = level ? &*level : nullptr;
+    // Рельєф потрібен і розбору: за ним видно, чи прочитане місце солдата
+    // тримається землі, чи попливло (мірило розсинхрону).
+    if (level) {
+      const obf2::level::Level* terrain = &*level;
+      remote->world.setGroundProbe(
+          [terrain](const obf2::Vec3f& at) { return terrain->groundHeightAt(at); });
+    }
     remote->physics = loadPhysics(files);
     remote->maxSpeed = remote->physics.runSpeed;
     if (level) {
@@ -3625,20 +3535,19 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       // складається один раз, а ці з'являються й зникають у грі.
       const std::vector<obf2::gfx::MeshRenderer::DrawItem>* toDraw = &items;
       std::vector<obf2::gfx::MeshRenderer::DrawItem> withOthers;
-      if (remote != nullptr && boxesReady && !remote->dynamicObjects.empty()) {
+      if (remote != nullptr && boxesReady && !remote->world.objects().empty()) {
         withOthers = items;
-        for (const auto& [id, at] : remote->dynamicObjects) {
+        for (const auto& [id, object] : remote->world.objects()) {
           if (id == remote->ourSoldier && !args.showOwnBox) continue;  // себе зсередини не малюємо
           // Чий це солдат, знає сервер: команду дав `CreatePlayerEvent`,
           // а об'єкт — `EnterVehicleEvent`. Нуль означає «не гравець».
-          const int team = remote->objectTeam(id);
-          const int which = team == 0 ? 0 : (team == remote->ourTeam ? 1 : 2);
+          const int which =
+              object.team == 0 ? 0 : (object.team == remote->world.ownTeam() ? 1 : 2);
           // Заповнювач повертаємо за прочитаним кутом: рискання їде в
-          // тому ж стані, дванадцятьма бітами.
-          obf2::Mat4 place = obf2::translation(at);
-          const auto facing = remote->dynamicYaw.find(id);
-          if (facing != remote->dynamicYaw.end()) {
-            place = place * obf2::rotationY(facing->second * 3.14159265f / 180.0f);
+          // тому ж стані, дванадцятьма бітами (`BF2.exe`, 0x62d4e0).
+          obf2::Mat4 place = obf2::translation(object.position);
+          if (object.yaw) {
+            place = place * obf2::rotationY(*object.yaw * 3.14159265f / 180.0f);
           }
           withOthers.push_back(obf2::gfx::MeshRenderer::DrawItem{&boxes[which], place});
         }

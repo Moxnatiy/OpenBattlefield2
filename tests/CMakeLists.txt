@@ -37,3 +37,7 @@ obf2_add_test(test_bf2_events obf2_net)
 # Тест читає спіймані з живого сервера пакети з tests/data.
 target_compile_definitions(test_bf2_events PRIVATE
   OBF2_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
+
+obf2_add_test(test_bf2_world obf2_net)
+target_compile_definitions(test_bf2_world PRIVATE
+  OBF2_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")

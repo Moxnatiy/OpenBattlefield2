@@ -4,6 +4,7 @@ add_library(obf2_net
   src/session.cpp
   src/bf2_protocol.cpp
   src/bf2_events.cpp
+  src/bf2_world.cpp
   src/bf2_join.cpp
   src/md5.cpp
   src/udp.cpp
