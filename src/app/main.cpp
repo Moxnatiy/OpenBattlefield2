@@ -697,6 +697,32 @@ int runCalibrate(const Args& args, obf2::FileSystem& files) {
     }
     std::printf("номер = порядок створення шаблона? збіглося %d, ні %d (наших шаблонів %zu)\n",
                 hit, miss, ordered.size());
+
+    // Якщо номери не збігаються, лишається питання, чи збігається бодай
+    // **порядок**: тоді різниця лише в тому, що ми рахуємо зайве або
+    // чогось не завантажуємо, а сама ідея «номер росте за порядком
+    // створення» правильна.
+    std::map<std::string, std::size_t> indexByName;
+    for (std::size_t i = 0; i < ordered.size(); ++i) {
+      indexByName.emplace(ordered[i]->name, i);
+    }
+    std::printf("порядок: номер сервера -> наш номер\n");
+    long long previous = -1;
+    int rising = 0, falling = 0, absent = 0;
+    for (const auto& [id, name] : mapping) {
+      const auto found = indexByName.find(name);
+      if (found == indexByName.end()) {
+        std::printf("  %6u  -> немає в нашому переліку  %s\n", id, name.c_str());
+        ++absent;
+        continue;
+      }
+      const auto ours = static_cast<long long>(found->second);
+      std::printf("  %6u  -> %6lld  %s\n", id, ours, name.c_str());
+      if (previous >= 0) (ours > previous ? rising : falling)++;
+      previous = ours;
+    }
+    std::printf("порядок збігається: %d разів, порушено: %d, немає в нас: %d\n", rising, falling,
+                absent);
   }
   if (!unmatched.empty()) {
     std::printf("не впізнано %zu номерів:\n", unmatched.size());
@@ -955,6 +981,23 @@ struct RemoteWorld {
   // і відносно неї пакуються місця всіх об'єктів у потоці привидів.
   obf2::Vec3f compressionReference;
   int positionUpdates = 0;
+
+  // Команда кожного гравця (`CreatePlayerEvent`) і об'єкт, який гравець
+  // зайняв (`EnterVehicleEvent`). Разом вони кажуть, чий солдат стоїть
+  // на тому чи іншому місці, — і кажуть це напевно, без здогадів.
+  std::map<std::uint32_t, int> playerTeam;
+  std::map<std::uint16_t, std::uint32_t> objectOwner;
+
+  int teamOf(std::uint32_t player) const {
+    const auto found = playerTeam.find(player);
+    return found == playerTeam.end() ? 0 : found->second;
+  }
+
+  // Команда об'єкта: 0 — це не чийсь солдат (техніка, майно рівня).
+  int objectTeam(std::uint16_t object) const {
+    const auto owner = objectOwner.find(object);
+    return owner == objectOwner.end() ? 0 : teamOf(owner->second);
+  }
 
   // Об'єкт, яким ми керуємо. Його називає `EnterVehicleEvent`.
   std::uint16_t ourSoldier = 0;
@@ -1401,6 +1444,7 @@ struct RemoteWorld {
               }
             }
             if (event.player) {
+              playerTeam[event.player->id] = static_cast<int>(event.player->team);
               std::printf("  гравець: %s (номер %u, команда %u)\n",
                           event.player->name.c_str(), event.player->id, event.player->team);
               // Свій номер гравця дізнаємося за іменем: сервер складає
@@ -1418,9 +1462,18 @@ struct RemoteWorld {
             // Хто чим керує. Солдат у BF2 «займається» як техніка, і
             // саме цією подією сервер каже, який об'єкт наш.
             if (event.enter) {
+              // Хто чий об'єкт — каже сам сервер, без жодного здогаду:
+              // `CreatePlayerEvent` дає команду гравця, а ця подія —
+              // об'єкт, який гравець зайняв. Тож заповнювач на цьому
+              // місці — це вже не «щось живе», а конкретний гравець
+              // конкретної команди.
+              objectOwner[event.enter->object] = event.enter->player;
               if (ourPlayer >= 0 && static_cast<int>(event.enter->player) == ourPlayer) {
                 ourSoldier = event.enter->object;
                 std::printf("  наш об'єкт: %u\n", ourSoldier);
+              } else {
+                std::printf("  гравець %u зайняв об'єкт %u (команда %d)\n", event.enter->player,
+                            event.enter->object, teamOf(event.enter->player));
               }
             }
             if (event.exitPlayer && ourPlayer >= 0 &&
@@ -1529,6 +1582,12 @@ struct RemoteWorld {
     std::printf("  об'єктів, створених у грі (чужі солдати й техніка): %zu, "
                 "оновлень місця з потоку привидів: %d\n",
                 dynamicObjects.size(), positionUpdates);
+    for (const auto& [id, at] : dynamicObjects) {
+      const int team = objectTeam(id);
+      std::printf("    об'єкт %5u  %8.1f %7.1f %8.1f  %s\n", id, at.x, at.y, at.z,
+                  team == 0 ? "не гравець"
+                            : (team == ourTeam ? "свій солдат" : "СОЛДАТ СУПРОТИВНИКА"));
+    }
     if (ourSoldier != 0) {
       std::printf("  наш об'єкт %u у записах привидів: %s\n", ourSoldier,
                   ghostObjects.count(ourSoldier) ? "є" : "немає");
@@ -3049,15 +3108,21 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   // Заповнювач для чужих солдатів. Розмір — не на око: це колізійна форма
   // солдата з даних гри (`coll-soldier-radius` 0.25 і
   // `coll-soldier-stand-height` 1.7), тобто 0.5 x 1.7 x 0.5.
-  obf2::gfx::GpuMesh enemyBox;
-  bool enemyBoxReady = false;
+  // Три заповнювачі: чужий солдат, свій і все інше. Кольори тут **наші**,
+  // а не з гри: це позначка на час, поки ми не вміємо взяти справжню
+  // геометрію. А от розмір не наш — це колізійна форма солдата з даних
+  // (`coll-soldier-radius` 0.25, `coll-soldier-stand-height` 1.7).
+  obf2::gfx::GpuMesh boxes[3];
+  bool boxesReady = false;
   if (remote != nullptr) {
     const obf2::server::PhysicsConstants& shape = remote->physics;
-    const obf2::mesh::RenderMesh box = obf2::mesh::buildBox(
-        obf2::mesh::Vec3{shape.radius * 2.0f, shape.standHeight, shape.radius * 2.0f}, "#c03030");
-    if (auto uploaded = renderer->upload(box, resolveTexture)) {
-      enemyBox = *uploaded;
-      enemyBoxReady = true;
+    const obf2::mesh::Vec3 size{shape.radius * 2.0f, shape.standHeight, shape.radius * 2.0f};
+    const char* colors[3] = {"#909090", "#3060c0", "#c03030"};  // ніхто, свої, чужі
+    boxesReady = true;
+    for (int i = 0; i < 3; ++i) {
+      auto uploaded = renderer->upload(obf2::mesh::buildBox(size, colors[i]), resolveTexture);
+      if (!uploaded) { boxesReady = false; break; }
+      boxes[i] = *uploaded;
     }
   }
 
@@ -3366,12 +3431,16 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       // складається один раз, а ці з'являються й зникають у грі.
       const std::vector<obf2::gfx::MeshRenderer::DrawItem>* toDraw = &items;
       std::vector<obf2::gfx::MeshRenderer::DrawItem> withOthers;
-      if (remote != nullptr && enemyBoxReady && !remote->dynamicObjects.empty()) {
+      if (remote != nullptr && boxesReady && !remote->dynamicObjects.empty()) {
         withOthers = items;
         for (const auto& [id, at] : remote->dynamicObjects) {
           if (id == remote->ourSoldier && !args.showOwnBox) continue;  // себе зсередини не малюємо
+          // Чий це солдат, знає сервер: команду дав `CreatePlayerEvent`,
+          // а об'єкт — `EnterVehicleEvent`. Нуль означає «не гравець».
+          const int team = remote->objectTeam(id);
+          const int which = team == 0 ? 0 : (team == remote->ourTeam ? 1 : 2);
           withOthers.push_back(
-              obf2::gfx::MeshRenderer::DrawItem{&enemyBox, obf2::translation(at)});
+              obf2::gfx::MeshRenderer::DrawItem{&boxes[which], obf2::translation(at)});
         }
         toDraw = &withOthers;
       }
