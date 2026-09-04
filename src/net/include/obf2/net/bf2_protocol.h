@@ -215,15 +215,44 @@ struct PlayerAction {
   bool flag = true;
 };
 
-// Осі, які ми впізнали. Решта трьох у знятому трафіку жодного разу не
-// відхилилася від нуля, тож їх не називаємо.
-inline constexpr int kAxisForward = 3;
-inline constexpr int kAxisMouseX = 4;
-inline constexpr int kAxisMouseY = 5;
-// Повний хід уперед у дампі — рівно 99.
+// Осі й кнопки названі не з дампу, а з таблиці, якою рушій реєструє
+// сталі керування (BF2.exe, 0x6904c0 і далі: рядок імені, потім його
+// номер у EDX). Порядок звідти:
+//
+//   0  c_PIYaw          4  c_PIMouseLookX     8  c_PIFire
+//   1  c_PIPitch        5  c_PIMouseLookY     9  c_PIAction
+//   2  c_PIRoll         6  c_PICameraX       10  c_PIUse
+//   3  c_PIThrottle     7  c_PICameraY       13  c_PISprint
+//
+// У пакет ідуть перші шість — рівно осі 0..5.
+//
+// Для піхоти розкладку задає `Settings/Controls.con`:
+//
+//   ControlMap.addKeysToAxisMapping c_PIYaw      IDKey_D IDKey_A
+//   ControlMap.addKeysToAxisMapping c_PIThrottle IDKey_W IDKey_S
+//   ControlMap.addKeyToTriggerMapping c_PIAction IDKey_Space
+//   ControlMap.addKeyToTriggerMapping c_PISprint IDKey_LeftShift
+//
+// Тобто вбік солдат ходить **віссю рискання**: окремої осі для кроку
+// вбік у рушія немає. Доки ми цього не знали, вбік було не піти взагалі.
+inline constexpr int kAxisYaw = 0;       // D/A — крок вбік у піхоти
+inline constexpr int kAxisPitch = 1;
+inline constexpr int kAxisRoll = 2;
+inline constexpr int kAxisThrottle = 3;  // W/S — хід уперед-назад
+inline constexpr int kAxisMouseX = 4;    // c_PIMouseLookX
+inline constexpr int kAxisMouseY = 5;    // c_PIMouseLookY
+// Стара назва третьої осі — лишаємо, щоб не переписувати виклики.
+inline constexpr int kAxisForward = kAxisThrottle;
+// Повний хід у дампі — рівно 99.
 inline constexpr std::int16_t kAxisFull = 99;
-// Єдина кнопка, яку вдалося назвати: спринт.
-inline constexpr std::uint32_t kButtonSprint = 32;
+
+// Маска кнопок: біт = номер сталої мінус номер `c_PIFire`. Перевірка
+// сходиться з трафіком: спринт це 13 - 8 = 5, а саме біт 5 (значення 32)
+// стояв у дампі, поки гравець тримав Shift.
+inline constexpr std::uint32_t kButtonFire = 1u << 0;    // c_PIFire   (8)
+inline constexpr std::uint32_t kButtonAction = 1u << 1;  // c_PIAction (9) — стрибок
+inline constexpr std::uint32_t kButtonUse = 1u << 2;     // c_PIUse    (10)
+inline constexpr std::uint32_t kButtonSprint = 1u << 5;  // c_PISprint (13)
 
 // Увесь потік дій із пакета.
 struct PlayerActions {

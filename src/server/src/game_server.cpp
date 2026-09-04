@@ -1,5 +1,7 @@
 #include "obf2/server/game_server.h"
 
+#include "obf2/server/soldier_move.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -624,70 +626,12 @@ void GameServer::simulate(float step) {
     body.velocity = soldier->velocity;
     body.onGround = soldier->onGround;
 
-    // Земля — це не тільки рельєф. Рушій шукає опору й на об'єктах, інакше
-    // на дах чи сходи не зійти. Беремо вищу з двох.
-    const PhysicsConstants& physics = settings_.physics;
-    float ground = groundHeightAt(body.position);
-    if (collision_ != nullptr) {
-      // Починаємо трохи вище ніг, щоб знайти й сходинку перед собою.
-      Vec3f from = body.position;
-      from.y += physics.stepHeight();
-      float surface = 0.0f;
-      if (collision_->groundHeight(from, physics.stepHeight() + 2.0f,
-                                   physics.feetContactNormal, &surface)) {
-        if (surface > ground) ground = surface;
-      }
-    }
-
-    // Вода. Рушій міряє, наскільки солдат занурений, і з певної частки
-    // висоти той спливає (`phy-soldier-start-float`), а назад стає на дно
-    // вже з іншої (`stop-float`) — щоб не смикався на межі.
-    const float waterLevel = terrain_ != nullptr ? terrain_->terrain.seaLevel : 0.0f;
-    const float submersion =
-        physics.standHeight > 0.0f ? (waterLevel - body.position.y) / physics.standHeight : 0.0f;
-    if (player.swimming) {
-      if (submersion <= physics.stopFloat) player.swimming = false;
-    } else if (submersion >= physics.startFloat) {
-      player.swimming = true;
-    }
-
-    if (player.swimming) {
-      // Пливемо: тяжіння не діє, солдат тримається біля поверхні, а
-      // швидкість своя (`phy-soldier-swim-speed`).
-      const float surface = waterLevel - physics.standHeight * physics.startFloat;
-      body.position = body.position + wish * (physics.swimSpeed * step);
-      body.position.y += (surface - body.position.y) * std::min(1.0f, step * 4.0f);
-      body.velocity = Vec3f{};
-      body.onGround = false;
-    } else {
-      stepSoldier(body, wish, speed, player.input.jump, physics, ground, step);
-    }
-
-    // Зіткнення зі стінами: солдат у BF2 це стовпчик сфер, а не одна сфера
-    // на рівні грудей (SoldierResponsePhysics::getSoldierHeight). Саме
-    // тому він може зійти на сходинку: нижче за stepHeight ми не
-    // штовхаємо взагалі, а вище перевіряємо кожну сферу.
-    if (collision_ != nullptr) {
-      const std::vector<float> centers = soldierSphereHeights(physics);
-      Vec3f offset{};
-      for (const float center : centers) {
-        if (center < physics.stepHeight()) continue;
-        Vec3f probe = body.position + offset;
-        probe.y += center;
-        const Vec3f before = probe;
-        if (collision_->resolveSphere(probe, physics.radius) > 0) {
-          offset.x += probe.x - before.x;
-          offset.z += probe.z - before.z;
-        }
-      }
-      if (length(offset) > 1e-4f) {
-        body.position.x += offset.x;
-        body.position.z += offset.z;
-        const Vec3f direction = normalize(offset);
-        const float into = dot(body.velocity, direction);
-        if (into < 0.0f) body.velocity = body.velocity - direction * into;
-      }
-    }
+    // Сам рух — спільною функцією: те саме робить клієнт, коли передбачає
+    // свого солдата (`obf2/server/soldier_move.h`).
+    SwimState swim{player.swimming};
+    moveSoldier(body, swim, wish, speed, player.input.jump, settings_.physics, terrain_,
+                collision_.get(), step);
+    player.swimming = swim.swimming;
 
     soldier->position = body.position;
     soldier->velocity = body.velocity;

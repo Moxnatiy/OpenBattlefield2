@@ -31,6 +31,7 @@
 #include "obf2/level/level.h"
 #include "obf2/server/game_client.h"
 #include "obf2/server/physics.h"
+#include "obf2/server/soldier_move.h"
 #include <set>
 
 #include "obf2/net/bf2_events.h"
@@ -815,10 +816,12 @@ struct RemoteWorld {
   // Тому рух рахуємо самі — тією ж фізикою, що й наш сервер, — а
   // виправлення від сервера приймаємо як істину.
   obf2::server::BodyState body;
+  obf2::server::SwimState swim;
   bool bodyReady = false;
   int corrections = 0;
   float correctionSum = 0.0f;
   float correctionMax = 0.0f;
+  obf2::Vec3f correctionAxis{};
   const obf2::level::Level* terrain = nullptr;
   const obf2::server::CollisionWorld* collision = nullptr;
   obf2::server::PhysicsConstants physics;
@@ -834,7 +837,19 @@ struct RemoteWorld {
       const float distance = std::sqrt(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z);
       correctionSum += distance;
       correctionMax = std::max(correctionMax, distance);
+      // Окремо по осях: рівне розходження по одній осі — це не хиба
+      // передбачення, а зсув точки відліку. Змішувати їх в одну довжину
+      // означає не побачити, що саме розійшлося.
+      correctionAxis.x += std::abs(delta.x);
+      correctionAxis.y += delta.y;  // зі знаком: важливо, ми вище чи нижче
+      correctionAxis.z += std::abs(delta.z);
       ++corrections;
+      if (corrections <= 8 && terrain != nullptr) {
+        std::printf("  виправлення: сервер %.2f %.2f %.2f, ми %.2f %.2f %.2f, "
+                    "земля %.2f (dy %.2f)\n",
+                    position.x, position.y, position.z, body.position.x, body.position.y,
+                    body.position.z, terrain->groundHeightAt(position), delta.y);
+      }
     }
     body.position = position;
     if (!bodyReady) body.velocity = obf2::Vec3f{};
@@ -847,30 +862,26 @@ struct RemoteWorld {
     constexpr float kToRadians = 3.14159265358979323846f / 180.0f;
     const float yaw = yawDegrees * kToRadians;
 
-    // Вісь уперед у потоці дій — це ±99; нам потрібен напрямок 0..1.
-    const float forward =
-        static_cast<float>(action.axes[obf2::net::bf2::kAxisForward]) /
-        static_cast<float>(obf2::net::bf2::kAxisFull);
-    // Нульовий кут дивиться вздовж +Z — так само, як рахує сервер.
-    const obf2::Vec3f wish{std::sin(yaw) * forward, 0.0f, std::cos(yaw) * forward};
+    // Осі в потоці дій — це ±99; нам потрібен напрямок 0..1. Вбік солдат
+    // ходить віссю рискання: окремої осі для кроку вбік рушій не має.
+    const float scale = 1.0f / static_cast<float>(obf2::net::bf2::kAxisFull);
+    const float forward = static_cast<float>(action.axes[obf2::net::bf2::kAxisThrottle]) * scale;
+    const float strafe = static_cast<float>(action.axes[obf2::net::bf2::kAxisYaw]) * scale;
+    // Нульовий кут дивиться вздовж +Z — так само, як рахує сервер, тож
+    // «вправо» це кут плюс 90 градусів.
+    obf2::Vec3f wish{std::sin(yaw) * forward + std::cos(yaw) * strafe, 0.0f,
+                     std::cos(yaw) * forward - std::sin(yaw) * strafe};
+    const float magnitude = std::sqrt(wish.x * wish.x + wish.z * wish.z);
+    if (magnitude > 1.0f) wish = wish * (1.0f / magnitude);
 
     const bool sprint = (action.buttons & obf2::net::bf2::kButtonSprint) != 0;
+    const bool jump = (action.buttons & obf2::net::bf2::kButtonAction) != 0;
     const float speed = sprint ? physics.sprintSpeed : maxSpeed;
 
-    // Земля — це не тільки рельєф: на підлогу будівлі й на сходи теж
-    // треба спиратися. Беремо вищу з двох, як це робить наш сервер.
-    float ground = terrain->groundHeightAt(body.position);
-    if (collision != nullptr) {
-      obf2::Vec3f from = body.position;
-      from.y += physics.stepHeight();
-      float surface = 0.0f;
-      if (collision->groundHeight(from, physics.stepHeight() + 2.0f, physics.feetContactNormal,
-                                  &surface) &&
-          surface > ground) {
-        ground = surface;
-      }
-    }
-    obf2::server::stepSoldier(body, wish, speed, false, physics, ground, step);
+    // Рух — тією самою функцією, що й на сервері: земля, вода, стіни.
+    // Поки в клієнта була власна скорочена копія, він знав лише висоту
+    // землі — і солдат проходив крізь об'єкти.
+    obf2::server::moveSoldier(body, swim, wish, speed, jump, physics, terrain, collision, step);
   }
 
   // Відіслати поточний ввід. Оригінал робить це тридцять разів на
@@ -1131,13 +1142,14 @@ struct RemoteWorld {
           } else {
             ++ghostUnparsed;
           }
-          // Наше власне місце сервер шле окремо від решти привидів —
-          // станом керованого об'єкта.
+          // Стан керованого об'єкта. З нього ми поки беремо **лише**
+          // номер об'єкта: трійка чисел у ньому — опорна точка стиснення,
+          // а не місце (див. bf2_events.h).
           if (const auto state = obf2::net::bf2::readControlObjectState(*more)) {
             if (controlStates < 3) {
-              std::printf("  наше місце: %.1f %.1f %.1f (лічильник %d, об'єкт %u)\n",
-                          state->position.x, state->position.y, state->position.z, state->counter,
-                          state->networkId);
+              std::printf("  стан керованого: опора %.1f %.1f %.1f (лічильник %d, об'єкт %u)\n",
+                          state->compressionReference.x, state->compressionReference.y,
+                          state->compressionReference.z, state->counter, state->networkId);
             }
             ++controlStates;
             // Номер керованого об'єкта сервер каже прямо. Але керований
@@ -1160,12 +1172,20 @@ struct RemoteWorld {
               ourSoldier = controlObject;
               std::printf("  наш солдат за станом керованого об'єкта: %u\n", ourSoldier);
             }
-            if (ourSoldier != 0) objects[ourSoldier] = state->position;
-            // Сервер — істина: ставимо тіло туди, де він нас бачить, а
-            // далі знову рахуємо самі. Але тільки коли керований об'єкт —
-            // це наш солдат: місцем камери екрана появи тіло рухати нема
-            // чого, і саме воно давало стрибок на всю карту при появі.
-            if (ourSoldier != 0 && state->networkId == ourSoldier) correct(state->position);
+            // Виправляти місце звідси нема чим: справжнє їде далі, у
+            // стані самого об'єкта, а його ми ще не розбираємо. Доки не
+            // розберемо, рух рахує тільки передбачення — від точки, яку
+            // сервер назвав при створенні солдата. Це борг, а не рішення.
+            // Тільки після `NEPlayerSpawned`: до появи солдата в нас
+            // немає, а подія посадки трапляється й чужа.
+            if (!bodyReady && playerSpawned && ourSoldier != 0) {
+              const auto born = objects.find(ourSoldier);
+              if (born != objects.end()) {
+                correct(born->second);
+                std::printf("  тіло поставлено на %.1f %.1f %.1f (місце створення солдата)\n",
+                            born->second.x, born->second.y, born->second.z);
+              }
+            }
           }
           if (const auto ghost = obf2::net::bf2::readGhostHeader(*more)) {
             ++ghostPackets;
@@ -1420,8 +1440,11 @@ struct RemoteWorld {
     std::printf("  пакетів зі станом керованого об'єкта: %d, розібрано %d\n",
                 ghostControlled, controlStates);
     if (corrections > 0) {
+      const float n = static_cast<float>(corrections);
       std::printf("  виправлень від сервера: %d, розходження в середньому %.2f м, найбільше %.2f м\n",
-                  corrections, correctionSum / static_cast<float>(corrections), correctionMax);
+                  corrections, correctionSum / n, correctionMax);
+      std::printf("    по осях: x %.2f, y %.2f (зі знаком), z %.2f\n", correctionAxis.x / n,
+                  correctionAxis.y / n, correctionAxis.z / n);
     }
     if (ourSoldier != 0) {
       std::printf("  наш об'єкт %u у записах привидів: %s\n", ourSoldier,
@@ -3092,11 +3115,17 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         obf2::net::bf2::PlayerAction& out = remote->action;
         out = obf2::net::bf2::PlayerAction{};
         // Повний хід уперед у дампі — 99, тож наш ±1 множимо на нього.
-        out.axes[obf2::net::bf2::kAxisForward] =
+        out.axes[obf2::net::bf2::kAxisThrottle] =
             static_cast<std::int16_t>(raw.moveForward * obf2::net::bf2::kAxisFull);
+        // Крок вбік — вісь рискання: у Controls.con D/A висять саме на
+        // `c_PIYaw`, окремої осі для кроку вбік рушій не має.
+        out.axes[obf2::net::bf2::kAxisYaw] =
+            static_cast<std::int16_t>(raw.moveRight * obf2::net::bf2::kAxisFull);
         out.axes[obf2::net::bf2::kAxisMouseX] = static_cast<std::int16_t>(raw.mouseDeltaX);
         out.axes[obf2::net::bf2::kAxisMouseY] = static_cast<std::int16_t>(raw.mouseDeltaY);
         if (raw.sprint) out.buttons |= obf2::net::bf2::kButtonSprint;
+        if (raw.jump) out.buttons |= obf2::net::bf2::kButtonAction;
+        if (raw.fire) out.buttons |= obf2::net::bf2::kButtonFire;
 
         // І одразу рахуємо власний рух: чекати на виправлення сервера
         // означало б ривки раз на кілька десятих секунди.

@@ -538,7 +538,7 @@ std::optional<ControlObjectState> readControlObjectState(std::span<const std::by
 
   const auto position = readVector(reader);
   if (!position) return std::nullopt;
-  out.position = *position;
+  out.compressionReference = *position;
 
   const auto networkId = reader.readBits(16);
   if (!networkId) return std::nullopt;
