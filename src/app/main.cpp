@@ -901,6 +901,10 @@ struct RemoteWorld {
   // Об'єкт, про який сервер шле стан керованого об'єкта. До появи це не
   // солдат, а камера екрана появи.
   std::uint16_t controlObject = 0;
+  // Сервер сказав `NEPlayerSpawned`. Після цього керований об'єкт — уже
+  // солдат: до появи солдата не існує, і `getSoldier` у рушії поверне
+  // порожньо (0x445e01).
+  bool playerSpawned = false;
 
   // Де зараз наш солдат. Порожньо — ще не з'явилися.
   std::optional<obf2::Vec3f> soldierPosition() const {
@@ -1148,6 +1152,14 @@ struct RemoteWorld {
                           (ourSoldier != 0 && controlObject != ourSoldier) ? " (не наш солдат!)"
                                                                           : "");
             }
+            // Після появи керований об'єкт — це і є наш солдат. Подія
+            // посадки каже те саме, але вона одна на всю гру й може не
+            // дійти; а без номера ми не шлемо потоку дій — і тоді сервер
+            // перестає слати нам стан, бо йому нема на що відповідати.
+            if (playerSpawned && controlObject != 0 && ourSoldier != controlObject) {
+              ourSoldier = controlObject;
+              std::printf("  наш солдат за станом керованого об'єкта: %u\n", ourSoldier);
+            }
             if (ourSoldier != 0) objects[ourSoldier] = state->position;
             // Сервер — істина: ставимо тіло туди, де він нас бачить, а
             // далі знову рахуємо самі. Але тільки коли керований об'єкт —
@@ -1234,6 +1246,7 @@ struct RemoteWorld {
                 std::printf("  сервер: подія %u%s\n", remote.number,
                             remote.value ? (" = " + std::to_string(*remote.value)).c_str() : "");
                 if (remote.number == obf2::net::bf2::kNetPlayerSpawned) {
+                  playerSpawned = true;
                   std::printf("  ГРАВЕЦЬ З'ЯВИВСЯ\n");
                 }
               }
@@ -2970,7 +2983,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   float yaw = 0.0f;
   float pitch = -10.0f;
   // У меню миша не захоплюється — інакше курсором не потрапиш у кнопку.
-  if (hostedServer) device->setRelativeMouse(true);
+  // Захоплення миші вмикається не тут, а щокадру за станом HUD: у бою
+  // так, на екрані появи ні (див. wantRelativeMouse нижче).
+  bool relativeMouse = false;
   // Детермінований знімок меню: ставимо курсор туди, куди попросили.
   if (args.mouseX >= 0.0f) {
     SDL_WarpMouseInWindow(device->window(), args.mouseX, args.mouseY);
@@ -3286,6 +3301,17 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
             hostedServer != nullptr ? localSoldierId != 0 : spawnRequested;
         const int hudState = spawned ? 0 : 1;
         const bool spawnVisible = hudState == 1 || args.hudScreenName == "SpawnMenu";
+
+        // Миша: у бою її захоплює вікно (інакше курсор упирається в край
+        // екрана й огляд просто зупиняється — саме це виглядало як
+        // «керування не працює»), а на екрані появи вона вільна, бо там
+        // нею тиснуть кнопки. Досі захоплення вмикалося лише у власній
+        // грі, і на справжньому сервері огляд ламався завжди.
+        const bool wantRelativeMouse = spawned && !spawnVisible;
+        if (wantRelativeMouse != relativeMouse) {
+          relativeMouse = wantRelativeMouse;
+          device->setRelativeMouse(relativeMouse);
+        }
         // Стан HUD і похідні від нього змінні — щокадру, як у грі
         // (0x786260 перемикає стан, 0x466930 і 0x78d0f0 рахують похідні).
         // Карта на весь екран — це саме екран появи: у стані 1 сам
