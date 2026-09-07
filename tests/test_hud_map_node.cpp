@@ -96,10 +96,48 @@ void testCommanderMap() {
   CHECK(map.fullSize());
 }
 
+// Компас доводить кут до напряму гравця. Двома згладжувачами поспіль,
+// тож і повільніше за один.
+void testCompassFollowsTheLook() {
+  hud::MapAngle angle;
+  angle.setTarget(1.5f);
+  for (int i = 0; i < 90; ++i) angle.update(1.0f / 30.0f);
+
+  CHECK(std::abs(angle.angle() - 1.5f) < 0.01f);
+  CHECK(std::abs(angle.delayed() - 1.5f) < 0.01f);
+}
+
+// Затриманий кут відстає від згладженого — саме через це в оригіналі
+// компас доїжджає після повороту, а не разом із ним.
+void testDelayedLagsBehind() {
+  hud::MapAngle angle;
+  angle.setTarget(1.5f);
+  angle.update(1.0f / 30.0f);
+
+  CHECK(angle.angle() > 0.0f);
+  CHECK(angle.delayed() < angle.angle());
+}
+
+// Через нуль кут іде найкоротшим шляхом, а не через півкола: 3.0 -> -3.0
+// це 0.28 радіана вперед, а не 6.0 назад.
+void testShortestWayAroundZero() {
+  hud::MapAngle angle;
+  angle.setTarget(3.0f);
+  for (int i = 0; i < 90; ++i) angle.update(1.0f / 30.0f);
+
+  angle.setTarget(-3.0f);
+  angle.update(1.0f / 30.0f);
+  // Пішли далі за пі, тобто перескочили межу, а не поповзли назад до нуля.
+  CHECK(angle.angle() > 3.0f || angle.angle() < -3.0f);
+}
+
 TEST_MAIN({
   testIngameIsMiniMap();
   testBigMapGrowsToMaxi();
   testNeitherFlagWhileMoving();
   testMapMenuDoesNotMoveMap();
   testCommanderMap();
+  testCompassFollowsTheLook();
+  testDelayedLagsBehind();
+  testShortestWayAroundZero();
 });

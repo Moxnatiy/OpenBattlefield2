@@ -63,6 +63,45 @@ struct MapPoint {
   float y = 0.0f;
 };
 
+// Швидкість доводки кута — 9.0 (`BF2.exe`, стала за 0x930334 = -9.0,
+// вживається двічі: 0x77c542 і 0x77c68b).
+inline constexpr float kMapAngleRate = 9.0f;
+
+// Поріг «уже зійшлося» для кутів — 0.001 (`FUN_00772310`, стала
+// 0x3a83126f за 0x77c4fd і 0x77c63e).
+inline constexpr float kMapAngleEpsilon = 0.001f;
+
+// Кут карти: два згладжувачі поспіль.
+//
+// Перший (+0x75c) доводить кут до поточного напряму гравця, другий
+// (+0x760) — до першого. Друге і є `MinimapDelayedMapAngle`: ім'я
+// складається з назви вузла в 0x780a49 і чіпляється саме до +0x760.
+// Через це компас мінікарти відстає від повороту гравця подвійно, і
+// саме так воно й виглядає в оригіналі.
+//
+// Сам напрям рахує 0x751d8b: `atan2(напрямок.x, напрямок.z)` — тобто
+// нуль дивиться на північ (+Z).
+class MapAngle {
+ public:
+  // Куди дивиться гравець, у радіанах (0x772470 записує це в +0x770).
+  // Похитування камери після різкого повороту (поля +0x724, +0x758,
+  // +0x775, +0x777) ми **не відтворюємо**: воно є в оригіналі, але його
+  // ще не звірено.
+  void setTarget(float radians) { target_ = radians; }
+
+  void update(float dt);
+
+  // +0x75c — згладжений напрям.
+  float angle() const { return angle_; }
+  // +0x760 — `MinimapDelayedMapAngle`, ним крутиться компас.
+  float delayed() const { return delayed_; }
+
+ private:
+  float target_ = 0.0f;
+  float angle_ = 0.0f;
+  float delayed_ = 0.0f;
+};
+
 class MapNode {
  public:
   // Три прямокутники з даних (`HudElementsMap.con`: setMiniPos/Size,

@@ -21,7 +21,58 @@ void approach(float& value, float target, float dt, float snapDistance, bool sna
   value += (1.0f - std::exp(exponent)) * (target - value);
 }
 
+// Загорнути кут у (-pi, pi] — `FUN_007722d0`: `(a/2pi - floor(a/2pi +
+// 0.5)) * 2pi`.
+float wrapAngle(float radians) {
+  const float turns = radians * 0.15915494f;
+  return (turns - std::floor(turns + 0.5f)) * 6.2831855f;
+}
+
+// Куди крутитися від `from` до `to`: -1, 0 або +1. Дослівно
+// `FUN_00772310` (`BF2.exe`, 0x772310) — нуль повертається і тоді, коли
+// кути збігаються з точністю до повного оберту.
+int angleDirection(float to, float from, float epsilon) {
+  if (std::fabs(from - to) < epsilon || std::fabs(from - (to + 6.2831855f)) < epsilon ||
+      std::fabs(from - (to - 6.2831855f)) < epsilon) {
+    return 0;
+  }
+  const float span = std::fabs(to - from);
+  if (span > 3.1415927f) {
+    if (from < 0.0f && to > 0.0f) return -1;
+    if (from > 0.0f && to < 0.0f) return 1;
+  }
+  return static_cast<int>(std::ceil((to - from) / span));
+}
+
+// Найкоротша відстань між кутами — `FUN_00772410` (0x772410).
+float angleDistance(float a, float b) {
+  float difference = (a >= 0.0f || b <= 0.0f) ? a - b : b - a;
+  if (std::fabs(difference) > 3.1415927f) difference = 6.2831855f - std::fabs(difference);
+  return difference;
+}
+
+// Один крок доводки кута: 0x77c4f4..0x77c569 і 0x77c632..0x77c6b2 —
+// обидва однакові.
+void approachAngle(float& value, float target, float dt) {
+  value = wrapAngle(value);
+  const int direction = angleDirection(target, value, kMapAngleEpsilon);
+  if (direction == 0) {
+    value = target;
+    return;
+  }
+  float exponent = dt * -kMapAngleRate;
+  if (exponent < -10.0f) exponent = -10.0f;
+  if (exponent > 10.0f) exponent = 10.0f;
+  value += std::fabs(angleDistance(target, value)) * (1.0f - std::exp(exponent)) *
+           static_cast<float>(direction);
+}
+
 }  // namespace
+
+void MapAngle::update(float dt) {
+  approachAngle(angle_, wrapAngle(target_), dt);
+  approachAngle(delayed_, wrapAngle(angle_), dt);
+}
 
 void MapNode::takeRects(const Node& node) {
   const auto take = [](const MapRect& rect, MapPoint& position, MapPoint& size) {

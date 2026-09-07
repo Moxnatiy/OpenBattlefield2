@@ -16,7 +16,8 @@ mesh::Vec3 flatNormal() { return mesh::Vec3{0.0f, 1.0f, 0.0f}; }
 // `uMin`/`uMax` дають змогу показати лише частину картинки — так малюється
 // заповнення смуги.
 mesh::RenderMesh quad(const ScreenRect& rect, const Screen& screen, const std::string& texture,
-                      float uMin = 0.0f, float uMax = 1.0f, float vMin = 0.0f, float vMax = 1.0f) {
+                      float uMin = 0.0f, float uMax = 1.0f, float vMin = 0.0f, float vMax = 1.0f,
+                      float angle = 0.0f) {
   auto toNdcX = [&](float pixels) {
     return pixels / static_cast<float>(screen.width) * 2.0f - 1.0f;
   };
@@ -37,6 +38,30 @@ mesh::RenderMesh quad(const ScreenRect& rect, const Screen& screen, const std::s
       mesh::Vertex{{x0, y1, 0.0f}, normal, {uMin, vMax}},
       mesh::Vertex{{x1, y1, 0.0f}, normal, {uMax, vMax}},
   };
+
+  // Обертання навколо середини вузла — `setPictureNodeRotateVariable`.
+  // Крутиться сама картинка, тож повертаємо кути в пікселях, а не в NDC:
+  // інакше на неквадратному екрані круг став би овалом.
+  //
+  // Знак: на екрані Y росте вниз, тож додатний кут має крутити **проти**
+  // годинникової стрілки. Інакше компас показував би сторону світу з
+  // протилежного боку: при погляді на схід «E» опинялося б унизу, а не
+  // вгорі.
+  if (angle != 0.0f) {
+    const float cx = rect.x + rect.width * 0.5f;
+    const float cy = rect.y + rect.height * 0.5f;
+    const float sin = std::sin(angle);
+    const float cos = std::cos(angle);
+    const float px[4] = {rect.x, rect.x + rect.width, rect.x, rect.x + rect.width};
+    const float py[4] = {rect.y, rect.y, rect.y + rect.height, rect.y + rect.height};
+    for (int i = 0; i < 4; ++i) {
+      const float dx = px[i] - cx;
+      const float dy = py[i] - cy;
+      mesh::Vertex& vertex = out.vertices[static_cast<std::size_t>(i)];
+      vertex.position.x = toNdcX(cx + dx * cos + dy * sin);
+      vertex.position.y = toNdcY(cy - dx * sin + dy * cos);
+    }
+  }
   out.indices = {0, 2, 1, 1, 2, 3};
 
   mesh::DrawRange range;
@@ -324,7 +349,16 @@ std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& fon
       texture = std::string(context.variableText(node.textureVariable));
     }
     if (!texture.empty()) {
-      pieces.push_back(DrawPiece{quad(rect, screen, texture), texture, &node, node.color});
+      // `setPictureNodeRotateVariable` — кут у радіанах. У даних його має
+      // лише компас мінікарти (`MapCompass` -> `MinimapDelayedMapAngle`,
+      // HudElementsMap.con), і веде його сама карта: поле +0x760 вузла
+      // карти, зареєстроване за `BF2.exe`, 0x780a49.
+      const float angle = node.rotateVariable.empty() || !context.variableValue
+                              ? 0.0f
+                              : context.variableValue(node.rotateVariable);
+      pieces.push_back(
+          DrawPiece{quad(rect, screen, texture, 0.0f, 1.0f, 0.0f, 1.0f, angle), texture, &node,
+                    node.color});
     }
   }
 

@@ -2424,6 +2424,11 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   // Карта: її розмір веде власна анімація, а вже з розміру виводяться
   // MapFullSize і MapMinSize (obf2/hud/map_node.h).
   obf2::hud::MapNode mapNode;
+  // Кут компаса мінікарти — два згладжувачі поспіль (там-таки).
+  obf2::hud::MapAngle mapAngle;
+  // Кут огляду живе між кадрами: миша дає лише зміщення. Оголошений тут,
+  // бо його читає й консольна команда `openbf2.look`.
+  float yaw = 0.0f;
   // Клавіша карти (`c_GIMapSize`, стала 0x23 у таблиці керування
   // BF2.exe 0x690244) — перемикач, а не «тримати». У бою вона переводить
   // HUD зі стану 0 у стан 2, де в даних лишається сама тільки карта.
@@ -2647,6 +2652,13 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       console.bind("openbf2.toggleMap", [&](const obf2::con::Command& command) {
         bigMap = command.args.empty() ? !bigMap : command.argInt(0).value_or(0) != 0;
         std::printf("  карта: велике подання %s\n", bigMap ? "увімкнено" : "вимкнено");
+      });
+      // `openbf2.look <кут>` — повернути огляд на заданий кут у градусах.
+      // Теж наша, для перевірок: інакше компас мінікарти не зняти
+      // знімком, бо кут беруть із миші.
+      console.bind("openbf2.look", [&](const obf2::con::Command& command) {
+        yaw = command.argFloat(0).value_or(0.0f);
+        std::printf("  огляд: кут %.1f\n", static_cast<double>(yaw));
       });
       console.bind("openbf2.selectSpawn", [&](const obf2::con::Command& command) {
         selectedSpawn = command.argInt(0).value_or(0);
@@ -3320,8 +3332,6 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       args.distance > 0.0f ? args.distance : scene.radius * (level ? 1.6f : 2.6f);
   const float eyeHeight = distance * (level && !args.focus ? 0.3f : 0.35f);
 
-  // Кути огляду живуть між кадрами: миша дає лише зміщення.
-  float yaw = 0.0f;
   float pitch = -10.0f;
   // У меню миша не захоплюється — інакше курсором не потрапиш у кнопку.
   // Захоплення миші вмикається не тут, а щокадру за станом HUD: у бою
@@ -3840,6 +3850,17 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           // порахований анімацією: у клієнті це та сама пара «ціль /
           // поточне» (0x77c330), і саме тому перехід мінікарта <-> велика
           // виглядає плавним, а не стрибком.
+          // Компас мінікарти. Напрям рахує 0x751d8b як
+          // `atan2(напрямок.x, напрямок.z)`, а в нас напрямок саме такий:
+          // нуль дивиться вздовж +Z, тож це просто кут огляду.
+          const float wasAngle = mapAngle.delayed();
+          mapAngle.setTarget(yaw * 3.14159265358979323846f / 180.0f);
+          mapAngle.update(slice);
+          if (mapAngle.delayed() != wasAngle) {
+            hudValues["MinimapDelayedMapAngle"] = mapAngle.delayed();
+            hudDirty = true;
+          }
+
           const auto wasSize = mapNode.size();
           const auto wasPosition = mapNode.position();
           mapNode.update(slice);
