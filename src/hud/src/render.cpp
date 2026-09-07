@@ -423,6 +423,30 @@ std::vector<DrawPiece> buildNode(const Node& node, const font::Font& font,
                                  const std::string& fontAtlas, const Screen& screen,
                                  const Context& context) {
   auto pieces = buildNodeGeometry(node, font, fontAtlas, screen, context);
+
+  // `setNodeRGBVariables <червона> <зелена> <синя>` — колір вузла зі
+  // змінних. У даних на цьому висять числа квитків
+  // (`FriendlyTeamTopRed` і сусіди) та смуги точок захоплення.
+  //
+  // Правило те саме, що для прозорості: **не знаємо змінної — не чіпаємо
+  // колір**. Інакше числа квитків стали б чорними, бо невідома змінна це
+  // нуль. Хто пише ці змінні в грі — **джерело не знайдене**.
+  if (node.rgbVariables.size() >= 3 && context.variableAlpha) {
+    const auto channel = [&](std::size_t index) {
+      return context.variableAlpha(node.rgbVariables[index]);
+    };
+    const auto red = channel(0);
+    const auto green = channel(1);
+    const auto blue = channel(2);
+    if (red || green || blue) {
+      for (DrawPiece& piece : pieces) {
+        if (red) piece.tint.r = *red;
+        if (green) piece.tint.g = *green;
+        if (blue) piece.tint.b = *blue;
+      }
+    }
+  }
+
   // Alpha-ефект множить прозорість усього, що вузол намалював.
   const float alpha = nodeShowState(node, context).alpha;
   if (alpha < 1.0f) {

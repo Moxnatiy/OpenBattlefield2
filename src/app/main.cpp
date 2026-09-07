@@ -22,6 +22,7 @@
 #include "obf2/engine/engine.h"
 #include "obf2/font/text.h"
 #include "obf2/hud/bottom_left.h"
+#include "obf2/hud/ingame.h"
 #include "obf2/hud/map_node.h"
 #include "obf2/meme/graph.h"
 #include "obf2/hud/render.h"
@@ -3051,86 +3052,18 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     // PlayerHealthShow (0x78d154), або гасить весь набір (0x78d2d9).
     // Тому дерево доводиться складати наново, а не пекти назавжди.
     buildIngamePieces = [&]() {
-    auto pieces = obf2::hud::buildTree(ingameHud, "Global", hudFont.font, hudFont.atlasPath,
-                                       hudScreen, hudContext);
-
-    // Кутові шари — окремі корені: у даних ніщо не веде до них із Global.
-    // Розробники самі це описали в `Menu/HUD/HudSetup/Readme.txt`: є сім
-    // ділянок, і вузли в них дістають координати **від лівого верхнього
-    // кута ділянки**. Де ті кути — сказано в `Menu/Ingame`
-    // (`tools/meme_read.py Ingame`):
-    //
-    //   BottomLeftAnimate   BfTransformNode 400x64   X<-BottomLeft_XPos   Y=563
-    //     Next node -> TransformNode  X=-1  Y=563  400x64   (Static)
-    //   BottomRightAnimate  BfTransformNode 600x100  X<-BottomRight_XPos  Y=497
-    //     Next node -> TransformNode  X=401 Y=563  400x64   (Static)
-    //
-    // Y беремо просто звідти. X у «рухомих» шарів — це змінна, і в файлі
-    // збережено відведене положення (-295 і 503): з ним вміст цілком за
-    // краєм екрана, тобто це саме сховано. Висунуте положення — рівне з
-    // нерухомим шаром по зовнішньому краю: ліворуч по лівому (-1),
-    // праворуч по правому (401+400-600=201).
-    //
-    // Перевірка сходиться: обидві плашки лягають в одну й ту саму смугу
-    // 561..600 і виступають за свій край дзеркально — ліва на 103, права
-    // на 101.
-    struct Layer {
-      const char* group;
-      float x;
-      float y;
-      obf2::hud::Anchor anchor;  // до якого краю тулиться на широкому екрані
-    };
-    // Ділянки беремо **з файлу**: `Menu/Ingame` задає кожну парою
-    // «рухома + нерухома», і рухомій прив'язує X до змінної
-    // (obf2/meme/graph.h, `Graph::layers`). Числа нижче — запасний
-    // варіант на випадок, коли файла нема; вони збігаються з файлом.
-    //
-    // Що НЕ з файлу: край, до якого ділянка тулиться на широкому екрані.
-    // Це наше — у грі 800x600 і такого питання немає.
-    const auto graphLayers = ingameGraph.layers();
-    const auto layerOf = [&](const char* variable, float fallbackY, float fallbackTwinX,
-                             float fallbackTwinY) {
-      struct Placement {
-        float y;
-        float twinX;
-        float twinY;
-      };
-      for (const auto& found : graphLayers) {
-        if (found.variable != variable) continue;
-        return Placement{found.y, found.hasTwin ? found.twinX : fallbackTwinX,
-                         found.hasTwin ? found.twinY : fallbackTwinY};
-      }
-      return Placement{fallbackY, fallbackTwinX, fallbackTwinY};
-    };
-    const auto leftPlace = layerOf("BottomLeft/BottomLeft_XPos", 563.0f, -1.0f, 563.0f);
-    const auto rightPlace = layerOf("BottomRight/BottomRight_XPos", 497.0f, 401.0f, 563.0f);
-
-    for (const Layer& layer : {
-             Layer{"BottomLeftAnimate", bottomLeftX, leftPlace.y, obf2::hud::Anchor::Left},
-             Layer{"BottomLeftStatic", leftPlace.twinX, leftPlace.twinY, obf2::hud::Anchor::Left},
-             Layer{"BottomRightAnimate", bottomRightX, rightPlace.y, obf2::hud::Anchor::Right},
-             Layer{"BottomRightStatic", rightPlace.twinX, rightPlace.twinY,
-                   obf2::hud::Anchor::Right},
-         }) {
-      obf2::hud::Screen layerScreen = hudScreen;
-      layerScreen.originX = layer.x;
-      layerScreen.originY = layer.y;
-      // На широкому екрані ділянка тримається свого краю — саме для
-      // цього вона в грі й окрема.
-      layerScreen.anchor = layer.anchor;
-      auto layerPieces = obf2::hud::buildTree(ingameHud, layer.group, hudFont.font,
-                                              hudFont.atlasPath, layerScreen, hudContext);
-      if (layerPieces.empty()) continue;
-      reportRects(layer.group, layerPieces);
-      if (!ingameReported) {
-        std::printf("  HUD: шар %-20s кут %.0f %.0f, шматків %zu\n", layer.group, layer.x,
-                    layer.y, layerPieces.size());
-      }
-      for (auto& piece : layerPieces) pieces.push_back(std::move(piece));
-    }
-
-    reportRects("Global", pieces);
-    return pieces;
+      const auto layers = obf2::hud::ingameLayers(ingameGraph, bottomLeftX, bottomRightX);
+      auto pieces = obf2::hud::buildIngame(
+          ingameHud, layers, hudFont.font, hudFont.atlasPath, hudScreen, hudContext,
+          [&](const obf2::hud::IngameLayer& layer, const std::vector<obf2::hud::DrawPiece>& made) {
+            reportRects(layer.group.c_str(), made);
+            if (!ingameReported) {
+              std::printf("  HUD: шар %-20s кут %.0f %.0f, шматків %zu\n", layer.group.c_str(),
+                          layer.x, layer.y, made.size());
+            }
+          });
+      reportRects("Global", pieces);
+      return pieces;
     };
 
     // Кожен екран на клавішу відмикає рівно **одна** змінна — та, що
