@@ -28,6 +28,52 @@
 
 namespace obf2::hud {
 
+// --- кутові ділянки HUD ------------------------------------------------
+//
+// Це окрема від вузлів річ: ділянки їздять не за `setNodeInTime`, а за
+// змінними графа `Menu/Ingame`. Прочитати їх можна командою
+// `tools/meme_read.py Ingame --find BottomRight`:
+//
+//   SetVariableSineAction {Speed: 600}
+//     Variable: FloatData «BottomRight/BottomRight_XPos»    503
+//     Data:     ToggleData «BottomRight/BottomRight_NextPos»
+//                 Data 1: «BottomRight_newXPos»             503
+//                 Data 2: «BottomRight_oldXPos»             201
+//
+// Сховане положення — 503, і воно з файлу.
+//
+// **Висунуте — 336.5, і воно з виміру, а не з файлу.** 201 у файлі — це
+// початкове значення змінної, яку гра переписує під час роботи (так само,
+// як ліворуч переписує `BottomLeft_nextXPos`). Знімок кадру оригіналу
+// (`Ctrl+Shift+D`, docs/research/03-frame-dump.md) дає 336.5, і на ньому
+// сходяться три різні вузли:
+//
+//   BottomRightBar  301 -> 637.5     ShotSelect 449 -> 785.5
+//   безіменний 16x10 431 -> 767.5
+//
+// Значення стале в усіх трьох знятих кадрах, тобто це не проміжок
+// анімації. З 201 плашка набоїв сидить на 135 пікселів лівіше, ніж в
+// оригіналі — це вже перевірялося.
+inline constexpr float kBottomRightHiddenX = 503.0f;
+inline constexpr float kBottomRightShownX = 336.5f;
+
+// Ліворуч у файлі обидва поля -295: висунуте положення туди не записане,
+// його пише сама гра в `BottomLeft_nextXPos`. Змінну реєструє код HUD
+// (`BF2.exe`, 0x789480), але місце запису ще не знайдене, тому висунуте
+// положення — **не виміряне**, і -1 тут заповнювач, а не джерело.
+inline constexpr float kBottomLeftHiddenX = -295.0f;
+inline constexpr float kBottomLeftShownX = -1.0f;  // не виміряно
+
+// Швидкість руху ділянок — з того самого файлу (`SetVariableSineAction`).
+// Саму криву ми ще не реверсили: клас зветься Sine, тобто хід, найпевніше,
+// згладжений, а ми поки їдемо рівно на цій швидкості.
+inline constexpr float kCornerMoveSpeed = 600.0f;
+
+// Прозорість тих самих ділянок веде **інша** дія — `SetVariableSoftAction`
+// зі швидкістю 10 (чотири штуки: BottomLeft_alpha1/2, BottomRight_alpha).
+// Ми її поки не відтворюємо: формула «Soft» не знайдена.
+inline constexpr float kCornerAlphaSpeed = 10.0f;
+
 // Стан переходу одного вузла.
 struct ShowState {
   // Чи аніматор узагалі чув про цей вузол. Ні — значить, за нього

@@ -2408,10 +2408,10 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   // Через це в оригіналі за екраном появи не видно широкої плашки під
   // здоров'ям: вузол BottomLeftBar (400x39, healthBackGround.tga) не має
   // жодної змінної показу, його ховає саме від'їзд ділянки.
-  float bottomLeftX = -295.0f;
-  float bottomRightX = 503.0f;
-  float bottomLeftTarget = -295.0f;
-  float bottomRightTarget = 503.0f;
+  float bottomLeftX = obf2::hud::kBottomLeftHiddenX;
+  float bottomRightX = obf2::hud::kBottomRightHiddenX;
+  float bottomLeftTarget = obf2::hud::kBottomLeftHiddenX;
+  float bottomRightTarget = obf2::hud::kBottomRightHiddenX;
   // Поява й зникнення вузлів у часі — те, чим у грі керує граф MemeFile
   // (див. obf2/hud/animation.h).
   obf2::hud::Animator hudAnimator;
@@ -2624,24 +2624,9 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       if (obf2::hud::applyDerived(hudVariables, obf2::hud::WorldView{hasPlayer, mapFullSize})) {
         hudDirty = true;
       }
-      // Куди їдуть рухомі ділянки. Обидва кінці правої ділянки лежать у
-      // самому `Menu/Ingame` — це видно
-      // `tools/meme_read.py Ingame --find BottomRight`:
-      //
-      //   FloatData «BottomRight/BottomRight_XPos»     503   (сховане)
-      //   FloatData «BottomRight/BottomRight_oldXPos»  201   (висунуте)
-      //   FloatData «BottomRight/BottomRight_newXPos»  503
-      //   ToggleData «BottomRight/BottomRight_NextPos» — перемикає між
-      //       newXPos і oldXPos за BottomRight_direction
-      //
-      // Тобто ділянка їздить саме між 503 і 201, і 201 сходиться з
-      // геометрією: шар 600 завширшки, прив'язаний праворуч, при 201 має
-      // правий край на 801 — рівно край екрана 800. При 503 він за
-      // екраном на 303 пікселі.
-      //
-      // Раніше тут стояло 336.5, зняте зі знімка кадру. Число лишало
-      // ділянку на 135 пікселів за екраном, тобто то був або перехідний
-      // кадр, або хибний вимір: дані гри мають перевагу над ним.
+      // Кінці рухомих ділянок — сталі з `obf2/hud/animation.h`, і там-таки
+      // сказано, звідки кожен: сховані з файлу `Menu/Ingame`, праве
+      // висунуте — з дампу кадру оригіналу, ліве висунуте не виміряне.
       //
       // Ліворуч висунуте положення **не виміряне**. Раніше тут стояло
       // -1, узяте з нерухомого шару BottomLeftStatic у тому ж файлі, —
@@ -2658,8 +2643,10 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       // полів об'єкта HUD (0x789480, шаблон «BottomLeft» + ім'я вузла),
       // але місце запису ще не знайдене. Поки веземо їх за тією ж
       // умовою, що й сам бойовий HUD.
-      bottomLeftTarget = hasPlayer ? -1.0f : -295.0f;
-      bottomRightTarget = hasPlayer ? 201.0f : 503.0f;
+      bottomLeftTarget =
+          hasPlayer ? obf2::hud::kBottomLeftShownX : obf2::hud::kBottomLeftHiddenX;
+      bottomRightTarget =
+          hasPlayer ? obf2::hud::kBottomRightShownX : obf2::hud::kBottomRightHiddenX;
     };
 
     // Що робить DONE. Шляхи два, і обидва однаково «справжні»:
@@ -3768,7 +3755,7 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           // Клас зветься Sine, тобто хід, найпевніше, згладжений, але
           // самої кривої ми не реверсили, тож їдемо рівно на цій
           // швидкості.
-          const float step = 600.0f * (dt > 0.25f ? 0.25f : dt);
+          const float step = obf2::hud::kCornerMoveSpeed * (dt > 0.25f ? 0.25f : dt);
           const auto approach = [&](float& value, float target) {
             if (value == target) return;
             const float left = target - value;
