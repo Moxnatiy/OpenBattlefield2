@@ -182,6 +182,47 @@ void Graph::walk(int index, float dt) {
   walk(sub("Transformed node"), dt);
 }
 
+void Graph::collectLayers(int index, std::vector<Layer>& out) const {
+  const Object* object = file_.at(index);
+  if (object == nullptr) return;
+  const auto sub = [&](const char* field) {
+    const Value* value = File::field(*object, field);
+    return value == nullptr ? -1 : value->object;
+  };
+  const auto number = [&](const Object& owner, const char* field) {
+    const Value* value = File::field(owner, field);
+    return value == nullptr ? 0.0f : value->number;
+  };
+
+  if (object->type() == "BfTransformNode") {
+    Layer layer;
+    layer.x = evaluate(sub("X"));
+    layer.y = evaluate(sub("Y"));
+    layer.width = number(*object, "Width");
+    layer.height = number(*object, "Height");
+    if (const Object* bound = file_.at(sub("X")); bound != nullptr) layer.variable = bound->name;
+    if (const Object* twin = file_.at(sub("Next node"));
+        twin != nullptr && twin->type() == "TransformNode") {
+      layer.hasTwin = true;
+      layer.twinX = number(*twin, "X");
+      layer.twinY = number(*twin, "Y");
+      layer.twinWidth = number(*twin, "Width");
+      layer.twinHeight = number(*twin, "Height");
+    }
+    out.push_back(std::move(layer));
+  }
+
+  collectLayers(sub("Next node"), out);
+  collectLayers(sub("Split node"), out);
+  collectLayers(sub("Transformed node"), out);
+}
+
+std::vector<Graph::Layer> Graph::layers() const {
+  std::vector<Layer> out;
+  collectLayers(file_.root(), out);
+  return out;
+}
+
 void Graph::update(float dt) {
   actions_ = 0;
   walk(file_.root(), dt);

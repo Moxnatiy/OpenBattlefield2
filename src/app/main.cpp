@@ -3080,24 +3080,37 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       float y;
       obf2::hud::Anchor anchor;  // до якого краю тулиться на широкому екрані
     };
+    // Ділянки беремо **з файлу**: `Menu/Ingame` задає кожну парою
+    // «рухома + нерухома», і рухомій прив'язує X до змінної
+    // (obf2/meme/graph.h, `Graph::layers`). Числа нижче — запасний
+    // варіант на випадок, коли файла нема; вони збігаються з файлом.
+    //
+    // Що НЕ з файлу: край, до якого ділянка тулиться на широкому екрані.
+    // Це наше — у грі 800x600 і такого питання немає.
+    const auto graphLayers = ingameGraph.layers();
+    const auto layerOf = [&](const char* variable, float fallbackY, float fallbackTwinX,
+                             float fallbackTwinY) {
+      struct Placement {
+        float y;
+        float twinX;
+        float twinY;
+      };
+      for (const auto& found : graphLayers) {
+        if (found.variable != variable) continue;
+        return Placement{found.y, found.hasTwin ? found.twinX : fallbackTwinX,
+                         found.hasTwin ? found.twinY : fallbackTwinY};
+      }
+      return Placement{fallbackY, fallbackTwinX, fallbackTwinY};
+    };
+    const auto leftPlace = layerOf("BottomLeft/BottomLeft_XPos", 563.0f, -1.0f, 563.0f);
+    const auto rightPlace = layerOf("BottomRight/BottomRight_XPos", 497.0f, 401.0f, 563.0f);
+
     for (const Layer& layer : {
-             Layer{"BottomLeftAnimate", bottomLeftX, 563.0f, obf2::hud::Anchor::Left},
-             Layer{"BottomLeftStatic", -1.0f, 563.0f, obf2::hud::Anchor::Left},
-             // X цієї ділянки — виміряний, а не взятий із файлу. У файлі
-             // лежить лише схований стан (BottomRight_XPos = 503) і пара
-             // ToggleData 201/503; висунуте положення рахує вже дія під
-             // час гри, тож із даних його не видно. Знімок кадру
-             // оригіналу (Ctrl+Shift+D, див. docs/research/03-frame-dump.md)
-             // дає 336.5, і три різні вузли сходяться на ньому:
-             //
-             //   BottomRightBar  301 -> 637.5     ShotSelect 449 -> 785.5
-             //   безіменний 16x10 431 -> 767.5
-             //
-             // Значення стале в усіх трьох знятих кадрах, тобто це не
-             // проміжок анімації. Раніше тут стояло 201 — плашка набоїв
-             // від того сиділа на 135 пікселів лівіше, ніж в оригіналі.
-             Layer{"BottomRightAnimate", bottomRightX, 497.0f, obf2::hud::Anchor::Right},
-             Layer{"BottomRightStatic", 401.0f, 563.0f, obf2::hud::Anchor::Right},
+             Layer{"BottomLeftAnimate", bottomLeftX, leftPlace.y, obf2::hud::Anchor::Left},
+             Layer{"BottomLeftStatic", leftPlace.twinX, leftPlace.twinY, obf2::hud::Anchor::Left},
+             Layer{"BottomRightAnimate", bottomRightX, rightPlace.y, obf2::hud::Anchor::Right},
+             Layer{"BottomRightStatic", rightPlace.twinX, rightPlace.twinY,
+                   obf2::hud::Anchor::Right},
          }) {
       obf2::hud::Screen layerScreen = hudScreen;
       layerScreen.originX = layer.x;

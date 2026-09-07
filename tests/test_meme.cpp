@@ -175,8 +175,41 @@ static void testGraphMovesTheAlpha() {
   CHECK(std::abs(graph.variables().get("BottomLeft/Alpha/BottomLeft_alpha1") - 1.0f) < 0.01f);
 }
 
+// Чотири кутові ділянки HUD — теж із файлу, разом із прив'язкою X до
+// змінної. Доти ці числа стояли в main.cpp руками.
+static void testLayersComeFromTheFile() {
+  if (!std::filesystem::exists(menuArchive())) return;
+  auto archive = ZipArchive::open(menuArchive());
+  if (archive == nullptr) return;
+  const auto data = archive->read(normalizeAssetPath("Ingame"));
+  if (!data) return;
+
+  meme::Graph graph;
+  if (!graph.load(*data)) return;
+
+  const auto layers = graph.layers();
+  CHECK_EQ(layers.size(), std::size_t(2));
+  if (layers.size() != 2) return;
+
+  CHECK_EQ(layers[0].variable, std::string("BottomLeft/BottomLeft_XPos"));
+  CHECK(std::abs(layers[0].x + 295.0f) < 0.01f);
+  CHECK(std::abs(layers[0].y - 563.0f) < 0.01f);
+  CHECK(std::abs(layers[0].width - 400.0f) < 0.01f);
+  CHECK(layers[0].hasTwin);
+  CHECK(std::abs(layers[0].twinX + 1.0f) < 0.01f);
+  CHECK(std::abs(layers[0].twinY - 563.0f) < 0.01f);
+
+  CHECK_EQ(layers[1].variable, std::string("BottomRight/BottomRight_XPos"));
+  CHECK(std::abs(layers[1].x - 503.0f) < 0.01f);
+  CHECK(std::abs(layers[1].y - 497.0f) < 0.01f);
+  CHECK(layers[1].hasTwin);
+  CHECK(std::abs(layers[1].twinX - 401.0f) < 0.01f);
+  CHECK(std::abs(layers[1].twinY - 563.0f) < 0.01f);
+}
+
 TEST_MAIN({
   testIngameParsesWhole();
+  testLayersComeFromTheFile();
   testGraphMovesTheCornerPanel();
   testGraphMovesTheAlpha();
   testLayerPositionComesFromTheFile();

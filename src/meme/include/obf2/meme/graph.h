@@ -72,9 +72,36 @@ class Graph {
   // Скільки дій виконано за останній такт — для перевірок.
   int lastActions() const { return actions_; }
 
+  // Ділянка HUD, як її задає файл. `BfTransformNode` — це **рухома**
+  // ділянка: її X і Y — вузли-дані, тож X може бути прив'язаний до
+  // змінної. Її ж `Next node` — звичайний `TransformNode` із сталими
+  // числами, і це нерухомий двійник тієї самої ділянки.
+  //
+  // Для `Menu/Ingame` виходить рівно чотири ділянки, які ми доти
+  // тримали числами в коді:
+  //
+  //   BottomLeftAnimate   X = BottomLeft_XPos,  Y = 563, 400x64
+  //   BottomLeftStatic    X = -1,               Y = 563, 400x64
+  //   BottomRightAnimate  X = BottomRight_XPos, Y = 497, 600x100
+  //   BottomRightStatic   X = 401,              Y = 563, 400x64
+  struct Layer {
+    std::string variable;  // до якої змінної прив'язано X рухомої
+    float x = 0.0f;
+    float y = 0.0f;
+    float width = 0.0f;
+    float height = 0.0f;
+    bool hasTwin = false;
+    float twinX = 0.0f;
+    float twinY = 0.0f;
+    float twinWidth = 0.0f;
+    float twinHeight = 0.0f;
+  };
+  std::vector<Layer> layers() const;
+
  private:
   void seed();
   void walk(int index, float dt);
+  void collectLayers(int index, std::vector<Layer>& out) const;
   void run(int action, float dt);
   // Ім'я змінної, у яку пише дія: це вузол-дані з непорожнім іменем.
   const Object* named(int index) const;
