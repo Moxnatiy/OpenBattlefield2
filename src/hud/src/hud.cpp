@@ -110,6 +110,18 @@ void Builder::setMapView(MapView view) {
   finish();
 }
 
+void Builder::setMapRect(float x, float y, float width, float height, MapView shape) {
+  for (Node& node : nodes_) {
+    if (node.type != NodeType::Map && node.type != NodeType::MiniMap) continue;
+    node.x = x;
+    node.y = y;
+    node.width = width;
+    node.height = height;
+    node.mapView = shape;
+  }
+  finish();
+}
+
 void useMapView(Node& node, MapView view) {
   const MapRect& rect = view == MapView::Maxi        ? node.mapMaxi
                         : view == MapView::Commander ? node.mapCommander

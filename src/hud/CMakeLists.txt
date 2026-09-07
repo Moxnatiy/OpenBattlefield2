@@ -6,6 +6,7 @@ add_library(obf2_hud
   src/spawn_interface.cpp
   src/hud_items.cpp
   src/bottom_left.cpp
+  src/map_node.cpp
   src/states.cpp
 )
 add_library(obf2::hud ALIAS obf2_hud)

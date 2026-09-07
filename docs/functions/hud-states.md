@@ -79,12 +79,51 @@ call  *0xc(%ebx)         setVariable(ім'я, значення)
 2. другий — за **новим** (таблиця 0x787008): вмикає своє.
 
 Тобто перехід не лишає хвостів не тому, що обробники провалюються, а
-тому, що старий стан спершу прибирає за собою. У нас це зроблено так
-само: `applyHudState` спершу знімає всі змінні станів, потім ставить
-потрібні.
+тому, що старий стан спершу прибирає за собою.
+
+**І це не те саме, що «згасити все й увімкнути потрібне».** Більшість
+станів не гасить нічого: стан 2 (велика карта) лише вмикає `MapShow`, а
+`ShowIngameHud` від стану 0 лишається — тому в оригіналі під великою
+картою й далі видно решту HUD. Доти ми гасили все підряд, і на великій
+карті не лишалося навіть самої карти: вона живе під `IngameHud`, а той
+під `ShowIngameHud`.
 
 Стан 11 — окремий: він гасить одразу 21 екран і не вмикає нічого. Це
 «прибрати все».
+
+### Перший switch: що гасить старий стан
+
+Таблиці переходів у нього немає, тож `hud_states.py` його не бачить —
+виписано з розбору самої функції. Перед switch, за будь-якого переходу,
+гасяться `SetupShow` (0x786289), `DemoRecInterfaceShow` (0x7862a2) і
+`DemoCameraInterfaceShow` (0x7862bb).
+
+| старий стан | гасить |
+|---|---|
+| 0 | `VoipListShow` |
+| 1 | `SpawnShow`, якщо новий не 9 і не 12 (0x7862ea) |
+| 2, 10, 13, 14, 22–25, 28 | — |
+| 3 | `SquadInterfaceShow` |
+| 4, 5 | `RadioInterfaceShow`, `RadioVehicleInterfaceShow` (0x786456) |
+| 6 | те саме плюс `SpottedInterfaceShow` (0x78643d) |
+| 7 | `SquadLeaderInterfaceShow` |
+| 8 | `CommanderInterfaceShow` |
+| 9, 12 | `ScoreboardShow`, `LevelsListShow`, `ServerInfoSelected` (0x7864be) |
+| 11 | `VictoryShow`, `VictoryRankShow` (0x786501) |
+| 15 | `CommanderShow` — за умовою `[0xa10890]->vtbl[0x1f4]()` (0x78649d), **що це за перевірка, не з'ясовано** |
+| 16 | `CommanderRadioShow` |
+| 17, 18 | `SpawnShow`, якщо новий не 9, 12, 20, 26, 13, 19 (0x78631a) |
+| 19 | `MapMenuShow` |
+| 20 | `SquadLeaderMenuShow`, `InviteListShow` (0x786350) |
+| 21 | `CommanderMenuShow` |
+| 26 | `InviteListShow` |
+| 27 | `ChoiceMenuShow` |
+| 29 | `SetupShow` |
+| 30 | `DemoCameraInterfaceShow` |
+| 31 | `DemoRecInterfaceShow` |
+| поза 0..31 | `default` (0x78653c…0x786735): прибрати геть усе — 22 змінні |
+
+У коді це `hudLeaveStates()` і `applyState(змінні, старий, новий)`.
 
 ## Похідні змінні: що рушій рахує щокадру
 

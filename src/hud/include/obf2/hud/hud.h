@@ -310,6 +310,15 @@ class Builder {
   // велика (setMaxiPos/setMaxiSize), у командира — своя.
   void setMapView(MapView view);
 
+  // Те саме, але прямокутником, який порахувала анімація карти
+  // (obf2/hud/map_node.h). Координати вже екранні: пів екрана до них
+  // додає сама анімація, як це робить рушій у 0x77d2b0.
+  // `shape` вибирає лише обрис: мініатюра в грі кругла, велика карта
+  // квадратна. **Не з'ясовано**, звідки рушій бере саме круглу маску;
+  // ми беремо обрис за `MapMinSize` — тобто «карта стоїть на своєму
+  // малому розмірі».
+  void setMapRect(float x, float y, float width, float height, MapView shape);
+
   const std::vector<Node>& nodes() const { return nodes_; }
   std::vector<const Node*> group(std::string_view name) const;
   std::vector<std::string> groups() const;

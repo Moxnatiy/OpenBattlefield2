@@ -18,45 +18,147 @@ const std::vector<StateEntry>& hudStates() {
   // переходів 0x787008 просто з BF2.exe. Позиції 10, 12-14, 22-25 і 28
   // ведуть до спільного порожнього обробника, тож їх тут немає.
   static const std::vector<StateEntry> table = {
-      {0, {"ShowIngameHud", "MapShow", "MapBorderShow"}},
-      {1, {"ShowIngameHud", "MapBorderAlternateShow", "SpawnShow", "KitsShow"}},
-      {2, {"MapShow"}},
-      {3, {"SquadInterfaceShow"}},
-      {4, {"RadioInterfaceShow"}},
-      {5, {"RadioVehicleInterfaceShow"}},
-      {6, {"SpottedInterfaceShow"}},
-      {7, {"SquadLeaderInterfaceShow"}},
-      {8, {"CommanderInterfaceShow"}},
-      {9, {"ScoreboardShow", "LevelsListShow"}},
-      {15, {"CommanderShow"}},
-      {16, {"CommanderRadioShow"}},
-      {17, {"MapShow", "SpawnShow", "MembersShow"}},
-      {18, {"MembersShow", "SpawnShow"}},
-      {19, {"MapMenuShow"}},
-      {20, {"SquadLeaderMenuShow"}},
-      {21, {"CommanderMenuShow"}},
-      {26, {"InviteListShow"}},
-      {27, {"ChoiceMenuShow"}},
-      {29, {"SetupShow"}},
-      {30, {"DemoCameraInterfaceShow"}},
-      {31, {"DemoRecInterfaceShow"}},
+      {0,
+       {"ShowIngameHud", "MapShow", "MapBorderShow"},
+       {"ScoreboardShow", "SpawnShow", "CommanderInterfaceShow", "CommanderShow"}},
+      {1,
+       {"ShowIngameHud", "MapBorderAlternateShow", "SpawnShow", "KitsShow", "MapMenuShow"},
+       {"ScoreboardShow", "MembersShow"}},
+      {2, {"MapShow"}, {}},
+      {3, {"SquadInterfaceShow"}, {}},
+      {4, {"RadioInterfaceShow"}, {}},
+      {5, {"RadioVehicleInterfaceShow"}, {}},
+      {6, {"SpottedInterfaceShow"}, {}},
+      {7, {"SquadLeaderInterfaceShow"}, {}},
+      {8, {"CommanderInterfaceShow"}, {}},
+      {9, {"ScoreboardShow", "LevelsListShow"}, {}},
+      {11,
+       {"SetupShow"},
+       {"ShowIngameHud", "SpawnShow", "RadioInterfaceShow", "SpottedInterfaceShow",
+        "RadioVehicleInterfaceShow", "SquadInterfaceShow", "SquadLeaderInterfaceShow",
+        "CommanderInterfaceShow", "MapMenuShow", "SquadLeaderMenuShow", "CommanderMenuShow",
+        "ChoiceMenuShow", "CommanderRadioShow", "ScoreboardShow", "LevelsListShow",
+        "RenameSquadShow", "VictoryShow", "VictoryRankShow", "VoipListShow", "InviteListShow",
+        "CommanderShow"}},
+      {15, {"CommanderShow"}, {"SpawnShow"}},
+      {16, {"CommanderRadioShow"}, {}},
+      {17, {"MapShow", "SpawnShow", "MembersShow"}, {"KitsShow"}},
+      {18, {"MembersShow", "SpawnShow"}, {"KitsShow"}},
+      {19, {"MapMenuShow"}, {}},
+      {20, {"SquadLeaderMenuShow"}, {}},
+      {21, {"CommanderMenuShow"}, {}},
+      {26, {"InviteListShow"}, {}},
+      {27, {"ChoiceMenuShow"}, {}},
+      {29, {"SetupShow"}, {}},
+      {30, {"DemoCameraInterfaceShow"}, {}},
+      {31, {"DemoRecInterfaceShow"}, {}},
   };
   return table;
 }
 
-bool applyState(VariableMap& variables, int state) {
-  // Спершу складаємо, чого хочемо, і лише потім пишемо. Проміжного
-  // «усе вимкнено» назовні бути не має: одна змінна належить кільком
-  // станам (MapShow є і в 0, і в 2, і в 17), і якби ми гасили та вмикали
-  // її двома проходами, повторний перехід у той самий стан щоразу
-  // виглядав би як зміна — і геометрія перебудовувалася б щокадру.
-  VariableMap target;
-  for (const StateEntry& entry : hudStates()) {
-    for (const char* name : entry.on) target.emplace(name, false);
+const std::vector<StateEntry>& hudLeaveStates() {
+  // Перший switch у 0x786260 — за старим станом. Виписано з розбору
+  // самої функції (адреси гілок у дужках); таблиці переходів у нього
+  // немає, тож `hud_states.py` його не бачить.
+  //
+  // Три рядки перед switch (0x786289, 0x7862a2, 0x7862bb) гасять
+  // `SetupShow`, `DemoRecInterfaceShow` і `DemoCameraInterfaceShow` за
+  // будь-якого переходу — вони в `kAlwaysOff` нижче.
+  static const std::vector<StateEntry> table = {
+      {0, {}, {"VoipListShow"}},
+      // 1: `SpawnShow`, але з умовою на **новий** стан — див. applyState.
+      {1, {}, {}},
+      {3, {}, {"SquadInterfaceShow"}},
+      {4, {}, {"RadioInterfaceShow", "RadioVehicleInterfaceShow"}},                        // 0x786456
+      {5, {}, {"RadioInterfaceShow", "RadioVehicleInterfaceShow"}},
+      {6, {}, {"SpottedInterfaceShow", "RadioInterfaceShow", "RadioVehicleInterfaceShow"}},  // 0x78643d
+      {7, {}, {"SquadLeaderInterfaceShow"}},
+      {8, {}, {"CommanderInterfaceShow"}},
+      {9, {}, {"ScoreboardShow", "LevelsListShow", "ServerInfoSelected"}},  // 0x7864be
+      {11, {}, {"VictoryShow", "VictoryRankShow"}},                        // 0x786501
+      {12, {}, {"ScoreboardShow", "LevelsListShow", "ServerInfoSelected"}},
+      // 15: `CommanderShow`, але лише коли `[0xa10890]->vtbl[0x1f4]()`
+      // хибний (0x78649d). Що це за перевірка — **не з'ясовано**, тож
+      // гасимо завжди: інакше командирський екран не закривався б.
+      {15, {}, {"CommanderShow"}},
+      {16, {}, {"CommanderRadioShow"}},
+      // 17, 18: `SpawnShow` з умовою на новий стан — див. applyState.
+      {17, {}, {}},
+      {18, {}, {}},
+      {19, {}, {"MapMenuShow"}},
+      {20, {}, {"SquadLeaderMenuShow", "InviteListShow"}},  // 0x786350
+      {21, {}, {"CommanderMenuShow"}},
+      {26, {}, {"InviteListShow"}},
+      {27, {}, {"ChoiceMenuShow"}},
+      {29, {}, {"SetupShow"}},
+      {30, {}, {"DemoCameraInterfaceShow"}},
+      {31, {}, {"DemoRecInterfaceShow"}},
+  };
+  return table;
+}
+
+namespace {
+
+// Гілка `default` першого switch (0x78653c..0x786735): стану ще не було
+// або він поза таблицею — прибрати геть усе.
+const std::vector<const char*> kLeaveEverything = {
+    "MapShow",           "MapBorderShow",      "SpawnShow",
+    "RadioInterfaceShow", "SpottedInterfaceShow", "RadioVehicleInterfaceShow",
+    "SquadInterfaceShow", "SquadLeaderInterfaceShow", "CommanderInterfaceShow",
+    "MapMenuShow",       "SquadLeaderMenuShow", "CommanderMenuShow",
+    "ChoiceMenuShow",    "CommanderRadioShow", "ScoreboardShow",
+    "LevelsListShow",    "RenameSquadShow",    "VictoryShow",
+    "VictoryRankShow",   "VoipListShow",       "InviteListShow",
+    "CommanderShow"};
+
+// Три виклики перед switch (0x786289, 0x7862a2, 0x7862bb).
+const std::vector<const char*> kAlwaysOff = {"SetupShow", "DemoRecInterfaceShow",
+                                             "DemoCameraInterfaceShow"};
+
+const StateEntry* find(const std::vector<StateEntry>& table, int id) {
+  for (const StateEntry& entry : table) {
+    if (entry.id == id) return &entry;
   }
-  for (const StateEntry& entry : hudStates()) {
-    if (entry.id != state) continue;
-    for (const char* name : entry.on) target[name] = true;
+  return nullptr;
+}
+
+}  // namespace
+
+bool applyState(VariableMap& variables, int previous, int state) {
+  // Спершу складаємо, чого хочемо, і лише потім пишемо: інакше змінна,
+  // яку старий стан гасить, а новий одразу вмикає, виглядала б як дві
+  // зміни, і геометрія перебудовувалася б двічі на кадр.
+  std::map<std::string, bool> target;
+  const auto off = [&](const char* name) { target[name] = false; };
+  const auto on = [&](const char* name) { target[name] = true; };
+
+  for (const char* name : kAlwaysOff) off(name);
+
+  // --- перший switch: за старим станом -------------------------------
+  const StateEntry* leaving = find(hudLeaveStates(), previous);
+  if (leaving == nullptr) {
+    // Порожні гілки (2, 10, 13, 14, 22-25, 28) у таблиці є з порожнім
+    // `off`; сюди потрапляє лише стан поза 0..31 — тобто «стану ще не
+    // було».
+    if (previous < 0 || previous > 31) {
+      for (const char* name : kLeaveEverything) off(name);
+    }
+  } else {
+    for (const char* name : leaving->off) off(name);
+  }
+
+  // Дві умовні гілки першого switch. Обидві гасять `SpawnShow`, але не
+  // тоді, коли новий стан і сам його показує чи ним керує.
+  if (previous == 1 && state != 9 && state != 12) off("SpawnShow");       // 0x7862ea
+  if ((previous == 17 || previous == 18) && state != 9 && state != 12 &&  // 0x78631a
+      state != 20 && state != 26 && state != 13 && state != 19) {
+    off("SpawnShow");
+  }
+
+  // --- другий switch: за новим станом --------------------------------
+  if (const StateEntry* entering = find(hudStates(), state); entering != nullptr) {
+    for (const char* name : entering->off) off(name);
+    for (const char* name : entering->on) on(name);
   }
 
   bool changed = false;

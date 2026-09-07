@@ -21,27 +21,59 @@ bool on(const hud::VariableMap& variables, const char* name) {
 static void testStateTurnsOnItsOwn() {
   hud::VariableMap variables;
 
-  CHECK(hud::applyState(variables, 0));
+  CHECK(hud::applyState(variables, -1, 0));
   CHECK(on(variables, "ShowIngameHud"));
   CHECK(on(variables, "MapShow"));
   CHECK(on(variables, "MapBorderShow"));
   CHECK(!on(variables, "SpawnShow"));
 
-  CHECK(hud::applyState(variables, 1));
+  CHECK(hud::applyState(variables, 0, 1));
   CHECK(on(variables, "SpawnShow"));
   CHECK(on(variables, "KitsShow"));
   CHECK(on(variables, "MapBorderAlternateShow"));
+}
+
+// Головне, чого ми раніше не робили: **стан 2 нічого не гасить**. Велика
+// карта лише вмикає `MapShow`, а `ShowIngameHud` лишається від стану 0 —
+// і решта HUD під великою картою й далі видно. Доти ми гасили все
+// підряд, і зникала навіть сама карта: вона живе під `IngameHud`, а той
+// під `ShowIngameHud`.
+static void testBigMapKeepsTheHud() {
+  hud::VariableMap variables;
+  hud::applyState(variables, -1, 0);
+
+  // Жодна змінна показу при цьому не міняється: `MapShow` уже ввімкнена
+  // станом 0. Уся різниця великої карти — в цілі розміру самого вузла
+  // карти (0x777dc0, obf2/hud/map_node.h), а не в змінних.
+  CHECK(!hud::applyState(variables, 0, 2));
+  CHECK(on(variables, "MapShow"));
+  CHECK(on(variables, "ShowIngameHud"));
+  CHECK(on(variables, "MapBorderShow"));
+}
+
+// Так само й швидке меню карти (стан 19): воно лягає поверх бою, а не
+// замість нього.
+static void testMapMenuKeepsTheHud() {
+  hud::VariableMap variables;
+  hud::applyState(variables, -1, 0);
+  hud::applyState(variables, 0, 19);
+  CHECK(on(variables, "MapMenuShow"));
+  CHECK(on(variables, "ShowIngameHud"));
+
+  // А вихід із нього прибирає за собою — це вже перший switch.
+  hud::applyState(variables, 19, 0);
+  CHECK(!on(variables, "MapMenuShow"));
 }
 
 // Перехід не лишає хвостів: старий стан прибирає за собою. У грі це
 // робить перший switch у HudObject::setState.
 static void testStateLeavesNoTail() {
   hud::VariableMap variables;
-  hud::applyState(variables, 9);  // табло
+  hud::applyState(variables, -1, 9);  // табло
   CHECK(on(variables, "ScoreboardShow"));
   CHECK(on(variables, "LevelsListShow"));
 
-  hud::applyState(variables, 0);
+  hud::applyState(variables, 9, 0);
   CHECK(!on(variables, "ScoreboardShow"));
   CHECK(!on(variables, "LevelsListShow"));
   CHECK(on(variables, "ShowIngameHud"));
@@ -51,8 +83,8 @@ static void testStateLeavesNoTail() {
 // сказати, інакше ми перебудовували б геометрію щокадру.
 static void testRepeatedStateChangesNothing() {
   hud::VariableMap variables;
-  CHECK(hud::applyState(variables, 1));
-  CHECK(!hud::applyState(variables, 1));
+  CHECK(hud::applyState(variables, -1, 1));
+  CHECK(!hud::applyState(variables, 1, 1));
 }
 
 // Без гравця бойовий набір гаситься — саме через це в оригіналі за
@@ -93,22 +125,22 @@ static void testCombinedVariablesAreAnAnd() {
   hud::VariableMap variables;
 
   // Екран появи: карта на весь екран і SpawnShow від стану 1.
-  hud::applyState(variables, 1);
+  hud::applyState(variables, -1, 1);
   hud::applyDerived(variables, hud::WorldView{false, true});
   CHECK(on(variables, "MapFullSizeAndSpawnShow"));
   CHECK(!on(variables, "MapFullSizeAndNotSpawnShow"));
 
   // Карта на весь екран у бою: появи немає, отже й кнопок немає.
-  hud::applyState(variables, 0);
+  hud::applyState(variables, 1, 0);
   hud::applyDerived(variables, hud::WorldView{true, true});
   CHECK(!on(variables, "MapFullSizeAndSpawnShow"));
   CHECK(on(variables, "MapFullSizeAndNotSpawnShow"));
 }
 
-// Таблиця — та сама, що в бінарі: 22 стани, а порожні позиції в ній не
+// Таблиця — та сама, що в бінарі: 23 стани, а порожні позиції в ній не
 // значаться.
 static void testTableMatchesTheBinary() {
-  CHECK_EQ(hud::hudStates().size(), std::size_t(22));
+  CHECK_EQ(hud::hudStates().size(), std::size_t(23));
   bool hasEmptySlot = false;
   for (const hud::StateEntry& entry : hud::hudStates()) {
     if (entry.id == 10 || entry.id == 28) hasEmptySlot = true;
@@ -119,6 +151,8 @@ static void testTableMatchesTheBinary() {
 
 TEST_MAIN({
   testStateTurnsOnItsOwn();
+  testBigMapKeepsTheHud();
+  testMapMenuKeepsTheHud();
   testStateLeavesNoTail();
   testRepeatedStateChangesNothing();
   testCombatSetNeedsAPlayer();

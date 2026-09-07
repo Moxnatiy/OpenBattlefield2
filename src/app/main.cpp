@@ -22,6 +22,7 @@
 #include "obf2/engine/engine.h"
 #include "obf2/font/text.h"
 #include "obf2/hud/bottom_left.h"
+#include "obf2/hud/map_node.h"
 #include "obf2/hud/render.h"
 #include "obf2/hud/spawn.h"
 #include "obf2/hud/spawn_interface.h"
@@ -2420,6 +2421,17 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   float& bottomLeftX = bottomLeft.x;
   float bottomRightX = obf2::hud::kBottomRightHiddenX;
   obf2::hud::BottomLeftMode bottomLeftMode = obf2::hud::BottomLeftMode::Hidden;
+  // Карта: її розмір веде власна анімація, а вже з розміру виводяться
+  // MapFullSize і MapMinSize (obf2/hud/map_node.h).
+  obf2::hud::MapNode mapNode;
+  // Клавіша карти (`c_GIMapSize`, стала 0x23 у таблиці керування
+  // BF2.exe 0x690244) — перемикач, а не «тримати». У бою вона переводить
+  // HUD зі стану 0 у стан 2, де в даних лишається сама тільки карта.
+  bool bigMap = false;
+  bool mapKeyWasDown = false;
+  // Стану ще не було: -1 веде в гілку `default` першого switch, тобто
+  // «прибрати геть усе» (0x78653c).
+  int hudStatePrevious = -1;
   float bottomRightTarget = obf2::hud::kBottomRightHiddenX;
   // Поява й зникнення вузлів у часі — те, чим у грі керує граф MemeFile
   // (див. obf2/hud/animation.h).
@@ -2513,8 +2525,22 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     // Таблиця станів і похідні змінні живуть у `obf2/hud/states.h`
     // разом зі своїм тестом: там і сама таблиця з BF2.exe, і адреси
     // тих місць, що пишуть кожну змінну.
+    // Прямокутники карти — з даних (`setMiniPos`/`setMaxiSize` і решта);
+    // анімація бере їх із зібраного дерева, щоб не розбирати вдруге.
+    for (const obf2::hud::Node& node : ingameHud.nodes()) {
+      if (node.type == obf2::hud::NodeType::Map || node.type == obf2::hud::NodeType::MiniMap) {
+        mapNode.takeRects(node);
+        break;
+      }
+    }
+
     applyHudState = [&](int state) {
-      if (obf2::hud::applyState(hudVariables, state)) hudDirty = true;
+      // Карта міняє ціль за номером стану — дослівно 0x777dc0.
+      mapNode.applyState(state);
+      // Перехід, а не «поставити стан»: у грі перший switch іде за
+      // старим станом, другий за новим (0x786260).
+      if (obf2::hud::applyState(hudVariables, hudStatePrevious, state)) hudDirty = true;
+      hudStatePrevious = state;
     };
 
     // Бойовий HUD — це стан 0.
@@ -2613,6 +2639,14 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
         std::printf("  екран появи: пряма поява в групі %d\n", group);
         remote->askSpawnGroup(selectedTeam, selectedKit, group);
         spawnScreen.setRequested(true);
+      });
+      // `openbf2.toggleMap [0|1]` — те саме, що клавіша карти. Своя, не
+      // з рушія: в оригіналі великою картою керує лише дія `c_GIMapSize`
+      // з розкладки, консольного імені в неї немає. Потрібна для
+      // перевірок — щоб знімати карту командою, а не тримати клавішу.
+      console.bind("openbf2.toggleMap", [&](const obf2::con::Command& command) {
+        bigMap = command.args.empty() ? !bigMap : command.argInt(0).value_or(0) != 0;
+        std::printf("  карта: велике подання %s\n", bigMap ? "увімкнено" : "вимкнено");
       });
       console.bind("openbf2.selectSpawn", [&](const obf2::con::Command& command) {
         selectedSpawn = command.argInt(0).value_or(0);
@@ -3651,7 +3685,16 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
         // (0x78d0f0 бере поточного гравця, і без нього гасить набір).
         const bool spawned =
             hostedServer != nullptr ? localSoldierId != 0 : spawnScreen.requested();
-        const int hudState = spawned ? 0 : 1;
+        // Клавіша карти перемикає стан 0 <-> 2. Стан 2 у таблиці станів
+        // (BF2.exe 0x787008) вмикає саму лише `MapShow`: увесь інший HUD
+        // на великій карті зникає.
+        {
+          const std::string_view mapKey = controls.key("c_GIMapSize");
+          const bool down = !mapKey.empty() && device->isKeyDown(mapKey);
+          if (down && !mapKeyWasDown) bigMap = !bigMap;
+          mapKeyWasDown = down;
+        }
+        const int hudState = spawned ? (bigMap ? 2 : 0) : 1;
         const bool spawnVisible = hudState == 1 || args.hudScreenName == "SpawnMenu";
 
         // Миша: у бою її захоплює вікно (інакше курсор упирається в край
@@ -3688,7 +3731,9 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           std::printf("  екран появи: сервер дав команду %d\n", selectedTeam);
         }
         if (applyHudState) applyHudState(hudState);
-        if (updateHudVariables) updateHudVariables(spawned, spawnVisible);
+        // `MapFullSize` більше не «ми на екрані появи», а «розмір карти
+        // доїхав до великого» — так її й виводить 0x77d3f8.
+        if (updateHudVariables) updateHudVariables(spawned, mapNode.fullSize());
 
         // Натискання на екрані появи. Кнопка не має власної логіки — вона
         // виконує консольну команду з setButtonNodeConCmd, тож усе, що
@@ -3790,6 +3835,27 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           const float wasHealth = bottomLeft.healthAlpha;
           bottomLeft.update(bottomLeftMode, backgroundAlpha, slice);
           if (bottomLeft.x != wasX || bottomLeft.healthAlpha != wasHealth) hudDirty = true;
+
+          // Карта. Її прямокутник — не один із трьох готових видів, а
+          // порахований анімацією: у клієнті це та сама пара «ціль /
+          // поточне» (0x77c330), і саме тому перехід мінікарта <-> велика
+          // виглядає плавним, а не стрибком.
+          const auto wasSize = mapNode.size();
+          const auto wasPosition = mapNode.position();
+          mapNode.update(slice);
+          const auto position = mapNode.position();
+          const auto size = mapNode.size();
+          // Кладемо прямокутник щокадру, а не лише коли він змінився:
+          // перебудова екрана появи ставить велике подання сама
+          // (`setMapView`), і без цього бойова карта лишалася б там, куди
+          // її поставили востаннє. Перебудову ж просимо тільки на зміну.
+          ingameHud.setMapRect(position.x, position.y, size.x, size.y,
+                               mapNode.minSize() ? obf2::hud::MapView::Mini
+                                                 : obf2::hud::MapView::Maxi);
+          if (size.x != wasSize.x || size.y != wasSize.y || position.x != wasPosition.x ||
+              position.y != wasPosition.y) {
+            hudDirty = true;
+          }
 
           // Праву ділянку ведемо як і раніше: її машини станів ми ще не
           // читали, відомі лише два кінці.
