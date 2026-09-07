@@ -65,7 +65,33 @@ void testFadedFollowsBackgroundAlpha() {
   CHECK(std::abs(panel.healthFadedAlpha - 1.0f) < 0.01f);
 }
 
+// Дія графа: без гальмівної ділянки — рівномірно, з нею — крок згасає
+// синусоїдою, і до цілі не перескакує.
+void testGraphActionCurve() {
+  float value = 0.0f;
+  hud::approachVariable(value, 100.0f, 600.0f, 0.0f, 1.0f / 30.0f);
+  CHECK(std::abs(value - 20.0f) < 0.01f);
+
+  // Ціль ближче за крок — стаємо рівно на неї, не далі.
+  value = 99.0f;
+  hud::approachVariable(value, 100.0f, 600.0f, 0.0f, 1.0f / 30.0f);
+  CHECK(std::abs(value - 100.0f) < 0.001f);
+
+  // З гальмуванням: на півдорозі гальмівної ділянки крок менший за
+  // повний, бо sin(pi/4) < 1.
+  value = 95.0f;
+  hud::approachVariable(value, 100.0f, 600.0f, 10.0f, 1.0f / 30.0f);
+  CHECK(value > 95.0f);
+  CHECK(value < 95.0f + 20.0f);
+
+  // Назад працює так само.
+  value = 100.0f;
+  hud::approachVariable(value, 0.0f, 600.0f, 0.0f, 1.0f / 30.0f);
+  CHECK(std::abs(value - 80.0f) < 0.01f);
+}
+
 TEST_MAIN({
+  testGraphActionCurve();
   testOnFootStopsAtFootPosition();
   testVehicleGoesFurther();
   testHiddenWaitsForAlpha();

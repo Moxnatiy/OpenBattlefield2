@@ -83,14 +83,30 @@ inline constexpr float kBottomLeftFootX = -137.0f;
 inline constexpr float kBottomLeftVehicleX = 54.0f;
 
 // Швидкість руху ділянок — з того самого файлу (`SetVariableSineAction`).
-// Саму криву ми ще не реверсили: клас зветься Sine, тобто хід, найпевніше,
-// згладжений, а ми поки їдемо рівно на цій швидкості.
 inline constexpr float kCornerMoveSpeed = 600.0f;
 
 // Прозорість тих самих ділянок веде **інша** дія — `SetVariableSoftAction`
 // зі швидкістю 10 (чотири штуки: BottomLeft_alpha1/2, BottomRight_alpha).
-// Ми її поки не відтворюємо: формула «Soft» не знайдена.
 inline constexpr float kCornerAlphaSpeed = 10.0f;
+
+// Крок дії `dice::meme::SetVariableSineAction::onEvent` (`MemeDll.dll`,
+// 0x10001050). Обидві дії графа — це вона й її батько:
+//
+//   відстань = |ціль - значення|
+//   якщо відстань >= «Braking distance»:  крок = швидкість * dt
+//   інакше:  крок = cos(pi/2 - (відстань/гальмування) * pi/2)
+//                   * швидкість * dt
+//   значення йде до цілі на крок, але не далі за неї
+//
+// `cos(pi/2 - x)` — це `sin(x)`, тобто біля цілі крок згасає синусоїдою.
+// `SetVariableSoftAction::onEvent` (0x10004d2c) — та сама дія **без**
+// гальмівної ділянки, тобто рівномірна; `SetVariableSineAction::onStream`
+// (0x1000459d) лише додає до неї поле «Braking distance» (+0x10).
+//
+// У `Menu/Ingame` гальмування нульове в обох дій, тож кутові ділянки
+// їдуть рівномірно — це видно з `tools/meme_read.py Ingame` (нульові
+// поля він не друкує) і збігається з формулою.
+void approachVariable(float& value, float target, float speed, float brakingDistance, float dt);
 
 // Стан переходу одного вузла.
 struct ShowState {

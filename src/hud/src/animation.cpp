@@ -4,6 +4,23 @@
 
 namespace obf2::hud {
 
+void approachVariable(float& value, float target, float speed, float brakingDistance, float dt) {
+  if (value == target) return;
+  const float distance = std::fabs(target - value);
+  float step = speed * dt;
+  if (brakingDistance > 0.0f && distance < brakingDistance) {
+    // `cos(pi/2 - x)` дослівно з 0x100010c8; стала там — 1.57075, а не
+    // повне pi/2, тож беремо саме її.
+    constexpr float kQuarterTurn = 1.57075f;
+    step *= std::cos(kQuarterTurn - distance / brakingDistance * kQuarterTurn);
+  }
+  if (value < target) {
+    value = value + step > target ? target : value + step;
+  } else {
+    value = value - step < target ? target : value - step;
+  }
+}
+
 void Animator::setVisible(const Node& node, bool visible) {
   auto [it, inserted] = entries_.try_emplace(node.name);
   Entry& entry = it->second;
@@ -44,17 +61,27 @@ ShowState Animator::state(const Node& node) const {
   if (it == entries_.end()) return out;
   out.known = true;
   out.progress = it->second.progress;
-  if (node.showEffects.empty()) {
-    // Без ефекту перехід не має чим себе показати: вузол просто
-    // з'являється і зникає.
-    out.progress = out.progress > 0.0f ? 1.0f : 0.0f;
-    return out;
-  }
+
+  // **Прозорість множить сам cull-вузол, а не ефект.**
+  // `dice::meme::CullNode::iteratePaint` (`MemeDll.dll`, 0x1000141a):
+  //
+  //   хід >= 1  -> діти малюються з батьківською трубою, без жодних змін;
+  //   хід <= 0  -> діти не малюються взагалі;
+  //   інакше    -> нова труба, і в ній `альфа = батьківська * хід`.
+  //
+  // Тобто вузол із `setNodeInTime`, але **без** `addNodeAlphaShowEffect`
+  // однаково згасає — просто тому, що він під cull-вузлом. Доти ми
+  // множили на хід лише за наявності alpha-ефекту, а вузол без ефектів
+  // узагалі перемикали миттєво; через це, наприклад, смуга часу
+  // (`TimeItems`, у неї лише move-ефект) в оригіналі виїжджає й
+  // проявляється, а в нас лише виїжджала.
+  out.alpha *= out.progress;
+
   for (const ShowEffectInfo& effect : node.showEffects) {
     switch (effect.kind) {
       case ShowEffect::Alpha:
       case ShowEffect::Blend:
-        out.alpha *= out.progress;
+        // Окремої дії тут немає: згасання вже зробив cull-вузол вище.
         break;
       case ShowEffect::Move: {
         // Формула — дослівно з `dice::meme::MoveEffect::picturePaint`

@@ -6,17 +6,11 @@
 namespace obf2::hud {
 namespace {
 
-// Рівномірний підхід до цілі — так рухають змінні обидві дії графа:
-// `SetVariableSoftAction::onEvent` (`MemeDll.dll`, 0x10004d2c) і
-// `SetVariableSineAction::onEvent` (0x10001050) з нульовою «Braking
-// distance», а вона в `Menu/Ingame` саме нульова.
+// Обидві дії графа — це `approachVariable` (obf2/hud/animation.h, знята
+// з `MemeDll.dll` 0x10001050 і 0x10004d2c). У `Menu/Ingame` гальмівна
+// ділянка нульова, тож підхід рівномірний.
 void approach(float& value, float target, float speed, float dt) {
-  const float step = speed * dt;
-  if (value < target) {
-    value = std::min(target, value + step);
-  } else if (value > target) {
-    value = std::max(target, value - step);
-  }
+  approachVariable(value, target, speed, 0.0f, dt);
 }
 
 }  // namespace
