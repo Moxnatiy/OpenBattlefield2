@@ -433,8 +433,15 @@ void Builder::feed(const con::Command& command) {
     return;
   }
   if (method == "settranformlistnodeposvariable" || method == "setnodeposvariable") {
-    // Ім'я команди в іграх саме таке, з опискою в "tranform".
-    node->positionVariable = std::string(command.argStr(0));
+    // Ім'я команди в даних саме таке, з опискою в «tranform».
+    // Аргументи: **вісь** (0 = X, 1 = Y) і назва змінної.
+    const int axis = command.argInt(0).value_or(0);
+    std::string name(command.argStr(1));
+    if (axis == 0) {
+      node->positionVariableX = std::move(name);
+    } else {
+      node->positionVariableY = std::move(name);
+    }
     return;
   }
 

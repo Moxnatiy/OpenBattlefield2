@@ -196,6 +196,14 @@ ScreenRect nodeRect(const Node& node, const Screen& screen, const Context* conte
     shiftX = show.offsetX;
     shiftY = show.offsetY;
   }
+  // `setNodePosVariable <вісь> <змінна>` — зсув вузла зі змінної. У даних
+  // цим роз'їжджаються чотири промені прицілу на розкид зброї
+  // (`HudElementsGenericWeapon.con`). Невідома змінна дає нуль — вузол
+  // лишається там, де стоїть у даних.
+  if (context != nullptr && context->variableValue) {
+    if (!node.positionVariableX.empty()) shiftX += context->variableValue(node.positionVariableX);
+    if (!node.positionVariableY.empty()) shiftY += context->variableValue(node.positionVariableY);
+  }
   return ScreenRect{(node.absX + shiftX + screen.originX) * scale + padX,
                     (node.absY + shiftY + screen.originY) * scale, node.width * scale,
                     node.height * scale};
@@ -353,9 +361,14 @@ std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& fon
       // лише компас мінікарти (`MapCompass` -> `MinimapDelayedMapAngle`,
       // HudElementsMap.con), і веде його сама карта: поле +0x760 вузла
       // карти, зареєстроване за `BF2.exe`, 0x780a49.
-      const float angle = node.rotateVariable.empty() || !context.variableValue
-                              ? 0.0f
-                              : context.variableValue(node.rotateVariable);
+      // Поворот буває сталий (`setPictureNodeRotation`, у градусах — так
+      // повернуті три з чотирьох променів прицілу) і зі змінної
+      // (`setPictureNodeRotateVariable`, у радіанах — компас).
+      constexpr float kToRadians = 3.14159265358979323846f / 180.0f;
+      float angle = node.rotation * kToRadians;
+      if (!node.rotateVariable.empty() && context.variableValue) {
+        angle += context.variableValue(node.rotateVariable);
+      }
       pieces.push_back(
           DrawPiece{quad(rect, screen, texture, 0.0f, 1.0f, 0.0f, 1.0f, angle), texture, &node,
                     node.color});

@@ -293,7 +293,24 @@ static void testShowEffectsAnimate() {
   CHECK(!animator.animating());
 }
 
+// `setNodePosVariable <вісь> <змінна>`: перший аргумент — вісь, а не
+// назва. Доти ми клали в поле саме його, і жодна така змінна ніколи не
+// знаходилася — приціл через це стояв би нерухомо.
+static void testPosVariableTakesAxisFirst() {
+  hud::Builder builder = build(
+      "hudBuilder.createPictureNode Root Arm 398 285 8 8\n"
+      "hudBuilder.setNodePosVariable 1 CrosshairUpPos\n"
+      "hudBuilder.setPictureNodeRotation 180\n");
+  CHECK_EQ(builder.nodes().size(), std::size_t(1));
+  if (builder.nodes().empty()) return;
+  const hud::Node& node = builder.nodes()[0];
+  CHECK(node.positionVariableX.empty());
+  CHECK_EQ(node.positionVariableY, std::string("CrosshairUpPos"));
+  CHECK(std::abs(node.rotation - 180.0f) < 0.01f);
+}
+
 TEST_MAIN({
+  testPosVariableTakesAxisFirst();
   testShowEffectsAnimate();
   testBarNodeHasDirectionBeforeRect();
   testBarIsClippedByValue();

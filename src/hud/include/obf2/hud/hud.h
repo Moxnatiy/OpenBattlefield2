@@ -148,7 +148,14 @@ struct Node {
   int barDirection = 0;
   std::string barTextureEmpty;
   std::string barTextureFull;
-  std::string positionVariable;  // setNodePosVariable
+  // `setNodePosVariable <вісь> <змінна>`: **перший аргумент — вісь**
+  // (0 = X, 1 = Y), а не назва. Доти ми брали за назву саме його, тож у
+  // полі лежало «0» чи «1», і жодна така змінна ніколи не знаходилася.
+  // У даних цим рухається приціл: чотири промені
+  // `vsp_CrossHair_single.tga` роз'їжджаються на розкид зброї
+  // (`HudElementsGenericWeapon.con`).
+  std::string positionVariableX;
+  std::string positionVariableY;
   std::string rotateVariable;    // setPictureNodeRotateVariable
   std::vector<std::string> rgbVariables;  // setNodeRGBVariables
 
