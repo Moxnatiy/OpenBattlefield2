@@ -137,6 +137,26 @@ open -a "$HOME/Applications/OpenBF2 Original.app"
 **при старті процесу**, `MTLCaptureManager` мовчки відмовляє, і жодне
 трасування Metal не почнеться.
 
+### 3. Трасування Metal — те саме, але засобами самої macOS
+
+```
+touch /tmp/mtld3d_capture
+```
+
+```
+INFO mtld3d::unix] started GPU capture -> /tmp/mtld3d_capture.gputrace
+INFO mtld3d::unix] stopped GPU capture -> /tmp/mtld3d_capture.gputrace
+```
+
+Виходить справжній `.gputrace` (у нашому заміру — 146 МБ, 1314 записів:
+`MTLBuffer-*`, `MTLTexture-*`, `CAMetalLayer-*`). Відкривається в Xcode
+як звичайне GPU-захоплення, з усіма ресурсами й проходами.
+
+Коли що брати: текстовий `[dump]` дає **прямокутники**, і саме він
+годиться для звірки розкладки числом; `.gputrace` дає стан GPU цілком —
+шейдери, буфери, вміст текстур — і потрібен тоді, коли питання не «де»,
+а «чим намальовано».
+
 ### Чого так зняти **не** вдається
 
 Знімок і рух миші проходять, а **натискання — ні**: BF2 читає мишу через
