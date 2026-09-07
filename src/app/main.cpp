@@ -2624,10 +2624,24 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       if (obf2::hud::applyDerived(hudVariables, obf2::hud::WorldView{hasPlayer, mapFullSize})) {
         hudDirty = true;
       }
-      // Куди їдуть рухомі ділянки. Сховані кінці — з `Menu/Ingame`:
-      // -295 ліворуч і 503 праворуч. Праворуч висунуте положення
-      // **виміряне** зі знімка кадру оригіналу — 336.5 (три вузли
-      // сходяться, див. таблицю шарів нижче).
+      // Куди їдуть рухомі ділянки. Обидва кінці правої ділянки лежать у
+      // самому `Menu/Ingame` — це видно
+      // `tools/meme_read.py Ingame --find BottomRight`:
+      //
+      //   FloatData «BottomRight/BottomRight_XPos»     503   (сховане)
+      //   FloatData «BottomRight/BottomRight_oldXPos»  201   (висунуте)
+      //   FloatData «BottomRight/BottomRight_newXPos»  503
+      //   ToggleData «BottomRight/BottomRight_NextPos» — перемикає між
+      //       newXPos і oldXPos за BottomRight_direction
+      //
+      // Тобто ділянка їздить саме між 503 і 201, і 201 сходиться з
+      // геометрією: шар 600 завширшки, прив'язаний праворуч, при 201 має
+      // правий край на 801 — рівно край екрана 800. При 503 він за
+      // екраном на 303 пікселі.
+      //
+      // Раніше тут стояло 336.5, зняте зі знімка кадру. Число лишало
+      // ділянку на 135 пікселів за екраном, тобто то був або перехідний
+      // кадр, або хибний вимір: дані гри мають перевагу над ним.
       //
       // Ліворуч висунуте положення **не виміряне**. Раніше тут стояло
       // -1, узяте з нерухомого шару BottomLeftStatic у тому ж файлі, —
@@ -2645,7 +2659,7 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       // але місце запису ще не знайдене. Поки веземо їх за тією ж
       // умовою, що й сам бойовий HUD.
       bottomLeftTarget = hasPlayer ? -1.0f : -295.0f;
-      bottomRightTarget = hasPlayer ? 336.5f : 503.0f;
+      bottomRightTarget = hasPlayer ? 201.0f : 503.0f;
     };
 
     // Що робить DONE. Шляхи два, і обидва однаково «справжні»:

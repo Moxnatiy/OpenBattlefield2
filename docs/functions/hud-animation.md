@@ -250,3 +250,51 @@ X, друга — з цільовим, і дія веде першу до дру
 секунду — це різні анімації, і різниця видна на око. Мірило: панель
 проходить свій шлях (-295 -> робоче X) за той самий час, що в оригіналі,
 знятий `Ctrl+Shift+D`.
+
+## Що саме анімується — прочитано з `Menu/Ingame`
+
+`tools/meme_read.py Ingame` розбирає файл цілком (3673 з 3673 байтів), і
+всі числа беруться звідти, а не зі знімків:
+
+**Кутові ділянки — рух.** Обидві веде `SetVariableSineAction` зі
+швидкістю **600**:
+
+```
+SetVariableSineAction {Speed: 600}
+  Variable: FloatData «BottomLeft/BottomLeft_XPos»     -295
+  Data:     FloatData «BottomLeft/BottomLeft_nextXPos» -295
+
+SetVariableSineAction {Speed: 600}
+  Variable: FloatData «BottomRight/BottomRight_XPos»    503
+  Data:     ToggleData «BottomRight/BottomRight_NextPos»
+              Toggle: BoolData «BottomRight_direction»
+              Data 1: FloatData «BottomRight_newXPos»   503
+              Data 2: FloatData «BottomRight_oldXPos»   201
+```
+
+Отже **праворуч ділянка їздить між 503 і 201**. 201 сходиться з
+геометрією: шар 600 завширшки, прив'язаний праворуч, при 201 має правий
+край на 801 — рівно край базового екрана 800; при 503 він за екраном на
+303 пікселі. Раніше в нас стояло 336.5 зі знімка кадру — воно лишало
+ділянку на 135 пікселів за екраном, тож то був або перехідний кадр, або
+хибний вимір. **Виправлено на 201.**
+
+Ліворуч у файлі обидва поля -295: висунуте положення туди не записане,
+його пише сама гра у `BottomLeft_nextXPos`. Ця змінна зареєстрована
+кодом HUD (`BF2.exe`, 0x789480 — там-таки `BottomLeft_XPos`,
+`BottomLeft_nextXPos`, `BottomLeft_alpha1/2`, `BottomLeft_nextAlpha1/2`),
+але **місце запису ще не знайдене**, тож ліве висунуте положення
+лишається невиміряним.
+
+**Кутові ділянки — прозорість.** Її веде інша дія — `SetVariableSoftAction`
+зі швидкістю **10**, чотири штуки:
+
+```
+SetVariableSoftAction {Speed: 10}  BottomLeft_alpha1  <- BottomLeft_nextAlpha1
+SetVariableSoftAction {Speed: 10}  BottomLeft_alpha2  <- BottomLeft_nextAlpha2
+SetVariableSoftAction {Speed: 10}  BottomRight_alpha  <- ToggleData(newAlpha 1.0, oldAlpha)
+```
+
+Тобто в оригіналі ділянка не просто їде — вона ще й **проступає**, і
+двома різними кривими: рух `Sine`, прозорість `Soft`. У нас прозорість
+кутових ділянок не анімується взагалі.
