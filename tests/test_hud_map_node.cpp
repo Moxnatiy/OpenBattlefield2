@@ -131,6 +131,45 @@ void testShortestWayAroundZero() {
   CHECK(angle.angle() > 3.0f || angle.angle() < -3.0f);
 }
 
+// Мінікарта їде за гравцем: центр доводиться до його місця, а не
+// стрибає. Саме через це в оригіналі карта повзе, а не смикається.
+void testCentreFollowsThePlayer() {
+  hud::MapNode map;
+  map.applyState(hud::kMapStateIngame);
+  map.update(1.0f / 30.0f);
+
+  map.setCentre(0.75f, 0.25f);
+  map.update(1.0f / 30.0f);
+  // Зрушило, але ще не доїхало.
+  CHECK(map.centre().x > 0.5f);
+  CHECK(map.centre().x < 0.75f);
+
+  for (int i = 0; i < 90; ++i) map.update(1.0f / 30.0f);
+  CHECK(std::abs(map.centre().x - 0.75f) < 0.001f);
+  CHECK(std::abs(map.centre().y - 0.25f) < 0.001f);
+}
+
+// Масштаб: кожен наступний номер наближає в 2.3 раза, і значення теж
+// доводиться, а не перемикається.
+void testZoomIsAPowerOfBase() {
+  hud::MapNode map;
+  CHECK(std::abs(map.zoomScale() - 1.0f) < 0.001f);
+
+  map.setZoomIndex(2);
+  for (int i = 0; i < 120; ++i) map.update(1.0f / 30.0f);
+  CHECK(std::abs(map.zoom() - 2.0f) < 0.01f);
+  CHECK(std::abs(map.zoomScale() - 2.3f * 2.3f) < 0.05f);
+}
+
+// Номерів рівно три — більше в таблицях вузла карти немає.
+void testZoomIndexIsClamped() {
+  hud::MapNode map;
+  map.setZoomIndex(7);
+  CHECK_EQ(map.zoomIndex(), hud::kMapZoomLevels - 1);
+  map.setZoomIndex(-3);
+  CHECK_EQ(map.zoomIndex(), 0);
+}
+
 TEST_MAIN({
   testIngameIsMiniMap();
   testBigMapGrowsToMaxi();
@@ -140,4 +179,7 @@ TEST_MAIN({
   testCompassFollowsTheLook();
   testDelayedLagsBehind();
   testShortestWayAroundZero();
+  testCentreFollowsThePlayer();
+  testZoomIsAPowerOfBase();
+  testZoomIndexIsClamped();
 });

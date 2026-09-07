@@ -2390,6 +2390,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   struct OwnedPiece {
     obf2::gfx::GpuMesh mesh;
     obf2::hud::Color tint;
+    // Не наш меш, а місце живого вузла: його шматки підставляються сюди
+    // під час складання кадру (див. `hudDynamic`).
+    const obf2::hud::Node* live = nullptr;
   };
   std::vector<OwnedPiece> spawnPieces;
   // Бойовий HUD: не запечений назавжди, а перебудовний — його змінні
@@ -2430,6 +2433,11 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   // екрана появи, знімок екрана на клавішу) — наступний кадр має
   // повернути свій.
   bool mapRectStale = true;
+  // Вікно карти при масштабі 0 — квадрат навколо бойової зони. Саме його
+  // й міряли з дампу кадру оригіналу (docs/research/03-frame-dump.md);
+  // наближення ділить його півсторону на `pow(2.3, масштаб)`.
+  float mapBaseCentreU = 0.5f, mapBaseCentreV = 0.5f;
+  float mapBaseHalfU = 0.0f, mapBaseHalfV = 0.0f;
   // Кут огляду живе між кадрами: миша дає лише зміщення. Оголошений тут,
   // бо його читає й консольна команда `openbf2.look`.
   float yaw = 0.0f;
@@ -2507,8 +2515,12 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     // мінікарти крутиться щокадру, і перепікати через нього **весь** HUD
     // не можна: 91 меш на кадр — це і є та просадка, яку видно.
     float shownAngle = 0.0f;
-    obf2::gfx::GpuMesh mesh;
-    bool valid = false;
+    // Вузол може дати не один шматок: карта малює ще й значки точок
+    // захоплення та їхні підписи.
+    std::vector<OwnedPiece> pieces;
+    // Чи будували взагалі. Без цього компас не з'являвся б, поки гравець
+    // не поверне мишу: його кут із самого початку дорівнює показаному.
+    bool built = false;
   };
   std::vector<DynamicNode> hudDynamic;
   const LoadedFont hudFont = bootMode ? LoadedFont{} : loadFont(files, "Fonts/800/dynamicText_13");
@@ -2660,6 +2672,18 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       console.bind("openbf2.toggleMap", [&](const obf2::con::Command& command) {
         bigMap = command.args.empty() ? !bigMap : command.argInt(0).value_or(0) != 0;
         std::printf("  карта: велике подання %s\n", bigMap ? "увімкнено" : "вимкнено");
+      });
+      // `MiniMap.setZoom <номер>` — команда з рушія, не наша: у даних
+      // вона висить на кнопці `MapZoom` (HudElementsMapMenu.con), а в
+      // клієнті 0x57a97e пише число прямо в поле +0x6d0 вузла карти.
+      // Без аргументу — наступний масштаб по колу, бо саме так поводиться
+      // кнопка: у даних їй передають 0, а вона перемикає.
+      console.bind("MiniMap.setZoom", [&](const obf2::con::Command& command) {
+        const int next = command.args.empty()
+                             ? (mapNode.zoomIndex() + 1) % obf2::hud::kMapZoomLevels
+                             : command.argInt(0).value_or(0);
+        mapNode.setZoomIndex(next);
+        std::printf("  карта: масштаб %d\n", mapNode.zoomIndex());
       });
       // `openbf2.look <кут>` — повернути огляд на заданий кут у градусах.
       // Теж наша, для перевірок: інакше компас мінікарти не зняти
@@ -2868,6 +2892,10 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       hudContext.mapV0 = toV(centerZ + half);
       hudContext.mapV1 = toV(centerZ - half);
       hudContext.mapWorldSize = world;
+      mapBaseCentreU = (hudContext.mapU0 + hudContext.mapU1) * 0.5f;
+      mapBaseCentreV = (hudContext.mapV0 + hudContext.mapV1) * 0.5f;
+      mapBaseHalfU = (hudContext.mapU1 - hudContext.mapU0) * 0.5f;
+      mapBaseHalfV = (hudContext.mapV1 - hudContext.mapV0) * 0.5f;
       std::printf("  карта: бойова зона %.0f..%.0f / %.0f..%.0f, видно u %.3f..%.3f v %.3f..%.3f\n",
                   minX, maxX, minZ, maxZ, hudContext.mapU0, hudContext.mapU1, hudContext.mapV0,
                   hudContext.mapV1);
@@ -3170,8 +3198,13 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
         obf2::hud::updateAnimator(ingameHud, root, hudAnimator, hudContext);
       }
       for (auto& piece : buildIngamePieces()) {
+        if (piece.live) {
+          // Мітка живого вузла: меша тут немає, є місце в черзі.
+          ingamePieces.push_back(OwnedPiece{{}, piece.tint, piece.node});
+          continue;
+        }
         if (auto uploaded = renderer->upload(piece.geometry, resolveTexture)) {
-          ingamePieces.push_back(OwnedPiece{*uploaded, piece.tint});
+          ingamePieces.push_back(OwnedPiece{*uploaded, piece.tint, nullptr});
         }
       }
       if (ingameReported) {
@@ -3231,8 +3264,12 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       const bool centreMessage = node.textVariable == "DisconnectMessage";
       // Компас: єдиний вузол у даних із `setPictureNodeRotateVariable`.
       const bool rotating = !node.rotateVariable.empty();
-      if (!ticketText && !cpBar && !centreMessage && !rotating) continue;
-      hudDynamic.push_back(DynamicNode{&node, {}, -1.0f, 0.0f, {}, false});
+      // Карта: її вікно їде за гравцем і за масштабом, тож пекти її
+      // наперед так само не можна.
+      const bool mapNodeItself = node.type == obf2::hud::NodeType::Map ||
+                                 node.type == obf2::hud::NodeType::MiniMap;
+      if (!ticketText && !cpBar && !centreMessage && !rotating && !mapNodeItself) continue;
+      hudDynamic.push_back(DynamicNode{&node, {}, -1.0f, 0.0f, {}});
     }
 
     // Живі вузли не пекти в спільну геометрію: інакше під компасом, що
@@ -3888,6 +3925,14 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           mapAngle.update(slice);
           hudValues["MinimapDelayedMapAngle"] = mapAngle.delayed();
 
+          // Куди дивиться карта: місце гравця в частках світу. Рахує це
+          // 0x751d55 (`(розмірX/2 + гравецьX) / розмірX`) і віддає в
+          // 0x773630, а той пише ціль +0x740/+0x744.
+          if (hudContext.mapWorldSize > 1.0f) {
+            const float world = hudContext.mapWorldSize;
+            mapNode.setCentre((world * 0.5f + eye.x) / world, (world * 0.5f - eye.z) / world);
+          }
+
           const auto wasSize = mapNode.size();
           const auto wasPosition = mapNode.position();
           mapNode.update(slice);
@@ -3905,6 +3950,23 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
                                  mapNode.minSize() ? obf2::hud::MapView::Mini
                                                    : obf2::hud::MapView::Maxi);
             hudDirty = true;
+          }
+
+          // Вікно карти. Мініатюра в кутку йде за гравцем і наближається
+          // за масштабом; велика карта показує всю бойову зону, як і
+          // доти. Як саме рушій змішує ці два центри — 0x773870 бере
+          // вагу з +0x694 — **ще не розібрано**, тож поки просто дві
+          // гілки.
+          if (mapBaseHalfU > 0.0f) {
+            const float scale = mapNode.minSize() ? mapNode.zoomScale() : 1.0f;
+            const float halfU = mapBaseHalfU / scale;
+            const float halfV = mapBaseHalfV / scale;
+            const float cu = mapNode.minSize() ? mapNode.centre().x : mapBaseCentreU;
+            const float cv = mapNode.minSize() ? mapNode.centre().y : mapBaseCentreV;
+            hudContext.mapU0 = cu - halfU;
+            hudContext.mapU1 = cu + halfU;
+            hudContext.mapV0 = cv - halfV;
+            hudContext.mapV1 = cv + halfV;
           }
 
           // Праву ділянку ведемо як і раніше: її машини станів ми ще не
@@ -3940,6 +4002,86 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           extra.insert(extra.end(), screen.quads.begin(), screen.quads.end());
         }
 
+        // Живі вузли перебудовуємо **до** складання кадру: їхні шматки
+        // підставляються на місце міток у `ingamePieces`.
+        for (DynamicNode& dynamic : hudDynamic) {
+          const obf2::hud::Node& node = *dynamic.node;
+          const bool isBar = node.type == obf2::hud::NodeType::Bar;
+          const bool isRotating = !node.rotateVariable.empty();
+          const bool isMap = node.type == obf2::hud::NodeType::Map ||
+                             node.type == obf2::hud::NodeType::MiniMap;
+
+          std::string text;
+          float value = 0.0f;
+          float angle = 0.0f;
+          if (isRotating) {
+            const auto found = hudValues.find(node.rotateVariable);
+            angle = found == hudValues.end() ? 0.0f : found->second;
+          } else if (isBar) {
+            const auto found = hudValues.find(node.valueVariable);
+            value = found == hudValues.end() ? 0.0f : found->second;
+          } else if (!isMap) {
+            const auto found = hudStrings.find(node.textVariable);
+            if (found != hudStrings.end()) text = found->second;
+          }
+
+          // Крок повороту, дрібніший за який на екрані вже не видно:
+          // компас 192 пікселя, тож 0.005 радіана — це пів пікселя на
+          // краю. Без цього порога ми перепікали б вузол щокадру навіть
+          // тоді, коли кут доводиться в останніх знаках.
+          //
+          // Карта перепікається, коли зрушило її вікно: центр їде за
+          // гравцем, а розмір вікна — за масштабом. Поріг — 0.0002 від
+          // ширини світу, тобто менше за піксель мінікарти.
+          const bool changed =
+              !dynamic.built ? true
+              : isMap        ? std::abs(hudContext.mapU0 - dynamic.shownValue) > 0.0002f ||
+                                   std::abs(hudContext.mapV0 - dynamic.shownAngle) > 0.0002f
+              : isRotating   ? std::abs(angle - dynamic.shownAngle) > 0.005f
+              : isBar        ? std::abs(value - dynamic.shownValue) > 0.001f
+                             : text != dynamic.shownText;
+          if (changed) {
+            // Значення змінилося — перебудовуємо тільки цей вузол.
+            for (OwnedPiece& piece : dynamic.pieces) renderer->release(piece.mesh);
+            dynamic.pieces.clear();
+            dynamic.built = true;
+            dynamic.shownValue = isMap ? hudContext.mapU0 : value;
+            dynamic.shownText = text;
+            dynamic.shownAngle = isMap ? hudContext.mapV0 : angle;
+
+            obf2::hud::Node copy = node;
+            // Беремо загальний контекст, а не порожній: інакше живі
+            // підписи малюються типовим шрифтом замість свого
+            // (setTextNodeStyle) і без локалізації.
+            obf2::hud::Context single = hudDynamicContext;
+            if (isMap) {
+              // Вікно карти живе в `hudContext` і міняється щокадру, а
+              // `hudDynamicContext` — знімок; переносимо руками.
+              single.mapU0 = hudContext.mapU0;
+              single.mapU1 = hudContext.mapU1;
+              single.mapV0 = hudContext.mapV0;
+              single.mapV1 = hudContext.mapV1;
+            } else if (isRotating) {
+              single.variableValue = [&](std::string_view) { return angle; };
+            } else if (isBar) {
+              single.variableValue = [&](std::string_view) { return value; };
+            } else {
+              copy.text = text;
+              copy.textVariable.clear();
+            }
+            if (isMap || isRotating || isBar || !text.empty()) {
+              // Карта дає не один шматок: сама картинка, значки точок
+              // захоплення і їхні підписи.
+              for (auto& built : obf2::hud::buildNode(copy, hudFont.font, hudFont.atlasPath,
+                                                      hudScreen, single)) {
+                if (auto uploaded = renderer->upload(built.geometry, resolveTexture)) {
+                  dynamic.pieces.push_back(OwnedPiece{*uploaded, built.tint});
+                }
+              }
+            }
+          }
+        }
+
         const auto pushHud = [&](int index) {
           if (index < 0 || !uploadedOk[static_cast<std::size_t>(index)]) return;
           obf2::gfx::MeshRenderer::DrawItem item{&gpuMeshes[static_cast<std::size_t>(index)],
@@ -3953,13 +4095,26 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           }
           hudItems.push_back(item);
         };
-        for (const OwnedPiece& piece : ingamePieces) {
+        const auto pushPiece = [&](const OwnedPiece& piece) {
           obf2::gfx::MeshRenderer::DrawItem item{&piece.mesh, obf2::Mat4::identity()};
           item.tint[0] = piece.tint.r;
           item.tint[1] = piece.tint.g;
           item.tint[2] = piece.tint.b;
           item.tint[3] = piece.tint.a;
           hudItems.push_back(item);
+        };
+        for (const OwnedPiece& piece : ingamePieces) {
+          if (piece.live == nullptr) {
+            pushPiece(piece);
+            continue;
+          }
+          // Місце живого вузла: підставляємо його шматки саме сюди, а не
+          // в кінець — інакше карта лягла б поверх власної рамки.
+          for (const DynamicNode& dynamic : hudDynamic) {
+            if (dynamic.node != piece.live) continue;
+            for (const OwnedPiece& own : dynamic.pieces) pushPiece(own);
+            break;
+          }
         }
         for (const int index : extra) pushHud(index);
         if (spawnVisible) {
@@ -3970,70 +4125,6 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
             item.tint[2] = piece.tint.b;
             item.tint[3] = piece.tint.a;
             hudItems.push_back(item);
-          }
-        }
-
-        for (DynamicNode& dynamic : hudDynamic) {
-          const obf2::hud::Node& node = *dynamic.node;
-          const bool isBar = node.type == obf2::hud::NodeType::Bar;
-          const bool isRotating = !node.rotateVariable.empty();
-
-          std::string text;
-          float value = 0.0f;
-          float angle = 0.0f;
-          if (isRotating) {
-            const auto found = hudValues.find(node.rotateVariable);
-            angle = found == hudValues.end() ? 0.0f : found->second;
-          } else if (isBar) {
-            const auto found = hudValues.find(node.valueVariable);
-            value = found == hudValues.end() ? 0.0f : found->second;
-          } else {
-            const auto found = hudStrings.find(node.textVariable);
-            if (found != hudStrings.end()) text = found->second;
-          }
-
-          // Крок повороту, дрібніший за який на екрані вже не видно:
-          // компас 192 пікселя, тож 0.005 радіана — це пів пікселя на
-          // краю. Без цього порога ми перепікали б вузол щокадру навіть
-          // тоді, коли кут доводиться в останніх знаках.
-          const bool changed = isRotating ? std::abs(angle - dynamic.shownAngle) > 0.005f
-                               : isBar    ? std::abs(value - dynamic.shownValue) > 0.001f
-                                          : text != dynamic.shownText;
-          if (changed) {
-            // Значення змінилося — перебудовуємо тільки цей вузол.
-            if (dynamic.valid) renderer->release(dynamic.mesh);
-            dynamic.valid = false;
-            dynamic.shownValue = value;
-            dynamic.shownText = text;
-            dynamic.shownAngle = angle;
-
-            obf2::hud::Node copy = node;
-            // Беремо загальний контекст, а не порожній: інакше живі
-            // підписи малюються типовим шрифтом замість свого
-            // (setTextNodeStyle) і без локалізації.
-            obf2::hud::Context single = hudDynamicContext;
-            if (isRotating) {
-              single.variableValue = [&](std::string_view) { return angle; };
-            } else if (isBar) {
-              single.variableValue = [&](std::string_view) { return value; };
-            } else {
-              copy.text = text;
-              copy.textVariable.clear();
-            }
-            if (isRotating || isBar || !text.empty()) {
-              auto built =
-                  obf2::hud::buildNode(copy, hudFont.font, hudFont.atlasPath, hudScreen, single);
-              if (!built.empty()) {
-                if (auto uploaded = renderer->upload(built.front().geometry, resolveTexture)) {
-                  dynamic.mesh = *uploaded;
-                  dynamic.valid = true;
-                }
-              }
-            }
-          }
-          if (dynamic.valid) {
-            hudItems.push_back(
-                obf2::gfx::MeshRenderer::DrawItem{&dynamic.mesh, obf2::Mat4::identity()});
           }
         }
 
@@ -4066,7 +4157,7 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   }
 
   for (auto& dynamic : hudDynamic) {
-    if (dynamic.valid) renderer->release(dynamic.mesh);
+    for (OwnedPiece& piece : dynamic.pieces) renderer->release(piece.mesh);
   }
   for (OwnedPiece& piece : spawnPieces) renderer->release(piece.mesh);
   for (auto& gpuMesh : gpuMeshes) renderer->release(gpuMesh);

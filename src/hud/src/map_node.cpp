@@ -139,6 +139,18 @@ void MapNode::applyState(int state) {
 
 void MapNode::snap() { snapNext_ = true; }
 
+void MapNode::setCentre(float u, float v) {
+  targetCentre_ = MapPoint{u, v};
+}
+
+void MapNode::setZoomIndex(int index) {
+  if (index < 0) index = 0;
+  if (index >= kMapZoomLevels) index = kMapZoomLevels - 1;
+  zoomIndex_ = index;
+}
+
+float MapNode::zoomScale() const { return std::pow(kMapZoomBase, zoom_); }
+
 void MapNode::update(float dt) {
   const bool snapNow = snapNext_;
   snapNext_ = false;
@@ -151,6 +163,13 @@ void MapNode::update(float dt) {
   approach(position_.x, targetPosition_.x + kReferenceWidth * 0.5f, dt, kMapSnapDistance, snapNow);
   approach(size_.y, targetSize_.y, dt, kMapSnapDistance, snapNow);
   approach(size_.x, targetSize_.x, dt, kMapSnapDistance, snapNow);
+
+  // Центр і масштаб — та сама швидкість 6.0 (0x77cd10 для +0x748/+0x74c
+  // і 0x77ce90 для +0x698). Поріг тут інший: центр міряється в частках
+  // світу, тож 0.1 було б півкартою.
+  approach(centre_.x, targetCentre_.x, dt, 0.0001f, snapNow);
+  approach(centre_.y, targetCentre_.y, dt, 0.0001f, snapNow);
+  approach(zoom_, static_cast<float>(zoomIndex_), dt, 0.001f, snapNow);
 
   // 0x77d3a0: обидві змінні показу **виводяться з поточного розміру**, а
   // не з номера стану. Доки розмір у дорозі, не ввімкнена жодна — і саме

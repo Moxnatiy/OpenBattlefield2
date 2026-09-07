@@ -49,6 +49,15 @@ inline constexpr float kMapSnapDistance = 0.1f;
 // Допуск, за яким розмір вважається «доїхав» (0x77d3d1: `- 3.0`).
 inline constexpr float kMapSizeTolerance = 3.0f;
 
+// Основа степеня наближення — 2.3 (`BF2.exe`, double-стала за 0x930150,
+// береться в 0x77397c). Кожен наступний номер масштабу наближає ще в
+// 2.3 раза.
+inline constexpr float kMapZoomBase = 2.3f;
+
+// Номерів масштабу три: таблиці в вузлі карти по три числа кожна
+// (+0x6d8, +0x6e4, +0x6f0 — вибір за 0x77cf6a).
+inline constexpr int kMapZoomLevels = 3;
+
 // Номери станів HUD, які карта розрізняє (`BF2.exe`, 0x777e11 — switch
 // по номеру стану; таблиця станів — docs/functions/hud-states.md).
 inline constexpr int kMapStateIngame = 0;      // мінікарта в кутку
@@ -120,8 +129,30 @@ class MapNode {
   // створили: інакше вона б виїжджала з нуля.
   void snap();
 
+  // Куди дивиться карта: місце гравця в частках розміру світу, обидва
+  // в [0, 1]. Записує це 0x773630 у поля +0x740/+0x744, а рахує
+  // 0x751d55: `(розмірX/2 + гравецьX) / розмірX`. По другій осі в
+  // клієнті число від'ємне (там `-1/розмірZ`), у нас — звичайне `v`,
+  // як і в позначках на карті.
+  void setCentre(float u, float v);
+
+  // Номер масштабу, 0..2. Ставить його консоль: `MiniMap.setZoom`
+  // (`BF2.exe`, 0x57a97e пише прямо в поле +0x6d0 вузла карти).
+  void setZoomIndex(int index);
+  int zoomIndex() const { return zoomIndex_; }
+
   MapPoint position() const { return position_; }
   MapPoint size() const { return size_; }
+
+  // +0x748/+0x74c — згладжений центр, саме він і малюється.
+  MapPoint centre() const { return centre_; }
+
+  // +0x698 — згладжений номер масштабу.
+  float zoom() const { return zoom_; }
+
+  // У скільки разів наближено. `pow(2.3, масштаб)` — основа лежить
+  // double-сталою за 0x930150, а сам степінь береться в 0x77397c.
+  float zoomScale() const;
 
   // Виведені з розміру змінні показу (0x77d3f8).
   bool fullSize() const { return fullSize_; }
@@ -144,6 +175,18 @@ class MapNode {
   // `useMapView`.
   MapPoint position_{kReferenceWidth * 0.5f + 197.0f, kReferenceHeight * 0.5f - 300.0f};
   MapPoint size_{197.0f, 197.0f};
+
+  // Центр: ціль (+0x740/+0x744) і згладжене (+0x748/+0x74c). Поки
+  // гравця немає, дивимося на середину світу — так само, як 0x751d78,
+  // коли керованого об'єкта ще нема.
+  MapPoint targetCentre_{0.5f, 0.5f};
+  MapPoint centre_{0.5f, 0.5f};
+
+  // Масштаб: номер (+0x6d0) і згладжене значення (+0x698). Значення
+  // доводиться до самого номера — це видно з порівняння в 0x77d4ad,
+  // де +0x698 звіряється з `(float)+0x6d0`.
+  int zoomIndex_ = 0;
+  float zoom_ = 0.0f;
 
   bool commanderMode_ = false;
   bool snapNext_ = true;

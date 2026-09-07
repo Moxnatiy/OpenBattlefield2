@@ -484,7 +484,13 @@ std::vector<DrawPiece> buildTree(const Builder& builder, std::string_view rootGr
       }
       if (hiddenByAlpha(*node, context)) continue;
       if (context.skipNode && context.skipNode(*node)) {
-        // Живий вузол: його малює той, хто веде значення. Діти лишаються.
+        // Живий вузол: геометрію дає той, хто веде значення, а тут
+        // лишається мітка — щоб не з'їхав порядок малювання.
+        DrawPiece marker;
+        marker.node = node;
+        marker.tint = node->color;
+        marker.live = true;
+        pieces.push_back(std::move(marker));
         self(self, node->name, depth + 1);
         continue;
       }
