@@ -24,9 +24,17 @@
 # BF2_LEVEL, BF2_SERVER, BF2_RES, BF2_NAME. Задавати їх треба **перед
 # збиранням** — вони запікаються в скрипт запуску.
 #
-# `MTL_CAPTURE_ENABLED=1` вмикає Apple-івське трасування Metal: без цієї
-# змінної, поставленої при старті процесу, `MTLCaptureManager` мовчки
-# відмовляє. mtld3d уміє знімати трасу сам — `/tmp/mtld3d_capture`.
+# `BF2_METAL_CAPTURE=1` вмикає Apple-івське трасування Metal: без
+# `MTL_CAPTURE_ENABLED`, поставленої **при старті процесу**,
+# `MTLCaptureManager` мовчки відмовляє. Типово вимкнено: у цьому режимі
+# Metal помітно повільніший, а трасу знімають рідко.
+#
+# **Відоме обмеження.** Із `+joinServer` на справжній сервер гра,
+# запущена цією обгорткою, каже «You have failed to connect» ще в меню.
+# Причина не з'ясована: дозвіл на локальну мережу ні до чого (ping із
+# самого застосунку проходить), `MTL_CAPTURE_ENABLED` теж (без нього те
+# саме), а наш власний клієнт до того ж сервера в ту саму мить
+# під'єднується. Для гри на сервері поки годиться `tools/bf2_run.sh`.
 set -e
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 NAME=${BF2_APP_NAME:-OpenBF2 Original}
@@ -74,16 +82,24 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <!-- Сервер зазвичай у локальній мережі (192.168.x.x), а macOS від
+       Sonoma питає на це окремий дозвіл — і питає **на застосунок**.
+       Запуск із оболонки успадковує дозвіл терміналу, а свіжий bundle
+       його не має: гра тоді каже «You have failed to connect» ще в
+       меню. Без цього рядка система навіть не показує запиту. -->
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Гра з'єднується з сервером Battlefield 2 у локальній мережі.</string>
 </dict>
 </plist>
 PLIST
 
+METAL=${BF2_METAL_CAPTURE:-}
 cat > "$APP/Contents/MacOS/run" <<RUN
 #!/bin/sh
 # Створено tools/bf2_app.sh — руками не правити.
 export WINEPREFIX="$B"
 export WINEDLLOVERRIDES="d3d9=n"
-export MTL_CAPTURE_ENABLED=1
+${METAL:+export MTL_CAPTURE_ENABLED=1}
 export ROSETTA_X87_PATH="$SIDECAR"
 "$WINE" reg add 'HKCU\\Software\\Wine\\Explorer\\Desktops' \\
     /v Default /d "$DESKTOP" /f >/dev/null 2>&1 || true
@@ -93,6 +109,11 @@ cd "$B/drive_c/Program Files (x86)/EA GAMES/Battlefield 2" || exit 1
 exec "$WINE" "$GAME\\\\BF2.exe" $ARGS > "$LOG" 2>&1
 RUN
 chmod +x "$APP/Contents/MacOS/run"
+
+# Підпис хоч і власний, але потрібен: без нього macOS не тримає за
+# застосунком дозволів (локальна мережа, керування) — вони прив'язані до
+# підпису, а не до шляху.
+codesign --force --sign - "$APP" >/dev/null 2>&1 || true
 
 # Без цього LaunchServices може не помітити щойно створений застосунок.
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
