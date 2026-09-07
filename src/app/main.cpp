@@ -23,6 +23,7 @@
 #include "obf2/font/text.h"
 #include "obf2/hud/render.h"
 #include "obf2/hud/spawn.h"
+#include "obf2/hud/spawn_interface.h"
 #include "obf2/hud/states.h"
 #include "obf2/game/controls.h"
 #include "obf2/game/scene.h"
@@ -2362,10 +2363,13 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   obf2::hud::Context hudDynamicContext;
   // Стан екрана появи та його геометрія. Він єдиний перебудовується на
   // ходу: вміст залежить від вибраного класу, команди й вкладки.
-  int selectedKit = 0;
-  int selectedTeam = 1;
-  bool membersTab = false;
-  bool spawnRequested = false;
+  // Стан і команди екрана появи живуть у модулі
+  // `obf2/hud/spawn_interface.h` — назва з оригіналу
+  // (`Code/BF2/Menu/Hud/SpawnInterface.cpp`).
+  obf2::hud::SpawnInterface spawnScreen;
+  int& selectedKit = spawnScreen.mutableChoice().kit;
+  int& selectedTeam = spawnScreen.mutableChoice().team;
+  bool& membersTab = spawnScreen.mutableChoice().membersTab;
   // Вибране місце появи — номер кружечка в spawnContext.spawnMarkers.
   //
   // Типово вибраний перший свій — інакше DONE не мав би чого слати, а
@@ -2549,7 +2553,7 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       });
       console.bind("hudManager.setDone", [&](const obf2::con::Command& command) {
         if (command.argInt(0).value_or(1) == 0) {
-          spawnRequested = false;
+          spawnScreen.setRequested(false);
           return;
         }
         // Номер групи появи — це номер контрольної точки обраного
@@ -2562,7 +2566,7 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
                     selectedKit, group);
 
         // **Екран закриваємо лише тоді, коли запит справді пішов.**
-        // Раніше ми ставили `spawnRequested` першим ділом, і коли місце
+        // Раніше ми ставили `spawnScreen.requested()` першим ділом, і коли місце
         // виявлялося невибраним, запит не йшов — а екран уже зникав.
         // Виходила застигла картинка без гравця, з якої нема виходу: це
         // і є «зависло після DONE».
@@ -2570,8 +2574,8 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           std::printf("    місце появи не обране — запит не пішов, екран лишається\n");
           return;
         }
-        spawnRequested = requestSpawn(selectedTeam, selectedKit, group);
-        if (!spawnRequested) {
+        spawnScreen.setRequested(requestSpawn(selectedTeam, selectedKit, group));
+        if (!spawnScreen.requested()) {
           std::printf("    запит не пішов — екран лишається\n");
         }
       });
@@ -2599,7 +2603,7 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
         if (remote == nullptr || group <= 0) return;
         std::printf("  екран появи: пряма поява в групі %d\n", group);
         remote->askSpawnGroup(selectedTeam, selectedKit, group);
-        spawnRequested = true;
+        spawnScreen.setRequested(true);
       });
       console.bind("openbf2.selectSpawn", [&](const obf2::con::Command& command) {
         selectedSpawn = command.argInt(0).value_or(0);
@@ -3634,7 +3638,7 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
         // йому солдата». Саме цим у рушії керується бойовий HUD
         // (0x78d0f0 бере поточного гравця, і без нього гасить набір).
         const bool spawned =
-            hostedServer != nullptr ? localSoldierId != 0 : spawnRequested;
+            hostedServer != nullptr ? localSoldierId != 0 : spawnScreen.requested();
         const int hudState = spawned ? 0 : 1;
         const bool spawnVisible = hudState == 1 || args.hudScreenName == "SpawnMenu";
 
