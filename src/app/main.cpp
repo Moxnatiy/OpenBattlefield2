@@ -21,6 +21,7 @@
 #include "obf2/core/platform.h"
 #include "obf2/engine/engine.h"
 #include "obf2/font/text.h"
+#include "obf2/hud/bottom_left.h"
 #include "obf2/hud/render.h"
 #include "obf2/hud/spawn.h"
 #include "obf2/hud/spawn_interface.h"
@@ -2412,9 +2413,11 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   // Через це в оригіналі за екраном появи не видно широкої плашки під
   // здоров'ям: вузол BottomLeftBar (400x39, healthBackGround.tga) не має
   // жодної змінної показу, його ховає саме від'їзд ділянки.
-  float bottomLeftX = obf2::hud::kBottomLeftHiddenX;
+  // Ліва ділянка — машина станів із клієнта (obf2/hud/bottom_left.h).
+  obf2::hud::BottomLeftPanel bottomLeft;
+  float& bottomLeftX = bottomLeft.x;
   float bottomRightX = obf2::hud::kBottomRightHiddenX;
-  float bottomLeftTarget = obf2::hud::kBottomLeftHiddenX;
+  obf2::hud::BottomLeftMode bottomLeftMode = obf2::hud::BottomLeftMode::Hidden;
   float bottomRightTarget = obf2::hud::kBottomRightHiddenX;
   // Поява й зникнення вузлів у часі — те, чим у грі керує граф MemeFile
   // (див. obf2/hud/animation.h).
@@ -2461,6 +2464,10 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   // 0x8a4a64 — і кладе у змінні MenuBackgroundAlpha та MenuMapAlpha
   // (0x4b68d3 і 0x4b6907). Доти ми ставили нуль, і широкі плашки під
   // здоров'ям, витривалістю та набоями не малювалися зовсім.
+  // Прозорість плашок із профілю — вона ж «основа» для пригашених
+  // варіантів у 0x78b600.
+  const float backgroundAlpha =
+      static_cast<float>(engine.settings().general.hudTransparency) / 255.0f;
   const std::map<std::string, float> hudAlpha = {
       {"MenuBackgroundAlpha",
        static_cast<float>(engine.settings().general.hudTransparency) / 255.0f},
@@ -2638,8 +2645,11 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       // не розібрано), тож беремо положення **пішки** — саме воно
       // правильне для гравця на своїх двох. Техніку додамо, коли
       // з'явиться джерело для прапорців.
-      bottomLeftTarget =
-          hasPlayer ? obf2::hud::kBottomLeftFootX : obf2::hud::kBottomLeftHiddenX;
+      // Режим лівої ділянки ставить 0x78b870: «здоров'я», коли гравець
+      // є, і «сховати», коли його немає. «Техніка» — коли керований
+      // об'єкт не солдат; ми поки завжди солдат, тож її не вмикаємо.
+      bottomLeftMode =
+          hasPlayer ? obf2::hud::BottomLeftMode::Health : obf2::hud::BottomLeftMode::Hidden;
       bottomRightTarget =
           hasPlayer ? obf2::hud::kBottomRightShownX : obf2::hud::kBottomRightHiddenX;
     };
@@ -2876,6 +2886,15 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     // ammoBackground.tga) висять саме на ній, і в бою вона нульова — у
     // грі під смугами видно лише вузьку смужку загону, 142 одиниці.
     hudContext.variableAlpha = [&](std::string_view variable) -> std::optional<float> {
+      // Чотири прозорості лівої ділянки веде її машина станів
+      // (obf2/hud/bottom_left.h, з BF2.exe 0x78b600). Саме вони й
+      // розводять дві половини ділянки: пішки видно смуги здоров'я, у
+      // техніці — смуги техніки. Доки ми їх не рахували, малювалися
+      // обидві разом.
+      if (variable == "BottomLeftHealthAlpha") return bottomLeft.healthAlpha;
+      if (variable == "BottomLeftVehicleAlpha") return bottomLeft.vehicleAlpha;
+      if (variable == "BottomLeftHealthFadedAlpha") return bottomLeft.healthFadedAlpha;
+      if (variable == "BottomLeftVehicleFadedAlpha") return bottomLeft.vehicleFadedAlpha;
       const auto found = hudAlpha.find(std::string(variable));
       if (found == hudAlpha.end()) return std::nullopt;
       return found->second;
@@ -3758,14 +3777,27 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           // Клас зветься Sine, тобто хід, найпевніше, згладжений, але
           // самої кривої ми не реверсили, тож їдемо рівно на цій
           // швидкості.
-          const float step = obf2::hud::kCornerMoveSpeed * (dt > 0.25f ? 0.25f : dt);
+          const float slice = dt > 0.25f ? 0.25f : dt;
+
+          // Ліва ділянка — цілком за машиною станів клієнта: вона сама
+          // вибирає, куди їхати і які половини показувати
+          // (obf2/hud/bottom_left.h). Режим «техніка» ми поки не вмикаємо:
+          // 0x78b870 ставить його, коли керований об'єкт гравця не є його
+          // солдатом, а ми поки завжди солдат.
+          const float wasX = bottomLeft.x;
+          const float wasHealth = bottomLeft.healthAlpha;
+          bottomLeft.update(bottomLeftMode, backgroundAlpha, slice);
+          if (bottomLeft.x != wasX || bottomLeft.healthAlpha != wasHealth) hudDirty = true;
+
+          // Праву ділянку ведемо як і раніше: її машини станів ми ще не
+          // читали, відомі лише два кінці.
+          const float step = obf2::hud::kCornerMoveSpeed * slice;
           const auto approach = [&](float& value, float target) {
             if (value == target) return;
             const float left = target - value;
             value = std::abs(left) <= step ? target : value + (left > 0 ? step : -step);
             hudDirty = true;
           };
-          approach(bottomLeftX, bottomLeftTarget);
           approach(bottomRightX, bottomRightTarget);
         }
         // Перебудовуємо екран появи лише поки він на екрані.
