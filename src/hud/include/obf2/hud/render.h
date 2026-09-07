@@ -73,6 +73,11 @@ struct Context {
   // Хід появи/зникання вузла (див. obf2/hud/animation.h). Порожньо —
   // вузол малюється відразу в кінцевому стані.
   std::function<ShowState(const Node&)> showState;
+  // Вузол, який хтось малює сам, щокадру. Його геометрію в спільний
+  // набір не кладемо — інакше під живим вузлом лишався б його ж
+  // відбиток із застарілим значенням (два компаси, два підписи).
+  // Діти такого вузла будуються як звичайно.
+  std::function<bool(const Node&)> skipNode;
   std::function<std::string_view(std::string_view variable)> variableText;
   // Заповнення смуги 0..1 (`setBarNodeValueVariable`).
   std::function<float(std::string_view variable)> variableValue;

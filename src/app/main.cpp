@@ -2426,6 +2426,10 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   obf2::hud::MapNode mapNode;
   // Кут компаса мінікарти — два згладжувачі поспіль (там-таки).
   obf2::hud::MapAngle mapAngle;
+  // Прямокутник карти на вузлі переставив хтось інший (перебудова
+  // екрана появи, знімок екрана на клавішу) — наступний кадр має
+  // повернути свій.
+  bool mapRectStale = true;
   // Кут огляду живе між кадрами: миша дає лише зміщення. Оголошений тут,
   // бо його читає й консольна команда `openbf2.look`.
   float yaw = 0.0f;
@@ -2499,6 +2503,10 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     const obf2::hud::Node* node = nullptr;
     std::string shownText;
     float shownValue = -1.0f;
+    // Кут повороту картинки (`setPictureNodeRotateVariable`). Компас
+    // мінікарти крутиться щокадру, і перепікати через нього **весь** HUD
+    // не можна: 91 меш на кадр — це і є та просадка, яку видно.
+    float shownAngle = 0.0f;
     obf2::gfx::GpuMesh mesh;
     bool valid = false;
   };
@@ -3123,6 +3131,7 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       // Повертаємо мініатюру: основний HUD міряється саме нею.
       if (setup.mapView != obf2::hud::MapView::Mini) {
         ingameHud.setMapView(obf2::hud::MapView::Mini);
+        mapRectStale = true;
       }
       if (built.empty()) continue;
       KeyScreen screen;
@@ -3197,6 +3206,9 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       }
       reportRects("SpawnMenu", built);
       ingameHud.setMapView(obf2::hud::MapView::Mini);
+      // Прямокутник карти щойно переставили — хай бойовий кадр поверне
+      // свій, порахований анімацією.
+      mapRectStale = true;
       for (auto& piece : built) {
         if (auto uploaded = renderer->upload(piece.geometry, resolveTexture)) {
           spawnPieces.push_back(OwnedPiece{*uploaded, piece.tint});
@@ -3217,9 +3229,23 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       // Напис посеред екрана: поки раунд чекає на гравців, текст у ньому
       // з'являється і зникає, тож пекти його наперед не можна.
       const bool centreMessage = node.textVariable == "DisconnectMessage";
-      if (!ticketText && !cpBar && !centreMessage) continue;
-      hudDynamic.push_back(DynamicNode{&node, {}, -1.0f, {}, false});
+      // Компас: єдиний вузол у даних із `setPictureNodeRotateVariable`.
+      const bool rotating = !node.rotateVariable.empty();
+      if (!ticketText && !cpBar && !centreMessage && !rotating) continue;
+      hudDynamic.push_back(DynamicNode{&node, {}, -1.0f, 0.0f, {}, false});
     }
+
+    // Живі вузли не пекти в спільну геометрію: інакше під компасом, що
+    // крутиться, лишався б другий, застиглий.
+    hudContext.skipNode = [&](const obf2::hud::Node& node) {
+      for (const DynamicNode& dynamic : hudDynamic) {
+        if (dynamic.node == &node) return true;
+      }
+      return false;
+    };
+    // Перший випал був іще без цього правила — переробити, інакше
+    // компас лишиться на екрані двічі.
+    rebuildIngame();
 
     // --hud-screen list: що саме лягло на екран. Без цього доводиться
     // здогадуватися, який вузол з'їхав.
@@ -3791,6 +3817,7 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
             const auto hitSpawn = obf2::hud::spawnMarkerAt(
                 ingameHud, "MapSplit", hudScreen, spawnContext, clickX, clickY);
             ingameHud.setMapView(obf2::hud::MapView::Mini);
+            mapRectStale = true;
             if (hitSpawn) {
               selectedSpawn = static_cast<int>(*hitSpawn);
               spawnDirty = true;
@@ -3853,28 +3880,30 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           // Компас мінікарти. Напрям рахує 0x751d8b як
           // `atan2(напрямок.x, напрямок.z)`, а в нас напрямок саме такий:
           // нуль дивиться вздовж +Z, тож це просто кут огляду.
-          const float wasAngle = mapAngle.delayed();
+          // Кут іде в змінну — а малює компас живий вузол
+          // (`hudDynamic`), не спільна геометрія. Через `hudDirty` це
+          // проводити не можна: щокадрове перепікання всього HUD і є та
+          // просадка кадрів, яку видно на око.
           mapAngle.setTarget(yaw * 3.14159265358979323846f / 180.0f);
           mapAngle.update(slice);
-          if (mapAngle.delayed() != wasAngle) {
-            hudValues["MinimapDelayedMapAngle"] = mapAngle.delayed();
-            hudDirty = true;
-          }
+          hudValues["MinimapDelayedMapAngle"] = mapAngle.delayed();
 
           const auto wasSize = mapNode.size();
           const auto wasPosition = mapNode.position();
           mapNode.update(slice);
           const auto position = mapNode.position();
           const auto size = mapNode.size();
-          // Кладемо прямокутник щокадру, а не лише коли він змінився:
-          // перебудова екрана появи ставить велике подання сама
-          // (`setMapView`), і без цього бойова карта лишалася б там, куди
-          // її поставили востаннє. Перебудову ж просимо тільки на зміну.
-          ingameHud.setMapRect(position.x, position.y, size.x, size.y,
-                               mapNode.minSize() ? obf2::hud::MapView::Mini
-                                                 : obf2::hud::MapView::Maxi);
-          if (size.x != wasSize.x || size.y != wasSize.y || position.x != wasPosition.x ||
-              position.y != wasPosition.y) {
+          const bool moved = size.x != wasSize.x || size.y != wasSize.y ||
+                             position.x != wasPosition.x || position.y != wasPosition.y;
+          // `setMapRect` веде за собою `finish()` на всі 1659 вузлів, тож
+          // кличемо його лише коли прямокутник справді змінився — або
+          // коли його встиг переставити хтось інший (перебудова екрана
+          // появи ставить велике подання сама, через `setMapView`).
+          if (moved || mapRectStale) {
+            mapRectStale = false;
+            ingameHud.setMapRect(position.x, position.y, size.x, size.y,
+                                 mapNode.minSize() ? obf2::hud::MapView::Mini
+                                                   : obf2::hud::MapView::Maxi);
             hudDirty = true;
           }
 
@@ -3947,10 +3976,15 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
         for (DynamicNode& dynamic : hudDynamic) {
           const obf2::hud::Node& node = *dynamic.node;
           const bool isBar = node.type == obf2::hud::NodeType::Bar;
+          const bool isRotating = !node.rotateVariable.empty();
 
           std::string text;
           float value = 0.0f;
-          if (isBar) {
+          float angle = 0.0f;
+          if (isRotating) {
+            const auto found = hudValues.find(node.rotateVariable);
+            angle = found == hudValues.end() ? 0.0f : found->second;
+          } else if (isBar) {
             const auto found = hudValues.find(node.valueVariable);
             value = found == hudValues.end() ? 0.0f : found->second;
           } else {
@@ -3958,27 +3992,35 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
             if (found != hudStrings.end()) text = found->second;
           }
 
-          const bool changed = isBar ? std::abs(value - dynamic.shownValue) > 0.001f
-                                     : text != dynamic.shownText;
+          // Крок повороту, дрібніший за який на екрані вже не видно:
+          // компас 192 пікселя, тож 0.005 радіана — це пів пікселя на
+          // краю. Без цього порога ми перепікали б вузол щокадру навіть
+          // тоді, коли кут доводиться в останніх знаках.
+          const bool changed = isRotating ? std::abs(angle - dynamic.shownAngle) > 0.005f
+                               : isBar    ? std::abs(value - dynamic.shownValue) > 0.001f
+                                          : text != dynamic.shownText;
           if (changed) {
             // Значення змінилося — перебудовуємо тільки цей вузол.
             if (dynamic.valid) renderer->release(dynamic.mesh);
             dynamic.valid = false;
             dynamic.shownValue = value;
             dynamic.shownText = text;
+            dynamic.shownAngle = angle;
 
             obf2::hud::Node copy = node;
             // Беремо загальний контекст, а не порожній: інакше живі
             // підписи малюються типовим шрифтом замість свого
             // (setTextNodeStyle) і без локалізації.
             obf2::hud::Context single = hudDynamicContext;
-            if (isBar) {
+            if (isRotating) {
+              single.variableValue = [&](std::string_view) { return angle; };
+            } else if (isBar) {
               single.variableValue = [&](std::string_view) { return value; };
             } else {
               copy.text = text;
               copy.textVariable.clear();
             }
-            if (isBar || !text.empty()) {
+            if (isRotating || isBar || !text.empty()) {
               auto built =
                   obf2::hud::buildNode(copy, hudFont.font, hudFont.atlasPath, hudScreen, single);
               if (!built.empty()) {

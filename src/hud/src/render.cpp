@@ -483,6 +483,11 @@ std::vector<DrawPiece> buildTree(const Builder& builder, std::string_view rootGr
         continue;
       }
       if (hiddenByAlpha(*node, context)) continue;
+      if (context.skipNode && context.skipNode(*node)) {
+        // Живий вузол: його малює той, хто веде значення. Діти лишаються.
+        self(self, node->name, depth + 1);
+        continue;
+      }
       for (auto& piece : buildNode(*node, font, fontAtlas, screen, context)) {
         pieces.push_back(std::move(piece));
       }
