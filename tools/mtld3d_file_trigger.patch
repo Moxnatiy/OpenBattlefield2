@@ -1,0 +1,69 @@
+diff --git a/windows/d3d9/src/capture.rs b/windows/d3d9/src/capture.rs
+index 556b2b7..3eb2d42 100644
+--- a/windows/d3d9/src/capture.rs
++++ b/windows/d3d9/src/capture.rs
+@@ -1,4 +1,8 @@
+-//! F12 hotkey poll for one-shot Metal GPU frame capture.
++//! F12 / Ctrl+Shift+D poll for GPU capture and draw-state dump.
++//!
++//! Both requests can also be armed by file — `/tmp/mtld3d_dump` and
++//! `/tmp/mtld3d_capture`. A hotkey needs a hand on the keyboard; a file
++//! is reachable from a script, a headless run, or a remote shell.
+ //!
+ //! Apple gates capture itself on `MTL_CAPTURE_ENABLED=1` at process
+ //! launch — no mtld3d-side env guard needed; without the Apple env, the
+@@ -11,7 +15,35 @@
+ //! the next frame and brackets `run_frame` with `StartGpuCapture` /
+ //! `StopGpuCapture` thunks. Output is `/tmp/mtld3d_capture.gputrace`.
+ 
+-use std::sync::atomic::{AtomicBool, Ordering};
++use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
++
++/// File triggers, checked alongside the key chords.
++///
++/// A hotkey needs a hand on the keyboard, and that rules out anything
++/// automated: a headless run, a script, an agent driving the game from
++/// a shell. A file is reachable from all of them — `touch` it and the
++/// next frame is armed, exactly as if the chord had been pressed.
++///
++/// Wine maps `Z:` to `/`, so these are `/tmp/mtld3d_dump` and
++/// `/tmp/mtld3d_capture` seen from macOS. The file is removed when the
++/// request is taken, so one `touch` fires once.
++const DUMP_TRIGGER: &str = r"Z:\tmp\mtld3d_dump";
++const CAPTURE_TRIGGER: &str = r"Z:\tmp\mtld3d_capture";
++
++/// Look for the trigger files every N presents, not every one: the check
++/// is a file-system syscall, and once every quarter second is plenty for
++/// something a human or a script arms by hand.
++const TRIGGER_PERIOD: u32 = 15;
++static TRIGGER_TICK: AtomicU32 = AtomicU32::new(0);
++
++/// Consume a trigger file: true when it was there, and it is gone after.
++fn take_trigger(path: &str) -> bool {
++    if !std::path::Path::new(path).exists() {
++        return false;
++    }
++    let _ = std::fs::remove_file(path);
++    true
++}
+ 
+ const VK_F12: i32 = 0x7B;
+ const VK_SHIFT: i32 = 0x10;
+@@ -53,6 +85,17 @@ pub fn poll() {
+     if chord && !was_chord {
+         FRAME_DUMP_REQUESTED.store(true, Ordering::Release);
+     }
++
++    // The same two requests, armed from outside the process.
++    let tick = TRIGGER_TICK.fetch_add(1, Ordering::Relaxed);
++    if tick % TRIGGER_PERIOD == 0 {
++        if take_trigger(DUMP_TRIGGER) {
++            FRAME_DUMP_REQUESTED.store(true, Ordering::Release);
++        }
++        if take_trigger(CAPTURE_TRIGGER) {
++            CAPTURE_REQUESTED.store(true, Ordering::Release);
++        }
++    }
+ }
+ 
+ /// Take the pending Ctrl+Shift+D request, if any; the next frame is then dumped.
