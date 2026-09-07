@@ -2981,8 +2981,9 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       return found != hudVariables.end() && found->second;
     };
     hudContext.variableValue = [&](std::string_view variable) -> float {
-      const auto found = hudValues.find(std::string(variable));
-      return found == hudValues.end() ? 0.0f : found->second;
+      // Числові й булеві змінні живуть у різних словниках, а умова
+      // показу питає і ті, й ті — див. obf2/hud/states.h.
+      return obf2::hud::showValue(hudVariables, hudValues, variable);
     };
     // Прозорість: знаємо поки одну змінну, зате важливу. Широкі плашки
     // під смугами здоров'я й набоїв (400x39, healthBackground.tga і

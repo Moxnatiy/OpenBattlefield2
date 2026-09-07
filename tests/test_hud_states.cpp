@@ -3,6 +3,9 @@
 // Перевіряємо саме те, що зреверсили: таблицю станів із BF2.exe і дві
 // функції, які рушій крутить щокадру (docs/functions/hud-states.md).
 #include "check.h"
+#include <cmath>
+#include <map>
+
 #include "obf2/hud/states.h"
 
 using namespace obf2;
@@ -149,8 +152,26 @@ static void testTableMatchesTheBinary() {
   CHECK(!hasEmptySlot);
 }
 
+// Умова показу питає одним іменем і числові змінні, і булеві. Доти ми
+// шукали лише серед чисел, і `NOT MapMinSize 1` виходило істинним
+// **завжди** — смуга великої карти малювалася поверх мінікарти в кутку.
+static void testShowValueReadsBothDictionaries() {
+  hud::VariableMap flags;
+  std::map<std::string, float> values;
+  values["FriendlyCPs"] = 0.25f;
+  flags["MapMinSize"] = true;
+  flags["CommanderShow"] = false;
+
+  CHECK(std::abs(hud::showValue(flags, values, "FriendlyCPs") - 0.25f) < 0.001f);
+  CHECK(std::abs(hud::showValue(flags, values, "MapMinSize") - 1.0f) < 0.001f);
+  CHECK(std::abs(hud::showValue(flags, values, "CommanderShow")) < 0.001f);
+  // Про яку не чули — нуль, як і в рушії.
+  CHECK(std::abs(hud::showValue(flags, values, "NoSuchThing")) < 0.001f);
+}
+
 TEST_MAIN({
   testStateTurnsOnItsOwn();
+  testShowValueReadsBothDictionaries();
   testBigMapKeepsTheHud();
   testMapMenuKeepsTheHud();
   testStateLeavesNoTail();

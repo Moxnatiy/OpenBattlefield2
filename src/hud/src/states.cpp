@@ -166,6 +166,15 @@ bool applyState(VariableMap& variables, int previous, int state) {
   return changed;
 }
 
+float showValue(const VariableMap& flags, const std::map<std::string, float>& values,
+                std::string_view name) {
+  const std::string key(name);
+  const auto number = values.find(key);
+  if (number != values.end()) return number->second;
+  const auto flag = flags.find(key);
+  return flag == flags.end() ? 0.0f : (flag->second ? 1.0f : 0.0f);
+}
+
 bool applyDerived(VariableMap& variables, const WorldView& view) {
   bool changed = false;
 

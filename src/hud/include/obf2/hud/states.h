@@ -18,6 +18,7 @@
 // Докладніше — docs/functions/hud-states.md.
 #include <map>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace obf2::hud {
@@ -58,6 +59,17 @@ const std::vector<StateEntry>& hudLeaveStates();
 // Повертає true, якщо хоч щось змінилося, — тому, хто пече геометрію,
 // це каже, що час перебудуватися.
 bool applyState(VariableMap& variables, int previous, int state);
+
+// Значення змінної для умов показу (`setNodeLogicShowVariable`).
+//
+// Умова питає одним іменем і числові змінні (заповнення смуг), і булеві
+// (змінні показу) — а живуть вони в різних словниках. Доти ми шукали
+// лише серед чисел, і будь-яка умова над булевою діставала нуль:
+// `NOT MapMinSize 1` виходило істинним **завжди**, і смуга великої карти
+// малювалася поверх мінікарти в кутку. У знімку кадру оригіналу
+// (docs/research/03-frame-dump.md) її там немає.
+float showValue(const VariableMap& flags, const std::map<std::string, float>& values,
+                std::string_view name);
 
 // Що рушій знає про світ на цей кадр.
 struct WorldView {
