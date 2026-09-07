@@ -62,11 +62,18 @@ float Graph::evaluate(int index) const {
   const Object* object = file_.at(index);
   if (object == nullptr) return 0.0f;
 
-  // Іменований вузол-дані — це змінна, і його значення беруть зі
-  // сховища, а не з файлу: файл дає лише те, з чого вона почала.
-  if (!object->name.empty()) return variables_.get(object->name);
-
   const std::string_view type = object->type();
+
+  // Ім'я робить змінною **лише листок**: `FloatData`, `BoolData` і
+  // `FloatRefData`. Саме їх рушій прив'язує до полів об'єкта HUD
+  // (`BF2.exe`, 0x789480 реєструє поля під такими іменами), і саме їхнє
+  // значення береться зі сховища, а не з файлу.
+  //
+  // У складених даних ім'я — просто підпис: `ToggleData
+  // «BottomRight/BottomRight_NextPos»` однаково має рахуватися, а не
+  // читатися зі сховища. Доти ми читали — і права ділянка їхала в нуль.
+  const bool isLeaf = type == "FloatData" || type == "BoolData" || type == "FloatRefData";
+  if (isLeaf && !object->name.empty()) return variables_.get(object->name);
   const auto sub = [&](const char* field) {
     const Value* value = File::field(*object, field);
     return value == nullptr ? -1 : value->object;

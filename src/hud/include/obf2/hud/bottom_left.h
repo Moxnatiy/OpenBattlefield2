@@ -47,9 +47,17 @@ struct BottomLeftPanel {
   float healthFadedAlpha = 0.0f;
   float vehicleFadedAlpha = 0.0f;
 
-  // Один крок. `menuBackgroundAlpha` — прозорість плашок із профілю
-  // гравця; `dt` у секундах.
-  void update(BottomLeftMode mode, float menuBackgroundAlpha, float dt);
+  // Один крок машини станів. **Рухає значення не вона, а граф**
+  // (`Menu/Ingame`, obf2/meme/graph.h): ця функція лише читає поточні
+  // `x`/`healthAlpha`/`vehicleAlpha` і пише цілі, точнісінько як
+  // 0x78b600 читає й пише поля об'єкта HUD. Тому й `dt` тут не треба.
+  //
+  // `menuBackgroundAlpha` — прозорість плашок із профілю гравця.
+  void update(BottomLeftMode mode, float menuBackgroundAlpha);
+
+  // Пригашені прозорості за поточними. Кличеться ще раз після того, як
+  // граф зрушив `healthAlpha`/`vehicleAlpha`.
+  void recomputeFaded(float menuBackgroundAlpha);
 };
 
 }  // namespace obf2::hud

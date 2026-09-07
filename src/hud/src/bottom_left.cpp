@@ -4,20 +4,10 @@
 #include <cmath>
 
 namespace obf2::hud {
-namespace {
-
-// Обидві дії графа — це `approachVariable` (obf2/hud/animation.h, знята
-// з `MemeDll.dll` 0x10001050 і 0x10004d2c). У `Menu/Ingame` гальмівна
-// ділянка нульова, тож підхід рівномірний.
-void approach(float& value, float target, float speed, float dt) {
-  meme::approachVariable(value, target, speed, 0.0f, dt);
-}
-
-}  // namespace
-
-void BottomLeftPanel::update(BottomLeftMode mode, float menuBackgroundAlpha, float dt) {
+void BottomLeftPanel::update(BottomLeftMode mode, float menuBackgroundAlpha) {
   // Порядок такий самий, як у 0x78b600: спершу цілі за поточним станом,
-  // потім рух до них, і аж наприкінці пригашені прозорості.
+  // а наприкінці пригашені прозорості. Самого руху тут немає — його
+  // робить граф.
   switch (mode) {
     case BottomLeftMode::Hidden:
       // Ховаємось лише коли смуги техніки вже згасли; доти ділянка
@@ -60,12 +50,13 @@ void BottomLeftPanel::update(BottomLeftMode mode, float menuBackgroundAlpha, flo
       break;
   }
 
-  approach(x, targetX, kCornerMoveSpeed, dt);
-  approach(healthAlpha, targetHealthAlpha, kCornerAlphaSpeed, dt);
-  approach(vehicleAlpha, targetVehicleAlpha, kCornerAlphaSpeed, dt);
+  recomputeFaded(menuBackgroundAlpha);
+}
 
+void BottomLeftPanel::recomputeFaded(float menuBackgroundAlpha) {
   // `Faded = clamp(Alpha - (1 - основа), 0, 1)`, де основа — прозорість
-  // плашок із профілю гравця. Дослівно з кінця 0x78b600.
+  // плашок із профілю гравця. Дослівно з кінця 0x78b600. Рахується після
+  // того, як граф зрушив прозорості, — тому й окремою функцією.
   const float lost = 1.0f - menuBackgroundAlpha;
   healthFadedAlpha = std::clamp(healthAlpha - lost, 0.0f, 1.0f);
   vehicleFadedAlpha = std::clamp(vehicleAlpha - lost, 0.0f, 1.0f);

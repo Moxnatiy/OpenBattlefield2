@@ -9,10 +9,23 @@ using namespace obf2;
 
 namespace {
 
+// Один такт: машина станів вибирає цілі, а рухає значення граф. Тут
+// граф підмінено тією самою дією, яку він і виконує
+// (`SetVariableSine`/`Soft` зі швидкостями з файлу).
+void tick(hud::BottomLeftPanel& panel, hud::BottomLeftMode mode, float background) {
+  const float step = 1.0f / 30.0f;
+  panel.update(mode, background);
+  meme::approachVariable(panel.x, panel.targetX, hud::kCornerMoveSpeed, 0.0f, step);
+  meme::approachVariable(panel.healthAlpha, panel.targetHealthAlpha, hud::kCornerAlphaSpeed, 0.0f,
+                         step);
+  meme::approachVariable(panel.vehicleAlpha, panel.targetVehicleAlpha, hud::kCornerAlphaSpeed,
+                         0.0f, step);
+}
+
 // Прокрутити секунди по кроку такту.
 void run(hud::BottomLeftPanel& panel, hud::BottomLeftMode mode, float seconds) {
   const float step = 1.0f / 30.0f;
-  for (float t = 0.0f; t < seconds; t += step) panel.update(mode, 0.8f, step);
+  for (float t = 0.0f; t < seconds; t += step) tick(panel, mode, 0.8f);
 }
 
 }  // namespace
@@ -47,7 +60,7 @@ void testHiddenWaitsForAlpha() {
   hud::BottomLeftPanel panel;
   run(panel, hud::BottomLeftMode::Health, 2.0f);
 
-  panel.update(hud::BottomLeftMode::Hidden, 0.8f, 1.0f / 30.0f);
+  tick(panel, hud::BottomLeftMode::Hidden, 0.8f);
   CHECK(panel.x > hud::kBottomLeftHiddenX);  // ще не поїхала
 
   run(panel, hud::BottomLeftMode::Hidden, 3.0f);
@@ -62,7 +75,7 @@ void testFadedFollowsBackgroundAlpha() {
   run(panel, hud::BottomLeftMode::Health, 2.0f);
   CHECK(std::abs(panel.healthFadedAlpha - 0.8f) < 0.01f);
 
-  panel.update(hud::BottomLeftMode::Health, 1.0f, 1.0f / 30.0f);
+  tick(panel, hud::BottomLeftMode::Health, 1.0f);
   CHECK(std::abs(panel.healthFadedAlpha - 1.0f) < 0.01f);
 }
 

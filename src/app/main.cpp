@@ -23,6 +23,7 @@
 #include "obf2/font/text.h"
 #include "obf2/hud/bottom_left.h"
 #include "obf2/hud/map_node.h"
+#include "obf2/meme/graph.h"
 #include "obf2/hud/render.h"
 #include "obf2/hud/spawn.h"
 #include "obf2/hud/spawn_interface.h"
@@ -2429,6 +2430,9 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   obf2::hud::MapNode mapNode;
   // Кут компаса мінікарти — два згладжувачі поспіль (там-таки).
   obf2::hud::MapAngle mapAngle;
+  // Граф `Menu/Ingame` — та сама система, якою рушій анімує HUD. Ділянки
+  // в кутах їздять саме ним, і всі швидкості лежать у файлі, а не тут.
+  obf2::meme::Graph ingameGraph;
   // Прямокутник карти на вузлі переставив хтось інший (перебудова
   // екрана появи, знімок екрана на клавішу) — наступний кадр має
   // повернути свій.
@@ -2537,6 +2541,20 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     obf2::con::Interpreter hudInterpreter(
         files, [&](const obf2::con::Command& command) { ingameHud.feed(command); });
     hudInterpreter.runFile("Menu/HUD/HudSetup/HudSetupMain.con");
+
+    // Система анімації HUD — це файл `Menu/Ingame`, а не код: у ньому
+    // лежать кутові ділянки з прив'язкою до змінних, умови показу й
+    // самі дії, що рухають ті змінні (obf2/meme/graph.h).
+    if (const auto memeData = files.read("Menu/Ingame")) {
+      std::string memeError;
+      if (ingameGraph.load(*memeData, &memeError)) {
+        std::printf("  граф Ingame: вузлів %zu, змінних %zu\n",
+                    ingameGraph.file().objects().size(),
+                    ingameGraph.variables().all().size());
+      } else {
+        std::printf("  граф Ingame не прочитано: %s\n", memeError.c_str());
+      }
+    }
     // Зв'язати дерево: доти координати вузлів лишаються відносними до
     // батька, і HUD розсипається по екрану.
     ingameHud.finish();
@@ -3905,14 +3923,45 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           // рух рівномірний, і в `Menu/Ingame` гальмування нульове.
           const float slice = dt > 0.25f ? 0.25f : dt;
 
-          // Ліва ділянка — цілком за машиною станів клієнта: вона сама
-          // вибирає, куди їхати і які половини показувати
-          // (obf2/hud/bottom_left.h). Режим «техніка» ми поки не вмикаємо:
-          // 0x78b870 ставить його, коли керований об'єкт гравця не є його
-          // солдатом, а ми поки завжди солдат.
+          // Кутові ділянки. Розподіл праці тут точнісінько як у грі:
+          // машина станів клієнта (0x78b600) читає поточні значення й
+          // пише **цілі**, а рухає їх граф `Menu/Ingame`. Жодної
+          // швидкості в нашому коді немає — вони у файлі.
+          //
+          // Режим «техніка» ми поки не вмикаємо: 0x78b870 ставить його,
+          // коли керований об'єкт гравця не є його солдатом.
           const float wasX = bottomLeft.x;
           const float wasHealth = bottomLeft.healthAlpha;
-          bottomLeft.update(bottomLeftMode, backgroundAlpha, slice);
+          const float wasRightX = bottomRightX;
+          if (ingameGraph.file().root() >= 0) {
+            auto& variables = ingameGraph.variables();
+            bottomLeft.x = variables.get("BottomLeft/BottomLeft_XPos");
+            bottomLeft.healthAlpha = variables.get("BottomLeft/Alpha/BottomLeft_alpha1");
+            bottomLeft.vehicleAlpha = variables.get("BottomLeft/Alpha/BottomLeft_alpha2");
+            bottomLeft.update(bottomLeftMode, backgroundAlpha);
+            variables.set("BottomLeft/BottomLeft_nextXPos", bottomLeft.targetX);
+            variables.set("BottomLeft/Alpha/BottomLeft_nextAlpha1", bottomLeft.targetHealthAlpha);
+            variables.set("BottomLeft/Alpha/BottomLeft_nextAlpha2", bottomLeft.targetVehicleAlpha);
+            // Права ділянка теж їде графом, але кінці їй дає HUD, а не
+            // файл: у файлі стоїть 201, і це початкове значення, яке гра
+            // переписує (0x7a62c0 реєструє поле +0x2c як
+            // `BottomRight_newXPos`). Висунуте 336.5 у нас **виміряне** з
+            // дампу кадру оригіналу, тож і кладемо його самі.
+            //
+            // Саму машину, що вибирає між `newXPos` і `oldXPos`, ми ще не
+            // читали, тому тримаємо перемикач на `newXPos` завжди —
+            // **джерело не знайдене**. Через це прозорість правої
+            // ділянки (вона висить на тому самому перемикачі) поки не
+            // ведеться.
+            variables.set("BottomRight/BottomRight_newXPos", bottomRightTarget);
+            variables.set("BottomRight/BottomRight_direction", 1.0f);
+            ingameGraph.update(slice);
+            bottomLeft.x = variables.get("BottomLeft/BottomLeft_XPos");
+            bottomLeft.healthAlpha = variables.get("BottomLeft/Alpha/BottomLeft_alpha1");
+            bottomLeft.vehicleAlpha = variables.get("BottomLeft/Alpha/BottomLeft_alpha2");
+            bottomLeft.recomputeFaded(backgroundAlpha);
+            bottomRightX = variables.get("BottomRight/BottomRight_XPos");
+          }
           if (bottomLeft.x != wasX || bottomLeft.healthAlpha != wasHealth) hudDirty = true;
 
           // Карта. Її прямокутник — не один із трьох готових видів, а
@@ -3974,16 +4023,9 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
             hudContext.mapV1 = cv + halfV;
           }
 
-          // Праву ділянку ведемо як і раніше: її машини станів ми ще не
-          // читали, відомі лише два кінці.
-          const float step = obf2::hud::kCornerMoveSpeed * slice;
-          const auto approach = [&](float& value, float target) {
-            if (value == target) return;
-            const float left = target - value;
-            value = std::abs(left) <= step ? target : value + (left > 0 ? step : -step);
-            hudDirty = true;
-          };
-          approach(bottomRightX, bottomRightTarget);
+          // Праву ділянку веде граф — див. вище. Тут лишається тільки
+          // сказати, що вона зрушила.
+          if (bottomRightX != wasRightX) hudDirty = true;
         }
         // Перебудовуємо екран появи лише поки він на екрані.
         if (spawnDirty && spawnVisible && rebuildSpawn) {
