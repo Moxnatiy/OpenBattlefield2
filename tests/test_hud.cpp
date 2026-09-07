@@ -272,7 +272,11 @@ static void testShowEffectsAnimate() {
   CHECK(std::abs(half.progress - 0.5f) < 0.001f);
   CHECK(std::abs(half.alpha - 0.5f) < 0.001f);
   CHECK(std::abs(half.offsetX) < 0.5f);  // -1.57 це майже рівно -pi/2
-  CHECK(std::abs(half.offsetY - 188.0f) < 0.5f);
+  // dy = +sin(a) * довжина * (1 - хід) = sin(-pi/2) * 376 * 0.5 = -188.
+  // Знак саме такий: `MoveEffect::picturePaint` (`MemeDll.dll`,
+  // 0x10001b27) рахує зсув як (-cos a, +sin a). Раніше тут стояло +188,
+  // бо ми брали знаки з міркування, а не з коду.
+  CHECK(std::abs(half.offsetY + 188.0f) < 0.5f);
   CHECK(animator.animating());
 
   animator.advance(0.1f);

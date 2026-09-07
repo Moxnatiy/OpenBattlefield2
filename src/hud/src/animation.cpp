@@ -57,9 +57,24 @@ ShowState Animator::state(const Node& node) const {
         out.alpha *= out.progress;
         break;
       case ShowEffect::Move: {
+        // Формула — дослівно з `dice::meme::MoveEffect::picturePaint`
+        // (`MemeDll.dll`, 0x10001b27; бібліотека лежить у теці мода й
+        // експортує повні символи C++):
+        //
+        //   кут    = «Move direction»
+        //   довжина = «Move length»
+        //   хід     = EffectPipe+0x18
+        //   зсув    = (1 - хід) * довжина
+        //   dx = -cos(кут) * зсув
+        //   dy = +sin(кут) * зсув
+        //
+        // **Обидва знаки в нас були протилежні.** Раніше вони стояли
+        // `(+cos, -sin)`, виведені з міркування «панель голосування має
+        // виїжджати знизу». Міркування не витримало перевірки джерелом:
+        // елементи в нас прилітали з протилежного боку, ніж в оригіналі.
         const float left = 1.0f - out.progress;
-        out.offsetX += std::cos(effect.angle) * effect.distance * left;
-        out.offsetY += -std::sin(effect.angle) * effect.distance * left;
+        out.offsetX += -std::cos(effect.angle) * effect.distance * left;
+        out.offsetY += std::sin(effect.angle) * effect.distance * left;
         break;
       }
     }
