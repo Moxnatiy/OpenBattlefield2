@@ -15,6 +15,10 @@ constexpr const char* kBootFiles[] = {
     "Settings/GeneralOptions.con",
     "Settings/Sound.con",
     "Settings/Controls.con",
+    // 79 псевдонімів консолі: `fps`, `hud`, `lp`, `suicide` і решта
+    // коротких імен, якими грають у консоль. Без цього файлу вони просто
+    // невідомі команди.
+    "Settings/AliasedCommands.con",
 };
 
 // Заставки в порядку показу. Це Bink-відео; ми їх не декодуємо, але порядок
@@ -81,6 +85,7 @@ std::string_view stateName(State state) {
 bool Engine::boot(FileSystem& files, const std::filesystem::path& modDir) {
   settings_.bind(console_);
   controls_.bind(console_);
+  console_.registerAliases();
 
   // Налаштування читаються тим самим інтерпретатором, що й усе інше:
   // у Refractor 2 консоль — єдина точка входу для будь-якого .con.

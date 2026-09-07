@@ -2008,8 +2008,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     }
 
     const auto& console = engine.console();
-    std::printf("  консоль: обробників %zu, виконано команд %lld, невідомих %lld\n",
-                console.handlerCount(), console.executedCount(), console.unknownCount());
+    std::printf("  консоль: обробників %zu, псевдонімів %zu, виконано команд %lld, "
+                "невідомих %lld\n",
+                console.handlerCount(), console.aliasCount(), console.executedCount(),
+                console.unknownCount());
     int shown = 0;
     for (const auto& [name, count] : console.unknownCommands()) {
       if (shown++ >= 24) break;

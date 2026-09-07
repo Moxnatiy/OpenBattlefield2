@@ -130,8 +130,45 @@ static void testMissingArgumentKeepsPreviousValue() {
   CHECK(settings.video.fieldOfView > 1.49f && settings.video.fieldOfView < 1.51f);
 }
 
+// Псевдоніми: команда рушія, у грі їх 79 у Settings/AliasedCommands.con.
+void testAliases() {
+  engine::Console console;
+  console.registerAliases();
+
+  int calls = 0;
+  console.bind("console.showfps", [&](const con::Command&) { ++calls; });
+
+  // Доки псевдоніма немає, коротке ім'я невідоме.
+  CHECK(!console.executeLine("fps"));
+
+  console.executeLine("alias fps console.showfps");
+  CHECK_EQ(console.aliasCount(), std::size_t(1));
+  CHECK(console.executeLine("fps"));
+  CHECK_EQ(calls, 1);
+
+  // Аргументи доїжджають до справжньої команди.
+  std::string got;
+  console.bind("game.setteam", [&](const con::Command& command) {
+    got = std::string(command.argStr(0));
+  });
+  console.executeLine("alias team game.setTeam");
+  console.executeLine("team 2");
+  CHECK_EQ(got, std::string("2"));
+
+  // Ланцюжок псевдонімів розгортається.
+  console.executeLine("alias f fps");
+  CHECK(console.executeLine("f"));
+  CHECK_EQ(calls, 2);
+
+  // Замкнене коло не вішає консоль.
+  console.executeLine("alias a b");
+  console.executeLine("alias b a");
+  CHECK(!console.executeLine("a"));
+}
+
 TEST_MAIN({
   testDispatch();
+  testAliases();
   testDispatchIsCaseInsensitive();
   testUnknownCommandsAreCounted();
   testSettingsFromRealFileShape();

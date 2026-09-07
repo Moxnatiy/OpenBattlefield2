@@ -22,9 +22,49 @@ void Console::bind(std::string_view name, Handler handler) {
   handlers_[toLower(name)] = std::move(handler);
 }
 
+void Console::registerAliases() {
+  bind("alias", [this](const con::Command& command) {
+    if (command.args.size() < 2) return;
+    // Ціль може складатися з кількох слів (`alias r3 game.setTeam 3`),
+    // але в наших даних усі 79 рядків — рівно два слова. Зайве
+    // склеюємо назад, щоб не загубити.
+    std::string target(command.argStr(1));
+    for (std::size_t i = 2; i < command.args.size(); ++i) {
+      target += ' ';
+      target += command.args[i];
+    }
+    aliases_[toLower(command.argStr(0))] = std::move(target);
+  });
+}
+
 bool Console::execute(const con::Command& command) {
   const auto found = handlers_.find(command.lowerPath);
   if (found == handlers_.end()) {
+    // Може, це псевдонім. Розгортаємо ланцюжок, але не нескінченно:
+    // `alias a b` + `alias b a` не має вішати консоль.
+    std::string name = command.lowerPath;
+    for (int step = 0; step < 8; ++step) {
+      const auto alias = aliases_.find(name);
+      if (alias == aliases_.end()) break;
+      std::string line = alias->second;
+      for (const std::string& argument : command.args) {
+        line += ' ';
+        line += argument;
+      }
+      const std::vector<std::string> tokens = con::tokenizeLine(line);
+      if (tokens.empty()) break;
+      name = toLower(tokens[0]);
+      const auto handler = handlers_.find(name);
+      if (handler == handlers_.end()) continue;  // псевдонім на псевдонім
+      con::Command expanded;
+      expanded.path = con::splitCommandPath(tokens[0]);
+      expanded.lowerPath = name;
+      expanded.args.assign(tokens.begin() + 1, tokens.end());
+      ++executed_;
+      handler->second(expanded);
+      return true;
+    }
+
     ++unknown_;
     ++unknownByName_[command.lowerPath];
     return false;

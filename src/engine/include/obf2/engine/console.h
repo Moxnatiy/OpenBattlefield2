@@ -41,8 +41,22 @@ class Console {
   // Невідомі команди за спаданням частоти — план робіт у чистому вигляді.
   const std::map<std::string, int>& unknownCommands() const { return unknownByName_; }
 
+  // Псевдоніми: `alias <коротко> <ціль>`.
+  //
+  // Це команда самого рушія, а не наша вигадка: у грі є цілий файл
+  // `Settings/AliasedCommands.con` із 79 такими рядками, і саме ними в
+  // консолі працюють `fps`, `hud`, `lp`, `suicide` та решта коротких
+  // імен. Псевдонім не має крапки, тож у наш розбір «ціль.метод» він не
+  // вкладається — його шукаємо окремо, коли обробника не знайшлося.
+  //
+  // Ланцюжок псевдонімів (`alias a b`, `alias b c.d`) розгортається до
+  // справжньої команди; замкнене коло обривається за кількістю кроків.
+  void registerAliases();
+  std::size_t aliasCount() const { return aliases_.size(); }
+
  private:
   std::unordered_map<std::string, Handler> handlers_;
+  std::unordered_map<std::string, std::string> aliases_;
   std::map<std::string, int> unknownByName_;
   long long executed_ = 0;
   long long unknown_ = 0;
