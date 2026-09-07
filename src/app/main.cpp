@@ -3661,9 +3661,17 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
         // оригінальний клієнт `NESelectTeam` навіть не шле — приймає ту,
         // яку дав сервер у CreatePlayerEvent. Тож щойно ми її дізналися,
         // екран появи має показувати кружечки саме на її прапорах.
-        if (remote != nullptr && remote->ourTeam > 0 && selectedTeam != remote->ourTeam) {
-          selectedTeam = remote->ourTeam;
-          selectedSpawn = 0;
+        // Команду призначає сервер, а не наш вибір: у знятому трафіку
+        // оригінальний клієнт `NESelectTeam` навіть не шле — приймає ту,
+        // яку дав сервер у `CreatePlayerEvent`. Скидання вибраного місця
+        // тут не дрібниця: кружечки належать прапорам своєї команди, і
+        // без скидання ми просили б появу на чужому прапорі, чого сервер
+        // не робить (`ServerGameLogic::uPlayingSpawning` бере групу
+        // гравця, а вона своєї команди).
+        if (remote != nullptr && remote->world.ownTeam() > 0 &&
+            selectedTeam != remote->world.ownTeam()) {
+          spawnScreen.setTeamFromServer(remote->world.ownTeam());
+          selectedSpawn = spawnScreen.choice().marker;
           spawnDirty = true;
           std::printf("  екран появи: сервер дав команду %d\n", selectedTeam);
         }
