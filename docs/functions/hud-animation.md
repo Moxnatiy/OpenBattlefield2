@@ -405,3 +405,43 @@ alpha *= EffectPipe+0x18     (тобто на хід показу)
 їдуть, а ще й проступають, і ведуть їх чотири окремі дії
 (`BottomLeft_alpha1`, `_alpha2`, `BottomRight_alpha`). Цілі для них пише
 сам HUD у `nextAlpha*`, і **звідки він бере значення — ще не знайдено**.
+
+## Прозорість плашок: механізм знайдено, значення — ні
+
+Вузли беруть прозорість зі змінної — команда `setNodeAlphaVariable` у
+даних HUD. Скільки разів яка змінна вживається (`Menu_client.zip`,
+`HUD/HudSetup/*.con`):
+
+```
+34  HitIndicatorIconAlpha
+16  BottomLeftVehicleFadedAlpha
+14  BottomRightAlpha
+11  BottomLeftVehicleAlpha
+ 6  BottomLeftHealthAlpha        6  BottomRightFadedAlpha
+ 5  BottomLeftHealthFadedAlpha
+25  MenuBackgroundAlpha          (плашки, з профілю гравця)
+```
+
+Усі ці змінні реєструє код HUD (`BF2.exe`, 0x789480) як поля свого
+об'єкта:
+
+```
+BottomLeftHealthAlpha        -> +0x18c
+BottomLeftVehicleAlpha       -> +0x190
+BottomLeftHealthFadedAlpha   -> +0x194
+BottomLeftVehicleFadedAlpha  -> +0x198
+```
+
+**У нас із них відомі лише дві** — `MenuBackgroundAlpha` і `MenuMapAlpha`
+(вони з профілю гравця). Решта повертає «не знаю», і вузол лишається
+цілком видимим. Наслідок видно на екрані: смуги здоров'я й смуги техніки
+малюються **одночасно**, бо жодна з них не пригашена.
+
+Чого бракує: **хто і коли пише ці поля**. Це вже не граф і не дані, а
+логіка HUD у клієнті, і її ми ще не читали. Доти значень не вигадуємо:
+поставити «в техніці Health = 0» без джерела — це рівно та підгонка, від
+якої нас тут відучили.
+
+Заразом це пояснює давню скаргу «фонова плашка під здоров'ям висунута,
+ніби я в техніці»: вона й має бути пригашена змінною, якої ми не
+рахуємо.
