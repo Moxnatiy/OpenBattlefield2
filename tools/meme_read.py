@@ -22,6 +22,7 @@
 """
 import argparse
 import os
+import re
 import struct
 import sys
 import zipfile
@@ -265,15 +266,85 @@ def show(node, depth, out, path=""):
                 show(item, depth + 2, out)
 
 
+# Зсув у таблиці методів -> назва типу в C++. Ті самі зсуви, що в
+# meme_types.SLOTS, лише іменами нашого переліку.
+CPP_SLOTS = {
+    0x1c: "Ubyte", 0x20: "Sbyte", 0x24: "Ushort", 0x28: "Sshort",
+    0x2c: "Ulong", 0x30: "Slong", 0x34: "Float", 0x38: "Bool",
+    0x3c: "Int", 0x48: "Wchar", 0x5c: "Index",
+    0x4c: "Name", 0x50: "Name", 0x54: "Name",
+    0x58: "List",
+}
+
+
+def emit_cpp(tables, path):
+    """Таблиця «клас -> поля» для читача на C++.
+
+    Береться з тих самих бібліотек, що й усе решта: руками тут нічого не
+    написано, і повторити можна однією командою.
+    """
+    # Класів більше, ніж експортованих `onStream`: частина його не має і
+    # успадковує чужий (NameNode, ShowEffectNode). Тому беремо **всі**
+    # імена, що взагалі трапляються в символах бібліотеки, і кожне
+    # проганяємо через ту саму розв'язку, що й читач.
+    seen = set()
+    for image in tables.images:
+        for symbol in image.exports():
+            for name in re.findall(r"@([A-Za-z0-9]+)@meme@dice@@", symbol):
+                seen.add(name)
+    for klass in sorted(seen):
+        tables.fields(klass)
+    names = sorted(n for n in tables._resolved if n in seen)
+    lines = [
+        "// Класи `dice::meme::*` та їхні поля, у порядку читання.",
+        "//",
+        "// Створено `tools/meme_read.py --cpp`. **Руками не правити.**",
+        "//",
+        "// Джерело — `MemeDll.dll` і `MemeBf.dll` із теки мода: вони",
+        "// експортують повні символи C++, і кожен `onStream` передає назву",
+        "// поля рядком, а тип поля — це те, який метод потоку викликано.",
+        "// Успадковані поля вже розгорнуті на місці.",
+        "",
+    ]
+    total = 0
+    for name in names:
+        rows = tables._resolved[name]
+        total += 1
+        lines.append("MEME_CLASS(%s)" % name)
+        for field, slot in rows:
+            kind = CPP_SLOTS.get(slot)
+            if kind is None:
+                kind = {0x60: "Object", 0x64: "Object", 0x68: "Object",
+                        0x6c: "Object", 0x70: "Object", 0x74: "Object",
+                        0x78: "Object", 0x7c: "Object", 0x80: "Object",
+                        0x84: "Object", 0x88: "Object"}.get(slot)
+            if kind is None:
+                # Невідомий метод потоку: далі за нього читати не можна,
+                # бо ширина невідома. Позначаємо і зупиняємо клас.
+                lines.append("  MEME_FIELD(\"%s\", Unknown)" % field)
+                break
+            lines.append("  MEME_FIELD(\"%s\", %s)" % (field, kind))
+        lines.append("MEME_CLASS_END()")
+        lines.append("")
+    with open(path, "w", encoding="utf-8") as out:
+        out.write("\n".join(lines))
+    print("записано %d класів у %s" % (total, path))
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("entry", nargs="?")
     parser.add_argument("--check", action="store_true", help="перевірити всі файли")
     parser.add_argument("--find", help="показати лише гілки з цим у назві")
+    parser.add_argument("--cpp", help="записати таблицю класів для C++")
     args = parser.parse_args()
 
     tables = Tables()
+
+    if args.cpp:
+        return emit_cpp(tables, args.cpp)
 
     if args.check or not args.entry:
         good = bad = 0

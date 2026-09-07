@@ -20,6 +20,11 @@ obf2_add_test(test_font_loc obf2_font obf2_loc)
 obf2_add_test(test_frustum obf2_core)
 obf2_add_test(test_server obf2_server)
 obf2_add_test(test_soldier_move obf2_server)
+obf2_add_test(test_meme obf2_meme obf2_vfs)
+# Тест читає справжній `Menu/Ingame` з інсталяції користувача; без неї
+# він каже про це і проходить.
+target_compile_definitions(test_meme PRIVATE
+  OBF2_GAME_FILES="${CMAKE_SOURCE_DIR}/Game Files")
 obf2_add_test(test_hud obf2_hud)
 obf2_add_test(test_hud_states obf2_hud)
 obf2_add_test(test_hud_spawn obf2_hud)
