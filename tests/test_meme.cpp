@@ -9,6 +9,7 @@
 #include <filesystem>
 
 #include "obf2/meme/file.h"
+#include "obf2/meme/graph.h"
 #include "obf2/core/path.h"
 #include "obf2/vfs/filesystem.h"
 #include "check.h"
@@ -129,8 +130,55 @@ static void testEveryHudMemeParses() {
   CHECK_EQ(whole, 12);
 }
 
+// Головне: граф **виконується**. Ставимо ціль лівої ділянки й дивимося,
+// чи він сам довозить її туди — рівно на 600 одиницях за секунду, як
+// каже `SetVariableSineAction {Speed 600}` у файлі.
+static void testGraphMovesTheCornerPanel() {
+  if (!std::filesystem::exists(menuArchive())) return;
+  auto archive = ZipArchive::open(menuArchive());
+  if (archive == nullptr) return;
+  const auto data = archive->read(normalizeAssetPath("Ingame"));
+  if (!data) return;
+
+  meme::Graph graph;
+  CHECK(graph.load(*data));
+
+  // Початкові значення — з файлу: ділянка схована на -295.
+  CHECK(std::abs(graph.variables().get("BottomLeft/BottomLeft_XPos") + 295.0f) < 0.01f);
+  // `AniPos` теж звідти, і саме він відмикає гілку з рухом.
+  CHECK(std::abs(graph.variables().get("AniPos") - 1.0f) < 0.01f);
+
+  graph.variables().set("BottomLeft/BottomLeft_nextXPos", -137.0f);
+  graph.update(1.0f / 30.0f);
+  CHECK(graph.lastActions() > 0);
+  // 600 за секунду -> 20 за такт.
+  CHECK(std::abs(graph.variables().get("BottomLeft/BottomLeft_XPos") + 275.0f) < 0.01f);
+
+  for (int i = 0; i < 60; ++i) graph.update(1.0f / 30.0f);
+  CHECK(std::abs(graph.variables().get("BottomLeft/BottomLeft_XPos") + 137.0f) < 0.01f);
+}
+
+// Прозорості веде інша дія — `SetVariableSoftAction {Speed 10}`, і теж
+// сама, без нашої допомоги.
+static void testGraphMovesTheAlpha() {
+  if (!std::filesystem::exists(menuArchive())) return;
+  auto archive = ZipArchive::open(menuArchive());
+  if (archive == nullptr) return;
+  const auto data = archive->read(normalizeAssetPath("Ingame"));
+  if (!data) return;
+
+  meme::Graph graph;
+  if (!graph.load(*data)) return;
+
+  graph.variables().set("BottomLeft/Alpha/BottomLeft_nextAlpha1", 1.0f);
+  for (int i = 0; i < 60; ++i) graph.update(1.0f / 30.0f);
+  CHECK(std::abs(graph.variables().get("BottomLeft/Alpha/BottomLeft_alpha1") - 1.0f) < 0.01f);
+}
+
 TEST_MAIN({
   testIngameParsesWhole();
+  testGraphMovesTheCornerPanel();
+  testGraphMovesTheAlpha();
   testLayerPositionComesFromTheFile();
   testEveryHudMemeParses();
 })

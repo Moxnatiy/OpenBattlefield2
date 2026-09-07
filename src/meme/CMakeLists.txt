@@ -1,5 +1,6 @@
 add_library(obf2_meme
   src/file.cpp
+  src/graph.cpp
 )
 add_library(obf2::meme ALIAS obf2_meme)
 

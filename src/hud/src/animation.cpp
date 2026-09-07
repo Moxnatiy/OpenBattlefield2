@@ -4,23 +4,6 @@
 
 namespace obf2::hud {
 
-void approachVariable(float& value, float target, float speed, float brakingDistance, float dt) {
-  if (value == target) return;
-  const float distance = std::fabs(target - value);
-  float step = speed * dt;
-  if (brakingDistance > 0.0f && distance < brakingDistance) {
-    // `cos(pi/2 - x)` дослівно з 0x100010c8; стала там — 1.57075, а не
-    // повне pi/2, тож беремо саме її.
-    constexpr float kQuarterTurn = 1.57075f;
-    step *= std::cos(kQuarterTurn - distance / brakingDistance * kQuarterTurn);
-  }
-  if (value < target) {
-    value = value + step > target ? target : value + step;
-  } else {
-    value = value - step < target ? target : value - step;
-  }
-}
-
 void Animator::setVisible(const Node& node, bool visible) {
   auto [it, inserted] = entries_.try_emplace(node.name);
   Entry& entry = it->second;

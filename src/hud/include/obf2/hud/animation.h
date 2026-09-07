@@ -31,6 +31,7 @@
 #include <unordered_map>
 
 #include "obf2/hud/hud.h"
+#include "obf2/meme/graph.h"
 
 namespace obf2::hud {
 
@@ -89,24 +90,9 @@ inline constexpr float kCornerMoveSpeed = 600.0f;
 // зі швидкістю 10 (чотири штуки: BottomLeft_alpha1/2, BottomRight_alpha).
 inline constexpr float kCornerAlphaSpeed = 10.0f;
 
-// Крок дії `dice::meme::SetVariableSineAction::onEvent` (`MemeDll.dll`,
-// 0x10001050). Обидві дії графа — це вона й її батько:
-//
-//   відстань = |ціль - значення|
-//   якщо відстань >= «Braking distance»:  крок = швидкість * dt
-//   інакше:  крок = cos(pi/2 - (відстань/гальмування) * pi/2)
-//                   * швидкість * dt
-//   значення йде до цілі на крок, але не далі за неї
-//
-// `cos(pi/2 - x)` — це `sin(x)`, тобто біля цілі крок згасає синусоїдою.
-// `SetVariableSoftAction::onEvent` (0x10004d2c) — та сама дія **без**
-// гальмівної ділянки, тобто рівномірна; `SetVariableSineAction::onStream`
-// (0x1000459d) лише додає до неї поле «Braking distance» (+0x10).
-//
-// У `Menu/Ingame` гальмування нульове в обох дій, тож кутові ділянки
-// їдуть рівномірно — це видно з `tools/meme_read.py Ingame` (нульові
-// поля він не друкує) і збігається з формулою.
-void approachVariable(float& value, float target, float speed, float brakingDistance, float dt);
+// Обидві дії, якими граф рухає змінні HUD, живуть у `obf2::meme`:
+// це той самий `Menu/Ingame`, що веде кутові ділянки
+// (obf2/meme/graph.h, `approachVariable`).
 
 // Стан переходу одного вузла.
 struct ShowState {

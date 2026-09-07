@@ -10,7 +10,7 @@ namespace {
 // з `MemeDll.dll` 0x10001050 і 0x10004d2c). У `Menu/Ingame` гальмівна
 // ділянка нульова, тож підхід рівномірний.
 void approach(float& value, float target, float speed, float dt) {
-  approachVariable(value, target, speed, 0.0f, dt);
+  meme::approachVariable(value, target, speed, 0.0f, dt);
 }
 
 }  // namespace
