@@ -259,10 +259,18 @@ static void testShowEffectsAnimate() {
   const hud::Node& node = builder.nodes()[0];
 
   hud::Animator animator;
-  // Перша поява — без переходу: інакше весь HUD в'їжджав би на старті.
+  // Перша поява теж іде переходом: щойно створений `CullNode` має хід
+  // -4, і 0x10004a57 ставить його в 0, а не в кінець.
   animator.setVisible(node, true);
-  animator.advance(0.0f);
+  animator.advance(0.2f);
+  CHECK(std::abs(animator.state(node).progress - 0.5f) < 0.001f);
+  CHECK(animator.animating());
+  animator.advance(0.2f);
   CHECK(std::abs(animator.state(node).progress - 1.0f) < 0.001f);
+  // Кадр, у якому вузол став на місце, ще треба перемалювати — а вже
+  // наступний ні.
+  CHECK(animator.animating());
+  animator.advance(0.0f);
   CHECK(!animator.animating());
 
   // Ховаємо: за outTime = 0.2 половина шляху проходить за 0.1 с.

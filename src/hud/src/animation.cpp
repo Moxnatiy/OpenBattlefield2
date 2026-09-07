@@ -25,8 +25,12 @@ void Animator::setVisible(const Node& node, bool visible) {
   auto [it, inserted] = entries_.try_emplace(node.name);
   Entry& entry = it->second;
   if (inserted) {
-    // Перший кадр: без переходу. Інакше весь HUD «в'їжджав» би на старті.
-    entry.progress = visible ? 1.0f : 0.0f;
+    // Щойно створений `CullNode` має хід -4 (`MemeDll.dll`, 0x10004a57
+    // звіряє саме з цією міткою), і **перший же показ іде переходом**: у
+    // тій самій гілці хід ставиться в 0 і одразу починає рости. Тобто
+    // вузол, видимий від початку, в оригіналі теж в'їжджає — це видно на
+    // `GlobalHud`, у якого `setNodeInTime 2`.
+    entry.progress = 0.0f;
   }
   entry.visible = visible;
   entry.inTime = node.inTime;
@@ -37,20 +41,25 @@ void Animator::advance(float dt) {
   animating_ = false;
   for (auto& [name, entry] : entries_) {
     const float target = entry.visible ? 1.0f : 0.0f;
-    if (entry.progress != target) animating_ = true;
-  }
-  if (dt <= 0.0f) return;
-  for (auto& [name, entry] : entries_) {
-    const float time = entry.visible ? entry.inTime : entry.outTime;
-    if (time <= 0.0f) {
-      entry.progress = entry.visible ? 1.0f : 0.0f;
-      continue;
+    const float was = entry.progress;
+    if (entry.progress != target) {
+      const float time = entry.visible ? entry.inTime : entry.outTime;
+      if (time <= 0.0f || dt <= 0.0f) {
+        // Нульовий час — миттєвий перехід: у 0x10004a57 хід одразу стає
+        // міткою «показано» чи «сховано».
+        if (time <= 0.0f) entry.progress = target;
+      } else {
+        // Рівномірно: `хід += dt / «In time»` і `хід -= dt / «Out time»`,
+        // дослівно з `CullNode::iterateUpdate`.
+        const float step = dt / time;
+        entry.progress += entry.visible ? step : -step;
+        if (entry.progress > 1.0f) entry.progress = 1.0f;
+        if (entry.progress < 0.0f) entry.progress = 0.0f;
+      }
     }
-    // Рівномірно: клас руху зветься Bf2MoveEffect, а не Bf2SinMoveEffect.
-    const float step = dt / time;
-    entry.progress += entry.visible ? step : -step;
-    if (entry.progress > 1.0f) entry.progress = 1.0f;
-    if (entry.progress < 0.0f) entry.progress = 0.0f;
+    // «Ще рухається» — це і «не доїхав», і «саме цим кроком доїхав»:
+    // кадр, у якому вузол став на місце, теж треба перемалювати.
+    if (entry.progress != target || entry.progress != was) animating_ = true;
   }
 }
 

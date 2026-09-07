@@ -3893,11 +3893,16 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
               std::chrono::duration<float>(now - lastAnimationTick).count();
           lastAnimationTick = now;
           hudAnimator.advance(dt > 0.25f ? 0.25f : dt);
-          if (hudAnimator.animating()) spawnDirty = true;
-          // Швидкість 600 — з самого файлу (SetVariableSineAction).
-          // Клас зветься Sine, тобто хід, найпевніше, згладжений, але
-          // самої кривої ми не реверсили, тож їдемо рівно на цій
-          // швидкості.
+          if (hudAnimator.animating()) {
+            spawnDirty = true;
+            // **І бойовий теж.** Доти перепікався лише екран появи, і
+            // вузли бойового HUD із `setNodeInTime` не рухалися взагалі:
+            // геометрія лишалася такою, якою її запекли.
+            hudDirty = true;
+          }
+          // Швидкість 600 — з самого файлу (SetVariableSineAction), а
+          // крива — з `MemeDll.dll` 0x10001050: поза гальмівною ділянкою
+          // рух рівномірний, і в `Menu/Ingame` гальмування нульове.
           const float slice = dt > 0.25f ? 0.25f : dt;
 
           // Ліва ділянка — цілком за машиною станів клієнта: вона сама
