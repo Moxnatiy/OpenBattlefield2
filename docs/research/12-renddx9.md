@@ -115,3 +115,31 @@ The shader undoes both scales, so the ground is lit by one times the
 level's own numbers; the quarter is what keeps a sun like Highway Tampa's
 2.34 inside a constant register. Worked through in
 [../formats/shaders.md](../formats/shaders.md).
+
+## Every light colour exists twice: `X` and `X_1X`
+
+The renderer keeps a table of effect-parameter names against offsets into
+the light manager's block of values, built in `FUN_10039940` (0x10039940,
+the registration runs from 0x1003a380 on). Colours appear in it in pairs:
+
+| name | offset | pushed at |
+|---|---|---|
+| `StaticSkyColor` | 0x1f4 | 0x1003a46a |
+| `StaticSkyColor_1X` | 0x204 | 0x1003a4a4 |
+| `StaticSpecularColor` | 0x210 | 0x1003a4de |
+| `StaticSpecularColor_1X` | 0x220 | 0x1003a518 |
+| `SinglePointColor` | 0x22c | 0x1003a552 |
+| `TerrainSunColor` | 0x118 | 0x1003a430 |
+
+`SinglePointColor_1X` is in the same string block (0x101e1680). So a
+shader picks not only *which* colour it wants but at which scale, by the
+name it declares — which is how one engine feeds both the `ps_1_4` and the
+`ps_2_0` builds of the same RaShader: `RaCommon.fx:63` doubles every
+constant it reads (`CEXP`) below shader model 2.0, and says outright that
+they are "`_d2` on CPU to fit [-1,+1] range".
+
+Not established: which of the two fields holds the level's number whole.
+Our static-mesh path draws with `CEXP` as the identity — the 2.0 case — so
+it uses `Lightmanager.staticSkyColor` as the data gives it, and the
+buildings sit in the same exposure as the ground. Measure: the writer of
+0x1f4 and 0x204, or a frame dump of the constants the STM shader is given.
