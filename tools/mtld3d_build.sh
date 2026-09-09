@@ -29,11 +29,18 @@ export PATH="$HOME/.cargo/bin:$PATH"
 
 [ -d "$SRC" ] || { echo "no sources: $SRC"; exit 1; }
 
+# `set -e` does not reach inside a pipeline, and this script used to be run
+# through `| tail`, which swallowed a compile failure and left the old DLL in
+# the bottle looking freshly built. Each step says so itself now.
+die() { echo "$1" >&2; exit 1; }
+
 echo "==> d3d9.dll (i686, $OUT)"
-( cd "$SRC/windows" && cargo build --profile "$PROFILE" -p d3d9 --target i686-pc-windows-msvc )
+( cd "$SRC/windows" && cargo build --profile "$PROFILE" -p d3d9 --target i686-pc-windows-msvc ) \
+    || die "d3d9 did not build"
 
 echo "==> mtld3d.so (x86_64, $OUT)"
-( cd "$SRC/unix" && cargo build --profile "$PROFILE" --target x86_64-apple-darwin -p mtld3d-unix )
+( cd "$SRC/unix" && cargo build --profile "$PROFILE" --target x86_64-apple-darwin -p mtld3d-unix ) \
+    || die "mtld3d-unix did not build"
 cp "$SRC/unix/target/x86_64-apple-darwin/$OUT/libmtld3d_unix.dylib" \
    "$SRC/unix/target/x86_64-apple-darwin/$OUT/mtld3d.so"
 

@@ -60,7 +60,7 @@ on in any order.
  
  const VK_F12: i32 = 0x7B;
  
-@@ -52,6 +84,17 @@
+@@ -52,6 +84,18 @@
      if down && !was_down {
          CAPTURE_REQUESTED.store(true, Ordering::Release);
      }
@@ -68,10 +68,11 @@ on in any order.
 +    // The same two requests, armed from outside the process.
 +    let tick = TRIGGER_TICK.fetch_add(1, Ordering::Relaxed);
 +    if tick % TRIGGER_PERIOD == 0 {
-+        if take_trigger(DUMP_TRIGGER) {
-+            FRAME_DUMP_REQUESTED.store(true, Ordering::Release);
-+        }
-+        if take_trigger(CAPTURE_TRIGGER) {
++        // Upstream now arms the dump and the GPU capture from one request —
++        // F12 fires both — so both trigger files set the same flag. The two
++        // names are kept because scripts use them, and because they say which
++        // of the two the caller was after.
++        if take_trigger(DUMP_TRIGGER) || take_trigger(CAPTURE_TRIGGER) {
 +            CAPTURE_REQUESTED.store(true, Ordering::Release);
 +        }
 +    }

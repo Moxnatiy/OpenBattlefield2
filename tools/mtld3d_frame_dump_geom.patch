@@ -91,7 +91,7 @@ on in any order.
      emit_snapshot_deltas(&obj);
      drop(snap);
      let _push = CycleAddTimer::start(draw_push_op_ptr(perf_ptr));
-@@ -10486,6 +10500,32 @@
+@@ -10486,6 +10500,21 @@
          return D3DERR_INVALIDCALL;
      };
  
@@ -109,6 +109,14 @@ on in any order.
 +            );
 +        }
 +    }
++
+     emit_snapshot_deltas(&obj);
+     drop(snap);
+     let _push = CycleAddTimer::start(draw_push_op_ptr(perf_ptr));
+@@ -10728,6 +10757,18 @@
+     // contract.
+     let vertex_copy = unsafe { copy_up_vertices(vertex_data, data_size) };
+ 
 +    // The draw bounding box for the Ctrl+Shift+D dump: the position is the
 +    // first two floats of each vertex, so min/max over them gives the rectangle.
 +    if dev.frame_dump.active {
@@ -124,7 +132,7 @@ on in any order.
      emit_snapshot_deltas(&obj);
      drop(snap);
      let _push = CycleAddTimer::start(draw_push_op_ptr(perf_ptr));
-@@ -11764,6 +11804,18 @@
+@@ -11764,6 +11805,18 @@
          )
      };
  
