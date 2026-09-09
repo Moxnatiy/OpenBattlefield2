@@ -100,6 +100,12 @@ ctest --test-dir build/macos-arm64-debug --output-on-failure
 
 # Join an original dedicated server
 ./build/macos-arm64-debug/src/app/openbf2 --connect <host> --level dalian_plant
+
+# Stand somewhere exactly, look somewhere exactly, and take the interface off.
+# For comparing a frame against the original's: `tools/bf2_run.sh` puts the
+# original in the same spot.
+./build/macos-arm64-debug/src/app/openbf2 --level Strike_at_Karkand \
+    --camera -134/175/-250 --angles 20 -8 --no-hud --frames 8 --screenshot out.png
 ```
 
 ## Layout

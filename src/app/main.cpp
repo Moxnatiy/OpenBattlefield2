@@ -76,6 +76,15 @@ struct Args {
   // --topdown: strictly from above, +X to the right, -Z up. Needed to check the
   // world's orientation against the level's own minimap.
   bool topDown = false;
+  // A camera put where we say and pointed where we say, and a way to take the
+  // interface off the picture. Both are for looking: comparing a frame of ours
+  // against the original means standing in the same spot, and the HUD covers
+  // most of what is being compared. `tools/bf2_run.sh` puts the original at the
+  // same place.
+  std::optional<obf2::Vec3f> camera;
+  float cameraYaw = 0.0f;    // degrees; 0 looks along +Z, as the engine counts
+  float cameraPitch = 0.0f;  // degrees; positive is up
+  bool noHud = false;
   // --own-box: draw a placeholder at our own soldier's position too. It is not
   // needed in the game itself, but without it the other players' placeholder
   // cannot be checked on an empty server.
@@ -162,6 +171,18 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--screen" && i + 1 < argc) args.screen = argv[++i];
     else if (flag == "--hosted") args.hosted = true;
     else if (flag == "--topdown") args.topDown = true;
+    else if (flag == "--no-hud") args.noHud = true;
+    else if (flag == "--camera" && i + 1 < argc) {
+      obf2::con::Command command;
+      command.args.emplace_back(argv[++i]);
+      if (const auto point = command.argVec3(0)) {
+        args.camera = obf2::Vec3f{point->x, point->y, point->z};
+      }
+    }
+    else if (flag == "--angles" && i + 2 < argc) {
+      args.cameraYaw = static_cast<float>(std::atof(argv[++i]));
+      args.cameraPitch = static_cast<float>(std::atof(argv[++i]));
+    }
     else if (flag == "--own-box") args.showOwnBox = true;
     else if (flag == "--flash" && i + 1 < argc) args.flashSwf = argv[++i];
     else if (flag == "--connect" && i + 1 < argc) args.connectTo = argv[++i];
@@ -3578,7 +3599,20 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     // there is no soldier yet. The spawn screen's camera from Init.con works then.
     const auto remoteSoldier =
         remote != nullptr ? remote->soldierPosition() : std::optional<obf2::Vec3f>{};
-    if ((hostedServer && hostedClient && localSoldierId != 0) || remoteSoldier) {
+    if (args.camera) {
+      // `--camera x/y/z --angles yaw pitch`: stand exactly here and look exactly
+      // there, whatever mode the rest of the run is in. It outranks the soldier
+      // and the spawn screen on purpose — the point of it is to put our frame
+      // and the original's in the same spot, and the original is put there with
+      // the same numbers.
+      constexpr float kToRadians = 3.14159265358979323846f / 180.0f;
+      const float yawRadians = args.cameraYaw * kToRadians;
+      const float pitchRadians = args.cameraPitch * kToRadians;
+      eye = *args.camera;
+      lookTarget = eye + obf2::Vec3f{std::sin(yawRadians) * std::cos(pitchRadians),
+                                     std::sin(pitchRadians),
+                                     std::cos(yawRadians) * std::cos(pitchRadians)};
+    } else if ((hostedServer && hostedClient && localSoldierId != 0) || remoteSoldier) {
       // The soldier's position comes from whoever owns him: our server in our own
       // game, that server on a real one.
       eye = remoteSoldier ? *remoteSoldier : hostedClient->interpolatedPosition(localSoldierId);
@@ -3876,8 +3910,10 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       renderer->renderScene(*acquired, *toDraw, projection * view,
                             obf2::gfx::Color{0.42f, 0.55f, 0.68f, 1.0f});
 
-      // The HUD goes as a second pass over the ready frame — without clearing the target.
-      if (!hudQuads.empty() || !hudDynamic.empty()) {
+      // The HUD goes as a second pass over the ready frame — without clearing the
+      // target. `--no-hud` skips it: when a frame is being compared against the
+      // original's, the interface is in the way of everything being compared.
+      if (!args.noHud && (!hudQuads.empty() || !hudDynamic.empty())) {
         // Live values: the tickets come straight from the server, because in a
         // single-player game it is right here. To a client they will arrive in a
         // separate packet once the round's state exists on the network.
