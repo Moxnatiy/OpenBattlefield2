@@ -25,6 +25,10 @@ struct GpuMesh {
     // material with a `Detail` channel, false for the terrain, whose slot 2 is
     // a weight map and not a colour.
     bool detailMultiply = false;
+    // Cut the surface out by the base map's alpha. The material's `alphaMode`
+    // says so: 0 or 2 are the only values in the game's static meshes, and 2 is
+    // what leaves, fences and grates carry.
+    bool alphaTest = false;
   };
 
   SDL_GPUBuffer* vertices = nullptr;

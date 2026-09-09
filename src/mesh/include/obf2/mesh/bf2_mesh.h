@@ -98,6 +98,11 @@ struct DrawRange {
   std::string fxFile;
   std::string technique;
   std::vector<std::string> maps;
+  // The material's `alphaMode`, straight from the file. It is what tells the
+  // engine whether to alpha-test the surface: `AlphaTestEnable = <AlphaTest>`
+  // in the technique (`Shaders_client.zip:RaShaderSTM.fx:583`) is a bool the
+  // engine sets per material. Absent in skinned meshes, where it stays 0.
+  std::uint32_t alphaMode = 0;
 
   // The rig number for skinning — it matches the material's number.
   int rig = -1;

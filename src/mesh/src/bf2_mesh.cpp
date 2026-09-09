@@ -354,6 +354,7 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
     DrawRange range;
     range.indexStart = static_cast<std::uint32_t>(out.indices.size());
     range.indexCount = material.indexCount;
+    range.alphaMode = material.alphaMode;
     // The rigs come one per material — that is visible on every skinned mesh in
     // the game: a lod's rig count always equals its material count.
     if (!out.rigs.empty() && materialIndex < out.rigs.size()) {

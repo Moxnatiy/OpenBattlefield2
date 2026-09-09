@@ -189,6 +189,78 @@ holds those counts.
 Still not drawn: the dirt and crack channels, and the normal maps, which
 need a tangent frame we do not build.
 
+## How a static mesh is lit
+
+`RaShaderSTM.fx` has two lighting paths. With no tangent frame and no
+normal maps we are on the vertex one (:209 for the terms, :524 for the
+assembly), and `getLightmap` returns `(1,1,1)` where there is no baked
+light map (:353):
+
+```hlsl
+scalar invDot = 1-saturate(dot(unpackedNormal*0.2, -Lights[0].dir));
+Out.InvDotAndLightAtt.rgb   = skyNormal.z * CEXP(StaticSkyColor) * invDot;
+Out.ColorOrPointLightFog.rgb = saturate(dot(unpackedNormal, -Lights[0].dir))
+                             * CEXP(Lights[0].color);
+...
+FinalColor.rgb *= 2 * diffuse;
+```
+
+Three things are worth pinning down.
+
+`skyNormal` is `vec3(0.78,0.52,0.65)` (:34) and it is a **tangent-space**
+constant, not a world direction. The pixel path dots it against the
+normal map's sample — `(0,0,1)` when there is no map — which leaves its z
+alone, and the vertex path uses that z straight. Dot it against a world
+normal and every wall facing away from it goes black. We made exactly that
+mistake first.
+
+The `0.2` turns `invDot` into a shallow ramp: 1.0 in shadow, 0.8 in full
+sun. That is the ambient floor, and it is why the game's shaded sides are
+not black.
+
+The **doubling** at the end is most of why the original's meshes are as
+bright as they are.
+
+The colours are the level's, from the `Lightmanager.*` block of its
+Sky.con — `staticSunColor`, `staticSkyColor`, `sunDirection`,
+`singlePointColor`. All twenty-one commands of that block are read into
+`obf2::level::Lighting`; the tree, effect and hemisphere-map values sit
+there unused.
+
+Not done: the baked light map. Every level ships one per object,
+`lightmaps/Objects/LightmapAtlas*.dds` with a `.tai` of the atlas offsets.
+Its three channels are what the formula above multiplies by — `.g` gates
+the sun, `.b` the sky, `.r` the point colour — so until it is read nothing
+shadows anything.
+
+## Alpha test: leaves, fences, grates
+
+The technique's pass ends with two lines
+(`Shaders_client.zip:RaShaderSTM.fx:583`):
+
+```
+AlphaTestEnable = < AlphaTest >;
+AlphaRef = 127; // temporary hack by johan because "m_shaderSettings.m_alphaTestRef = 127" somehow doesn't work
+```
+
+So the reference is **127 of 255**, and whether the test runs at all is a
+per-material bool. What sets it is the material's `alphaMode`, which is
+straight in the mesh file. Over the game's static meshes it takes exactly
+two values — `tools/mesh_info --materials` now prints the distribution:
+
+```
+0  BaseDetailNDetail       4008        2  Base                252
+0  BaseDetailDirtNDetail   1125        2  BaseDetailNDetail   183
+```
+
+2 is the cut-out one. The pine `nc_pinebig01` shows it in miniature: its
+trunk range is `alphaMode 0` and its needles `alphaMode 2`.
+
+The test is on the **base** map's alpha, before the detail is multiplied
+in. With `_ALPHATEST_` the shader keeps `totalDiffuse.a` and only scales
+it by Transparency; without it the alpha is discarded and the detail's
+becomes gloss instead (`RaShaderSTM.fx:282`).
+
 ## Roads are lifted and do not write depth
 
 `RoadCompiled.fx:95`, in the vertex shader:

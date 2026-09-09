@@ -113,8 +113,9 @@ void printOne(obf2::FileSystem& files, const std::string& path, std::size_t geom
               render->bounds.max.y, render->bounds.max.z);
   for (std::size_t i = 0; i < render->ranges.size() && i < 4; ++i) {
     const auto& range = render->ranges[i];
-    std::printf("    [%zu] %s / %s, %u indices, %zu textures%s\n", i, range.fxFile.c_str(),
-                range.technique.c_str(), range.indexCount, range.maps.size(),
+    std::printf("    [%zu] %s / %s, alphaMode %u, %u indices, %zu textures%s\n", i,
+                range.fxFile.c_str(), range.technique.c_str(), range.alphaMode, range.indexCount,
+                range.maps.size(),
                 range.maps.empty() ? "" : (" -> " + range.maps.front()).c_str());
   }
 }
@@ -134,6 +135,9 @@ int main(int argc, char** argv) {
   if (what == "--materials") {
     std::map<std::string, int> techniques;
     std::map<std::string, int> slotSuffix;  // "slot N: suffix" -> how many times
+    // alphaMode is what turns the shader's alpha test on, so it is worth seeing
+    // which techniques carry which value.
+    std::map<std::string, int> alphaModes;
 
     auto scan = files.list();
     std::sort(scan.begin(), scan.end());
@@ -150,6 +154,7 @@ int main(int argc, char** argv) {
         for (const auto& lod : geometry.lods) {
           for (const auto& material : lod.materials) {
             ++techniques[material.technique];
+            ++alphaModes[std::to_string(material.alphaMode) + "  " + material.technique];
             for (std::size_t slot = 0; slot < material.maps.size() && slot < 4; ++slot) {
               const std::string& map = material.maps[slot];
               const std::size_t dot = map.find_last_of('.');
@@ -164,7 +169,15 @@ int main(int argc, char** argv) {
       }
     }
 
-    std::puts("technique (top 10):");
+    std::puts("alphaMode + technique (top 12):");
+    std::vector<std::pair<std::string, int>> sortedAlpha(alphaModes.begin(), alphaModes.end());
+    std::sort(sortedAlpha.begin(), sortedAlpha.end(),
+              [](auto& a, auto& b) { return a.second > b.second; });
+    for (std::size_t i = 0; i < sortedAlpha.size() && i < 12; ++i) {
+      std::printf("  %-44s %d\n", sortedAlpha[i].first.c_str(), sortedAlpha[i].second);
+    }
+
+    std::puts("\ntechnique (top 10):");
     std::vector<std::pair<std::string, int>> sortedTechniques(techniques.begin(), techniques.end());
     std::sort(sortedTechniques.begin(), sortedTechniques.end(),
               [](auto& a, auto& b) { return a.second > b.second; });

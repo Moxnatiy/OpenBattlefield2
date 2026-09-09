@@ -61,7 +61,8 @@ struct Uniforms {
     float4 skyColor;
     // x: multiply the detail map in (a mesh material with a Detail channel);
     // y: take the alpha from the texture rather than 1 (the road pass);
-    // z: the sky dome — unlit, and projected with a w of 10 (see below).
+    // z: the sky dome — unlit, and projected with a w of 10 (see below);
+    // w: cut the surface out by the base map's alpha.
     float4 material;
     // `Lightmanager.sunDirection` — the way the light travels, so the vector
     // towards the sun is its negative. w unused.
@@ -113,6 +114,18 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
                               sampler lightSampler [[sampler(1)]],
                               sampler detailSampler [[sampler(2)]]) {
     float4 albedo = baseColor.sample(baseSampler, in.uv);
+
+    // Leaves, fences, grates: the shape is cut out of the base map's alpha.
+    // The technique switches it on per material (`AlphaTestEnable = <AlphaTest>`,
+    // `Shaders_client.zip:RaShaderSTM.fx:583`) and the line under it sets the
+    // reference: `AlphaRef = 127`, with the author's own note that it is there
+    // because the setting it should come from does not work. 127 of 255.
+    //
+    // It is the **base** map's alpha, before the detail is multiplied in: with
+    // `_ALPHATEST_` the shader keeps `totalDiffuse.a` and only scales it by
+    // Transparency, while without it the alpha is thrown away and the detail's
+    // becomes gloss instead (`RaShaderSTM.fx:282`).
+    if (in.material.w > 0.5 && albedo.a < 127.0 / 255.0) discard_fragment();
 
     // A material whose technique names a `Detail` channel is the base
     // **multiplied by** the detail, and the detail is sampled with the tiling
@@ -697,6 +710,10 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
       range.texture = load(layout.base >= 0 ? layout.base : 0);
       range.detail = load(layout.detail);
       range.detailMultiply = range.detail != nullptr;
+      // 0 and 2 are the only values the game's static meshes carry, and 2 is
+      // the alpha-tested one — the pine's needles have it while its trunk does
+      // not (`mesh_info … nc_pinebig01.staticmesh`).
+      range.alphaTest = source_range.alphaMode == 2;
     }
     gpuMesh.ranges.push_back(range);
   }
@@ -869,6 +886,7 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
         // tiling is zero and the sampling lands in the white placeholder.
         uniforms.fogParams[3] = range.detail != nullptr ? detailTiling_ : 0.0f;
         uniforms.material[0] = range.detailMultiply ? 1.0f : 0.0f;
+        uniforms.material[3] = range.alphaTest ? 1.0f : 0.0f;
         SDL_PushGPUVertexUniformData(frame.commands, 0, &uniforms, sizeof(uniforms));
 
         SDL_DrawGPUIndexedPrimitives(pass, range.indexCount, 1, range.indexStart, 0, 0);
