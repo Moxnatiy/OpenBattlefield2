@@ -55,3 +55,54 @@ order is:
 2. `RendDX9.dll` — what the engine puts into them;
 3. a frame dump under `mtld3d` — what the numbers actually are on a given
    level, when a value is easier measured than traced.
+
+## Two terrains: the game's and the editor's
+
+The level's `Terrain.con` has two branches, and the argument decides which
+one the engine builds:
+
+```
+if v_arg1 == BF2Editor
+  terrain.create TerrainEditable
+  terrain.patchSize 128
+  ... the tile texture base names, the tiling, terrain.init
+else
+  terrain.create Terrain
+  terrain.load Levels/Strike_at_Karkand/terraindata.raw
+endIf
+```
+
+They are two different classes in `RendDX9.dll`, and each caches its own
+effect handles at start-up:
+
+| class | where | its effect | SUNCOLOR | GICOLOR |
+|---|---|---|---|---|
+| `Terrain` — the game's | `FUN_100d7f80`, 0x100d7f80 | `Shaders/TerrainShader` | `+0x20c` | `+0x210` |
+| `TerrainEditable` — the editor's | `FUN_1010b380`, 0x1010b380 | `Shaders/TerrainEditorShader` | `+0x83` | `+0x84` (dwords) |
+
+So the editor's terrain really is a different renderer, not the same one
+with a different loader — the editor also loads its own
+`BF2Editor/Content/Terrain/Grid` overlays there.
+
+**We run the editor's branch**, because the game's takes a single compiled
+blob, `terraindata.raw`, which we have not reversed; the editor's names
+the loose files we can already read (`HeightmapPrimary.raw`, `Colormaps/`,
+`Lightmaps/`, `Detailmaps/`). That is a deliberate deviation, and it costs
+us nothing in **data** — the loose files are the same baked tiles the game
+ships — but it does mean the `.con` we execute is not the one the game
+executes. Where the two branches set the same thing under different
+names, the game's spelling is what we follow: the terrain's two colours
+are `terrain.sunColor` / `terrain.GIColor`, and the values are identical
+to the editor's `LightSettings.*` on every one of the game's twelve levels
+that set them (measured over `levels/*/server.zip:Sky.con`).
+
+Debt: `terraindata.raw`. Measure: our terrain is built from it rather than
+from the heightmap plus the tile lists, and the patch and chart layout
+comes out the same.
+
+The game terrain's own handle list also names `SINGLEPOINTCOLOR_1X` next
+to `SUNCOLOR`, `GICOLOR` and `AMBIENTCOLOR`. The `_1X` suffix is the thing
+to pull on when establishing whether the engine uploads these colours
+whole or halved — `RaCommon.fx:63` says the constants are "`_d2` on CPU"
+for shaders below 2.0, and the terrain's fill pass is hand-written
+`ps_1_4`.
