@@ -255,8 +255,73 @@ static void testMissingHeightmapIsReported() {
   CHECK(!error.empty());
 }
 
+// Sky.con's `Skydome.*` block. Every one of the game's 13 levels sets all
+// fourteen commands, so all fourteen are read — and the texture paths in the
+// data are Windows-shaped and extensionless, which is the part that has to be
+// normalised on the way in.
+static void testSkydomeBlock() {
+  TempLevel temp;
+  temp.write("Heightdata.con", kHeightdata);
+  temp.write("Terrain.con", kTerrain);
+  temp.write("StaticObjects.con", "");
+  temp.write("Water.con", "");
+  // Copied from Strike at Karkand's own Sky.con, backslashes and all.
+  temp.write("Sky.con",
+             "Skydome.skyTemplate skydome\n"
+             "Skydome.cloudTemplate cloudlayer\n"
+             "Skydome.hasCloudLayer 0\n"
+             "Skydome.hasCloudLayer2 1\n"
+             "Skydome.scrolldirection 0.003/0.007\n"
+             "Skydome.scrolldirection2 -0.001/-0.003\n"
+             "Skydome.cloudTexture common\\textures\\cloud\\Cloud03\n"
+             "Skydome.skyTexture common\\textures\\sky\\karkand_cloudy\n"
+             "Skydome.domeRotation 60\n"
+             "Skydome.fadeCloudsDistances 900/500\n"
+             "Skydome.cloudLerpFactors 0.5/0.25\n"
+             "Skydome.flareTexture common\\textures\\sunflare\\Sunglow_32bit_v2\n"
+             "Skydome.flareDirection 0.25/-0.5/0.75\n"
+             "Renderer.fogColor 163.00/135.00/86.00\n"
+             "Renderer.fogStartEndAndBase 0.00/135.00/2.30/0.40\n");
+  temp.writeHeights("HeightmapPrimary.raw", std::vector<std::uint16_t>(25, 0));
+
+  FileSystem files;
+  files.mountDirectory(temp.root());
+  const auto level = level::loadLevel(files, "testmap");
+  CHECK(level.has_value());
+  if (!level) return;
+
+  CHECK_EQ(level->sky.domeTemplate, std::string("skydome"));
+  CHECK_EQ(level->sky.cloudTemplate, std::string("cloudlayer"));
+  CHECK_EQ(level->sky.domeRotation, 60.0f);
+  CHECK(!level->sky.hasCloudLayer);
+  CHECK(level->sky.hasCloudLayer2);
+
+  // Backslashes become slashes and `.dds` is appended: the archives are mounted
+  // the other way round from how the data is written.
+  CHECK_EQ(level->sky.texture, std::string("common/textures/sky/karkand_cloudy.dds"));
+  CHECK_EQ(level->sky.cloudTexture, std::string("common/textures/cloud/Cloud03.dds"));
+  CHECK_EQ(level->sky.flareTexture,
+           std::string("common/textures/sunflare/Sunglow_32bit_v2.dds"));
+
+  CHECK_EQ(level->sky.scrollDirection[0], 0.003f);
+  CHECK_EQ(level->sky.scrollDirection2[1], -0.003f);
+  CHECK_EQ(level->sky.fadeCloudsDistances[0], 900.0f);
+  CHECK_EQ(level->sky.cloudLerpFactors[1], 0.25f);
+  CHECK_EQ(level->sky.flareDirection.y, -0.5f);
+
+  // The same file carries the fog, and the third and fourth numbers of
+  // fogStartEndAndBase are read past without disturbing the first two.
+  CHECK_EQ(level->terrain.fogStart, 0.0f);
+  CHECK_EQ(level->terrain.fogEnd, 135.0f);
+
+  // With no dome mesh in the mounted tree there is nothing to build, and that
+  // is not an error: a level may name a template we do not have.
+  CHECK(!level::buildSkyDome(*level, files).has_value());
+}
+
 TEST_MAIN({
   testLoadLevel();
+  testSkydomeBlock();
   testStaticObjects();
   testTerrainCentredOnOrigin();
   testPatchesSkipMissingColormaps();

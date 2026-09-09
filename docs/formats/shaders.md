@@ -79,7 +79,7 @@ same thing our renderer already did. So the fog we draw is a shipped BF2
 formula after all; what it lacked was the citation, and that is now next
 to it in `src/gfx/src/mesh_renderer.cpp`.
 
-## What "there is no fog" actually is: there is no sky
+## What "there is no fog" actually was: there was no sky
 
 The fog works. Measured on Strike at Karkand, whose
 `Renderer.fogStartEndAndBase` is `0.00/135.00/2.30/0.40` and whose
@@ -101,12 +101,36 @@ Renderer.fogColor 163.00/135.00/86.00
 Renderer.fogStartEndAndBase 0.00/135.00/2.30/0.40
 ```
 
-Not one `Skydome.*` command has a handler in our engine, so where the
-original draws a textured dome we leave the clear colour. The terrain
-fades correctly into a sandy fog and then meets a hard edge of flat
-blue — which reads exactly like "the fog is missing". The shader is
-`SkyDome.fx`; the dome is an ordinary object template, so the mesh and the
-texture are already within reach of what we load.
+Not one `Skydome.*` command had a handler in our engine, so where the
+original draws a textured dome we left the clear colour. The terrain faded
+correctly into a sandy fog and then met a hard edge of flat blue — which
+reads exactly like "the fog is missing".
+
+**Done.** `obf2::level` reads all fourteen `Skydome.*` commands (every one
+of the game's 13 levels sets all of them) and `level::buildSkyDome` loads
+the mesh the level's own Sky.con names — `run /Common/Sky/SkyDome/skydome.con`,
+geometry beside it in `Meshes/`, 667 vertices — putting the level's
+`skyTexture` in place of the template's default `skyclear01.dds`. The
+renderer draws it in a pass of its own, first, unlit and unfogged: the
+dome carries a painted horizon, and `SkyDome.fx` computes no fog either.
+
+Two things about that pass are worth naming. The dome **is** projected the
+original's way, with a w of 10 rather than 1 (`SkyDome.fx:100`,
+`vec4 posScaled = vec4(input.Pos.xyz, 10.0); //plo: fix for artifacts on
+BFO`): scaling a clip vector uniformly leaves the NDC alone, so an
+878-unit dome draws as an 88-unit one and stops being cut by the far
+plane — ours is the fog's end, 135 on Karkand, and without the trick the
+horizon ring falls outside it.
+
+The depth state, on the other hand, is **not** the original's.
+`SkyDome.fx:226` keeps `ZWriteEnable = TRUE, ZFunc = LESSEQUAL`, which
+works there because the engine's far plane is its view distance rather
+than the fog's end. We draw the dome first with no depth at all: the same
+picture, as long as nothing is ever meant to stand behind the sky.
+
+Not drawn: the cloud layers (they need the per-frame scroll offsets and a
+second dome) and the sun flare (its own additive sprite). Both are read
+into `Level::sky` and sit there.
 
 Also not established: the third and fourth components of
 `fogStartEndAndBase`. The name accounts for three (`2.30` would be the

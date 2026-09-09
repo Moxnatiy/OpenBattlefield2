@@ -1744,6 +1744,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     }
   } scene;
 
+  // The sky dome, kept apart from the scene: everything in the scene has a
+  // fixed place, and the dome's place is wherever the camera is.
+  std::optional<obf2::mesh::RenderMesh> skyDome;
+
   std::optional<obf2::level::Level> level;
   obf2::game::Registry registry;
   // The server and the client live all the time, not only during loading: in a
@@ -1791,6 +1795,17 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     }
     std::printf("  roads in the scene: %d\n", roadsPlaced);
     scene.add(obf2::level::buildWaterPlane(*level), obf2::Mat4::identity());
+
+    // The sky dome. Its place is the camera's, so it is not a scene instance:
+    // it is uploaded on its own and put into the draw list every frame.
+    if (auto dome = obf2::level::buildSkyDome(*level, files)) {
+      skyDome = std::move(*dome);
+      std::printf("  sky: %s, texture %s, rotation %.0f\n", level->sky.domeTemplate.c_str(),
+                  level->sky.texture.c_str(), static_cast<double>(level->sky.domeRotation));
+    } else if (!level->sky.domeTemplate.empty()) {
+      std::printf("  sky: the dome mesh for `%s` was not found\n",
+                  level->sky.domeTemplate.c_str());
+    }
 
     if (remote != nullptr) remote->keepAlive();
     registry = buildRegistry(files);
@@ -3303,6 +3318,15 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     triangles += static_cast<long long>(scene.meshes[i].indices.size() / 3);
   }
 
+  obf2::gfx::GpuMesh skyMesh;
+  bool skyReady = false;
+  if (skyDome) {
+    if (auto uploaded = renderer->upload(*skyDome, resolveTexture, &error)) {
+      skyMesh = *uploaded;
+      skyReady = true;
+    }
+  }
+
   // The placeholder for other players' soldiers. The size is not by eye: it is the
   // soldier's collision shape from the game's data (`coll-soldier-radius` 0.25 and
   // `coll-soldier-stand-height` 1.7), that is 0.5 x 1.7 x 0.5.
@@ -3741,8 +3765,21 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       // assembled once, while these appear and disappear during the game.
       const std::vector<obf2::gfx::MeshRenderer::DrawItem>* toDraw = &items;
       std::vector<obf2::gfx::MeshRenderer::DrawItem> withOthers;
-      if (remote != nullptr && boxesReady && !remote->world.objects().empty()) {
+
+      // The dome rides with the camera and turns by the level's own
+      // `Skydome.domeRotation`, so it is placed every frame.
+      if (skyReady) {
         withOthers = items;
+        obf2::gfx::MeshRenderer::DrawItem dome{
+            &skyMesh, obf2::translation(eye) *
+                          obf2::rotationYawPitchRoll(level->sky.domeRotation, 0.0f, 0.0f)};
+        dome.sky = true;
+        withOthers.push_back(dome);
+        toDraw = &withOthers;
+      }
+
+      if (remote != nullptr && boxesReady && !remote->world.objects().empty()) {
+        if (withOthers.empty()) withOthers = items;
         for (const auto& [id, object] : remote->world.objects()) {
           if (id == remote->ourSoldier && !args.showOwnBox) continue;  // we do not draw ourselves from inside
           // Whose soldier this is the server knows: the team came from

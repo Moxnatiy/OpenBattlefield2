@@ -58,6 +58,36 @@ struct TerrainInfo {
   Vec3f terrainSkyColor{0.6f, 0.7f, 0.9f};
 };
 
+// The `Skydome.*` block of a level's Sky.con. All fourteen commands are here
+// even though only three are drawn yet (rule 3): every one of the game's 13
+// levels sets all of them, and leaving a field out is how a format quietly
+// stops being whole.
+//
+// The paths come with Windows separators and no extension —
+// `common\textures\sky\karkand_cloudy` — so they are normalised on the way in
+// and `.dds` is appended.
+struct Sky {
+  std::string domeTemplate;   // Skydome.skyTemplate; "skydome" on every level
+  std::string cloudTemplate;  // Skydome.cloudTemplate; "cloudlayer" on every level
+  std::string texture;        // Skydome.skyTexture — the dome's own map
+  float domeRotation = 0.0f;  // Skydome.domeRotation, degrees about Y
+
+  // The cloud layers. Not drawn: they need the scrolling offsets the engine
+  // advances per frame, and a second dome.
+  bool hasCloudLayer = false;
+  bool hasCloudLayer2 = false;
+  std::string cloudTexture;
+  std::string cloudTexture2;
+  float scrollDirection[2]{};
+  float scrollDirection2[2]{};
+  float fadeCloudsDistances[2]{};  // near/far, the fade the dome's own shader does
+  float cloudLerpFactors[2]{};
+
+  // The sun's flare: its own sprite object, drawn additively. Not done.
+  std::string flareTexture;
+  Vec3f flareDirection{0.0f, 0.0f, 0.0f};
+};
+
 // A road from CompiledRoads.con. The `.mesh` format differs from the other
 // meshes: the vertices lie relative to the `start` point, and the position is
 // accompanied by two pairs of texture coordinates and an alpha for edge fading.
@@ -101,6 +131,7 @@ struct StaticObject {
 struct Level {
   std::string name;
   TerrainInfo terrain;
+  Sky sky;
   HeightmapInfo primary;
   std::vector<StaticObject> objects;
   std::vector<Road> roads;
@@ -173,6 +204,14 @@ struct TerrainPatch {
 // Patches with no colour map in the game are entirely under water — the game
 // does not draw them either. So they are skipped, and the water plane covers the sea.
 std::vector<TerrainPatch> buildTerrainPatches(const Level& level, const FileSystem& files);
+
+// The sky dome: the mesh the level's `Skydome.skyTemplate` names, with the
+// level's own sky texture put in place of the template's default.
+//
+// The dome is drawn around the camera, so its geometry comes back in its own
+// coordinates — the caller places it. Empty when the level names no sky or the
+// mesh is not in the archives.
+std::optional<mesh::RenderMesh> buildSkyDome(const Level& level, const FileSystem& files);
 
 // The name the engine substitutes for the water surface's texture file: the
 // water's colour is given as a number in Water.con, not as a picture.

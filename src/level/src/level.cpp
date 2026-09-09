@@ -31,6 +31,18 @@ std::size_t parseSlashList(std::string_view text, float* out, std::size_t capaci
   return count;
 }
 
+// A texture path out of Sky.con. The data writes them the Windows way and
+// without an extension (`common\textures\sky\karkand_cloudy`) while the
+// archives are mounted with forward slashes and hold `.dds`.
+std::string skyTexturePath(std::string_view raw) {
+  if (raw.empty()) return {};
+  std::string out(raw);
+  for (char& c : out) {
+    if (c == '\\') c = '/';
+  }
+  return out + ".dds";
+}
+
 // The state collector while a level's .con runs. The language is a stream of
 // commands, so heightmap.* apply to the last heightmapcluster.addHeightmap and
 // Object.* to the last Object.create.
@@ -132,6 +144,71 @@ class LevelBuilder {
       if (parseSlashList(command.argStr(0), values, 4) >= 2) {
         level_.terrain.fogStart = values[0];
         level_.terrain.fogEnd = values[1];
+      }
+      return;
+    }
+    // --- Sky.con, the `Skydome.*` block ---
+    //
+    // The dome is what the horizon is made of: the terrain fades into the fog
+    // and then meets the sky. Every one of the game's levels sets all fourteen
+    // of these; we read them all and draw the three that need no per-frame
+    // work (docs/formats/shaders.md).
+    if (path == "skydome.skytemplate") {
+      level_.sky.domeTemplate = std::string(command.argStr(0));
+      return;
+    }
+    if (path == "skydome.cloudtemplate") {
+      level_.sky.cloudTemplate = std::string(command.argStr(0));
+      return;
+    }
+    if (path == "skydome.skytexture") {
+      level_.sky.texture = skyTexturePath(command.argStr(0));
+      return;
+    }
+    if (path == "skydome.cloudtexture") {
+      level_.sky.cloudTexture = skyTexturePath(command.argStr(0));
+      return;
+    }
+    if (path == "skydome.cloudtexture2") {
+      level_.sky.cloudTexture2 = skyTexturePath(command.argStr(0));
+      return;
+    }
+    if (path == "skydome.flaretexture") {
+      level_.sky.flareTexture = skyTexturePath(command.argStr(0));
+      return;
+    }
+    if (path == "skydome.domerotation") {
+      level_.sky.domeRotation = command.argFloat(0).value_or(0.0f);
+      return;
+    }
+    if (path == "skydome.hascloudlayer") {
+      level_.sky.hasCloudLayer = command.argInt(0).value_or(0) != 0;
+      return;
+    }
+    if (path == "skydome.hascloudlayer2") {
+      level_.sky.hasCloudLayer2 = command.argInt(0).value_or(0) != 0;
+      return;
+    }
+    if (path == "skydome.scrolldirection") {
+      parseSlashList(command.argStr(0), level_.sky.scrollDirection, 2);
+      return;
+    }
+    if (path == "skydome.scrolldirection2") {
+      parseSlashList(command.argStr(0), level_.sky.scrollDirection2, 2);
+      return;
+    }
+    if (path == "skydome.fadeclouddistances" || path == "skydome.fadeclouddsdistances" ||
+        path == "skydome.fadecloudsdistances") {
+      parseSlashList(command.argStr(0), level_.sky.fadeCloudsDistances, 2);
+      return;
+    }
+    if (path == "skydome.cloudlerpfactors") {
+      parseSlashList(command.argStr(0), level_.sky.cloudLerpFactors, 2);
+      return;
+    }
+    if (path == "skydome.flaredirection") {
+      if (const auto direction = command.argVec3(0)) {
+        level_.sky.flareDirection = Vec3f{direction->x, direction->y, direction->z};
       }
       return;
     }
@@ -562,6 +639,37 @@ std::vector<TerrainPatch> buildTerrainPatches(const Level& level, const FileSyst
     }
   }
   return patches;
+}
+
+std::optional<mesh::RenderMesh> buildSkyDome(const Level& level, const FileSystem& files) {
+  if (level.sky.domeTemplate.empty()) return std::nullopt;
+
+  // Where the template lives is named by the level's own Sky.con:
+  //
+  //   run /Common/Sky/SkyDome/skydome.con
+  //   Skydome.skyTemplate skydome
+  //
+  // and its geometry sits beside it in `Meshes/`, the way every other
+  // ObjectTemplate's does.
+  const std::string path =
+      "common/sky/" + level.sky.domeTemplate + "/meshes/" + level.sky.domeTemplate + ".staticmesh";
+  const auto bytes = files.read(path);
+  if (!bytes) return std::nullopt;
+  const auto parsed = mesh::load(*bytes, mesh::Kind::Static);
+  if (!parsed) return std::nullopt;
+  auto dome = mesh::extract(*parsed, 0, 0);
+  if (!dome || dome->ranges.empty()) return std::nullopt;
+
+  // The mesh carries a default sky (`skyclear01.dds`); the level replaces it
+  // through `Skydome.skyTexture`. Slot 0 is the base colour of its
+  // `BaseDetail` material, so that is the one to swap — leaving the detail
+  // behind would multiply the sky by a cloud tile it was not meant to have.
+  if (!level.sky.texture.empty()) {
+    for (mesh::DrawRange& range : dome->ranges) {
+      range.maps.assign(1, level.sky.texture);
+    }
+  }
+  return dome;
 }
 
 mesh::RenderMesh buildWaterPlane(const Level& level) {

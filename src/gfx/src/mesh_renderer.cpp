@@ -53,14 +53,24 @@ struct Uniforms {
     float4 sunColor;   // TerrainSunColor
     float4 skyColor;   // TerrainSkyColor
     // x: multiply the detail map in (a mesh material with a Detail channel);
-    // y: take the alpha from the texture rather than 1 (the road pass).
+    // y: take the alpha from the texture rather than 1 (the road pass);
+    // z: the sky dome — unlit, and projected with a w of 10 (see below).
     float4 material;
 };
 
 vertex VertexOut vertex_main(VertexIn in [[stage_in]],
                              constant Uniforms& uniforms [[buffer(0)]]) {
     VertexOut out;
-    out.position = uniforms.modelViewProjection * float4(in.position, 1.0);
+    // The sky dome is projected with a w of 10 rather than 1 — the original's
+    // own trick (`Shaders_client.zip:SkyDome.fx:100`,
+    // `vec4 posScaled = vec4(input.Pos.xyz, 10.0); //plo: fix for artifacts`).
+    // Scaling the clip vector uniformly leaves the NDC untouched, so this draws
+    // the dome as though it were a tenth of its size around the camera: an
+    // 878-unit dome becomes 88, and it stops being cut by the far plane. Ours
+    // is the fog's end — 135 on Strike at Karkand — so without this the horizon
+    // ring falls outside it.
+    const float w = uniforms.material.z > 0.5 ? 10.0 : 1.0;
+    out.position = uniforms.modelViewProjection * float4(in.position, w);
     out.normal = in.normal;
     out.uv = in.uv;
     out.uv2 = in.uv2;
@@ -117,6 +127,10 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
         float lambert = dot(normal, lightDirection) * 0.5 + 0.5;
         light = float3(0.35 + 0.65 * lambert);
     }
+
+    // `SkyDome.fx` samples the sky texture and returns it — the dome carries
+    // its own sky, painted, and nothing lights it.
+    if (in.material.z > 0.5) light = float3(1.0);
 
     float3 color = albedo.rgb * light;
 
@@ -255,6 +269,7 @@ MeshRenderer::~MeshRenderer() {
   if (placeholder_ != nullptr) SDL_ReleaseGPUTexture(gpu, placeholder_);
   if (overlayPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, overlayPipeline_);
   if (roadPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, roadPipeline_);
+  if (skyPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, skyPipeline_);
   if (sampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, sampler_);
   if (overlaySampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, overlaySampler_);
   if (pipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, pipeline_);
@@ -342,15 +357,38 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   roadInfo.depth_stencil_state.enable_depth_write = false;
   SDL_GPUGraphicsPipeline* roadPipeline = SDL_CreateGPUGraphicsPipeline(gpu, &roadInfo);
 
+  // The sky dome is the background: drawn first, with no depth at all, so
+  // everything after it paints over.
+  //
+  // This is **not** the original's state. `SkyDome.fx:226`, technique
+  // SkyDomeNV3xNoClouds, keeps `ZWriteEnable = TRUE, ZFunc = LESSEQUAL` and its
+  // vertex shader projects the dome with a w of 10 rather than 1
+  // (`SkyDome.fx:100`, "fix for artifacts on BFO"), which pulls an 878-unit
+  // dome in to an effective 88. That ordering depends on the engine's view
+  // distance, which we do not have — our far plane is the fog's end. Drawn
+  // first with no depth the picture is the same while nothing may stand behind
+  // the sky, and the deviation is here in writing rather than in a number.
+  //
+  // The dome is not culled either: we look at it from inside, and 1120
+  // triangles are not worth establishing which way the winding turns under our
+  // left-handed conversion.
+  SDL_GPUGraphicsPipelineCreateInfo skyInfo = info;
+  skyInfo.depth_stencil_state.enable_depth_test = false;
+  skyInfo.depth_stencil_state.enable_depth_write = false;
+  skyInfo.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+  SDL_GPUGraphicsPipeline* skyPipeline = SDL_CreateGPUGraphicsPipeline(gpu, &skyInfo);
+
   SDL_ReleaseGPUShader(gpu, vertexShader);
   SDL_ReleaseGPUShader(gpu, fragmentShader);
   if (pipeline == nullptr) return fail("graphics pipeline");
   if (roadPipeline == nullptr) return fail("road pipeline");
+  if (skyPipeline == nullptr) return fail("sky pipeline");
 
   auto renderer = std::unique_ptr<MeshRenderer>(new MeshRenderer());
   renderer->device_ = &device;
   renderer->pipeline_ = pipeline;
   renderer->roadPipeline_ = roadPipeline;
+  renderer->skyPipeline_ = skyPipeline;
 
   // The second pipeline is for the interface: no depth (the call order decides
   // that), but with alpha blending, without which the font's glyphs would be
@@ -706,17 +744,25 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
   uniforms.skyColor[1] = terrainSky_.g;
   uniforms.skyColor[2] = terrainSky_.b;
 
-  // Two passes over the same list. The roads go second and through their own
-  // pipeline: they are a skin on the terrain, not geometry of their own.
-  auto drawLayer = [&](bool roads) {
+  // Three passes over the same list, each through its own pipeline: the sky is
+  // the background, then everything solid, then the roads as a skin on the
+  // terrain.
+  enum class Layer { Sky, Solid, Road };
+  auto layerOf = [](const DrawItem& item) {
+    if (item.sky) return Layer::Sky;
+    return item.road ? Layer::Road : Layer::Solid;
+  };
+  auto drawLayer = [&](Layer wanted) {
     for (const DrawItem& item : items) {
-      if (item.road != roads) continue;
+      if (layerOf(item) != wanted) continue;
       if (item.mesh == nullptr || item.mesh->vertices == nullptr) continue;
 
       Mat4 transform = item.transform;
       if (item.road) transform.m[13] += kRoadLift;
 
-      if (item.mesh->boundsRadius > 0.0f) {
+      // The sky is always around the camera, so culling it can only ever get
+      // it wrong.
+      if (!item.sky && item.mesh->boundsRadius > 0.0f) {
         const Vec3f center = transformPoint(transform, item.mesh->boundsCenter);
         if (!frustum.intersectsSphere(center, item.mesh->boundsRadius)) {
           ++culled_;
@@ -733,6 +779,10 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
       const Mat4 modelViewProjection = viewProjection * transform;
       std::memcpy(uniforms.modelViewProjection, modelViewProjection.m, sizeof(Mat4));
       uniforms.material[1] = item.road ? 1.0f : 0.0f;
+      uniforms.material[2] = item.sky ? 1.0f : 0.0f;
+      // No fog on the sky: the dome's texture already holds the horizon the fog
+      // fades into. `SkyDome.fx` computes none either.
+      uniforms.fogParams[1] = item.sky ? 0.0f : fog_.end;
 
       for (const GpuMesh::Range& range : item.mesh->ranges) {
         if (range.indexCount == 0) continue;
@@ -758,10 +808,12 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
     }
   };
 
+  SDL_BindGPUGraphicsPipeline(pass, skyPipeline_);
+  drawLayer(Layer::Sky);
   SDL_BindGPUGraphicsPipeline(pass, pipeline_);
-  drawLayer(false);
+  drawLayer(Layer::Solid);
   SDL_BindGPUGraphicsPipeline(pass, roadPipeline_);
-  drawLayer(true);
+  drawLayer(Layer::Road);
 
   SDL_EndGPURenderPass(pass);
 }

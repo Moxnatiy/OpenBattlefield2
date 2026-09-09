@@ -79,6 +79,10 @@ class MeshRenderer {
     // centimetre, blended by its texture's alpha and does not write depth.
     // Drawn like everything else it fights the terrain for the same pixels.
     bool road = false;
+    // The sky dome. Drawn first, unlit, unfogged and with no depth at all: it
+    // is the background everything else is painted over. The caller places it
+    // around the camera.
+    bool sky = false;
   };
 
   // The fog comes from the level's data (Sky.con). fogEnd == 0 disables it.
@@ -118,6 +122,7 @@ class MeshRenderer {
   Device* device_ = nullptr;
   SDL_GPUGraphicsPipeline* pipeline_ = nullptr;
   SDL_GPUGraphicsPipeline* roadPipeline_ = nullptr;
+  SDL_GPUGraphicsPipeline* skyPipeline_ = nullptr;
   SDL_GPUGraphicsPipeline* overlayPipeline_ = nullptr;
   SDL_GPUSampler* sampler_ = nullptr;
   // A separate sampler for the interface: there a texture is never tiled, and
