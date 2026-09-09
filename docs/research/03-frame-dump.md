@@ -27,36 +27,24 @@ richer `geom` line (stride, per-quad rectangles, the first and last
 vertex) lived only in the working tree for a while and was nearly lost to
 an update.
 
-## The checkout is pinned to b37f18d, on purpose
+## The checkout follows upstream's `main`
 
-`reference/mtld3d` sits on a branch called `openbf2-pinned` at **b37f18d**,
-not on upstream's `main`. Moving it to `02622eb` (294 commits later, past
-v0.8.0) broke the picture in the game: **smoke turned purple and the
-leaves on trees came out deformed**. Both are upstream's, not ours — our
-patches only add logging and read vertex data, they write nothing.
+`reference/mtld3d` sits on a branch called `openbf2-dev` tracking
+upstream's `main`, currently **02622eb** (past v0.8.0). Our three patches
+are kept applicable to it; when upstream moves, re-cut them.
 
-The suspects, from the commits in that range that touch shader translation:
+It was briefly pinned to the older `b37f18d` instead. Purple smoke and
+deformed leaves on trees had appeared, and the update looked like the
+cause — 294 commits had gone by, several of them in shader translation.
+That reading was wrong: the same artefacts are there on `b37f18d` too, so
+the update neither caused them nor fixes them, and there is no reason to
+sit on an old tree. The pin is gone.
 
-| commit | why it fits |
-|---|---|
-| `5be21e4` Apply sampler swizzles to texture sample results | a wrong swizzle turns a texture's channels round, which is what purple smoke looks like |
-| `e55f04a` Give vs_1_1 expp its four-component result | vegetation is animated in the vertex shader |
-| `9aa8e7f` Honor predicates on mova address writes | same shader, address registers |
-| `568ef66` Translate predicate-based shader flow control | same |
-| `626ecbd` Preserve components masked by SM3 predicates | same |
-
-Narrowing it further means a bisect, and every step costs a cross-build
-and a run of the game. Worth doing before reporting it upstream, not
-before the next thing we actually need.
-
-## How to take one
-
-1. Start the game: `BF2_LEVEL=dalian_plant BF2_RES=800x600 tools/bf2_run.sh`
-2. In the game press **Ctrl+Shift+D** — three consecutive frames are taken.
-3. The `[dump]` lines land in the launch log.
-
-(`F12` in the same place starts a full Metal GPU capture into `.gputrace`,
-but for the layout it is overkill.)
+What the artefacts actually are is still open. Both are ours to
+investigate, not upstream's to be told about, until we can say which draw
+call goes wrong — a bug report that amounts to "smoke is the wrong colour"
+helps nobody. The dump is the tool for it: smoke is a particle pass and
+the leaves are vegetation, so both have a handful of draws to look at.
 
 ## What was missing and what was added
 
