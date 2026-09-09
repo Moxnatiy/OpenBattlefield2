@@ -174,16 +174,20 @@ out of the game's files**.
 
 ### 10a. The repository is in English
 
-Everything published — code comments, `docs/`, `README.md`, this file —
-is written in **English**, in technical language. Ukrainian remains for
-the conversation with the maintainer and for commit messages.
+**Everything the repository carries is in English.** Code comments,
+`docs/`, `README.md`, this file, **commit messages**, and every string the
+programs print — logs, diagnostics, `--help`, the output of the tools in
+`tools/`. If it ends up in a file or on a terminal, it is English.
+
+The conversation with the maintainer is the one exception: it goes in
+whatever language suits, and nothing is translated for it.
 
 The comment format does not change: the address in the binary or the path
 to the data file is named exactly as before (rule 6a).
 
-`tools/translate_comments.py` moves the remaining Ukrainian comments over
-line by line; it refuses to write when a line no longer matches, so a
-stale list fails loudly instead of scrambling the source.
+`tools/translate_comments.py` moves comments over line by line; it refuses
+to write when a line no longer matches, so a stale list fails loudly
+instead of scrambling the source.
 
 ### 11. One thing per file
 
