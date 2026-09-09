@@ -443,3 +443,113 @@ data writes primary first and `Road.fx` samples `detail0: TEXLAYER0` with
 `CLAMP` across and `WRAP` along, which is what a marking strip wants and
 not what a tiling surface wants. `RendDX9.dll` can settle it —
 `BlendFactor` is a string in it.
+
+## The ground's light is a buffer, not a texture lookup
+
+The terrain is not lit in the pass that draws it. BF2 fills a screen-sized
+buffer from the tile's baked light map first, and every pass that needs
+the ground's light reads that buffer back projectively — the terrain
+itself and the roads lying on it.
+
+The fill is `TerrainShader_Hi.fx:588`, and the same pass is written a
+second time as hand-made `ps_1_4` beside the technique
+(`TerrainShader_Hi.fx:630`), which is the version the game actually
+compiles for this technique:
+
+```hlsl
+vec4 lightmap = tex2D(sampler0Clamp, indata.Tex0);
+vec4 light = saturate(lightmap.z * vGIColor * 2) * 0.5;
+light.w = lightmap.y;            // or the shadow map, where it is nearer
+```
+
+```
+ps_1_4
+texld r1, t0
+mul r0.xyz, r1.z, c0     // rgb = lightmap.b * vGIColor
++mov_sat r0.w, r1.y      // a   = saturate(lightmap.g)
+```
+
+So **green is the sun and blue is the sky**; the red channel no terrain
+pass reads. We had the sun on red, and on Karkand's tiles red is nearly
+binary — 65% of texels at 0 and 30% at 240 — so the ground had hard
+shadows in the wrong places while the soft term in green went unused.
+The measured channel means of `lightmaps/tx02x02.dds`, decoded texel by
+texel: R 80, G 128 (30% at 0, 61% at 192), B 178.
+
+The two consumers reduce to one expression. The terrain
+(`TerrainShader_Hi.fx:81`, and the hand-written `ps_1_4` of the same pass
+at :755, `mad r5.xyz, r0_x2.w, c2, r0` then `lrp r0.xyz, v0.x, r0_x2, c0`):
+
+```hlsl
+vec4 accumlights = tex2Dproj(sampler1Clamp, indata.Tex1);
+vec3 light = 2*accumlights.w * vSunColor.rgb + accumlights.rgb;
+vec3 outColor = detailout * colormap * light;
+//tl: this 2* is the one missing from the light calculation above!
+vec3 fogOutColor = lerp(FogColor, outColor*2, indata.FogAndFade2.x);
+```
+
+and the road (`RoadCompiled.fx:127`):
+
+```hlsl
+vec4 accumlights = tex2Dproj(sampler2, indata.PosTex);
+vec4 light = ((accumlights.w * vSunColor*2) + accumlights)*2;
+final.rgb *= light.xyz;
+```
+
+Both are `4·a·SunColor + 2·rgb`. `detailout` is the terrain material
+system's tiling detail, whose neutral value is one — the game builds it
+that way (`lerp(0.5, …) * 4 * lerp(0.5, …)`) — so a renderer without that
+system leaves it out and changes nothing.
+
+**Done.** `obf2::gfx::TerrainLightBuffer` is that pass, in its own file;
+`MeshRenderer` runs it before the scene and reads it back by screen
+position, which is what `tex2Dproj` of a clip position amounts to.
+
+**Not established.** With the level's own numbers this comes out brighter
+than the original looks: on Strike at Karkand a sunlit texel is
+`0.48 · (4·0.75·0.75 + 1) = 1.6`, which clips. Either the engine uploads
+something other than the raw `terrain.sunColor` / `terrain.GIColor` into
+`vSunColor` / `vGIColor`, or the near and far terrain passes compose
+differently than reading them apart suggests. Measure: a frame dump of
+the original that reads the pixel shader constants `c0` and `c2` in the
+terrain's passes, and the setter in `RendDX9.dll` behind the `SUNCOLOR` /
+`GICOLOR` handles (cached at `+0x58`/`+0x5c` of the road effect wrapper,
+`FUN_10144b90`, 0x10144b90).
+
+## Which of the two terrain colours the game reads
+
+Sky.con sets the terrain's pair twice, under a condition:
+
+```
+if v_arg1 == BF2Editor
+  LightSettings.TerrainSunColor 0.75/0.71/0.57
+  LightSettings.TerrainSkyColor 0.73/0.64/0.33
+else
+  terrain.sunColor 0.75/0.71/0.57
+  terrain.GIColor  0.73/0.64/0.33
+endIf
+```
+
+`v_arg1` is the editor's own argument, so **the game runs the `else`** and
+the `terrain.*` pair is the one that matters; the `LightSettings.*` names
+are the editor's spelling of the same two numbers. We read only the
+editor's branch, so every level was lit by our defaults instead of by its
+own data. Both spellings are read now.
+
+The names are properties of the `terrain` object in `RendDX9.dll` —
+`GIColor` is registered there as a `Vec3` (`FUN_100b6b43`, 0x100b6b43),
+alongside `SunColorLow`/`SunColorHigh` and `GIColorLow`/`GIColorHigh`,
+which no level in the game sets.
+
+## The compiled road tiles its surface ten times more slowly
+
+`RoadCompiled.fx:126` scales the second UV set on the way into the
+sampler:
+
+```hlsl
+vec4 t1 = tex2D(sampler1, indata.Tex1*0.1);
+```
+
+The editor's `Road.fx` does not. A level ships compiled roads
+(`Roads/*_compiled.mesh`), so the tenth applies: without it the asphalt
+under the markings is a stripe pattern instead of a surface.

@@ -12,6 +12,10 @@
 
 namespace obf2::gfx {
 
+// The off-screen buffer the ground's light is drawn into before anything is
+// lit by it. Declared here, defined in `obf2/gfx/terrain_light.h`.
+class TerrainLightBuffer;
+
 // Geometry uploaded into video memory.
 struct GpuMesh {
   // One draw call: a range of indices plus its texture.
@@ -166,6 +170,11 @@ class MeshRenderer {
   // one-pixel dark line.
   SDL_GPUSampler* overlaySampler_ = nullptr;
   SDL_GPUTexture* placeholder_ = nullptr;  // a white 1x1 for materials with no texture
+  // The ground's light, filled once per frame before the scene is drawn. Null
+  // when the device would not give us the pass; then the terrain falls back to
+  // reading its light map directly and the roads to the static-mesh formula,
+  // which is where they were before.
+  std::unique_ptr<TerrainLightBuffer> terrainLight_;
   std::vector<SDL_GPUTexture*> sharedTextures_;
   Fog fog_;
   Color terrainSun_{1.0f, 1.0f, 1.0f, 1.0f};

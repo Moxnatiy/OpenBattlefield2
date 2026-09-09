@@ -219,13 +219,15 @@ class LevelBuilder {
       }
       return;
     }
-    if (path == "lightsettings.terrainsuncolor") {
+    // Two spellings of the same pair: `LightSettings.*` in the editor's branch
+    // of Sky.con and `terrain.*` in the game's. See TerrainInfo for the block.
+    if (path == "lightsettings.terrainsuncolor" || path == "terrain.suncolor") {
       if (const auto color = command.argVec3(0)) {
         level_.terrain.terrainSunColor = Vec3f{color->x, color->y, color->z};
       }
       return;
     }
-    if (path == "lightsettings.terrainskycolor") {
+    if (path == "lightsettings.terrainskycolor" || path == "terrain.gicolor") {
       if (const auto color = command.argVec3(0)) {
         level_.terrain.terrainSkyColor = Vec3f{color->x, color->y, color->z};
       }

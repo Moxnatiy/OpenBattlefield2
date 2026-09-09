@@ -2,6 +2,7 @@
 
 #include <cstring>
 
+#include "obf2/gfx/terrain_light.h"
 #include "obf2/mesh/material.h"
 
 namespace obf2::gfx {
@@ -88,6 +89,10 @@ struct Uniforms {
     float4 fogShape;
     // x: a road's blend factor, how hard its markings sit over the tiling
     // surface under them (`RoadTemplate.SetBlendFactor`).
+    // zw: the render target's size in pixels. The terrain's light buffer is
+    // read by screen position, the way the game reads it — `tex2Dproj` of the
+    // clip position (`Shaders_client.zip:RoadCompiled.fx:127`) — and a fragment
+    // shader in Metal is handed that position in pixels, not normalised.
     float4 roadParams;
 };
 
@@ -135,9 +140,11 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
                               texture2d<float> baseColor [[texture(0)]],
                               texture2d<float> lightmap [[texture(1)]],
                               texture2d<float> detail [[texture(2)]],
+                              texture2d<float> terrainLight [[texture(3)]],
                               sampler baseSampler [[sampler(0)]],
                               sampler lightSampler [[sampler(1)]],
-                              sampler detailSampler [[sampler(2)]]) {
+                              sampler detailSampler [[sampler(2)]],
+                              sampler terrainLightSampler [[sampler(3)]]) {
     float4 albedo = baseColor.sample(baseSampler, in.uv);
 
     // Leaves, fences, grates: the shape is cut out of the base map's alpha.
@@ -166,8 +173,14 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
     // on its second — and the per-vertex alpha is what fades a road's edge
     // into the terrain. We drew the markings alone on one set and let the edges
     // end square.
+    //
+    // The compiled road, which is what a level ships, scales that second set by
+    // a tenth on the way in (`RoadCompiled.fx:126`,
+    // `tex2D(sampler1, indata.Tex1*0.1)`), so the surface tiles ten times more
+    // slowly than the numbers in the mesh say. Without it the asphalt is a
+    // stripe pattern instead of a surface.
     if (in.material.y > 0.5) {
-        float4 surface = detail.sample(detailSampler, in.uv2);
+        float4 surface = detail.sample(detailSampler, in.uv2 * 0.1);
         albedo.rgb = mix(surface.rgb, albedo.rgb, saturate(in.roadParams.x));
     }
 
@@ -182,12 +195,74 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
     }
 
     float3 light;
-    if (in.fogParams.z > 0.5) {
-        // Terrain: in BF2's light map the red channel is exposure to the sun and
-        // the blue one to the sky. Each is multiplied by its own colour from
-        // Sky.con, which is why TerrainSunColor can exceed one: it brightens.
+    if (in.fogParams.z > 1.5) {
+        // The ground's light, read back out of the buffer it was drawn into —
+        // for the terrain itself and for the roads lying on it. The buffer is
+        // `obf2::gfx::TerrainLightBuffer`, which holds the game's own
+        // ZFillLightmap pass; here is the other half, the two places that
+        // consume it.
+        //
+        // The terrain (`Shaders_client.zip:TerrainShader_Hi.fx:81`):
+        //
+        //     vec4 accumlights = tex2Dproj(sampler1Clamp, indata.Tex1);
+        //     vec3 light = 2*accumlights.w * vSunColor.rgb + accumlights.rgb;
+        //     vec3 outColor = detailout * colormap * light;
+        //     //tl: this 2* is the one missing from the light calculation above!
+        //     vec3 fogOutColor = lerp(FogColor, outColor*2, indata.FogAndFade2.x);
+        //
+        // and the road (`Shaders_client.zip:RoadCompiled.fx:127`):
+        //
+        //     vec4 accumlights = tex2Dproj(sampler2, indata.PosTex);
+        //     vec4 light = ((accumlights.w * vSunColor*2) + accumlights)*2;
+        //     final.rgb *= light.xyz;
+        //
+        // Both come to the same expression — 4·a·SunColor + 2·rgb — so there is
+        // one branch for the two. `sunColor` here is the terrain's pair
+        // (`terrain.sunColor`), which the CPU pushes for both.
+        float2 screenUv = in.position.xy / max(in.roadParams.zw, float2(1.0, 1.0));
+        float4 accum = terrainLight.sample(terrainLightSampler, screenUv);
+        light = 4.0 * accum.a * in.sunColor.rgb + 2.0 * accum.rgb;
+
+        // What is left out of the terrain's line is `detailout`, the tiling
+        // detail textures, which need the terrain material system we do not
+        // have. Its neutral value is one: the game builds it so
+        // (`TerrainShader_Hi.fx:90`, `lerp(0.5, …) * 4 * lerp(0.5, …)`), and
+        // where a level's masks are zero it is exactly one.
+    } else if (in.fogParams.z > 0.5) {
+        // Terrain. The game draws it in several passes: one fills an
+        // accumulation buffer from the tile's baked light map, and the colour
+        // pass reads that buffer back projectively
+        // (`Shaders_client.zip:TerrainShader_Hi.fx:588` and
+        // `TerrainShader_Shared.fx:170`):
+        //
+        //   accum.rgb = saturate(lightmap.z * vGIColor * 2) * 0.5;
+        //   accum.w   = lightmap.y;                  // or the shadow map, when nearer
+        //   light     = 2 * accum.w * vSunColor + accum.rgb;
+        //   outColor  = colormap * light * 2;
+        //
+        // The same pass exists as hand-written ps_1_4 next to the technique
+        // (TerrainShader_Hi.fx:630) and says it without the doublings, since
+        // those constants are uploaded halved for 1.x:
+        //
+        //   texld r1, t0
+        //   mul r0.xyz, r1.z, c0     // rgb = lightmap.b * vGIColor
+        //   +mov_sat r0.w, r1.y      // a   = saturate(lightmap.g)
+        //
+        // So the sun rides the light map's **green** channel and the sky its
+        // blue; the red one is not read by any terrain pass. We had the sun on
+        // red, which is why the ground had shadows in the wrong places: on
+        // Karkand's tiles red is nearly binary (endpoints cluster at 0 and 255)
+        // while green carries the soft sun term.
         float3 baked = lightmap.sample(lightSampler, in.uv).rgb;
-        light = in.sunColor.rgb * baked.r + in.skyColor.rgb * baked.b;
+        light = 2.0 * baked.g * in.sunColor.rgb +
+                0.5 * saturate(2.0 * baked.b * in.skyColor.rgb);
+        // `colormap * light * 2` is the first half of Shared_PS_LowDetail. The
+        // rest of that line — `* lerp(yplaneLowDetailmap.x, .z, blend)` and a
+        // final `* 2` — is the low-detail texture, which needs the terrain
+        // material system we do not have. The two are left out together: the
+        // detail texture is centred on mid-grey, so dropping it and keeping its
+        // doubling would brighten the whole ground by two.
+        light *= 2.0;
 
         // The detail map is NOT multiplied in here. It turned out to be not a
         // colour but a weight map: the R/G/B channels give the shares of the
@@ -382,7 +457,7 @@ SDL_GPUShader* createShader(SDL_GPUDevice* gpu, SDL_GPUShaderStage stage, const 
   info.format = SDL_GPU_SHADERFORMAT_MSL;
   info.stage = stage;
   info.num_uniform_buffers = isVertex ? 1 : 0;
-  info.num_samplers = isVertex ? 0 : 3;  // colour, light map, detail
+  info.num_samplers = isVertex ? 0 : 4;  // colour, light map, detail, the ground's light
   return SDL_CreateGPUShader(gpu, &info);
 }
 
@@ -554,6 +629,12 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   renderer->pipeline_ = pipeline;
   renderer->roadPipeline_ = roadPipeline;
   renderer->skyPipeline_ = skyPipeline;
+
+  // The ground's light. Its own pass, its own file: what it is and what the
+  // game does with it is in `obf2/gfx/terrain_light.h`. A failure here is not
+  // fatal — the terrain then reads its light map directly and the roads take
+  // the static-mesh formula, which is what they had before.
+  renderer->terrainLight_ = TerrainLightBuffer::create(device);
 
   // The second pipeline is for the interface: no depth (the call order decides
   // that), but with alpha blending, without which the font's glyphs would be
@@ -881,6 +962,14 @@ void MeshRenderer::render(const Frame& frame, const GpuMesh& gpuMesh,
 
 void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& items,
                                const Mat4& viewProjection, Color clearColor) {
+  // First the ground's light, into a buffer of its own — the game's own order:
+  // its terrain's ZFillLightmap pass runs before anything that reads the light
+  // (`Shaders_client.zip:TerrainShader_Hi.fx:607`, pass p0). Everything lit by
+  // the ground samples the result by screen position afterwards.
+  SDL_GPUTexture* groundLight =
+      terrainLight_ != nullptr ? terrainLight_->render(frame, items, viewProjection, terrainSky_)
+                               : nullptr;
+
   SDL_GPUTexture* depth = device_->acquireDepthTarget(frame.width, frame.height);
 
   SDL_GPUColorTargetInfo colorTarget{};
@@ -922,6 +1011,10 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
   uniforms.pointColor[0] = pointColor_.r;
   uniforms.pointColor[1] = pointColor_.g;
   uniforms.pointColor[2] = pointColor_.b;
+  // The size of what we are drawing into: the ground's light is read back by
+  // screen position, and Metal hands the fragment shader that position in pixels.
+  uniforms.roadParams[2] = static_cast<float>(frame.width);
+  uniforms.roadParams[3] = static_cast<float>(frame.height);
 
   // Three passes over the same list, each through its own pipeline: the sky is
   // the background, then everything solid, then the roads as a skin on the
@@ -986,21 +1079,28 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
         // anyway.
         const bool baked = item.lightmap != nullptr && item.mesh->hasLightmapUv;
         SDL_GPUTexture* lightmapTexture = baked ? item.lightmap : range.lightmap;
-        const SDL_GPUTextureSamplerBinding bindings[3] = {
+        const SDL_GPUTextureSamplerBinding bindings[4] = {
             {range.texture != nullptr ? range.texture : placeholder_, sampler_},
             {lightmapTexture != nullptr ? lightmapTexture : placeholder_, sampler_},
             {range.detail != nullptr ? range.detail : placeholder_, sampler_},
+            {groundLight != nullptr ? groundLight : placeholder_,
+             groundLight != nullptr ? terrainLight_->readSampler() : sampler_},
         };
-        SDL_BindGPUFragmentSamplers(pass, 0, bindings, 3);
+        SDL_BindGPUFragmentSamplers(pass, 0, bindings, 4);
 
         // The lighting mode changes from range to range, so the uniform is pushed
         // before every draw call.
         // Which branch of the shader draws this range — and with it, which pair
       // of light colours it means by sunColor/skyColor.
+      // 0 — a static mesh, lit by the sun and the sky directly; 1 — terrain,
+      // reading its own light map (only when there is no buffer to read
+      // instead); 2 — lit by the ground's light buffer, which is both the
+      // terrain and the roads lying on it.
       const bool terrain = range.lightmap != nullptr;
-      uniforms.fogParams[2] = terrain ? 1.0f : 0.0f;
-      const Color& sun = terrain ? terrainSun_ : staticSun_;
-      const Color& sky = terrain ? terrainSky_ : staticSky_;
+      const bool fromGround = groundLight != nullptr && (terrain || item.road);
+      uniforms.fogParams[2] = fromGround ? 2.0f : (terrain ? 1.0f : 0.0f);
+      const Color& sun = (terrain || fromGround) ? terrainSun_ : staticSun_;
+      const Color& sky = (terrain || fromGround) ? terrainSky_ : staticSky_;
       uniforms.sunColor[0] = sun.r;
       uniforms.sunColor[1] = sun.g;
       uniforms.sunColor[2] = sun.b;

@@ -1,6 +1,7 @@
 add_library(obf2_gfx
   src/device.cpp
   src/mesh_renderer.cpp
+  src/terrain_light.cpp
 )
 add_library(obf2::gfx ALIAS obf2_gfx)
 

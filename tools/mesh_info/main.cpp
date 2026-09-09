@@ -206,6 +206,54 @@ int main(int argc, char** argv) {
     return 0;
   }
 
+  // Which shader every material asks for. The mesh names its own `.fx` file, so
+  // the engine does not have to guess how a surface is lit: leaves say
+  // `RaShaderLeaf.fx`, walls say `RaShaderSTM.fx`, and the two are lit by
+  // different formulas. This mode prints the whole corpus's distribution and,
+  // for each file, one mesh that uses it so the claim can be checked by hand.
+  if (what == "--fx") {
+    std::map<std::string, int> byFx;
+    std::map<std::string, std::string> firstMesh;
+    std::map<std::string, std::map<std::string, int>> techniquesOfFx;
+
+    auto scan = files.list();
+    std::sort(scan.begin(), scan.end());
+    scan.erase(std::unique(scan.begin(), scan.end()), scan.end());
+
+    for (const auto& path : scan) {
+      if (obf2::assetExtension(path) != "staticmesh") continue;
+      const auto bytes = files.read(path);
+      if (!bytes) continue;
+      const auto mesh = obf2::mesh::load(*bytes, obf2::mesh::Kind::Static);
+      if (!mesh) continue;
+      for (const auto& geometry : mesh->geometries) {
+        for (const auto& lod : geometry.lods) {
+          for (const auto& material : lod.materials) {
+            ++byFx[material.fxFile];
+            ++techniquesOfFx[material.fxFile][material.technique];
+            firstMesh.emplace(material.fxFile, path);
+          }
+        }
+      }
+    }
+
+    std::vector<std::pair<std::string, int>> sorted(byFx.begin(), byFx.end());
+    std::sort(sorted.begin(), sorted.end(), [](auto& a, auto& b) { return a.second > b.second; });
+    std::puts("fxFile over every .staticmesh in the mod:");
+    for (const auto& [fx, count] : sorted) {
+      std::printf("  %-28s %6d   %s\n", fx.c_str(), count, firstMesh[fx].c_str());
+      const auto& techniques = techniquesOfFx[fx];
+      std::vector<std::pair<std::string, int>> byCount(techniques.begin(), techniques.end());
+      std::sort(byCount.begin(), byCount.end(),
+                [](auto& a, auto& b) { return a.second > b.second; });
+      for (std::size_t i = 0; i < byCount.size() && i < 4; ++i) {
+        std::printf("      %-24s %6d\n", byCount[i].first.c_str(), byCount[i].second);
+      }
+      if (byCount.size() > 4) std::printf("      ... %zu more techniques\n", byCount.size() - 4);
+    }
+    return 0;
+  }
+
   // Reconnaissance: which techniques occur and what lies in each texture slot.
   // Needed to work out which slot to take for the base colour.
   if (what == "--materials") {

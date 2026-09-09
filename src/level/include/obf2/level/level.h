@@ -56,9 +56,24 @@ struct TerrainInfo {
   Vec3f ambientColor{0.9f, 0.9f, 0.9f};
   Vec3f sunColor{1.0f, 1.0f, 1.0f};
 
-  // LightSettings.TerrainSunColor / TerrainSkyColor — the terrain's baked light
-  // map is multiplied by exactly these. The values can exceed 1: they do not
-  // merely tint, they brighten.
+  // The two colours the terrain's baked light map is multiplied by. Sky.con
+  // sets them twice, under a condition, and the game takes the second pair:
+  //
+  //   if v_arg1 == BF2Editor
+  //     LightSettings.TerrainSunColor 0.75/0.71/0.57
+  //     LightSettings.TerrainSkyColor 0.73/0.64/0.33
+  //   else
+  //     terrain.sunColor 0.75/0.71/0.57
+  //     terrain.GIColor  0.73/0.64/0.33
+  //   endIf
+  //
+  // (`levels/strike_at_karkand/server.zip:Sky.con:7`). `v_arg1` is the editor's
+  // own argument, so in the game the `else` runs — the `terrain.*` pair is what
+  // must be read, and the `LightSettings.*` pair is the editor's spelling of the
+  // same two numbers. The shader calls the second one GI, not sky
+  // (`Shaders_client.zip:TerrainShader_Hi.fx:588`, `vGIColor`).
+  //
+  // The values can exceed 1: they do not merely tint, they brighten.
   Vec3f terrainSunColor{1.0f, 1.0f, 1.0f};
   Vec3f terrainSkyColor{0.6f, 0.7f, 0.9f};
 };
