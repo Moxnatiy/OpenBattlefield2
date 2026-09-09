@@ -101,8 +101,17 @@ from the heightmap plus the tile lists, and the patch and chart layout
 comes out the same.
 
 The game terrain's own handle list also names `SINGLEPOINTCOLOR_1X` next
-to `SUNCOLOR`, `GICOLOR` and `AMBIENTCOLOR`. The `_1X` suffix is the thing
-to pull on when establishing whether the engine uploads these colours
-whole or halved — `RaCommon.fx:63` says the constants are "`_d2` on CPU"
-for shaders below 2.0, and the terrain's fill pass is hand-written
-`ps_1_4`.
+to `SUNCOLOR`, `GICOLOR` and `AMBIENTCOLOR`, and the `_1X` was the thread
+worth pulling: these colours are **not** uploaded whole.
+
+| what | where | what it stores |
+|---|---|---|
+| `Terrain::setSunColor` | 0x100db420 | `saturate(colour * 0.25)` at `+0x2e4` |
+| `Terrain::setGIColor` | 0x100db520 | `saturate(colour * 0.5)` at `+0x2f0` |
+| their getters | 0x100db620, 0x100e2fa0 | multiply back by 4 and by 2 |
+| the per-frame push | 0x100d9c30 | those fields into SUNCOLOR / GICOLOR, and `singlePointColor * 0.25` into SINGLEPOINTCOLOR_1X |
+
+The shader undoes both scales, so the ground is lit by one times the
+level's own numbers; the quarter is what keeps a sun like Highway Tampa's
+2.34 inside a constant register. Worked through in
+[../formats/shaders.md](../formats/shaders.md).

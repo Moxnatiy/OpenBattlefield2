@@ -123,13 +123,33 @@ class MeshRenderer {
   };
   void setFog(const Fog& fog) { fog_ = fog; }
 
-  // The colours the terrain's baked light map is multiplied by (the level's LightSettings.*).
   // How many times the detail texture repeats over a terrain patch.
   void setDetailTiling(float tiles) { detailTiling_ = tiles; }
 
+  // The two colours the terrain's baked light map is multiplied by, as the
+  // level's Sky.con writes them: `terrain.sunColor` and `terrain.GIColor`.
+  //
+  // The engine does not hand them to the shader whole. `Terrain::setSunColor`
+  // (`RendDX9.dll`, 0x100db420) keeps `saturate(colour * 0.25)` and
+  // `Terrain::setGIColor` (0x100db520) keeps `saturate(colour * 0.5)`; the
+  // matching getters multiply back by 4 and by 2 (0x100db620, 0x100e2fa0), so
+  // those are storage scales, not tints. What is stored is what is uploaded —
+  // `Terrain`'s per-frame constant push reads exactly those fields into the
+  // SUNCOLOR and GICOLOR handles (0x100d9c30, fields +0x2e4 and +0x2f0).
+  //
+  // The shader's own factors then undo them: `4 * accum.a * vSunColor` and
+  // `2 * accum.rgb` over a buffer that holds `saturate(2 * lightmap.b *
+  // vGIColor) * 0.5`. So the ground is lit by one times the level's numbers,
+  // and the quarter is what keeps a level like Highway Tampa — whose sun is
+  // 2.34/1.72/0.56 — inside a constant register at all.
+  //
+  // We store what the engine uploads, because that is what the shader reads.
+  // The clamp is the engine's too, and it is per component.
   void setTerrainLighting(Color sun, Color sky) {
-    terrainSun_ = sun;
-    terrainSky_ = sky;
+    auto clamp01 = [](float value) { return value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value); };
+    terrainSun_ = Color{clamp01(sun.r * 0.25f), clamp01(sun.g * 0.25f), clamp01(sun.b * 0.25f),
+                        1.0f};
+    terrainSky_ = Color{clamp01(sky.r * 0.5f), clamp01(sky.g * 0.5f), clamp01(sky.b * 0.5f), 1.0f};
   }
 
   // How the level lights everything that is not terrain: the `Lightmanager.*`
@@ -177,8 +197,9 @@ class MeshRenderer {
   std::unique_ptr<TerrainLightBuffer> terrainLight_;
   std::vector<SDL_GPUTexture*> sharedTextures_;
   Fog fog_;
-  Color terrainSun_{1.0f, 1.0f, 1.0f, 1.0f};
-  Color terrainSky_{0.6f, 0.7f, 0.9f, 1.0f};
+  // Already scaled the way the engine stores them — see setTerrainLighting.
+  Color terrainSun_{0.25f, 0.25f, 0.25f, 1.0f};
+  Color terrainSky_{0.3f, 0.35f, 0.45f, 1.0f};
   Color staticSun_{0.8f, 0.8f, 0.8f, 1.0f};
   Color staticSky_{0.3f, 0.35f, 0.4f, 1.0f};
   Vec3f sunDirection_{-0.26f, -0.80f, -0.54f};

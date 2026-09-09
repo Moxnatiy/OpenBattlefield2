@@ -505,16 +505,49 @@ system leaves it out and changes nothing.
 `MeshRenderer` runs it before the scene and reads it back by screen
 position, which is what `tex2Dproj` of a clip position amounts to.
 
-**Not established.** With the level's own numbers this comes out brighter
-than the original looks: on Strike at Karkand a sunlit texel is
-`0.48 · (4·0.75·0.75 + 1) = 1.6`, which clips. Either the engine uploads
-something other than the raw `terrain.sunColor` / `terrain.GIColor` into
-`vSunColor` / `vGIColor`, or the near and far terrain passes compose
-differently than reading them apart suggests. Measure: a frame dump of
-the original that reads the pixel shader constants `c0` and `c2` in the
-terrain's passes, and the setter in `RendDX9.dll` behind the `SUNCOLOR` /
-`GICOLOR` handles (cached at `+0x58`/`+0x5c` of the road effect wrapper,
-`FUN_10144b90`, 0x10144b90).
+## The terrain's colours are uploaded quartered and halved
+
+Taken whole, the expression above overshoots: on Strike at Karkand a
+sunlit texel would be `0.48 · (4·0.75·0.75 + 1) = 1.6`, which clips, and
+on Highway Tampa, whose sun is `2.34/1.72/0.56`, worse. Something had to
+be scaling them, and the binary says what.
+
+`Terrain::setSunColor` (`RendDX9.dll`, 0x100db420) does not store the
+colour it is given:
+
+```
+sun[i] = saturate(colour[i] * 0.25)
+```
+
+and `Terrain::setGIColor` (0x100db520) the same with `0.5`. The matching
+getters multiply back — by 4 (0x100db620) and by 2 (0x100e2fa0) — so this
+is storage, not a tint. What is stored is what is uploaded: the terrain's
+per-frame constant push (0x100d9c30) reads those very fields into the
+SUNCOLOR and GICOLOR handles:
+
+```c
+(**(code **)(**(int **)(this + 0x20c) + 0x18))(this + 0x2e4, 0);  // SUNCOLOR <- sun/4
+(**(code **)(**(int **)(this + 0x210) + 0x18))(this + 0x2f0, 0);  // GICOLOR  <- gi/2
+```
+
+The shader's own factors undo exactly those, so the ground ends up lit by
+**one** times the level's numbers:
+
+```
+light = 4·lightmap.g·saturate(sun/4) + saturate(2·lightmap.b·saturate(gi/2))
+      = lightmap.g·min(sun, 4)       + saturate(lightmap.b·min(gi, 2))
+```
+
+The quarter is what keeps a sun of 2.34 inside a constant register at all,
+and it caps the sun at 4 and the sky at 2 — which no level in the game
+reaches.
+
+The same function scales one more constant at the call site, and names it
+in the shader: `SINGLEPOINTCOLOR_1X` is `Lightmanager.singlePointColor`
+times 0.25.
+
+We store the scaled pair, since that is what the shader reads
+(`MeshRenderer::setTerrainLighting`).
 
 ## Which of the two terrain colours the game reads
 
