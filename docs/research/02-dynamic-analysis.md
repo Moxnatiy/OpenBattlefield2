@@ -1,5 +1,32 @@
 # Dynamic analysis of the original
 
+## The rig, and where each piece comes from
+
+Running the original on arm64 macOS takes three third-party pieces, none of
+them in git (`reference/`, rule 4). What each is and where it comes from,
+because that was nowhere written down and a bare binary in a directory tells
+nobody anything:
+
+| piece | source | what it is for |
+|---|---|---|
+| `reference/x87sidecar` | [athei/x87sidecar](https://github.com/athei/x87sidecar), built from source in `reference/x87sidecar-git` (`v1.6.0-3-g1420e3c`) | Rosetta 2 translates x87 very slowly; this replaces that part with a JIT of its own |
+| `reference/wine-cx` | [athei/wine-build](https://github.com/athei/wine-build) — CrossOver 26.3 with the sidecar handshake | the sidecar only attaches to a Wine that knows about it |
+| `reference/mtld3d` | [athei/mtld3d](https://github.com/athei/mtld3d), pinned to `b37f18d` on a branch `openbf2-pinned` | D3D9 straight into Metal, and the frame dump we read the original with |
+
+x87sidecar is built as the **flat** binary, not `x87sidecar_entitled`: the
+two differ only in the signature, and `ROSETTA_X87_PATH` wants the flat one
+— Wine's loader re-execs each 32-bit process through
+`x87sidecar --cooperative`, which needs no entitlements and no password.
+
+```bash
+cd reference/x87sidecar-git && cmake -B build && cmake --build build
+cp build/bin/x87sidecar ../x87sidecar/x87sidecar
+../x87sidecar/x87sidecar --probe      # is this Rosetta supported?
+```
+
+Why mtld3d is pinned rather than current is in
+[03-frame-dump.md](03-frame-dump.md).
+
 ## The debugger: attaching kills the game
 
 `winedbg attach` to the **32-bit** game in this Wine build (wow64) does

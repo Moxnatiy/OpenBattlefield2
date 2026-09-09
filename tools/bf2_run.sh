@@ -27,7 +27,19 @@
 # * games of those years count in x87, and Rosetta 2 translates it very slowly.
 #   `x87sidecar` replaces that piece of Rosetta with a JIT of its own, running
 #   as a separate arm64 process. It needs a Wine that shakes hands with it —
-#   the athei/wine-build build (the same CrossOver 26.3, only patched);
+#   the athei/wine-build build (the same CrossOver 26.3, only patched).
+#
+#   It comes from https://github.com/athei/x87sidecar and is built from
+#   source into `reference/x87sidecar-git`:
+#
+#       cmake -B build && cmake --build build
+#       cp build/bin/x87sidecar ../x87sidecar/x87sidecar
+#
+#   The **flat** binary, not `x87sidecar_entitled`: the two differ only in
+#   the signature, and the flat one is what `ROSETTA_X87_PATH` wants — Wine's
+#   loader re-execs each 32-bit process through `x87sidecar --cooperative`,
+#   which needs no entitlements and no password (its README, "Building").
+#   `x87sidecar --probe` says whether the installed Rosetta is supported;
 # * graphics is mtld3d (D3D9 straight into Metal), built from the branch:
 #   in release v0.7.0 a texture returns no interface at all
 #   (tools/d3d9_qi_test.c) and the game crashes. Building: tools/mtld3d_build.sh;
