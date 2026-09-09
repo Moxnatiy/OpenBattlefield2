@@ -1,465 +1,468 @@
-# Мережевий протокол BF2: під'єднання
+# BF2's network protocol: connecting
 
-Розібрано за Linux-сервером (`dice::hfe::io::NetServer`) і перевірено на
-живому сервері в контейнері. **Наш клієнт під'єднується до оригінального
-сервера й тримає зв'язок.**
+Taken apart from the Linux server (`dice::hfe::io::NetServer`) and verified
+against a live server in a container. **Our client connects to an original
+server and holds the connection.**
 
-## Базовий заголовок — 12 бітів
+## The basic header — 12 bits
 
 `readBasicHeader` / `writeBasicHeader`:
 
 ```
-4 біти   тип пакета
-8 бітів  номер з'єднання (у клієнта до під'єднання 0)
+4 bits   packet type
+8 bits   connection id (0 in the client before connecting)
 ```
 
-Біти пакуються молодшими вперед — так само, як у нашому `BitStream`.
+Bits are packed low first — the same as in our `BitStream`.
 
-Типи з диспетчера `NetServer::_update`:
+The types from `NetServer::_update`'s dispatcher:
 
-| Тип | Що це |
+| Type | What it is |
 |---|---|
-| 1 | запит на під'єднання |
-| 2 | під'єднання прийнято |
-| 3 | відмова |
-| 4 | підтвердження прийому |
-| 5 | від'єднання |
-| 7 / 8 | пінг: запит і відповідь |
-| 9 | запит відомостей (у виділеному сервері — заглушка) |
-| 15 | дані |
+| 1 | connection request |
+| 2 | connection accepted |
+| 3 | denied |
+| 4 | receipt acknowledged |
+| 5 | disconnect |
+| 7 / 8 | ping: request and reply |
+| 9 | info request (a stub in the dedicated server) |
+| 15 | data |
 
-## Запит на під'єднання (тип 1)
+## The connection request (type 1)
 
-`handleConnectRequest` читає рівно це:
+`handleConnectRequest` reads exactly this:
 
 ```
-u32   0x1002              стала протоколу
-u32   версія гри
-1 біт PunkBuster у клієнта
-u32   токен перепід'єднання
-32 байти пароль
-32 байти тека мода
+u32   0x1002              the protocol constant
+u32   the game's version
+1 bit PunkBuster on the client
+u32   the reconnection token
+32 bytes password
+32 bytes mod directory
 ```
 
-Відмови, які тут можливі: `0x16` заблоковано, `0x1f` потрібен PunkBuster,
-`0x24` інша тека (сервер додає свою до відповіді), `0x11` невірний пароль,
-`0x1e`/`0x02` немає місць, `0x17`/`0x18` клієнт застарий або занадто новий.
+The refusals possible here: `0x16` banned, `0x1f` PunkBuster required, `0x24` a
+different directory (the server adds its own to the reply), `0x11` wrong
+password, `0x1e`/`0x02` no slots, `0x17`/`0x18` the client is too old or too
+new.
 
-## Версія
+## The version
 
-`checkVersion` вимагає, щоб перше число було рівно `0x1002`, а друге
-збігалося з версією сервера. Саме число в даних не лежить, тож знайшли
-його **двійковим пошуком по живому серверу**: він відповідає «застарий»
-(0x17) або «занадто новий» (0x18), і за 32 кроки залишається одне значення:
+`checkVersion` requires the first number to be exactly `0x1002` and the second
+to match the server's version. The number itself is not in the data, so we
+found it with a **binary search against the live server**: it answers "too old"
+(0x17) or "too new" (0x18), and after 32 steps a single value is left:
 
 ```
 0x150C5100
 ```
 
-Байти `15 0C 51 00` читаються як **1.5** і збірка **0x0C51 = 3153** —
-рівно `bf2-linuxded-1.5.3153.0`. Це не збіг, а підтвердження.
+The bytes `15 0C 51 00` read as **1.5** and build **0x0C51 = 3153** — exactly
+`bf2-linuxded-1.5.3153.0`. That is not a coincidence but a confirmation.
 
-Важлива обережність: UDP-відповіді приходять із затримкою, і перший
-«успіх» виявився старою відповіддю на попередній запит. Правильний спосіб
-— свіжий сокет на кожну спробу й перевірка двічі.
+An important caution: UDP replies arrive with a delay, and the first "success"
+turned out to be a stale reply to the previous request. The right way is a fresh
+socket for each attempt and a double check.
 
-## Прийнято (тип 2) і відмова (тип 3)
-
-```
-тип 2:  u8 виданий номер з'єднання, u32 час сервера, 1 біт PunkBuster
-тип 3:  u32 причина, 1 біт «є тека», [32 байти теки, лише для 0x24]
-```
-
-Після прийому клієнт має надіслати **тип 4** — лише тоді з'єднання
-переходить у робочий стан (у `_update` стан 1 -> 2).
-
-## Розширений заголовок
-
-Пінги й дані несуть іще один заголовок (`writeExtendedHeader`), 44 біти:
+## Accepted (type 2) and denied (type 3)
 
 ```
-6 бітів  номер пакета (по колу до 64)
-6 бітів  номер останнього прийнятого
-32 біти  маска, які з попередніх дійшли
+type 2:  u8 the assigned connection id, u32 the server's time, 1 bit PunkBuster
+type 3:  u32 the reason, 1 bit "a directory follows", [32 bytes of directory, only for 0x24]
 ```
 
-Далі в пінг-запиті йде прапорець і час сервера; його треба повернути
-незміненим — за різницею сервер рахує затримку.
+After the acceptance the client has to send **type 4** — only then does the
+connection go into its working state (in `_update` state 1 -> 2).
 
-## Що працює зараз
+## The extended header
+
+Pings and data carry one more header (`writeExtendedHeader`), 44 bits:
+
+```
+6 bits   packet number (wrapping at 64)
+6 bits   the number of the last one received
+32 bits  a mask of which of the previous ones arrived
+```
+
+Then a ping request carries a flag and the server's time; it has to be returned
+unchanged — the server computes the latency from the difference.
+
+## What works now
 
 ```bash
 openbf2 --connect 127.0.0.1:16567
 ```
 
 ```
-під'єднання: 127.0.0.1:16567
-  надіслано запит: протокол 0x1002, версія 0x150c5100
-  ПРИЙНЯТО: з'єднання 0, час сервера 4551784 мс, PunkBuster вимкнено
-  надіслано підтвердження
-  за 30 секунд: пінгів 9 (на всі відповіли), пакетів даних 9 (234 байтів), інших 0
+connecting: 127.0.0.1:16567
+  request sent: protocol 0x1002, version 0x150c5100
+  ACCEPTED: connection 0, server time 4551784 ms, PunkBuster off
+  acknowledgement sent
+  over 30 seconds: pings 9 (all answered), data packets 9 (234 bytes), other 0
 ```
 
-Тобто рукостискання повне, і сервер не відключає нас за мовчання.
+So the handshake is complete, and the server does not drop us for silence.
 
-## Пакети даних (тип 15)
+## Data packets (type 15)
 
-`handleDataPacket` — це лише рівень надійності: він читає розширений
-заголовок, перевіряє свіжість номера (`(seq - останній) & 0x3f < 0x20`),
-підтверджує отримане й кладе пакет у чергу. Сам вміст розбирає гра.
+`handleDataPacket` is only the reliability layer: it reads the extended header,
+checks the number's freshness (`(seq - last) & 0x3f < 0x20`), acknowledges what
+arrived and queues the packet. The content itself is parsed by the game.
 
-Усередині — потік подій. `GameEventManager::processReceivedPacket` читає:
-
-```
-1 біт   чи є події
-8 бітів кількість
-5 бітів + 1 біт службових
-далі:   кожна подія — тип у N бітах, потім її власні поля
-```
-
-N — найменше число, при якому `(1<<N)-1` вміщує розмір реєстру подій
-(`readGameEvent`). На живому сервері виходить **7**.
-
-Перед потоком подій у пакеті ще **17 бітів** каркасу потоків — їх поки не
-розібрано, але зміщення стале й перевірене на живих пакетах.
-
-## Перша подія: виклик
-
-`GameServer::onNewConnection` одразу створює `ChallengeEvent` і шле його
-клієнту. `ChallengeEvent::serialize` пише:
+Inside is an event stream. `GameEventManager::processReceivedPacket` reads:
 
 ```
-N бітів  тип (у ChallengeEvent::getType це 1)
-80 бітів рядок виклику (десять байтів із нулем у кінці)
-8 бітів  довжина назви мода
-далі     сама назва
+1 bit    are there events
+8 bits   the count
+5 bits + 1 service bit
+then:    each event — its type in N bits, then its own fields
 ```
 
-Розшифрований живий пакет:
+N is the smallest number for which `(1<<N)-1` covers the size of the event
+registry (`readGameEvent`). Against a live server it comes out as **7**.
+
+Before the event stream the packet has another **17 bits** of stream framing —
+not taken apart yet, but the offset is stable and verified on live packets.
+
+## The first event: the challenge
+
+`GameServer::onNewConnection` immediately creates a `ChallengeEvent` and sends
+it to the client. `ChallengeEvent::serialize` writes:
+
+```
+N bits   the type (in ChallengeEvent::getType it is 1)
+80 bits  the challenge string (ten bytes with a zero at the end)
+8 bits   the length of the mod's name
+then     the name itself
+```
+
+A decoded live packet:
 
 ```
 0f 10 00 00 00 00 00 11 00 06 00 01 b7 3c ba b5 35 b1 33 3d 35 80 01 31 33 19
 ```
 
-розкладається рівно так: 12 бітів базового заголовка, 44 розширеного,
-17 каркасу, 15 каркасу подій, 7 типу (= 1), 80 виклику, 8 довжини (= 3),
-24 назви (`bf2`) і 1 біт добивки — разом 152 біти, тобто всі 19 байтів
-корисного навантаження без залишку.
+breaks down exactly like this: 12 bits of the basic header, 44 of the extended
+one, 17 of framing, 15 of the event framing, 7 of the type (= 1), 80 of the
+challenge, 8 of the length (= 3), 24 of the name (`bf2`) and 1 padding bit —
+152 bits in all, that is all 19 bytes of payload with nothing left over.
 
-Наш клієнт це вже читає:
-
-```
-  подія-виклик: uqymfsofr, мод bf2
-```
-
-## Три потоки в одному пакеті
-
-`ClientConnection::processReceivedPacket` віддає пакет трьом менеджерам
-**у сталому порядку** — жодних ідентифікаторів, кожен просто відкушує свої
-біти:
-
-1. `PlayerActionManager` — дії гравця;
-2. `GameEventManager` — події;
-3. `GhostManager` — стан світу.
-
-Саме тому «17 бітів каркасу» з боку сервера — це його блок дій гравця.
-У наш бік усе простіше: якщо дій немає, `PlayerActionManager` читає
-**рівно один біт** і виходить. Інакше — 4 біти кількості, 9 бітів такту,
-знак і 31 біт базового номера, далі самі дії.
-
-## Відповідь на виклик
-
-Подія типу 2 (`ChallengeResponseEvent`), розкладка з `serialize`:
+Our client already reads this:
 
 ```
-584 біти  блок відповіді (73 байти)
+  challenge event: uqymfsofr, mod bf2
+```
+
+## Three streams in one packet
+
+`ClientConnection::processReceivedPacket` hands the packet to three managers
+**in a fixed order** — no identifiers, each simply bites off its own bits:
+
+1. `PlayerActionManager` — the player's actions;
+2. `GameEventManager` — the events;
+3. `GhostManager` — the world's state.
+
+That is exactly why the "17 bits of framing" from the server's side are its
+player-action block. In our direction it is simpler: if there are no actions,
+`PlayerActionManager` reads **exactly one bit** and stops. Otherwise — 4 bits of
+count, 9 bits of tick, a sign and 31 bits of the base number, then the actions
+themselves.
+
+## The challenge reply
+
+Event type 2 (`ChallengeResponseEvent`), the layout from `serialize`:
+
+```
+584 bits  the response block (73 bytes)
 u32       ?
-u32       мережева версія
-1 біт     знак + 31 біт номера продукту (у BF2 це 0x423)
+u32       the network version
+1 bit     sign + 31 bits of the product number (0x423 in BF2)
 ```
 
-`GameServer::challengeResponse` без автентифікатора (`sv.internet 0`)
-перевіряє **лише мережеву версію**. Вона береться з
-`BuildNrUtil::getNetVersionNumber()`, і та повертає `0x150C5100` — рівно
-те число, яке ми до того знайшли двійковим пошуком. Дві незалежні дороги
-зійшлися.
+Without an authenticator (`sv.internet 0`) `GameServer::challengeResponse`
+checks **only the network version**. It comes from
+`BuildNrUtil::getNetVersionNumber()`, and that returns `0x150C5100` — exactly
+the number we had found earlier by binary search. Two independent roads met.
 
-### Пастка з підтвердженням
+### The acknowledgement trap
 
-Спершу сервер слав виклик знову й знову, хоча відповідь начебто була
-правильна. Причина не в події, а в надійності: у розширеному заголовку
-маска підтверджень стояла нулем, тож сервер вважав свою подію
-непідтвердженою й повторював її нескінченно. З маскою `0xFFFFFFFF`
-виклик приходить **рівно один раз** — це і є ознака, що відповідь
-прийнято.
+At first the server sent the challenge again and again, even though the reply
+was apparently right. The cause is not in the event but in the reliability: in
+the extended header the acknowledgement mask was zero, so the server considered
+its event unacknowledged and repeated it endlessly. With the mask `0xFFFFFFFF`
+the challenge arrives **exactly once** — and that is the sign the reply was
+accepted.
 
-Тепер клієнт робить це сам:
+Now the client does this itself:
 
 ```
-  подія-виклик: enmemivfp, мод bf2
-  надіслано відповідь на виклик
-  за 30 секунд: пінгів 9 (на всі відповіли), пакетів даних 1 (26 байтів)
-  викликів отримано: 1 (відповідь прийнято)
+  challenge event: enmemivfp, mod bf2
+  challenge reply sent
+  over 30 seconds: pings 9 (all answered), data packets 1 (26 bytes)
+  challenges received: 1 (the reply was accepted)
 ```
 
-## Пакет даних: 72 біти заголовка
+## The data packet: 72 bits of header
 
-Довго не сходилося: сервер падав на перевірці
-`Game/Common/GhostManager.cpp:1658` «Failed to receive ghostmanager».
-Здогадки не допомагали, тож сервер підняли **нативно на x86** (домашній
-Linux, той самий контейнер, але без емуляції) і запустили під `gdb` —
-на Apple Silicon ptrace не працює, тому ні стека, ні точок зупину там не
-було.
+For a long time it would not add up: the server was failing the check at
+`Game/Common/GhostManager.cpp:1658` "Failed to receive ghostmanager". Guesses
+did not help, so the server was brought up **natively on x86** (a Linux box at
+home, the same container but without emulation) and run under `gdb` — on Apple
+Silicon ptrace does not work, so there were neither stacks nor breakpoints
+there.
 
-Зупинка на вході кожного з трьох потоків показала і позицію читання, і
-байти, які бачить сервер. У нашому пакеті тип блока й розмір лежали рівно
-на **16 бітів раніше**, ніж їх шукав сервер. Ці 16 бітів знайшлися й у
-його власному пакеті: на 26 байтів там стояло `0x0011` = 17, а це рівно
-26 − 9. Отже це **довжина корисної частини в байтах**, а заголовок пакета
-даних — 72 біти:
+A stop at the entry of each of the three streams showed both the read position
+and the bytes the server sees. In our packet the block type and the size lay
+exactly **16 bits earlier** than the server looked for them. Those 16 bits were
+found in the server's own packet too: on 26 bytes it held `0x0011` = 17, which
+is exactly 26 − 9. So it is **the payload's length in bytes**, and the data
+packet's header is 72 bits:
 
-| поле | бітів |
+| field | bits |
 |---|---|
-| тип пакета | 4 |
-| номер з'єднання | 8 |
-| номер пакета | 6 |
-| підтвердження | 6 |
-| маска підтверджень | 32 |
-| довжина корисної частини (байтів) | 16 |
+| packet type | 4 |
+| connection id | 8 |
+| packet number | 6 |
+| acknowledgement | 6 |
+| acknowledgement mask | 32 |
+| payload length (bytes) | 16 |
 
-Далі йдуть три потоки в сталому порядку — дії гравця, події, привиди.
-Порядок задає `ClientConnection::ClientConnection`: саме так вона тричі
-кличе `addStreamManager`. Кожен потік починається з біта «є дані», і
-навіть коли даних немає, цей біт треба написати — інакше сусідній потік
-читає чуже.
+Then come the three streams in a fixed order — player actions, events, ghosts.
+The order is set by `ClientConnection::ClientConnection`: that is how it calls
+`addStreamManager` three times. Every stream begins with a "has data" bit, and
+even when there is no data that bit has to be written — otherwise the next
+stream reads someone else's.
 
-## Номер пачки подій
+## The event batch number
 
-Події читалися, але не виконувалися. `GameEventManager` складає пачки в
-дерево за 5-бітним номером і віддає їх грі **лише поспіль**: якщо номер
-не той, якого чекають, пачка лежить у дереві й нічого не відбувається.
-Рахунок має починатися з нуля й рости на одиницю з кожною пачкою — не з
-номером пакета. Щойно це виправили, `DataBlockManager::newDataBlock`
-спрацював з першого разу.
+The events were being read but not executed. `GameEventManager` puts batches
+into a tree by a 5-bit number and hands them to the game **only in sequence**:
+if the number is not the one expected, the batch lies in the tree and nothing
+happens. The count has to start at zero and grow by one with every batch — not
+with the packet number. As soon as that was fixed,
+`DataBlockManager::newDataBlock` worked the first time.
 
 ## ClientInfo
 
-Блок, який рушій читає в `ClientInfo::setFromDataBlock`:
+The block the engine reads in `ClientInfo::setFromDataBlock`:
 
-| поле | розмір |
+| field | size |
 |---|---|
-| довжина + ім'я | u16 + байти |
-| хеш імені | u32 |
-| номер профілю | 1 біт знак + 31 біт |
-| довжина + тег клану | u16 + байти |
-| довжина + рядок автентифікації | u16 + байти |
-| прапорець | 1 біт |
+| length + name | u16 + bytes |
+| the name's hash | u32 |
+| profile number | 1 sign bit + 31 bits |
+| length + clan tag | u16 + bytes |
+| length + authentication string | u16 + bytes |
+| a flag | 1 bit |
 
-Хеш імені — `h = 0x1505`, далі для кожного символу в нижньому регістрі
-`h = h * 0x21 ^ c`. На сервері без рейтингу (`sv.ranked 0`) ні хеш, ні
-рядок автентифікації не перевіряються: `GameServer::handleClientInfo`
-одразу йде коротким шляхом і складає підсумкове ім'я як «тег + пробіл +
-ім'я». Через це порожній тег дає ім'я з пробілом попереду — так воно й
-видно в списку гравців.
+The name's hash is `h = 0x1505`, then for every lower-cased character
+`h = h * 0x21 ^ c`. On a server without ranking (`sv.ranked 0`) neither the hash
+nor the authentication string is checked: `GameServer::handleClientInfo` takes
+the short path straight away and assembles the final name as "tag + space +
+name". Because of that an empty tag gives a name with a leading space — and that
+is how it shows in the player list.
 
-Блок їде подією типу 4 (`DataBlockEvent`): спершу заголовок (1 біт = 1,
-далі u32 тип блока і u32 розмір), потім шматки (1 біт = 0, u8 довжина,
-байти). Тип блока 1 — це ClientInfo (`GameServer::handleDataBlock`).
+The block travels as event type 4 (`DataBlockEvent`): first the header (1 bit =
+1, then u32 block type and u32 size), then the chunks (1 bit = 0, u8 length,
+bytes). Block type 1 is ClientInfo (`GameServer::handleDataBlock`).
 
-## Гравець на оригінальному сервері
+## A player on the original server
 
 ```
 $ openbf2 --connect 192.168.100.100 --name OpenBF2
-  ПРИЙНЯТО: з'єднання 0, ...
-  подія-виклик: ..., мод bf2
-  надіслано відповідь на виклик
-  надіслано ClientInfo: ім'я OpenBF2, 22 байтів
+  ACCEPTED: connection 0, ...
+  challenge event: ..., mod bf2
+  challenge reply sent
+  ClientInfo sent: name OpenBF2, 22 bytes
 
 $ rcon admin.listPlayers
 Id:  0 -  OpenBF2 is remote ip: 192.168.100.112:53234
 ```
 
-## Що сервер шле після реєстрації
+## What the server sends after registration
 
-Одразу приходять два блоки даних (`sendDataBlock`):
+Two data blocks arrive at once (`sendDataBlock`):
 
-| тип | вміст |
+| type | contents |
 |---:|---|
-| 0 | налаштування сервера: назва «OpenBF2 reference» і купа чисел |
-| 5 | відомості про рівень: `dalian_plant`, режим `gpm_cq`, розмір 16 |
+| 0 | the server's settings: the name "OpenBF2 reference" and a heap of numbers |
+| 5 | the level's details: `dalian_plant`, mode `gpm_cq`, size 16 |
 
-Далі — пакет із подіями: `CreatePlayerEvent` з нашим іменем,
-`VoipSessionEvent`, `UnlockEvent` і два порожні `StringManagerEvent`.
+Then a packet with events: `CreatePlayerEvent` with our name,
+`VoipSessionEvent`, `UnlockEvent` and two empty `StringManagerEvent`.
 
-## Крок готовності
+## The readiness step
 
-На цьому все спинялося: об'єктів світу не було, потік привидів приходив
-порожнім. Причина — `GameServer::isClientReady` порівнює стан з'єднання
-з трійкою (`state > 3`), а сам стан рухають `clientSendDatabaseComplete`
-і `clientLoadComplete`. Обидві сидять у таблиці переходів
-`GameServer::handleNetworkEvent`: номер 2 — «рівень завантажено»,
-номер 4 — «базу гравців отримано».
+Everything stalled here: there were no world objects and the ghost stream came
+in empty. The cause is that `GameServer::isClientReady` compares the
+connection's state against three (`state > 3`), and the state itself is moved by
+`clientSendDatabaseComplete` and `clientLoadComplete`. Both sit in the jump table
+of `GameServer::handleNetworkEvent`: number 2 is "the level is loaded", number 4
+is "the player base was received".
 
-Клієнт піднімає їх через `PostRemoteEvent` (тип 11) — узагальнену подію
-«підніми в себе оцю подію»:
+The client raises them through `PostRemoteEvent` (type 11) — the general "raise
+this event on your side" event:
 
-| поле | бітів |
+| field | bits |
 |---|---|
-| категорія | 4 |
-| номер події | 32 |
-| затримка (float) | 32 |
-| довжина даних | 8 |
+| category | 4 |
+| event number | 32 |
+| delay (float) | 32 |
+| data length | 8 |
 
-Категорію видно в `GameServer::handleEvent`: він порівнює її з 6 і
-віддає в `handleNetworkEvent` (двійка там — HUD-події). Спроба вгадати
-категорію перебором 0..15 закінчилася тим, що сервер тихо вимкнувся:
-`PostRemoteEvent` піднімає будь-яку внутрішню подію, тож перебирати їх
-на живому сервері не варто.
+The category is visible in `GameServer::handleEvent`: it compares it against 6
+and hands it to `handleNetworkEvent` (two there means HUD events). An attempt to
+guess the category by trying 0..15 ended with the server quietly shutting down:
+`PostRemoteEvent` raises any internal event, so trying them out on a live server
+is unwise.
 
-Щойно надіслали категорію 6, подію 2 — сервер посипав світом:
+The moment category 6, event 2 was sent, the server poured out the world:
 
 ```
-  пакет даних: подій 11, перша типу 35
-  пакет даних: подій 12, перша типу 6     <- CreateObjectEvent
-  пакет даних: подій 36, перша типу 6
-  пакет даних: подій 14, перша типу 11
-  пакет даних: подій  1, перша типу 56    <- BeginRoundEvent
+  data packet: 11 events, the first of type 35
+  data packet: 12 events, the first of type 6     <- CreateObjectEvent
+  data packet: 36 events, the first of type 6
+  data packet: 14 events, the first of type 11
+  data packet:  1 event,  the first of type 56    <- BeginRoundEvent
 ```
 
-У клієнті це видно як зростання з одного пакета на 26 байтів до семи на
-1358.
+In the client that shows as a rise from one packet of 26 bytes to seven of 1358.
 
-## Далі
+## Next
 
-Розібрати `CreateObjectEvent` до кінця: розміри полів знято
-(32, 16, 2, 1, 8, 1, 1, три числа позиції, три біти, три числа повороту —
-разом рівно 256), але позиції поки виходять неправдоподібні, тож
-тлумачення полів ще не остаточне. Далі — сам потік привидів.
+Take `CreateObjectEvent` apart to the end: the field sizes have been taken
+(32, 16, 2, 1, 8, 1, 1, three position numbers, three bits, three rotation
+numbers — exactly 256 in all), but the positions still come out implausible, so
+the interpretation of the fields is not final. After that, the ghost stream
+itself.
 
-## Як це досліджувати швидко
+## How to investigate this quickly
 
-Стенд і досліди зведені до двох команд:
+The rig and the experiments come down to two commands:
 
 ```bash
-tools/linuxded/serverctl.sh up        # підняти сервер (сам перезапускається)
+tools/linuxded/serverctl.sh up        # bring the server up (it restarts itself)
 tools/linuxded/capture.py --stage world --out tests/data/bf2-world.bin
 ```
 
-`capture.py` доводить з'єднання до потрібного етапу (`connect`,
-`challenge`, `player`, `world`) і записує все, що прийшло. Далі розбір
-перевіряється вже без стенда й без мережі:
+`capture.py` drives the connection to the required stage (`connect`,
+`challenge`, `player`, `world`) and records everything that arrived. After that
+the parsing is checked without the rig and without the network:
 
 ```bash
 tools/linuxded/capture.py --replay tests/data/bf2-world.bin
 ```
 
-Це 0.03 секунди замість хвилини на живий сеанс. І, що важливіше,
-спіймані пакети лишаються назавжди: кожен дослід стає постійним зразком,
-а не разовим скриптом.
+That is 0.03 seconds instead of a minute of a live session. And, more
+importantly, the captured packets stay forever: every experiment becomes a
+permanent sample rather than a one-off script.
 
-Розбір повідомляє, де саме він спіткнувся. Тип події не буває більшим за
-69, тож усе понад це означає, що попередня подія прочитана неправильної
-довжини — і поруч друкується та, після якої це сталося:
+The parser reports where exactly it stumbled. An event type is never greater
+than 69, so anything above that means the previous event was read at the wrong
+length — and the one after which it happened is printed beside it:
 
 ```
-ще не розбираємо: {80: 1, 87: 1, 32: 2, 106: 1}
-збилося після: {'StringManagerEvent': 1, 'CreateObjectEvent': 2}
+not parsed yet: {80: 1, 87: 1, 32: 2, 106: 1}
+went astray after: {'StringManagerEvent': 1, 'CreateObjectEvent': 2}
 ```
 
-Тобто саме ті дві події, де довжину поки взято з припущення, а не з коду.
+That is, exactly those two events whose length is so far taken from an
+assumption rather than from the code.
 
-### Розбір бінаря — локально
+### Taking the binary apart — locally
 
-`bitfields.py` більше нікуди не ходить: бінар сервера лежить у теці гри,
-виконувати його не треба, а `objdump` на macOS розбирає ELF x86-64 без
-проблем. Було близько секунди на запит через ssh у контейнер із gdb —
-стало 0.19 с прямо тут. Таблиця символів читається раз і кешується.
+`bitfields.py` no longer goes anywhere: the server's binary lies in the game's
+directory, it does not have to be executed, and `objdump` on macOS takes an ELF
+x86-64 apart without trouble. It used to be about a second per query over ssh
+into a container with gdb — now it is 0.19 s right here. The symbol table is
+read once and cached.
 
-Разом це дає такий цикл: подивитися будову функції (0.2 с), виправити
-розбір, перевірити на спійманих пакетах (0.03 с). Стенд потрібен лише
-тоді, коли треба спіймати щось нове.
+Together that gives this cycle: look at a function's shape (0.2 s), fix the
+parsing, check against the captured packets (0.03 s). The rig is needed only
+when something new has to be captured.
 
-## Таблиця подій робиться з бінаря
+## The event table is made from the binary
 
 ```bash
 tools/linuxded/gen_events.py > src/net/src/bf2_events.inc
 ```
 
-Сім секунд — і маємо всі 63 події: номер типу з `getType()`, розміри
-полів із `deSerialize`. Руками цього не пишемо.
+Seven seconds — and we have all 63 events: the type number from `getType()`, the
+field sizes from `deSerialize`. We do not write this by hand.
 
-47 подій із 62 — прості, поля лежать поспіль, і за таблицею їх можна
-пропустити рівно на потрібну кількість бітів. Решта 15 позначені
-`BF2_EVENT_BRANCHY`: там частина полів за умовою, і таблиця розмірів
-збрехала б. Генератор про це каже чесно, а не видає неправильний код —
-розбір таких написано руками (`skipEvent` у `bf2_events.cpp`).
+47 of the 62 events are simple, their fields lie consecutively, and by the table
+they can be skipped by exactly the right number of bits. The other 15 are marked
+`BF2_EVENT_BRANCHY`: there part of the fields sits behind a condition, and a
+size table would lie. The generator says so honestly rather than emitting wrong
+code — the parsing of those is written by hand (`skipEvent` in
+`bf2_events.cpp`).
 
-Уміти пропустити подію важливіше, ніж її розібрати: пакет везе події
-одну за одною, і якщо спіткнутися на незнайомій, усе далі перетворюється
-на сміття.
+Being able to skip an event matters more than parsing it: a packet carries
+events one after another, and stumbling on an unknown one turns everything after
+it into rubbish.
 
-## Тест на справжніх пакетах
+## A test on real packets
 
-`tests/test_bf2_events.cpp` читає спіймані з живого сервера пакети
-(`tests/data/bf2-world.bin`) і перевіряє, що розбір доходить до кінця:
+`tests/test_bf2_events.cpp` reads packets captured from a live server
+(`tests/data/bf2-world.bin`) and checks that the parse runs to the end:
 
-- номер типу не більший за 69 (усе понад це — зсув);
-- об'єктів із позиціями не менше сорока;
-- висота в межах рельєфу карти, а не 1e38.
+- the type number is not greater than 69 (anything above is a shift);
+- there are no fewer than forty objects with positions;
+- the height is within the map's terrain, not 1e38.
 
-Останнє ловить помилку в один біт: із зсунутого float одразу вилазять
-неможливі числа.
+The last catches a one-bit error: a shifted float immediately produces
+impossible numbers.
 
-## Клієнт бачить світ
+## The client sees the world
 
 ```
 $ openbf2 --connect 192.168.100.100 --name OpenBF2
-  гравець:  OpenBF2 (номер 0, команда 2)
-  об'єкт: шаблон 5068, номер 1859, позиція -108.1 153.9 -253.7
-  об'єкт: шаблон 5217, номер 1871, позиція -179.2 153.9 -33.8
-  за 30 секунд: пакетів даних 9 (2007 байтів)
-  подій розібрано: 85, з них об'єктів світу: 32
+  player:  OpenBF2 (id 0, team 2)
+  object: template 5068, id 1859, position -108.1 153.9 -253.7
+  object: template 5217, id 1871, position -179.2 153.9 -33.8
+  over 30 seconds: data packets 9 (2007 bytes)
+  events parsed: 85, of them world objects: 32
 ```
 
-## Звідки береться номер шаблона
+## Where the template number comes from
 
-`ServerConnection::clientSendDatabase` обходить об'єкти й на кожен
-робить `CreateObjectEvent(номер шаблона, мережевий номер, ..., позиція,
-поворот)`. Номер шаблона він бере з `IObjectTemplate` (запис 0x88 у
-таблиці методів), а той — просто лічильник:
+`ServerConnection::clientSendDatabase` walks the objects and makes for each a
+`CreateObjectEvent(template number, network id, ..., position, rotation)`. It
+takes the template number from `IObjectTemplate` (entry 0x88 in the method
+table), and that is simply a counter:
 
 ```
-esi = manager->[0x7c]      // поточне значення лічильника
-template->setId(esi)       // запис 0x80
+esi = manager->[0x7c]      // the counter's current value
+template->setId(esi)       // entry 0x80
 manager->[0x7c]++
 ```
 
-Тобто **номер — це порядок створення шаблона**, а не хеш назви. Щоб
-зіставити номер із назвою, треба читати ті самі файли в тому самому
-порядку, що й гра: обидва боки роблять це однаково, тому й сходяться.
+So **the number is the order in which the template was created**, not a hash of
+its name. To match a number to a name, the same files have to be read in the
+same order as the game does: both sides do it identically, which is why they
+agree.
 
-Що номери детерміновані — перевірено двома окремими сеансами: усі 27
-об'єктів отримали ті самі номери шаблонів. Позиції збіглися в 23 з 27:
-чотири об'єкти рухомі.
+That the numbers are deterministic was verified in two separate sessions: all 27
+objects got the same template numbers. The positions matched in 23 of 27: four
+objects are moving ones.
 
-Повороти приходять кутами Ейлера ZXY **у градусах** — рівно в тому
-вигляді, що й у `.con` (`-90`, `180`, `4.3`). У `clientSendDatabase`
-поруч видно виклик `getRotationZXY`, а три числа після нього ще й
-міняють знак.
+The rotations arrive as ZXY Euler angles **in degrees** — exactly as in the
+`.con` (`-90`, `180`, `4.3`). In `clientSendDatabase` a `getRotationZXY` call is
+visible right there, and the three numbers after it also flip sign.
 
-## Калібрування номерів за позиціями
+## Calibrating the numbers by positions
 
-Із самого числа назви не дістати, бо це лічильник. Але позиції збігаються:
-рівень ми читаємо самі й знаємо, що і де стоїть, а сервер каже номери для
-тих самих місць.
+The name cannot be got from the number itself, because it is a counter. But the
+positions match: we read the level ourselves and know what stands where, and the
+server gives the numbers for those same places.
 
 ```bash
 openbf2 --level dalian_plant --calibrate tests/data/bf2-world.bin
 ```
 
 ```
-рівень dalian_plant: відомих об'єктів 1333
-об'єктів від сервера: 50, зіставлено: 50
+level dalian_plant: known objects 1333
+objects from the server: 50, matched: 50
       47  barrel_blue
     3747  fence_corrugated_3x12m_broken_parts
     3751  fueltankwagon
@@ -470,100 +473,102 @@ openbf2 --level dalian_plant --calibrate tests/data/bf2-world.bin
     ...
 ```
 
-Спершу зіставлялося 40 із 50: у таблиці для звірки були лише контрольні
-точки й спавнери. Три невпізнані номери знайшлися пошуком координат по
-`StaticObjects.con` — це виявилися бочка, паркан і цистерна. Тобто сервер
-шле й **руйнівну статику**, а не тільки прапори з технікою. Щойно додали
-статичні об'єкти рівня, зійшлося все.
+At first 40 of 50 matched: the comparison table held only control points and
+spawners. Three unrecognised numbers were found by searching the coordinates
+through `StaticObjects.con` — they turned out to be a barrel, a fence and a
+tanker. So the server sends **destructible statics** too, not only flags and
+vehicles. As soon as the level's static objects were added, everything matched.
 
-Допуск навмисно вузький — два метри. Обидва боки беруть позицію з тих
-самих даних, тож збіг має бути точним; ширший допуск почав би вигадувати
-відповідності там, де їх немає.
+The tolerance is deliberately narrow — two metres. Both sides take the position
+from the same data, so the match must be exact; a wider tolerance would start
+inventing correspondences where there are none.
 
-З цього виходить помітна річ: **усе, що шле сервер, ми вже маємо в даних
-рівня**. Прапори, техніка зі спавнерів, руйнівна статика — усе читається
-з тих самих `.con`. Тобто об'єктів на карті бракує не тому, що вони
-«приходять із сервера»: у нас вони є, просто ще не всі малюються.
+From this something notable follows: **everything the server sends we already
+have in the level's data**. Flags, vehicles from spawners, destructible statics —
+all of it reads from the same `.con`. So objects are missing on the map not
+because they "come from the server": we have them, they are simply not all drawn
+yet.
 
-## Рівень береться від сервера
+## The level comes from the server
 
-`--connect` більше не потребує `--level`: сервер шле рівень блоком даних
-типу 5 одразу після реєстрації, і клієнт монтує саме його. Порядок такий
-самий, як в оригіналі:
+`--connect` no longer needs `--level`: the server sends the level as a data
+block of type 5 right after registration, and the client mounts exactly that.
+The order is the same as in the original:
 
-1. запит, підтвердження, відповідь на виклик;
-2. блок `ClientInfo` — сервер заводить гравця;
-3. сервер шле блок з рівнем (`dalian_plant`, `gpm_cq`, 16);
-4. клієнт монтує рівень і **аж тоді** каже «рівень завантажено»;
-5. сервер шле світ.
+1. request, acknowledgement, challenge reply;
+2. the `ClientInfo` block — the server creates the player;
+3. the server sends the level block (`dalian_plant`, `gpm_cq`, 16);
+4. the client mounts the level and **only then** says "the level is loaded";
+5. the server sends the world.
 
-Спершу ми казали «завантажено» одразу після `ClientInfo` — і об'єкти
-приходили раніше, ніж рівень, тобто складати їх було нікуди.
+At first we said "loaded" straight after `ClientInfo` — and the objects arrived
+before the level, so there was nowhere to put them.
 
-### Чи читає клієнт server.zip
+### Does the client read server.zip
 
-Читає, і це перевірено в самому `BF2.exe`. У функції монтування рівня
-(`FUN_004f30d0`) видно:
-
-```
-монтувати <рівень>/server.zip          — завжди
-якщо (не виділений сервер):
-    монтувати <рівень>/client.zip
-```
-
-Прапорець береться з налаштування `GSDedicated`. Тобто все навпаки до
-очікуваного: **server.zip монтують обидва боки**, а `client.zip`
-пропускає саме виділений сервер. Так і має бути: у `server.zip` лежать
-`StaticObjects.con`, `Init.con`, колізія та AI — без них клієнту нема чого
-малювати, бо сервер шле лише мережеві об'єкти (50 штук проти 1333 у
-файлі рівня).
-
-## Що доходить до екрана
-
-Клієнт тепер проходить за кожним отриманим об'єктом той самий шлях, що й
-гра, і каже, де саме той губиться:
+It does, and that is verified in `BF2.exe` itself. In the level-mounting
+function (`FUN_004f30d0`) one sees:
 
 ```
-різних шаблонів: 25
-  намальовано            3
-  геометрії немає ніде  18
-  геометрія в нащадка    4
+mount <level>/server.zip          — always
+if (not a dedicated server):
+    mount <level>/client.zip
 ```
 
-- **4 з геометрією в нащадка** — це контрольні точки. У `.con` вони самі
-  без меша: `ObjectTemplate.create ControlPoint ...` і далі
-  `ObjectTemplate.addTemplate flagpole`. Прапор приходить від дочірнього
-  шаблона, а ми беремо геометрію лише з кореня — тому й не видно.
-- **18 без геометрії ніде** — це спавнери техніки (`*_UAV`, `*_AT0` і
-  подібні). Вони й не повинні бути видимі: спавнер лише каже, яку машину
-  видати (`setObjectTemplate 1 aircontroltower_chi`), а сама машина
-  приходить окремим об'єктом.
+The flag comes from the setting `GSDedicated`. So it is the opposite of what one
+expects: **both sides mount server.zip**, and it is the dedicated server that
+skips `client.zip`. And so it should be: `server.zip` holds
+`StaticObjects.con`, `Init.con`, the collision and the AI — without them the
+client has nothing to draw, because the server sends only networked objects (50
+of them against 1333 in the level's files).
 
-Тобто з отриманого від сервера бракує саме прапорів, і причина одна й
-конкретна: геометрія в дереві може лежати не в корені.
+## What reaches the screen
 
-## Прапори з'явилися
-
-Виявилося дві окремі хиби, і кожна сама по собі ховала прапор.
-
-**Геометрія в нащадка.** Збирання об'єкта брало меш лише з кореня. Тепер,
-коли в кореня його немає, об'єкт складається з мешів нащадків, кожен —
-своєю накопиченою матрицею. Для контрольної точки це і є прапор із
-`addTemplate flagpole`.
-
-**Порядок завантаження.** Контрольні точки в нашому сервері жили окремим
-списком і до клієнта не доходили взагалі, хоча оригінал шле їх звичайними
-`CreateObjectEvent`-ами нарівні з технікою. Додали — і вони все одно не
-з'являлися: `loadWorld` починає з чистого списку об'єктів, а викликався
-він **після** `setGameplay`, тобто змітав щойно поставлені прапори.
-Порядок виправлено на той, що в рушії: спершу статика рівня, потім
-ігрова логіка.
+The client now walks every received object down the same path the game does, and
+says where exactly it is lost:
 
 ```
-контрольних точок дійшло до клієнта: 4
-унікальної геометрії: 167 (було 163), розставлено: 1279 (було 1275)
+distinct templates: 25
+  drawn                       3
+  no geometry anywhere       18
+  geometry in a child         4
 ```
 
-## Далі
+- **4 with geometry in a child** are the control points. In the `.con` they have
+  no mesh of their own: `ObjectTemplate.create ControlPoint ...` and then
+  `ObjectTemplate.addTemplate flagpole`. The flag comes from the child template,
+  and we take geometry only from the root — which is why it is not visible.
+- **18 with no geometry anywhere** are vehicle spawners (`*_UAV`, `*_AT0` and
+  the like). They are not supposed to be visible: a spawner only says which
+  vehicle to issue (`setObjectTemplate 1 aircontroltower_chi`), and the vehicle
+  itself arrives as a separate object.
 
-Потік привидів — рух об'єктів і гравців.
+So of what the server sends it is precisely the flags that are missing, and the
+cause is one and specific: geometry in the tree may sit somewhere other than the
+root.
+
+## The flags appeared
+
+There turned out to be two separate faults, and each on its own hid the flag.
+
+**Geometry in a child.** Assembling an object took the mesh only from the root.
+Now, when the root has none, the object is assembled from the children's meshes,
+each with its own accumulated matrix. For a control point that is exactly the
+flag from `addTemplate flagpole`.
+
+**The loading order.** Control points in our server lived in a separate list and
+never reached the client at all, even though the original sends them as ordinary
+`CreateObjectEvent`s alongside vehicles. We added them — and they still did not
+appear: `loadWorld` starts with a clean object list, and it was being called
+**after** `setGameplay`, so it swept away the flags that had just been placed.
+The order was fixed to the engine's: the level's statics first, then the game
+logic.
+
+```
+control points that reached the client: 4
+unique geometry: 167 (was 163), placed: 1279 (was 1275)
+```
+
+## Next
+
+The ghost stream — the movement of objects and players.

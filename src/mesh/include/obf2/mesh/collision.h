@@ -1,26 +1,26 @@
 #pragma once
-// `.collisionmesh` — окрема геометрія для зіткнень.
+// `.collisionmesh` — separate geometry for collisions.
 //
-// У BF2 вона **не збігається з видимою**: спрощена, без деталей, і поділена
-// на кілька шарів під різних споживачів. Саме тому куля може пролетіти крізь
-// поручень, який зупиняє солдата.
+// In BF2 it **does not match the visible one**: simplified, without detail, and
+// split into several layers for different consumers. That is exactly why a
+// bullet can fly through a railing that stops a soldier.
 //
-// Розкладка (за Project Dalian, engine/formats/collision):
+// The layout (after Project Dalian, engine/formats/collision):
 //
-//   u32 versionMajor, u32 versionMinor        (у BF2 це 0 і 10)
+//   u32 versionMajor, u32 versionMinor        (0 and 10 in BF2)
 //   u32 geometryPartCount
 //     u32 geometryCount
 //       u32 colCount
-//         u32 colType                          див. ColType
-//         u32 faceCount, далі по 4 u16: v1,v2,v3, матеріал
-//         u32 vertexCount, далі float3 на вершину
-//         u16 на вершину — матеріал вершини
+//         u32 colType                          see ColType
+//         u32 faceCount, then 4 u16 each: v1,v2,v3, material
+//         u32 vertexCount, then a float3 per vertex
+//         u16 per vertex — the vertex's material
 //         float3 boundsMin, float3 boundsMax
-//         u8 маркер BSP: '1' означає, що далі йде дерево
-//         (versionMinor >= 10) u32 adjacencyCount і стільки ж i32
+//         u8 BSP marker: '1' means a tree follows
+//         (versionMinor >= 10) u32 adjacencyCount and that many i32
 //
-// BSP-дерево ми пропускаємо: воно потрібне для швидкого пошуку всередині
-// одного меша, а ми будуємо власний просторовий індекс по всьому рівню.
+// We skip the BSP tree: it is meant for fast lookup inside one mesh, while we
+// build our own spatial index over the whole level.
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -34,9 +34,9 @@ namespace mesh_detail {}  // silence -Wunused
 
 namespace obf2::mesh {
 
-// Під кого призначений шар зіткнень. Значення взяті з даних гри.
+// Who a collision layer is meant for. The values come from the game's data.
 enum class ColType : std::uint32_t {
-  Projectile = 0,  // кулі й снаряди
+  Projectile = 0,  // bullets and shells
   Vehicle = 1,
   Soldier = 2,
   Ai = 3,
@@ -59,7 +59,7 @@ struct CollisionMesh {
   std::uint32_t versionMinor = 0;
   std::vector<CollisionLayer> layers;
 
-  // Шар для заданого споживача; nullptr, якщо його немає.
+  // The layer for the given consumer; nullptr when there is none.
   const CollisionLayer* layer(ColType type) const;
 };
 

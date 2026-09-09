@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Витягує значення змінних рушія з коду реєстрації Linux-сервера BF2.
+"""Pulls the engine's variable values out of the BF2 Linux server's registration code.
 
-Реєстрація має сталий вигляд:
-    MOV dword ptr [ESP], <адреса рядка з іменем>
-    MOV EAX, <бітове представлення float>
+The registration has a fixed shape:
+    MOV dword ptr [ESP], <the address of the string with the name>
+    MOV EAX, <the bit pattern of the float>
     ...
     CALL <register>
 
-Скрипт знаходить ці пари в .text і друкує «ім'я = значення».
-Це специфікація для нашої реалізації, а не копія коду.
+The script finds these pairs in .text and prints "name = value".
+This is a specification for our implementation, not a copy of the code.
 """
 import re, struct, subprocess, sys
 from elftools.elf.elffile import ELFFile

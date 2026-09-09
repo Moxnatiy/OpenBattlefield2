@@ -5,7 +5,7 @@
 namespace obf2::mesh {
 namespace {
 
-// Множення матриць у тій самій розкладці, що й у core: стовпцями.
+// Matrix multiplication in the same layout as in core: column-major.
 Mat4 multiply(const Mat4& a, const Mat4& b) {
   Mat4 out;
   for (int column = 0; column < 4; ++column) {
@@ -18,11 +18,11 @@ Mat4 multiply(const Mat4& a, const Mat4& b) {
   return out;
 }
 
-// Кватерніон (x, y, z, w) і зсув — у матрицю.
+// A quaternion (x, y, z, w) and a translation into a matrix.
 //
-// Рушій під DirectX працює з вектор-рядками, а ми — зі стовпцями, тож
-// матриця повороту тут транспонована відносно звичної формули. Так само
-// це вже зроблено в `rotationY` у core/math.h.
+// The engine under DirectX works with row vectors and we with columns, so the
+// rotation matrix here is transposed relative to the usual formula. The same is
+// already done in `rotationY` in core/math.h.
 Mat4 fromRotationTranslation(const float q[4], const Vec3& position) {
   const float x = q[0], y = q[1], z = q[2], w = q[3];
   Mat4 out{};
@@ -58,13 +58,13 @@ Vec3 transformDirection(const Mat4& m, const Vec3& v) {
 
 namespace {
 
-// Сферична інтерполяція між двома кватерніонами. Для близьких значень
-// переходить на лінійну — інакше ділення на синус втрачає точність.
+// Spherical interpolation between two quaternions. For close values it falls
+// back to linear — otherwise dividing by the sine loses precision.
 void slerp(const float from[4], const float to[4], float t, float out[4]) {
   float target[4] = {to[0], to[1], to[2], to[3]};
   float cosine = from[0] * to[0] + from[1] * to[1] + from[2] * to[2] + from[3] * to[3];
   if (cosine < 0.0f) {
-    // Кватерніони q і -q дають той самий поворот; беремо ближчий.
+    // The quaternions q and -q give the same rotation; take the closer one.
     for (float& value : target) value = -value;
     cosine = -cosine;
   }
@@ -94,8 +94,8 @@ void slerp(const float from[4], const float to[4], float t, float out[4]) {
 }  // namespace
 
 std::vector<Mat4> poseSkeleton(const Skeleton& skeleton, const std::vector<PoseStage>& stages) {
-  // Крок 1: розкласти кліпи по кістках так само, як це робить рушій —
-  // стек на кістку, вага 1 його очищає.
+  // Step 1: spread the clips over the bones the way the engine does —
+  // a stack per bone, and a weight of 1 clears it.
   struct Applied {
     const BoneAnimation* animation = nullptr;
     std::size_t track = 0;
@@ -121,7 +121,7 @@ std::vector<Mat4> poseSkeleton(const Skeleton& skeleton, const std::vector<PoseS
     }
   }
 
-  // Крок 2: власне поза.
+  // Step 2: the pose itself.
   std::vector<Mat4> world(skeleton.bones.size());
   for (std::size_t i = 0; i < skeleton.bones.size(); ++i) {
     const SkeletonBone& bone = skeleton.bones[i];
@@ -164,8 +164,8 @@ void skinMesh(const RenderMesh& bindPose, const std::vector<Mat4>& boneWorld, Re
   if (bindPose.skin.size() != bindPose.vertices.size() || bindPose.rigs.empty()) return;
   out.vertices = bindPose.vertices;
 
-  // Кожна вершина належить своєму діапазону, а діапазон — своєму риґу.
-  // Проходимо по діапазонах, щоб знати, який риґ застосовувати.
+  // Every vertex belongs to its own range, and a range to its own rig.
+  // We walk the ranges so as to know which rig to apply.
   std::vector<int> rigForVertex(bindPose.vertices.size(), -1);
   for (const DrawRange& range : bindPose.ranges) {
     if (range.rig < 0) continue;

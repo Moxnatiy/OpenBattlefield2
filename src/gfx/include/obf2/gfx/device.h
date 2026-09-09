@@ -13,14 +13,14 @@ struct WindowDesc {
   int width = 1280;
   int height = 720;
   bool resizable = true;
-  bool debugDevice = false;  // шар валідації GPU-бекенда
+  bool debugDevice = false;  // the GPU backend's validation layer
 };
 
 struct Color {
   float r = 0.0f, g = 0.0f, b = 0.0f, a = 1.0f;
 };
 
-// Кадр, готовий до запису команд. Живе рівно від beginFrame() до endFrame().
+// A frame ready to record commands into. Lives exactly from beginFrame() to endFrame().
 struct Frame {
   SDL_GPUCommandBuffer* commands = nullptr;
   SDL_GPUTexture* swapchain = nullptr;
@@ -28,12 +28,12 @@ struct Frame {
   Uint32 height = 0;
 };
 
-// Вікно + GPU-пристрій.
+// The window plus the GPU device.
 //
-// Свідомо на SDL_GPU, а не на OpenGL: на macOS GL заморожений на 4.1 і
-// deprecated, а SDL_GPU лягає на Metal тут і на Vulkan/D3D12 на інших цілях —
-// тобто один і той самий код працює на обох наших платформах без гілок.
-// Шейдери за це доведеться платити компіляцією під кожен бекенд (MSL/SPIR-V).
+// Deliberately on SDL_GPU rather than OpenGL: on macOS GL is frozen at 4.1 and
+// deprecated, while SDL_GPU maps onto Metal here and onto Vulkan/D3D12 on the
+// other targets — so the same code works on both of our platforms without branches.
+// The price is shaders: they have to be compiled for each backend (MSL/SPIR-V).
 class Device {
  public:
   ~Device();
@@ -42,53 +42,53 @@ class Device {
 
   static std::unique_ptr<Device> create(const WindowDesc& desc, std::string* error = nullptr);
 
-  // false — користувач закрив вікно або натиснув Esc.
+  // false means the user closed the window or pressed Esc.
   bool pumpEvents();
 
-  // Пробіл або Enter — як пропуск заставки в грі. Прапорець зчитується один
-  // раз, щоб одне натискання не пропустило кілька роликів поспіль.
+  // Space or Enter — like skipping an intro in the game. The flag is read once,
+  // so that one press does not skip several movies in a row.
   bool consumeSkip();
 
-  // Стан клавіатури й миші для керування гравцем. Рушій сам нічого з ним
-  // не робить — це сировина для ControlMap і вводу, який іде на сервер.
+  // Keyboard and mouse state for driving the player. The engine does nothing
+  // with it itself — it is raw material for ControlMap and for the input sent to the server.
   struct InputState {
     float moveForward = 0.0f;  // -1..1
     float moveRight = 0.0f;
-    float mouseDeltaX = 0.0f;  // пікселі за кадр
+    float mouseDeltaX = 0.0f;  // pixels per frame
     float mouseDeltaY = 0.0f;
     bool sprint = false;
     bool fire = false;
     bool jump = false;
 
-    // Абсолютна позиція курсора в пікселях вікна — для меню, де миша
-    // не захоплена.
+    // The cursor's absolute position in window pixels — for the menu, where the
+    // mouse is not captured.
     float mouseX = 0.0f;
     float mouseY = 0.0f;
-    bool clicked = false;  // ліва кнопка щойно натиснута
+    bool clicked = false;  // the left button was just pressed
   };
   InputState readInput();
 
-  // Чи натиснута клавіша з іменем, як його пише гра: "IDKey_Tab",
-  // "IDKey_Q". Ім'я приходить із `ControlMap`, тобто з даних, тож жодна
-  // розкладка тут не зашита — лише переклад імені у скан-код SDL.
+  // Whether a key is down, named the way the game writes it: "IDKey_Tab",
+  // "IDKey_Q". The name comes from `ControlMap`, that is from the data, so no
+  // layout is baked in here — only the translation of a name into an SDL scancode.
   bool isKeyDown(std::string_view name) const;
 
-  // Захоплення миші: без нього огляд упирається в межі вікна.
+  // Mouse capture: without it looking around runs into the window's edges.
   void setRelativeMouse(bool enabled);
 
-  // nullopt — кадр пропущено (вікно згорнуте чи swapchain недоступний).
+  // nullopt means the frame was skipped (the window is minimised or the swapchain is unavailable).
   std::optional<Frame> beginFrame();
-  // Прохід, що лише очищає екран — коли малювати нема чого.
+  // A pass that only clears the screen — when there is nothing to draw.
   void clear(const Frame& frame, Color color);
   void submit(const Frame& frame);
 
-  // Дописує до кадру завантаження swapchain у пам'ять, відправляє його,
-  // чекає завершення і зберігає результат у BMP. Замінює submit().
-  // Потрібно, щоб перевіряти рендер автоматично, без людини перед екраном.
+  // Appends a download of the swapchain into memory to the frame, submits it,
+  // waits for completion and saves the result as a BMP. Replaces submit().
+  // Needed to check the renderer automatically, without a person at the screen.
   bool submitAndSave(const Frame& frame, const char* path, std::string* error = nullptr);
 
-  // Буфер глибини під розмір swapchain; перестворюється при зміні розміру
-  // вікна. nullptr — не вдалося створити.
+  // A depth buffer the size of the swapchain; recreated when the window is
+  // resized. nullptr means it could not be created.
   SDL_GPUTexture* acquireDepthTarget(Uint32 width, Uint32 height);
   SDL_GPUTextureFormat colorFormat() const;
   SDL_GPUTextureFormat depthFormat() const { return depthFormat_; }

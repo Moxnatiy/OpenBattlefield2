@@ -1,11 +1,11 @@
-# Ghidra: перший прохід по BF2.exe
+# Ghidra: the first pass over BF2.exe
 
-Дата: 2026-08-25.
+Date: 2026-08-25.
 
-## Що зроблено
+## What was done
 
-`BF2.exe` (6.5 МБ, 32-бітний PE) імпортовано й повністю проаналізовано
-в headless-режимі. Проєкт: `ghidra_projects/OpenBF2` (151 МБ, не в git).
+`BF2.exe` (6.5 MB, 32-bit PE) was imported and fully analysed headless.
+The project is `ghidra_projects/OpenBF2` (151 MB, not in git).
 
 ```bash
 JAVA_HOME=/opt/homebrew/opt/openjdk@21 \
@@ -13,28 +13,31 @@ JAVA_HOME=/opt/homebrew/opt/openjdk@21 \
   ghidra_projects OpenBF2 -import "Game Files/BF2.exe" -processor "x86:LE:32:default"
 ```
 
-Результат: **27 630 функцій**, 11 061 рядок. Символів немає — імена
-функцій доведеться відновлювати самотужки.
+Result: **27 630 functions**, 11 061 strings. There are no symbols — the
+function names have to be recovered by hand.
 
-## Перший корисний витяг
+## The first useful extraction
 
-`tools/ghidra_scripts/DumpConCommands.java` витягує з таблиці рядків усе,
-що виглядає як команда мови `.con` (`ціль.метод`): **1735 команд**,
-збережено в [../reference/con-commands-from-exe.txt](../reference/con-commands-from-exe.txt).
+`tools/ghidra_scripts/DumpConCommands.java` pulls everything that looks
+like a `.con` command (`target.method`) out of the string table: **1735
+commands**, saved in
+[../reference/con-commands-from-exe.txt](../reference/con-commands-from-exe.txt).
 
 ```bash
 analyzeHeadless ghidra_projects OpenBF2 -process BF2.exe -noanalysis \
   -scriptPath tools/ghidra_scripts -postScript DumpConCommands.java out.txt
 ```
 
-Це вже не здогадка про мову, а **перелік того, що рушій реально вміє**, —
-на відміну від того, що трапилося у файлах гри.
+This is no longer a guess about the language but **a list of what the
+engine can actually do** — as opposed to what happens to appear in the
+game's files.
 
-## Що з цього видно
+## What it shows
 
-Розподіл за цілями підтверджує модель, яку ми вивели з даних:
+The distribution across targets confirms the model we derived from the
+data:
 
-| Ціль | Команд у бінарі |
+| Target | Commands in the binary |
 |---|---:|
 | `ObjectTemplate` | 784 |
 | `hapticSettings` | 214 |
@@ -44,28 +47,31 @@ analyzeHeadless ghidra_projects OpenBF2 -process BF2.exe -noanalysis \
 | `weaponHud` | 34 |
 | `vehicleHud` | 32 |
 
-Компоненти, які ми знайшли з даних (`armor`, `fire`, `ammo`, `deviation`,
-`recoil`, `zoom`, `target`, `newcar2`, `weaponHud`, `helpHud`...), лежать
-у бінарі як **власні префікси команд** — тобто підоб'єкт справді має власний
-простір імен, а не є просто угодою про іменування.
+The components we found from the data (`armor`, `fire`, `ammo`,
+`deviation`, `recoil`, `zoom`, `target`, `newcar2`, `weaponHud`,
+`helpHud`…) sit in the binary as **command prefixes of their own** — so a
+sub-object really does have its own namespace rather than following a
+naming convention.
 
-Знайшлися й підсистеми, яких у даних стокового BF2 майже не видно:
-`demo.*` (запис і рендер демо), `dice.*`, `gameServerSettings.*`,
-а `hapticSettings.*` із його 214 командами — це підтримка тактильних
-пристроїв Novint Falcon (звідси й `NovintHFX.dll` поруч із грою).
+Subsystems barely visible in stock BF2's data turned up too: `demo.*`
+(demo recording and rendering), `dice.*`, `gameServerSettings.*`, and
+`hapticSettings.*` with its 214 commands is support for Novint Falcon
+haptic devices (hence `NovintHFX.dll` sitting next to the game).
 
-## Висновок для планування
+## The conclusion for planning
 
-Ghidra на цьому етапі дала **довідник, а не логіку**: список команд корисний
-як план робіт, але поведінку кожної все одно доведеться з'ясовувати окремо.
-Витрачати декомпіляцію на формати, які описані даними, сенсу немає — це
-підтвердив рівень, який завантажився без жодного реверсу.
+At this stage Ghidra gave us **a reference, not logic**: the command list
+is useful as a work plan, but each command's behaviour still has to be
+worked out separately. Spending decompilation on formats that the data
+already describes makes no sense — the level that loaded without any
+reversing proved that.
 
-Де вона справді знадобиться:
+Where it will genuinely be needed:
 
-1. **Мережевий протокол** — єдиний великий шматок, якого немає ніде
-   у відкритому вигляді. Починати варто з серверних бінарів (`_w32ded`):
-   вони без графіки й тому значно менші.
-2. **`terraindata.raw`** — скомпільований терен ігрової гілки. Поки обходимо
-   редакторською гілкою, але для сумісності з оригіналом знадобиться.
-3. **Формати AI** (`.ahm`, `.qtr`, `.clb`, `.vbf`) — теж скомпільовані.
+1. **The network protocol** — the one large piece that exists nowhere in
+   the open. Start from the server binaries (`_w32ded`): no graphics, so
+   much smaller.
+2. **`terraindata.raw`** — the compiled terrain of the game branch. For
+   now we go around it through the editor branch, but compatibility with
+   the original will need it.
+3. **The AI formats** (`.ahm`, `.qtr`, `.clb`, `.vbf`) — compiled as well.

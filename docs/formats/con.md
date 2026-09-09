@@ -1,56 +1,59 @@
-# Мова `.con` / `.tweak` (Refractor 2)
+# The `.con` / `.tweak` language (Refractor 2)
 
-Статус: **реалізовано** — `src/con`, перевірено на всьому корпусі BF2 1.5
-(4777 файлів, 497 195 команд, 0 помилок).
+Status: **implemented** — `src/con`, verified over the whole BF2 1.5
+corpus (4777 files, 497 195 commands, 0 errors).
 
-## Природа мови
+## What the language is
 
-Це не конфіг і не дерево, а **потік команд**, який виконує інтерпретатор рушія.
-Тому в `src/con` немає AST: кожен рядок стає `Command` і одразу віддається
-в callback. Стан (який зараз ObjectTemplate «активний») тримає споживач команд,
-а не парсер — так само, як у самому Refractor.
+It is not a config and not a tree but **a stream of commands** executed by
+the engine's interpreter. That is why there is no AST in `src/con`: every
+line becomes a `Command` and is handed to a callback at once. State (which
+ObjectTemplate is currently "active") is kept by the consumer of the
+commands, not by the parser — the same as in Refractor itself.
 
-## Синтаксис
+## Syntax
 
 ```
 ObjectTemplate.fire.projectileStartPosition 0.06/-0.12/0
 ```
 
-- Перший токен — шлях через крапки: `<ціль>.<під'єкт...>.<метод>`.
-- Роздільники аргументів — пробіли й табуляції, будь-яка кількість.
-- Рядки у CRLF (`\r` обрізаємо).
-- `"текст у лапках"` — один аргумент. **Escape-послідовностей немає**:
-  `"Ingame\Kits\kit.tga"` — це шлях зі зворотними слешами, а не екранування.
-- Вектор — числа через слеш: `0.06/-0.12/0`.
-- Регістр не має значення ніде: ні в командах, ні в шляхах.
+- The first token is a dotted path: `<target>.<sub-object...>.<method>`.
+- Arguments are separated by spaces and tabs, any number of them.
+- Lines are CRLF (we trim the `\r`).
+- `"text in quotes"` is a single argument. **There are no escape
+  sequences**: `"Ingame\Kits\kit.tga"` is a path with backslashes, not
+  escaping.
+- A vector is numbers separated by slashes: `0.06/-0.12/0`.
+- Case never matters, neither in commands nor in paths.
 
-## Директиви
+## Directives
 
-| Директива | Поведінка |
+| Directive | Behaviour |
 |---|---|
-| `rem ...` | коментар до кінця рядка |
-| `beginRem` / `endRem` | блоковий коментар, **вкладеність працює** |
-| `var v_name = value` | локальна змінна файлу |
-| `if a == b` / `endIf` | у корпусі лише `==` і `!=`, лише порівняння з `v_arg1`; `else` не зустрічається |
-| `include <file>` | виконати файл у тому ж контексті |
-| `run <file> [args]` | те саме, але аргументи стають `v_arg1`, `v_arg2`, ... |
+| `rem ...` | comment to the end of the line |
+| `beginRem` / `endRem` | block comment, **nesting works** |
+| `var v_name = value` | a file-local variable |
+| `if a == b` / `endIf` | the corpus has only `==` and `!=`, only compared against `v_arg1`; `else` never occurs |
+| `include <file>` | execute a file in the same context |
+| `run <file> [args]` | the same, but the arguments become `v_arg1`, `v_arg2`, … |
 
-Голий токен, що збігається з іменем змінної, підставляється значенням
-(`GeometryTemplate.setSubGeometryLodDistance 0 0 v_dist`). Змінні локальні для
-файлу — у корпусі жодного випадку, коли `var` очікувано «протікає» в include.
+A bare token matching a variable's name is substituted with its value
+(`GeometryTemplate.setSubGeometryLodDistance 0 0 v_dist`). Variables are
+file-local — there is not a single case in the corpus where a `var` is
+expected to "leak" into an include.
 
-## Поведінка, знята з реальних даних
+## Behaviour taken from the real data
 
-**Відсутній `include` — не помилка.** У BF2 1.5 є 159 посилань на файли, яких
-немає в жодному архіві (напр. `objects/kits/ch/ch_kits.tweak`, який підключає
-`Kits/ch/ch_kits.con`). Гра завантажується нормально, отже Refractor їх мовчки
-ігнорує. У нас це `Severity::Warning`; якби це була помилка, не завантажився б
-жоден оригінальний мод.
+**A missing `include` is not an error.** BF2 1.5 has 159 references to
+files that exist in no archive (e.g. `objects/kits/ch/ch_kits.tweak`,
+which includes `Kits/ch/ch_kits.con`). The game loads fine, so Refractor
+silently ignores them. For us that is a `Severity::Warning`; were it an
+error, not a single original mod would load.
 
-**Частотність цілей** (весь корпус bf2, 497k команд) — показує, куди варто
-вкладати роботу далі:
+**Target frequency** (the whole bf2 corpus, 497k commands) — shows where
+work pays off next:
 
-| Ціль | Команд |
+| Target | Commands |
 |---|---:|
 | `ObjectTemplate` | 433 778 |
 | `hudBuilder` | 25 060 |
@@ -63,15 +66,15 @@ ObjectTemplate.fire.projectileStartPosition 0.06/-0.12/0
 | `gameLogic` | 1 493 |
 | `ControlMap` | 1 020 |
 
-87% усіх команд — `ObjectTemplate`. Наступний крок по мові: не розширювати
-парсер, а будувати `ObjectTemplate`-реєстр (створення шаблонів, компоненти,
-успадкування через `.activeSafe`).
+87 % of all commands are `ObjectTemplate`. The next step for the language
+is not to extend the parser but to build the `ObjectTemplate` registry
+(creating templates, components, inheritance through `.activeSafe`).
 
-## Перевірка
+## Checking
 
 ```bash
 ./build/macos-arm64-debug/tools/con_dump/con_dump "Game Files/mods/bf2" --all
 ```
 
-Читає архіви на місці (нічого не розпаковує), монтує їх за
-`ServerArchives.con` / `ClientArchives.con` самої гри.
+Reads the archives in place (unpacking nothing) and mounts them according
+to the game's own `ServerArchives.con` / `ClientArchives.con`.

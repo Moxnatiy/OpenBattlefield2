@@ -16,7 +16,7 @@ namespace obf2 {
 struct ZipArchive::Impl {
   mz_zip_archive zip{};
   bool opened = false;
-  std::unordered_map<std::string, mz_uint> index;  // нормалізований шлях -> номер запису
+  std::unordered_map<std::string, mz_uint> index;  // normalised path -> entry number
 
   ~Impl() {
     if (opened) mz_zip_reader_end(&zip);
@@ -33,7 +33,7 @@ std::unique_ptr<ZipArchive> ZipArchive::open(const fs::path& file, std::string* 
   archive->file_ = file;
 
   if (!mz_zip_reader_init_file(&archive->impl_->zip, file.string().c_str(), 0)) {
-    if (error) *error = "не вдалося відкрити архів: " + file.string();
+    if (error) *error = "could not open the archive: " + file.string();
     return nullptr;
   }
   archive->impl_->opened = true;
@@ -89,8 +89,8 @@ std::optional<std::vector<std::byte>> readWholeFile(const fs::path& path) {
   return data;
 }
 
-// Ключ, за яким шукаємо у монтуванні: якщо є точка монтування, шлях має з неї
-// починатися, і вона відрізається.
+// The key we look up in a mount: if there is a mount point, the path has to start
+// with it, and it is stripped.
 std::optional<std::string> stripMountPoint(std::string_view mountPoint, std::string_view path) {
   if (mountPoint.empty()) return std::string(path);
   if (path.size() <= mountPoint.size()) return std::nullopt;
@@ -109,8 +109,8 @@ bool FileSystem::mountDirectory(const fs::path& dir, std::string_view mountPoint
   mount.mountPoint = normalizeAssetPath(mountPoint);
   mount.realDir = dir;
 
-  // Індексуємо один раз: шляхи в ассетах регістронезалежні, а том користувача
-  // може бути case-sensitive, тож покладатися на ОС не можна.
+  // Indexed once: asset paths are case-insensitive, while the user's volume may
+  // be case-sensitive, so the OS cannot be relied on.
   for (auto it = fs::recursive_directory_iterator(
            dir, fs::directory_options::skip_permission_denied, ec);
        it != fs::recursive_directory_iterator(); it.increment(ec)) {
@@ -139,7 +139,7 @@ bool FileSystem::mountArchive(const fs::path& zip, std::string_view mountPoint, 
 std::optional<std::vector<std::byte>> FileSystem::read(std::string_view path) const {
   const std::string normalized = normalizeAssetPath(path);
 
-  // Від найпізнішого монтування до найранішого: пізніше перекриває раніше.
+  // From the latest mount to the earliest: later overrides earlier.
   for (auto it = mounts_.rbegin(); it != mounts_.rend(); ++it) {
     const auto key = stripMountPoint(it->mountPoint, normalized);
     if (!key) continue;
@@ -186,19 +186,19 @@ std::vector<std::string> FileSystem::list(std::string_view prefix) const {
   return out;
 }
 
-// --- завантаження списку архівів з .con --------------------------------------
+// --- loading the archive list from a .con -----------------------------------
 
 int mountArchivesFromCon(FileSystem& target, const fs::path& modDir, const fs::path& archivesCon,
                          std::vector<std::string>* errors) {
   auto text = readWholeFile(archivesCon);
   if (!text) {
-    if (errors) errors->push_back("не читається " + archivesCon.string());
+    if (errors) errors->push_back("cannot read " + archivesCon.string());
     return 0;
   }
   const std::string source(reinterpret_cast<const char*>(text->data()), text->size());
 
-  // Сам список архівів — теж .con, тому виконуємо його тим самим інтерпретатором.
-  // Файлів він не підключає, тож провайдер тут нічого не віддає.
+  // The archive list is itself a .con, so we run it with the same interpreter.
+  // It includes no files, so the provider here returns nothing.
   struct NullProvider : con::FileProvider {
     std::optional<std::string> loadText(std::string_view) override { return std::nullopt; }
   } nullProvider;

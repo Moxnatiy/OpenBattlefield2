@@ -18,8 +18,8 @@ using SocketHandle = SOCKET;
 namespace obf2::net {
 namespace {
 
-// Найбільший пакет, який приймає рушій: у `NetServer::_update` буфер
-// читається шматками по 0x5c0 байтів.
+// The largest packet the engine accepts: in `NetServer::_update` the buffer is
+// read in chunks of 0x5c0 bytes.
 constexpr std::size_t kMaxPacket = 0x5C0;
 
 }  // namespace
@@ -33,7 +33,7 @@ UdpSocket::~UdpSocket() {
 std::unique_ptr<UdpSocket> UdpSocket::connect(const std::string& host, std::uint16_t port,
                                               std::string* error) {
 #if defined(_WIN32)
-  if (error) *error = "UDP під Windows ще не піднято";
+  if (error) *error = "UDP on Windows is not brought up yet";
   return nullptr;
 #else
   addrinfo hints{};
@@ -43,23 +43,23 @@ std::unique_ptr<UdpSocket> UdpSocket::connect(const std::string& host, std::uint
   addrinfo* found = nullptr;
   const std::string service = std::to_string(port);
   if (::getaddrinfo(host.c_str(), service.c_str(), &hints, &found) != 0 || found == nullptr) {
-    if (error) *error = "не знайдено адресу " + host;
+    if (error) *error = "could not resolve " + host;
     return nullptr;
   }
 
   const int handle = ::socket(found->ai_family, found->ai_socktype, found->ai_protocol);
   if (handle < 0) {
     ::freeaddrinfo(found);
-    if (error) *error = "не вдалося відкрити сокет";
+    if (error) *error = "could not open the socket";
     return nullptr;
   }
 
-  // `connect` на UDP лише запам'ятовує адресу — так можна слати без неї
-  // і заодно отримувати помилки на кшталт «порт закритий».
+  // `connect` on UDP only remembers the address — that way we can send without it
+  // and also receive errors such as "port closed".
   if (::connect(handle, found->ai_addr, found->ai_addrlen) != 0) {
     ::freeaddrinfo(found);
     ::close(handle);
-    if (error) *error = "не вдалося прив'язатися до " + host;
+    if (error) *error = "could not bind to " + host;
     return nullptr;
   }
   ::freeaddrinfo(found);

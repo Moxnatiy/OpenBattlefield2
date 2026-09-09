@@ -6,23 +6,23 @@
 namespace obf2::engine {
 namespace {
 
-// Порядок як в оригіналі: спершу типові налаштування відео, потім збережені
-// користувачем, далі профіль, звук і керування. Файлів може не бути — гра в
-// такому разі просто лишає значення за замовчуванням, і ми теж.
+// The order is as in the original: first the default video settings, then the
+// ones saved by the user, then the profile, sound and controls. The files may be
+// absent — the game then simply keeps the defaults, and so do we.
 constexpr const char* kBootFiles[] = {
     "Settings/VideoDefault.con",
     "Settings/Video.con",
     "Settings/GeneralOptions.con",
     "Settings/Sound.con",
     "Settings/Controls.con",
-    // 79 псевдонімів консолі: `fps`, `hud`, `lp`, `suicide` і решта
-    // коротких імен, якими грають у консоль. Без цього файлу вони просто
-    // невідомі команди.
+    // The console's 79 aliases: `fps`, `hud`, `lp`, `suicide` and the other
+    // short names the console is played with. Without this file they are simply
+    // unknown commands.
     "Settings/AliasedCommands.con",
 };
 
-// Заставки в порядку показу. Це Bink-відео; ми їх не декодуємо, але порядок
-// і сам факт показу лишаються ті самі, що в грі.
+// The intro movies in the order they are shown. They are Bink videos; we do not
+// decode them, but the order and the fact of showing them stay as in the game.
 constexpr const char* kMovieNames[] = {
     "Movies/EA.bik",
     "Movies/Dice.bik",
@@ -30,12 +30,12 @@ constexpr const char* kMovieNames[] = {
     "Movies/Intro.bik",
 };
 
-// Скільки тримати заставку, якої ми не вміємо програти. Реальні тривалості
-// відомі лише з самого Bink, тому поки що умовна пауза.
+// How long to hold a movie we cannot play. The real durations are known only
+// from the Bink itself, so for now this is a nominal pause.
 constexpr float kPlaceholderMovieSeconds = 1.5f;
 
-// Мінімальний витяг вмісту тега. .desc — це XML, але нам звідти потрібне
-// лише <name>, і тягти повноцінний парсер заради одного тега ні до чого.
+// A minimal extraction of a tag's content. A .desc is XML, but all we need from
+// it is <name>, and dragging in a full parser for one tag is pointless.
 std::string tagValue(std::string_view xml, std::string_view tag) {
   const std::string open = "<" + std::string(tag) + ">";
   const std::string close = "</" + std::string(tag) + ">";
@@ -51,7 +51,7 @@ std::string tagValue(std::string_view xml, std::string_view tag) {
   return std::string(value);
 }
 
-// Значення атрибута: <briefing locid="LOADINGSCREEN_MAPDESCRIPTION_dalianplant">
+// An attribute's value: <briefing locid="LOADINGSCREEN_MAPDESCRIPTION_dalianplant">
 std::string attributeValue(std::string_view xml, std::string_view tag, std::string_view attribute) {
   const std::size_t tagStart = xml.find("<" + std::string(tag));
   if (tagStart == std::string_view::npos) return {};
@@ -87,8 +87,8 @@ bool Engine::boot(FileSystem& files, const std::filesystem::path& modDir) {
   controls_.bind(console_);
   console_.registerAliases();
 
-  // Налаштування читаються тим самим інтерпретатором, що й усе інше:
-  // у Refractor 2 консоль — єдина точка входу для будь-якого .con.
+  // The settings are read with the same interpreter as everything else: in
+  // Refractor 2 the console is the single entry point for any .con.
   con::Interpreter interpreter(
       files, [this](const con::Command& command) { console_.execute(command); });
 
@@ -98,7 +98,7 @@ bool Engine::boot(FileSystem& files, const std::filesystem::path& modDir) {
     interpreter.runFile(name);
   }
 
-  // Заставки лежать не в архіві, а поруч із грою, тому дивимося на диск.
+  // The movies lie not in an archive but next to the game, so we look on disk.
   for (const char* name : kMovieNames) {
     const std::filesystem::path path = modDir / name;
     std::error_code ec;
@@ -115,8 +115,8 @@ bool Engine::boot(FileSystem& files, const std::filesystem::path& modDir) {
 }
 
 void Engine::loadLexicon(FileSystem& files) {
-  // Гра читає кілька файлів на мову: основний, патчі, додатки. Пізніші
-  // перекривають раніші, тому порядок має значення.
+  // The game reads several files per language: the main one, patches, add-ons.
+  // Later ones override earlier, so the order matters.
   for (const char* name : {"Localization/English/english.utxt",
                            "Localization/English/English_Patch.utxt",
                            "Localization/English/XPEnglish.utxt"}) {
@@ -138,7 +138,7 @@ void Engine::scanLevels(FileSystem& files, const std::filesystem::path& modDir) 
     level.directory = entry.path().filename().string();
     level.displayName = level.directory;
 
-    // Назва лежить у Info/<ім'я>.desc — там же, де й картинка завантаження.
+    // The name lies in Info/<name>.desc — the same place as the loading picture.
     const std::string base = "Levels/" + level.directory + "/Info/";
     if (const auto desc = files.read(base + level.directory + ".desc")) {
       const std::string xml(reinterpret_cast<const char*>(desc->data()), desc->size());

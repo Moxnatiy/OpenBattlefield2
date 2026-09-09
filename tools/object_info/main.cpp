@@ -1,8 +1,8 @@
-// object_info — реєстр ObjectTemplate на справжніх даних гри.
+// object_info — the ObjectTemplate registry on the game's real data.
 //
-//   object_info <modDir> --all          — зібрати все й показати статистику
-//   object_info <modDir> <ім'я>          — показати один шаблон
-//   object_info <modDir> --tree <ім'я>   — шаблон з ієрархією нащадків
+//   object_info <modDir> --all          — gather everything and show statistics
+//   object_info <modDir> <name>          — show one template
+//   object_info <modDir> --tree <name>   — a template with its child hierarchy
 
 #include <algorithm>
 #include <cstdio>
@@ -24,7 +24,7 @@ obf2::FileSystem mountGame(const std::filesystem::path& modDir) {
   return files;
 }
 
-// Проганяє всі .con/.tweak гри через інтерпретатор, згодовуючи команди реєстру.
+// It runs every .con/.tweak of the game through the interpreter, feeding the registry.
 void buildRegistry(obf2::FileSystem& files, obf2::game::Registry& registry) {
   std::vector<std::string> paths;
   for (auto& path : files.list()) {
@@ -46,11 +46,11 @@ void printTemplate(const obf2::game::ObjectTemplate& object, const obf2::game::R
   const std::string indent(static_cast<std::size_t>(depth) * 2, ' ');
   std::printf("%s%s (%s)\n", indent.c_str(), object.name.c_str(), object.className.c_str());
   if (depth == 0) {
-    std::printf("%s  джерело: %s:%d\n", indent.c_str(), object.file.c_str(), object.line);
+    std::printf("%s  source: %s:%d\n", indent.c_str(), object.file.c_str(), object.line);
   }
 
   if (depth == 0) {
-    std::printf("%s  властивостей: %zu\n", indent.c_str(), object.properties.size());
+    std::printf("%s  properties: %zu\n", indent.c_str(), object.properties.size());
     std::vector<std::string> names;
     names.reserve(object.properties.size());
     for (const auto& [name, values] : object.properties) {
@@ -67,10 +67,10 @@ void printTemplate(const obf2::game::ObjectTemplate& object, const obf2::game::R
     for (std::size_t i = 0; i < names.size() && i < 14; ++i) {
       std::printf("%s    %s\n", indent.c_str(), names[i].c_str());
     }
-    if (names.size() > 14) std::printf("%s    ... ще %zu\n", indent.c_str(), names.size() - 14);
+    if (names.size() > 14) std::printf("%s    ... %zu more\n", indent.c_str(), names.size() - 14);
 
     for (const auto& component : object.components) {
-      std::printf("%s  компонент %s (%zu властивостей)\n", indent.c_str(), component.name.c_str(),
+      std::printf("%s  component %s (%zu properties)\n", indent.c_str(), component.name.c_str(),
                   component.properties.size());
     }
   }
@@ -94,7 +94,7 @@ void printTemplate(const obf2::game::ObjectTemplate& object, const obf2::game::R
 
 int main(int argc, char** argv) {
   if (argc < 3) {
-    std::fputs("usage: object_info <modDir> <--all | --tree <ім'я> | <ім'я>>\n", stderr);
+    std::fputs("usage: object_info <modDir> <--all | --tree <name> | <name>>\n", stderr);
     return 2;
   }
 
@@ -106,12 +106,12 @@ int main(int argc, char** argv) {
   const auto& stats = registry.stats();
 
   if (what == "--all") {
-    std::printf("шаблонів: %zu\n", registry.size());
-    std::printf("  create: %d, activeSafe на наявних: %d\n", stats.created, stats.reopened);
-    std::printf("  компонентів: %d, прикріплень: %d\n", stats.componentsCreated,
+    std::printf("templates: %zu\n", registry.size());
+    std::printf("  create: %d, activeSafe on existing: %d\n", stats.created, stats.reopened);
+    std::printf("  components: %d, attachments: %d\n", stats.componentsCreated,
                 stats.childrenAdded);
-    std::printf("  присвоєнь властивостей: %lld\n", stats.propertiesSet);
-    std::printf("  команд без активного шаблону: %d\n", stats.orphanCommands);
+    std::printf("  property assignments: %lld\n", stats.propertiesSet);
+    std::printf("  commands with no active template: %d\n", stats.orphanCommands);
 
     std::map<std::string, int> byClass;
     int withChildren = 0, withComponents = 0;
@@ -121,8 +121,8 @@ int main(int argc, char** argv) {
       if (!object->components.empty()) ++withComponents;
     }
 
-    std::printf("\nз нащадками: %d, з компонентами: %d\n", withChildren, withComponents);
-    std::printf("\nкласів: %zu, топ-15:\n", byClass.size());
+    std::printf("\nwith children: %d, with components: %d\n", withChildren, withComponents);
+    std::printf("\nclasses: %zu, top 15:\n", byClass.size());
     std::vector<std::pair<std::string, int>> sorted(byClass.begin(), byClass.end());
     std::sort(sorted.begin(), sorted.end(), [](auto& a, auto& b) { return a.second > b.second; });
     for (std::size_t i = 0; i < sorted.size() && i < 15; ++i) {
@@ -135,7 +135,7 @@ int main(int argc, char** argv) {
   const std::string name = tree ? (argc > 3 ? argv[3] : "") : what;
   const auto* object = registry.find(name);
   if (object == nullptr) {
-    std::fprintf(stderr, "шаблон не знайдено: %s (усього в реєстрі %zu)\n", name.c_str(),
+    std::fprintf(stderr, "template not found: %s (%zu in the registry in all)\n", name.c_str(),
                  registry.size());
     return 1;
   }

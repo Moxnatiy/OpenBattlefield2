@@ -8,8 +8,8 @@
 namespace obf2::anim {
 namespace {
 
-// Ім'я анімації в скрипті — це шлях; посилаються на неї теж шляхом, тому
-// ключем беремо сам рядок як є, лише в нижньому регістрі.
+// An animation's name in the script is a path, and it is referred to by a path
+// too, so the key is the string as it is, only lower-cased.
 std::string key(std::string_view text) {
   std::string out(text);
   for (char& c : out) {
@@ -21,8 +21,8 @@ std::string key(std::string_view text) {
 }  // namespace
 
 bool ValueHolder::contains(float value) const {
-  // Порядок меж у даних довільний: для від'ємних діапазонів вони записані
-  // навпаки. Рушій розрізняє це за знаком першої (`isWithinRange`).
+  // The order of the bounds in the data is arbitrary: for negative ranges they
+  // are written the other way round. The engine tells them apart by the first
   if (low == high) return true;
   const float first = low >= 0.0f ? low : high;
   const float second = low >= 0.0f ? high : low;
@@ -54,7 +54,7 @@ void System::feed(const con::Command& command) {
     return;
   }
   if (path == "animationsystem.createtrigger") {
-    // createTrigger <тип> <ім'я>
+    // createTrigger <type> <name>
     activeTrigger_ = key(command.argStr(1));
     activeAnimation_.clear();
     activeBundle_.clear();
@@ -121,7 +121,7 @@ void System::feed(const con::Command& command) {
 std::optional<System> System::load(FileSystem& files, const std::string& scriptPath,
                                    std::string* error) {
   if (!files.exists(scriptPath)) {
-    if (error) *error = "немає " + scriptPath;
+    if (error) *error = "no " + scriptPath;
     return std::nullopt;
   }
 
@@ -130,8 +130,8 @@ std::optional<System> System::load(FileSystem& files, const std::string& scriptP
                                [&](const con::Command& command) { system.feed(command); });
   interpreter.runFile(scriptPath);
 
-  // Діапазони лежать окремим файлом поруч і ніде не підключаються — рушій
-  // читає їх сам. Робимо так само: беремо сусідній ValueHolders.inc.
+  // The ranges lie in a separate file next to it and are included nowhere — the
+  // engine reads them itself. We do the same: take the neighbouring ValueHolders.inc.
   const std::size_t slash = scriptPath.find_last_of("/\\");
   if (slash != std::string::npos) {
     const std::string neighbour = scriptPath.substr(0, slash + 1) + "ValueHolders.inc";
@@ -139,7 +139,7 @@ std::optional<System> System::load(FileSystem& files, const std::string& scriptP
   }
 
   if (system.triggers_.empty()) {
-    if (error) *error = "у скрипті немає жодного тригера";
+    if (error) *error = "the script has no triggers at all";
     return std::nullopt;
   }
   return system;
@@ -161,11 +161,11 @@ std::vector<std::string> System::roots() const {
 
 bool System::visit(const Trigger& trigger, const State& state, std::vector<const Bundle*>& out,
                    int depth) const {
-  if (depth > 16) return false;  // захист від кільця у даних
+  if (depth > 16) return false;  // a guard against a cycle in the data
 
   if (trigger.type == "PoseTrigger") {
-    // Дитина вибирається номером пози, а зайвий номер зводиться до останньої
-    // — рівно як у `PoseTrigger::update`.
+    // The child is chosen by the pose number, and an out-of-range number falls
+    // back to the last one — exactly as in `PoseTrigger::update`.
     if (trigger.children.empty()) return false;
     std::size_t index = static_cast<std::size_t>(state.pose);
     if (index >= trigger.children.size()) index = trigger.children.size() - 1;
@@ -174,7 +174,7 @@ bool System::visit(const Trigger& trigger, const State& state, std::vector<const
     if (child == triggers_.end()) return false;
     if (!visit(child->second, state, out, depth + 1)) return false;
   } else {
-    // MovementTrigger вмикається лише в межах свого діапазону.
+    // A MovementTrigger fires only within its own range.
     if (trigger.type == "MovementTrigger" || trigger.type == "ForwardTrigger" ||
         trigger.type == "SideTrigger" || trigger.type == "TurnTrigger") {
       if (!trigger.valueHolder.empty()) {
@@ -189,8 +189,8 @@ bool System::visit(const Trigger& trigger, const State& state, std::vector<const
     }
   }
 
-  // Свої бандли додаються після дітей — так само, як `Trigger::update`
-  // спершу питає дітей, а потім кличе applyAnimations.
+  // Its own bundles are added after the children — just as `Trigger::update`
+  // first asks the children and then calls applyAnimations.
   for (const std::string& name : trigger.bundles) {
     const auto bundle = bundles_.find(key(name));
     if (bundle != bundles_.end()) out.push_back(&bundle->second);

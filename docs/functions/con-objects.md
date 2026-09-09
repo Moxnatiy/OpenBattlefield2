@@ -1,10 +1,10 @@
-# Консольні об'єкти BF2 та їхні адреси
+# BF2 console objects and their addresses
 
-Знято `tools/con_objects.py` з `BF2.exe`. Образ стоїть за
-0x400000 без релокацій, тож ці адреси чинні й у живій
-грі — за ними можна дивитися в пам'ять.
+Taken with `tools/con_objects.py` from `BF2.exe`. The image loads at
+0x400000 with no relocations, so these addresses hold in a live game too
+— they can be used to look into memory.
 
-| об'єкт | адреса |
+| object | address |
 |---|---|
 | `SwiffHost` | `0x996a84` |
 | `LocalProfile` | `0x988bfc` |

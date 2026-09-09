@@ -7,9 +7,9 @@
 namespace obf2::mesh {
 namespace {
 
-// Читач із перевіркою меж. Будь-яке читання за межі буфера переводить його в
-// стан помилки назавжди — далі всі читання просто нічого не роблять, тож
-// парсер можна писати лінійно, без перевірки після кожного кроку.
+// A bounds-checked reader. Any read past the end of the buffer puts it into an
+// error state for good — after that every read simply does nothing, so the
+// parser can be written linearly, without a check after every step.
 class Reader {
  public:
   explicit Reader(std::span<const std::byte> data) : data_(data) {}
@@ -21,7 +21,7 @@ class Reader {
   void fail(std::string why) {
     if (ok_) {
       ok_ = false;
-      error_ = std::move(why) + " (зсув " + std::to_string(pos_) + ")";
+      error_ = std::move(why) + " (offset " + std::to_string(pos_) + ")";
     }
   }
   const std::string& error() const { return error_; }
@@ -32,7 +32,7 @@ class Reader {
     T value{};
     if (!ok_) return value;
     if (data_.size() - pos_ < sizeof(T)) {
-      fail(std::string("файл обірвано: ") + what);
+      fail(std::string("file truncated: ") + what);
       return value;
     }
     std::memcpy(&value, data_.data() + pos_, sizeof(T));
@@ -40,20 +40,20 @@ class Reader {
     return value;
   }
 
-  // Читання масиву з попередньою перевіркою, що він узагалі влазить у файл.
-  // Це головний захист від зіпсованих лічильників: 4 мільярди вершин не мають
-  // спричиняти спробу виділити 100 ГБ.
+  // An array read with a prior check that it fits into the file at all.
+  // This is the main defence against corrupt counters: 4 billion vertices must
+  // not cause an attempt to allocate 100 GB.
   template <typename T>
   bool readArray(T* dst, std::size_t count, const char* what) {
     if (!ok_) return false;
     if (count == 0) return true;
     if (count > (std::numeric_limits<std::size_t>::max() / sizeof(T))) {
-      fail(std::string("нереальний розмір: ") + what);
+      fail(std::string("implausible size: ") + what);
       return false;
     }
     const std::size_t bytes = count * sizeof(T);
     if (data_.size() - pos_ < bytes) {
-      fail(std::string("файл обірвано: ") + what);
+      fail(std::string("file truncated: ") + what);
       return false;
     }
     std::memcpy(dst, data_.data() + pos_, bytes);
@@ -61,18 +61,18 @@ class Reader {
     return true;
   }
 
-  // Скільки елементів розміру T ще фізично може бути у файлі.
+  // How many elements of size T can still physically be in the file.
   template <typename T>
   std::size_t capacity() const {
     return ok_ ? (data_.size() - pos_) / sizeof(T) : 0;
   }
 
-  // Рядок: uint32 довжина + байти без термінатора.
+  // A string: uint32 length + bytes, with no terminator.
   std::string readString(const char* what) {
     const auto length = read<std::uint32_t>(what);
     if (!ok_) return {};
     if (length > remaining()) {
-      fail(std::string("довжина рядка більша за файл: ") + what);
+      fail(std::string("string length exceeds the file: ") + what);
       return {};
     }
     std::string out(reinterpret_cast<const char*>(data_.data() + pos_), length);
@@ -95,8 +95,8 @@ Material readMaterial(Reader& r, std::uint32_t version, Kind kind) {
   material.technique = r.readString("material.technique");
 
   const auto mapCount = r.read<std::uint32_t>("material.mapCount");
-  if (mapCount > r.remaining()) {  // кожен запис — щонайменше 4 байти довжини
-    r.fail("нереальна кількість текстур матеріалу");
+  if (mapCount > r.remaining()) {  // every entry is at least the 4 bytes of a length
+    r.fail("implausible material texture count");
     return material;
   }
   material.maps.reserve(std::min<std::size_t>(mapCount, 64));
@@ -127,11 +127,11 @@ void readLodNodes(Reader& r, Lod& lod, std::uint32_t version, Kind kind) {
 
   if (kind == Kind::Skinned) {
     const auto rigCount = r.read<std::uint32_t>("lod.rigCount");
-    if (rigCount > r.remaining()) { r.fail("нереальна кількість rig"); return; }
+    if (rigCount > r.remaining()) { r.fail("implausible rig count"); return; }
     lod.rigs.resize(rigCount);
     for (auto& rig : lod.rigs) {
       const auto boneCount = r.read<std::uint32_t>("rig.boneCount");
-      if (boneCount > r.capacity<Bone>()) { r.fail("нереальна кількість кісток"); return; }
+      if (boneCount > r.capacity<Bone>()) { r.fail("implausible bone count"); return; }
       rig.bones.resize(boneCount);
       r.readArray(rig.bones.data(), boneCount, "rig.bones");
     }
@@ -139,10 +139,10 @@ void readLodNodes(Reader& r, Lod& lod, std::uint32_t version, Kind kind) {
   }
 
   const auto nodeCount = r.read<std::uint32_t>("lod.nodeCount");
-  // BundledMesh пише лічильник, але самих матриць не зберігає — трансформи
-  // частин лежать у .con (geometryPart), а не в меші.
+  // A BundledMesh writes the counter but stores no matrices — the parts'
+  // transforms live in the .con (geometryPart), not in the mesh.
   if (kind == Kind::Bundled) return;
-  if (nodeCount > r.capacity<Mat4>()) { r.fail("нереальна кількість вузлів"); return; }
+  if (nodeCount > r.capacity<Mat4>()) { r.fail("implausible node count"); return; }
   lod.nodes.resize(nodeCount);
   r.readArray(lod.nodes.data(), nodeCount, "lod.nodes");
 }
@@ -172,22 +172,22 @@ std::optional<Mesh> load(std::span<const std::byte> bytes, Kind kind, std::strin
 
   r.readArray(&mesh.header, 1, "header");
 
-  // Маркер гри: 1 = Battlefield Play4Free, у якого кілька полів зсунуто.
+  // The game marker: 1 = Battlefield Play4Free, which has several fields shifted.
   mesh.isBfp4f = r.read<std::uint8_t>("gameMarker") == 1;
 
   const auto geometryCount = r.read<std::uint32_t>("geometryCount");
-  if (geometryCount > r.remaining()) { r.fail("нереальна кількість geom"); }
+  if (geometryCount > r.remaining()) { r.fail("implausible geom count"); }
   if (r.ok()) {
     mesh.geometries.resize(geometryCount);
     for (auto& geometry : mesh.geometries) {
       const auto lodCount = r.read<std::uint32_t>("geometry.lodCount");
-      if (lodCount > r.remaining()) { r.fail("нереальна кількість lod"); break; }
-      geometry.lods.resize(lodCount);  // вміст читається наприкінці файлу
+      if (lodCount > r.remaining()) { r.fail("implausible lod count"); break; }
+      geometry.lods.resize(lodCount);  // the contents are read at the end of the file
     }
   }
 
   const auto attributeCount = r.read<std::uint32_t>("attributeCount");
-  if (attributeCount > r.capacity<VertexAttribute>()) r.fail("нереальна кількість атрибутів");
+  if (attributeCount > r.capacity<VertexAttribute>()) r.fail("implausible attribute count");
   if (r.ok()) {
     mesh.attributes.resize(attributeCount);
     r.readArray(mesh.attributes.data(), attributeCount, "attributes");
@@ -200,9 +200,9 @@ std::optional<Mesh> load(std::span<const std::byte> bytes, Kind kind, std::strin
   if (r.ok()) {
     if (mesh.vertexFormat == 0 || mesh.vertexStride == 0 ||
         mesh.vertexStride % mesh.vertexFormat != 0) {
-      r.fail("некоректний формат вершини");
+      r.fail("malformed vertex format");
     } else if (mesh.vertexCount > r.remaining() / mesh.vertexStride) {
-      r.fail("вершинний буфер не влазить у файл");
+      r.fail("the vertex buffer does not fit into the file");
     } else {
       mesh.vertexData.resize(static_cast<std::size_t>(mesh.vertexCount) * mesh.floatsPerVertex());
       r.readArray(mesh.vertexData.data(), mesh.vertexData.size(), "vertexData");
@@ -210,7 +210,7 @@ std::optional<Mesh> load(std::span<const std::byte> bytes, Kind kind, std::strin
   }
 
   const auto indexCount = r.read<std::uint32_t>("indexCount");
-  if (indexCount > r.capacity<std::uint16_t>()) r.fail("індексний буфер не влазить у файл");
+  if (indexCount > r.capacity<std::uint16_t>()) r.fail("the index buffer does not fit into the file");
   if (r.ok()) {
     mesh.indices.resize(indexCount);
     r.readArray(mesh.indices.data(), indexCount, "indices");
@@ -224,7 +224,7 @@ std::optional<Mesh> load(std::span<const std::byte> bytes, Kind kind, std::strin
   for (auto& geometry : mesh.geometries) {
     for (auto& lod : geometry.lods) {
       const auto materialCount = r.read<std::uint32_t>("lod.materialCount");
-      if (materialCount > r.remaining()) { r.fail("нереальна кількість матеріалів"); break; }
+      if (materialCount > r.remaining()) { r.fail("implausible material count"); break; }
       lod.materials.resize(materialCount);
       for (auto& material : lod.materials) {
         material = readMaterial(r, mesh.header.version, kind);
@@ -247,25 +247,25 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
     return std::nullopt;
   };
 
-  if (geometryIndex >= mesh.geometries.size()) return fail("немає такого geom");
+  if (geometryIndex >= mesh.geometries.size()) return fail("no such geom");
   const Geometry& geometry = mesh.geometries[geometryIndex];
-  if (lodIndex >= geometry.lods.size()) return fail("немає такого lod");
+  if (lodIndex >= geometry.lods.size()) return fail("no such lod");
   const Lod& lod = geometry.lods[lodIndex];
 
   const std::size_t stride = mesh.floatsPerVertex();
-  if (stride == 0) return fail("нульовий stride вершини");
+  if (stride == 0) return fail("zero vertex stride");
 
-  // Зсуви потрібних каналів. Беремо перший TEXCOORD: у BF2 їх до трьох
-  // (база, детейл, лайтмапа), і для геометрії досить нульового.
+  // The offsets of the channels we need. We take the first TEXCOORD: BF2 has up
+  // to three (base, detail, light map), and geometry needs only the zeroth.
   bool hasPosition = false, hasNormal = false, hasUv = false, hasPart = false;
   std::size_t positionFloat = 0, normalFloat = 0, uvFloat = 0, partFloat = 0;
   std::size_t weightFloat = 0;
   bool hasWeight = false;
   for (const VertexAttribute& attribute : mesh.attributes) {
-    if (attribute.flag != 0) continue;  // 255 = канал вимкнено
+    if (attribute.flag != 0) continue;  // 255 = the channel is disabled
     const std::size_t index = attribute.offset / sizeof(float);
-    // usage кодується як (номер каналу << 8) | призначення, тому TEXCOORD1
-    // це 0x105, а TEXCOORD2 (лайтмапа) — 0x205. Нам треба нульовий.
+    // usage is encoded as (channel number << 8) | purpose, so TEXCOORD1 is
+    // 0x105 and TEXCOORD2 (the light map) is 0x205. We want the zeroth.
     switch (attribute.usage) {
       case 0: positionFloat = index; hasPosition = true; break;
       case 1: weightFloat = index; hasWeight = true; break;
@@ -277,14 +277,14 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
       default: break;
     }
   }
-  if (!hasPosition) return fail("у меші немає POSITION");
+  if (!hasPosition) return fail("the mesh has no POSITION");
 
   RenderMesh out;
   out.bounds = Aabb{lod.min, lod.max};
   out.vertices.resize(mesh.vertexCount);
   if (hasPart && mesh.kind == Kind::Bundled) out.vertexPart.resize(mesh.vertexCount);
-  // Скінінг: пара кісток і вага. Риґи копіюємо як є — вони прив'язують
-  // номери в риґу до номерів кісток скелета.
+  // Skinning: a pair of bones and a weight. The rigs are copied as they are —
+  // they bind rig indices to the skeleton's bone indices.
   if (mesh.kind == Kind::Skinned && hasPart && hasWeight) {
     out.skin.resize(mesh.vertexCount);
     out.rigs = lod.rigs;
@@ -295,8 +295,8 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
     Vertex& vertex = out.vertices[i];
 
     if (!out.vertexPart.empty() && base + partFloat < mesh.vertexData.size()) {
-      // D3DCOLOR: чотири байти, запхані у float-слот. Номер частини лежить
-      // у молодшому байті; старший використовується під анімовані UV.
+      // D3DCOLOR: four bytes stuffed into a float slot. The part number sits in
+      // the low byte; the high one is used for animated UVs.
       std::uint32_t packed = 0;
       std::memcpy(&packed, &mesh.vertexData[base + partFloat], sizeof(packed));
       out.vertexPart[i] = static_cast<std::uint8_t>(packed & 0xFFu);
@@ -327,21 +327,21 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
     }
   }
 
-  // Індекси в матеріалі відлічуються від його vertexStart, тому зводимо все
-  // до одного плоского буфера з абсолютними індексами.
+  // A material's indices are counted from its vertexStart, so everything is
+  // reduced to one flat buffer with absolute indices.
   for (std::size_t materialIndex = 0; materialIndex < lod.materials.size(); ++materialIndex) {
     const Material& material = lod.materials[materialIndex];
     if (material.indexCount == 0) continue;
     if (material.indexStart > mesh.indices.size() ||
         mesh.indices.size() - material.indexStart < material.indexCount) {
-      continue;  // зіпсований діапазон — пропускаємо матеріал, не весь меш
+      continue;  // a corrupt range — skip the material, not the whole mesh
     }
 
     DrawRange range;
     range.indexStart = static_cast<std::uint32_t>(out.indices.size());
     range.indexCount = material.indexCount;
-    // Риґи йдуть по одному на матеріал — це видно на всіх скелетних мешах
-    // гри: кількість риґів у lod завжди дорівнює кількості матеріалів.
+    // The rigs come one per material — that is visible on every skinned mesh in
+    // the game: a lod's rig count always equals its material count.
     if (!out.rigs.empty() && materialIndex < out.rigs.size()) {
       range.rig = static_cast<int>(materialIndex);
     }

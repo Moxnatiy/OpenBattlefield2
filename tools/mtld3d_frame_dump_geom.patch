@@ -51,8 +51,8 @@ index 91a7468..fb5ffbb 100644
          warn!(target: LOG_TARGET, "DrawPrimitive: no vertex buffer bound");
          return D3DERR_INVALIDCALL;
      };
-+    // Габарит для дампу Ctrl+Shift+D — з того самого буфера, який піде
-+    // на малювання.
++    // The bounding box for the Ctrl+Shift+D dump — from the same buffer that
++    // will go to drawing.
 +    if dev.frame_dump.active {
 +        if let VertexSource::Bound { first, .. } = &vertex_source {
 +            dev.frame_dump.geom = frame_dump::vertex_extent_bound(
@@ -72,8 +72,8 @@ index 91a7468..fb5ffbb 100644
          return D3DERR_INVALIDCALL;
      };
  
-+    // Габарит для дампу Ctrl+Shift+D. Індексований виклик читає діапазон
-+    // вершин, який гра оголосила в min_vertex_index/num_vertices.
++    // The bounding box for the Ctrl+Shift+D dump. An indexed call reads the
++    // vertex range the game declared in min_vertex_index/num_vertices.
 +    if dev.frame_dump.active {
 +        if let VertexSource::Bound { first, .. } = &vertex_source {
 +            dev.frame_dump.geom = frame_dump::vertex_extent_bound(
@@ -93,8 +93,8 @@ index 91a7468..fb5ffbb 100644
      // were just initialised by the copy above.
      unsafe { vertex_copy.set_len(data_size) };
  
-+    // Габарит малювання для дампу Ctrl+Shift+D: позиція — це перші два
-+    // float кожної вершини, тож min/max по них і дає прямокутник.
++    // The draw bounding box for the Ctrl+Shift+D dump: the position is the
++    // first two floats of each vertex, so min/max over them gives the rectangle.
 +    if dev.frame_dump.active {
 +        let count = if vertex_stride == 0 {
 +            0
@@ -112,8 +112,8 @@ index 91a7468..fb5ffbb 100644
          (metal_prim, index_copy, index_count)
      };
  
-+    // Габарит малювання для дампу Ctrl+Shift+D: позиція — це перші два
-+    // float кожної вершини, тож min/max по них і дає прямокутник.
++    // The draw bounding box for the Ctrl+Shift+D dump: the position is the
++    // first two floats of each vertex, so min/max over them gives the rectangle.
 +    if dev.frame_dump.active {
 +        let count = if vertex_stride == 0 {
 +            0
@@ -244,7 +244,7 @@ index c45f49d..7ca9c65 100644
              textures.trim_start(),
 +            self.frame_dump.geom,
          );
-+        // Кожен виклик несе свій габарит; наступний заповнить його заново.
++        // Every call carries its own box; the next one fills it in afresh.
 +        self.frame_dump.geom.clear();
          for tex in note {
              // SAFETY: collected above from live bound stages on this thread;

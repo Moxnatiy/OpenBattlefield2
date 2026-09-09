@@ -1,8 +1,8 @@
-// Витягує з BF2.exe рядки, схожі на команди мови .con ("ціль.метод"), і
-// зводить їх у файл. Потрібно, щоб побачити, які команди рушій узагалі знає,
-// а не лише ті, що трапилися у файлах гри.
+// Pulls the strings that look like .con commands ("target.method") out of
+// BF2.exe and gathers them into a file. Needed to see which commands the
+// engine knows at all, not only those that occurred in the game's files.
 //
-// Запуск (headless):
+// To run (headless):
 //   analyzeHeadless ghidra_projects OpenBF2 -process BF2.exe -noanalysis \
 //     -scriptPath tools/ghidra_scripts -postScript DumpConCommands.java out.txt
 //
@@ -39,8 +39,8 @@ public class DumpConCommands extends GhidraScript {
             ++functionCount;
         }
 
-        // Ключ — команда у нижньому регістрі, значення — як вона написана
-        // в бінарі: регістр знадобиться, коли писатимемо власні обробники.
+        // The key is the command in lower case, the value is how it is written
+        // in the binary: the case is wanted when we write handlers of our own.
         Map<String, String> commands = new TreeMap<>();
         int stringCount = 0;
 
@@ -66,16 +66,16 @@ public class DumpConCommands extends GhidraScript {
         }
 
         try (PrintWriter out = new PrintWriter(outputPath, "UTF-8")) {
-            out.println("# Команди .con, знайдені у BF2.exe");
-            out.println("# функцій у програмі: " + functionCount);
-            out.println("# рядків проаналізовано: " + stringCount);
-            out.println("# кандидатів у команди: " + commands.size());
+            out.println("# The .con commands found in BF2.exe");
+            out.println("# functions in the program: " + functionCount);
+            out.println("# strings analysed: " + stringCount);
+            out.println("# candidate commands: " + commands.size());
             for (Map.Entry<String, String> entry : commands.entrySet()) {
                 out.println(entry.getValue());
             }
         }
 
-        println("функцій: " + functionCount + ", рядків: " + stringCount
-                + ", команд: " + commands.size() + " -> " + outputPath);
+        println("functions: " + functionCount + ", strings: " + stringCount
+                + ", commands: " + commands.size() + " -> " + outputPath);
     }
 }

@@ -11,9 +11,9 @@
 
 namespace obf2 {
 
-// Zip-архів гри (Objects_server.zip, Common_client.zip, ...) — читаємо як є,
-// нічого не розпаковуючи на диск. Індекс будується один раз при відкритті,
-// ключі — нормалізовані шляхи.
+// A zip archive of the game (Objects_server.zip, Common_client.zip, ...) — read
+// in place, nothing is unpacked to disk. The index is built once on open, and
+// the keys are normalised paths.
 class ZipArchive {
  public:
   ~ZipArchive();
@@ -36,15 +36,15 @@ class ZipArchive {
   std::filesystem::path file_;
 };
 
-// Віртуальна файлова система рушія.
+// The engine's virtual file system.
 //
-// Повторює поведінку fileManager у Refractor 2: кілька точок монтування, кожна
-// з яких — тека на диску або zip. Пошук іде від НАЙПІЗНІШЕ змонтованого до
-// найранішого, тому вільні файли в теці моду перекривають вміст архівів — саме
-// на цьому тримається весь модінг BF2.
+// Reproduces the behaviour of fileManager in Refractor 2: several mount points,
+// each a directory on disk or a zip. The search goes from the LATEST mounted to
+// the earliest, so loose files in the mod's directory override the archives'
+// contents — the whole of BF2 modding rests on that.
 class FileSystem : public con::FileProvider {
  public:
-  // mountPoint — префікс усередині VFS ("Objects" для Objects_server.zip).
+  // mountPoint is the prefix inside the VFS ("Objects" for Objects_server.zip).
   bool mountDirectory(const std::filesystem::path& dir, std::string_view mountPoint = {});
   bool mountArchive(const std::filesystem::path& zip, std::string_view mountPoint = {},
                     std::string* error = nullptr);
@@ -58,17 +58,17 @@ class FileSystem : public con::FileProvider {
 
  private:
   struct Mount {
-    std::string mountPoint;                 // нормалізований, може бути порожнім
-    std::filesystem::path realDir;          // для теки
-    std::unique_ptr<ZipArchive> archive;    // для архіву
+    std::string mountPoint;                 // normalised, may be empty
+    std::filesystem::path realDir;          // for a directory
+    std::unique_ptr<ZipArchive> archive;    // for an archive
     std::vector<std::pair<std::string, std::filesystem::path>> diskIndex;
   };
   std::vector<Mount> mounts_;
 };
 
-// Виконує ClientArchives.con / ServerArchives.con і монтує все, що там указано.
-// Команда виглядає так: `fileManager.mountArchive Objects_server.zip Objects`.
-// Повертає кількість успішно змонтованих архівів.
+// Runs ClientArchives.con / ServerArchives.con and mounts everything listed there.
+// The command looks like this: `fileManager.mountArchive Objects_server.zip Objects`.
+// Returns the number of archives mounted successfully.
 int mountArchivesFromCon(FileSystem& fs, const std::filesystem::path& modDir,
                          const std::filesystem::path& archivesCon,
                          std::vector<std::string>* errors = nullptr);

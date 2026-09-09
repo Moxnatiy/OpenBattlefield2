@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Витягує офіційні описи команд .con із редактора BF2.
+"""Pulls the official .con command descriptions out of the BF2 editor.
 
-`bf2editor/Help/CommandDescriptions.dat` — UTF-16LE, рядки розділені NUL і
-йдуть парами «команда, опис». Це документація від самої DICE, тому вона
-цінніша за будь-які здогадки: показує, що команда робить, а не лише те,
-що вона існує.
+`bf2editor/Help/CommandDescriptions.dat` is UTF-16LE, the strings separated by
+NUL and coming in "command, description" pairs. This is documentation from DICE
+itself, so it is worth more than any guesswork: it shows what a command does,
+not merely that it exists.
 
     python3 tools/extract_command_descriptions.py \
         "Game Files/OtherFiles/bf2editor_and_tools/bf2editor/Help/CommandDescriptions.dat" \
@@ -21,14 +21,14 @@ def extract(path: str):
     parts = [part.strip() for part in text.split("\0")]
     parts = [part for part in parts if part]
 
-    # Перші два рядки — службовий заголовок ("LANGUAGE", "Description").
+    # The first two strings are a service header ("LANGUAGE", "Description").
     if len(parts) >= 2 and parts[0].upper() == "LANGUAGE":
         parts = parts[2:]
 
-    # Не йдемо строго через один: у файлі трапляються порожні описи, і
-    # від них увесь подальший потік зсувається назавжди. Натомість шукаємо
-    # те, що виглядає як команда ("ціль.метод" без пробілів), і беремо
-    # наступний рядок за опис — так розбір сам себе синхронізує.
+    # We do not step strictly every other one: empty descriptions occur in the
+    # file, and they shift the whole stream that follows for good. Instead we
+    # look for what looks like a command ("target.method" with no spaces) and
+    # take the next string as its description — so the parse resynchronises.
     def looks_like_command(value: str) -> bool:
         return "." in value and " " not in value and not value.endswith(".")
 
@@ -52,13 +52,13 @@ def main() -> int:
     pairs.sort(key=lambda item: item[0].lower())
 
     with open(sys.argv[2], "w", encoding="utf-8") as out:
-        out.write("# Офіційні описи команд .con із редактора BF2\n")
-        out.write("# Джерело: bf2editor/Help/CommandDescriptions.dat\n")
-        out.write(f"# Команд: {len(pairs)}\n")
+        out.write("# The official descriptions of the .con commands, from the BF2 editor\n")
+        out.write("# Source: bf2editor/Help/CommandDescriptions.dat\n")
+        out.write(f"# Commands: {len(pairs)}\n")
         for command, description in pairs:
             out.write(f"{command}\t{description}\n")
 
-    print(f"команд: {len(pairs)} -> {sys.argv[2]}")
+    print(f"commands: {len(pairs)} -> {sys.argv[2]}")
     return 0
 
 

@@ -19,10 +19,10 @@ std::string toLower(std::string_view s) {
   return out;
 }
 
-// Числа у .con завжди у форматі C ("0.06", "-1.5e2"), незалежно від локалі
-// користувача. from_chars для float є не в кожній stdlib (libc++ довго його не
-// мав), тому там, де його нема, лишається strtof — і тоді рушій зобов'язаний
-// тримати LC_NUMERIC="C".
+// Numbers in a .con are always in the C format ("0.06", "-1.5e2"), regardless of
+// the user's locale. from_chars for float is not in every stdlib (libc++ went
+// without it for a long time), so where it is missing strtof remains — and then
+// the engine is obliged to keep LC_NUMERIC="C".
 bool parseFloat(std::string_view s, float& out) {
   if (s.empty()) return false;
 #if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L
@@ -96,7 +96,7 @@ std::optional<Vec3> Command::argVec3(std::size_t i) const {
 // --- Interpreter -------------------------------------------------------------
 
 struct Interpreter::Frame {
-  std::unordered_map<std::string, std::string> vars;  // ключі у нижньому регістрі
+  std::unordered_map<std::string, std::string> vars;  // keys in lower case
 };
 
 Interpreter::Interpreter(FileProvider& files, CommandFn onCommand, DiagnosticFn onDiagnostic,
@@ -118,7 +118,7 @@ bool Interpreter::runFile(std::string_view path, const std::vector<std::string>&
   const std::string normalized = normalizeAssetPath(path);
   const auto text = files_.loadText(normalized);
   if (!text) {
-    diagnose(normalized, 0, "файл не знайдено");  // точка входу — вже помилка
+    diagnose(normalized, 0, "file not found");  // the entry point — already an error
     return false;
   }
   return execute(*text, normalized, args, 0);
@@ -132,11 +132,11 @@ bool Interpreter::runText(std::string_view text, std::string_view virtualPath,
 bool Interpreter::execute(std::string_view text, std::string_view normalizedPath,
                           const std::vector<std::string>& args, int depth) {
   if (depth > options_.maxIncludeDepth) {
-    diagnose(normalizedPath, 0, "перевищено глибину include/run");
+    diagnose(normalizedPath, 0, "include/run nesting limit exceeded");
     return false;
   }
   if (std::find(activeFiles_.begin(), activeFiles_.end(), normalizedPath) != activeFiles_.end()) {
-    diagnose(normalizedPath, 0, "циклічний include");
+    diagnose(normalizedPath, 0, "cyclic include");
     return false;
   }
   activeFiles_.emplace_back(normalizedPath);
@@ -159,8 +159,8 @@ bool Interpreter::execute(std::string_view text, std::string_view normalizedPath
     return it == frame.vars.end() ? token : it->second;
   };
 
-  int remDepth = 0;               // вкладеність beginRem/endRem
-  std::vector<bool> ifStack;      // true = гілка виконується
+  int remDepth = 0;               // beginRem/endRem nesting
+  std::vector<bool> ifStack;      // true = the branch is executed
   auto skipping = [&ifStack] {
     return std::find(ifStack.begin(), ifStack.end(), false) != ifStack.end();
   };
@@ -179,17 +179,17 @@ bool Interpreter::execute(std::string_view text, std::string_view normalizedPath
     if (tokens.empty()) continue;
     const std::string keyword = toLower(tokens[0]);
 
-    // 1. Блокові коментарі мають найвищий пріоритет: усередині них не діє ніщо.
+    // 1. Block comments have the highest priority: nothing applies inside them.
     if (keyword == "beginrem") { ++remDepth; continue; }
     if (keyword == "endrem") {
       if (remDepth > 0) --remDepth;
-      else diagnose(normalizedPath, lineNo, "endRem без beginRem");
+      else diagnose(normalizedPath, lineNo, "endRem without beginRem");
       continue;
     }
     if (remDepth > 0) continue;
     if (keyword == "rem") continue;
 
-    // 2. if/endIf рахуємо навіть у пропущеній гілці, інакше з'їде вкладеність.
+    // 2. if/endIf is counted even in a skipped branch, otherwise the nesting slides.
     if (keyword == "if") {
       bool value = false;
       if (tokens.size() >= 4) {
@@ -198,40 +198,40 @@ bool Interpreter::execute(std::string_view text, std::string_view normalizedPath
         const std::string& op = tokens[2];
         if (op == "==") value = (lhs == rhs);
         else if (op == "!=") value = (lhs != rhs);
-        else diagnose(normalizedPath, lineNo, "невідомий оператор у if: " + op);
+        else diagnose(normalizedPath, lineNo, "unknown operator in if: " + op);
       } else if (tokens.size() == 2) {
         const std::string v = substitute(tokens[1]);
         value = !v.empty() && v != "0";
       } else {
-        diagnose(normalizedPath, lineNo, "порожній вираз у if");
+        diagnose(normalizedPath, lineNo, "empty expression in if");
       }
       ifStack.push_back(value);
       continue;
     }
     if (keyword == "endif") {
       if (!ifStack.empty()) ifStack.pop_back();
-      else diagnose(normalizedPath, lineNo, "endIf без if");
+      else diagnose(normalizedPath, lineNo, "endIf without if");
       continue;
     }
     if (skipping()) continue;
 
-    // 3. Локальні змінні: `var v_dist = 20`
+    // 3. Local variables: `var v_dist = 20`
     if (keyword == "var") {
       if (tokens.size() >= 4 && tokens[2] == "=") {
         frame.vars[toLower(tokens[1])] = substitute(tokens[3]);
       } else if (tokens.size() == 2) {
         frame.vars[toLower(tokens[1])] = std::string{};
       } else {
-        diagnose(normalizedPath, lineNo, "некоректний var");
+        diagnose(normalizedPath, lineNo, "malformed var");
       }
       continue;
     }
 
-    // 4. Підключення інших файлів. include — той самий контекст, run — виклик
-    //    з аргументами, що стають v_arg1..N. Для нас різниця лише в аргументах.
+    // 4. Including other files. include keeps the same context, run is a call
+    //    with arguments that become v_arg1..N. For us the only difference is the arguments.
     if (keyword == "include" || keyword == "run") {
       if (tokens.size() < 2) {
-        diagnose(normalizedPath, lineNo, keyword + " без шляху");
+        diagnose(normalizedPath, lineNo, keyword + " without a path");
         continue;
       }
       const std::string target = joinAssetPath(dir, substitute(tokens[1]));
@@ -240,15 +240,15 @@ bool Interpreter::execute(std::string_view text, std::string_view normalizedPath
 
       auto nested = files_.loadText(target);
       if (!nested) {
-        // Другий шанс: шлях від кореня mod-у, а не відносно поточного файлу.
+        // A second chance: the path from the mod's root rather than relative to the current file.
         const std::string fromRoot = normalizeAssetPath(substitute(tokens[1]));
         nested = files_.loadText(fromRoot);
         if (nested) {
           ok &= execute(*nested, fromRoot, callArgs, depth + 1);
           continue;
         }
-        // Як в оригіналі: відсутній include не зупиняє завантаження.
-        diagnose(normalizedPath, lineNo, keyword + ": файл не знайдено — " + target,
+        // As in the original: a missing include does not stop loading.
+        diagnose(normalizedPath, lineNo, keyword + ": file not found — " + target,
                  Severity::Warning);
         continue;
       }
@@ -257,11 +257,11 @@ bool Interpreter::execute(std::string_view text, std::string_view normalizedPath
       continue;
     }
 
-    // 5. Звичайна команда.
+    // 5. An ordinary command.
     Command cmd;
     cmd.path = splitCommandPath(tokens[0]);
     if (cmd.path.empty()) {
-      diagnose(normalizedPath, lineNo, "порожнє ім'я команди");
+      diagnose(normalizedPath, lineNo, "empty command name");
       continue;
     }
     cmd.lowerPath = toLower(tokens[0]);
@@ -272,8 +272,8 @@ bool Interpreter::execute(std::string_view text, std::string_view normalizedPath
     if (onCommand_) onCommand_(cmd);
   }
 
-  if (remDepth != 0) diagnose(normalizedPath, lineNo, "незакритий beginRem");
-  if (!ifStack.empty()) diagnose(normalizedPath, lineNo, "незакритий if");
+  if (remDepth != 0) diagnose(normalizedPath, lineNo, "unclosed beginRem");
+  if (!ifStack.empty()) diagnose(normalizedPath, lineNo, "unclosed if");
   return ok;
 }
 

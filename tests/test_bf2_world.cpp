@@ -1,8 +1,8 @@
-// Стан світу зі знятого трафіку.
+// The world's state from captured traffic.
 //
-// Зразок `tests/data/bf2-spawned.bin` знято вже після появи гравця й із
-// надісланим вводом (`openbf2 --connect ... --record`), тож у ньому є все
-// одразу: події про гравців, стан керованого об'єкта і записи привидів.
+// The sample `tests/data/bf2-spawned.bin` was taken after the player spawned and
+// with input sent (`openbf2 --connect ... --record`), so it holds everything at
+// once: the player events, the controlled-object state and the ghost records.
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -39,13 +39,13 @@ void testWorldViewCollectsPlayersAndObjects() {
   world.setOwnName("OpenBF2");
   for (const auto& packet : packets) world.feed(packet);
 
-  // Гравці зі знятку: у ньому були і ми, і ще хтось.
+  // The players from the capture: it held both us and somebody else.
   CHECK(!world.players().empty());
-  // Себе впізнали за іменем — сервер шле його з пробілом попереду.
+  // We recognised ourselves by name — the server sends it with a leading space.
   CHECK(world.ownPlayer() >= 0);
   CHECK(world.ownTeam() > 0);
 
-  // Об'єкти світу теж зібралися, і всі — в межах карти.
+  // The world's objects assembled too, and all of them are within the map.
   CHECK(!world.objects().empty());
   for (const auto& [id, object] : world.objects()) {
     CHECK(id != 0);
@@ -54,8 +54,8 @@ void testWorldViewCollectsPlayersAndObjects() {
   }
 }
 
-// Опорна точка стиснення береться зі стану керованого об'єкта і не
-// лишається нулем: без неї місця з потоку розлетілися б.
+// The compression reference point comes from the controlled-object state and does
+// not stay zero: without it the positions from the stream would scatter.
 void testWorldViewTakesCompressionReference() {
   const auto packets = loadCapture(std::string(OBF2_TEST_DATA) + "/bf2-spawned.bin");
   obf2::net::bf2::WorldView world;

@@ -1,6 +1,6 @@
 # stb_image v2.30 (public domain / MIT) — https://github.com/nothings/stb
-# Потрібен лише для PNG: ассети меню BF2 лежать саме в ньому, тоді як
-# ігрові текстури — DDS, які ми читаємо самі.
+# Needed for PNG only: BF2's menu assets are in it, while the game's textures are
+# DDS, which we read ourselves.
 add_library(stb_image stb_image.c)
 target_include_directories(stb_image PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 if(MSVC)

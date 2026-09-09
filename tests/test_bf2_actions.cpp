@@ -1,13 +1,13 @@
-// Потік дій гравця — те, чим клієнт рухає свого солдата.
+// The player action stream — what the client moves its soldier with.
 //
-// Розкладка з `PlayerActionManager::processReceivedPacket` (0x44d670).
-// Перевіряємо її двома способами, і другий важливіший за перший:
+// The layout comes from `PlayerActionManager::processReceivedPacket` (0x44d670).
+// We check it two ways, and the second matters more than the first:
 //
-//   1. що ми пишемо, те й читаємо назад;
-//   2. що наш розбирач розуміє **справжні** пакети оригінального
-//      клієнта, зняті з мережі (`tests/data/actions-*.bin`).
+//   1. what we write reads back;
+//   2. our parser understands **real** packets of the original client,
+//      captured off the network (`tests/data/actions-*.bin`).
 //
-// Другий тест і є доказом, що розкладка правильна: байти там не наші.
+// The second test is the proof that the layout is right: those bytes are not ours.
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -16,13 +16,13 @@
 #include "obf2/net/bf2_events.h"
 #include "obf2/net/bf2_protocol.h"
 
-// Лише простір BF2: у `obf2::net` є свій ExtendedHeader, і два
-// однакові імені зробили б звертання неоднозначним.
+// The BF2 namespace only: `obf2::net` has an ExtendedHeader of its own, and two
+// identical names would make the reference ambiguous.
 using namespace obf2::net::bf2;
 
 namespace {
 
-// Один пакет зі спійманого файлу: u32 довжина, далі байти.
+// One packet from a captured file: a u32 length, then the bytes.
 std::vector<std::byte> capturedPacket(const char* name) {
   const auto packets = loadCapture(std::string(OBF2_TEST_DATA) + "/" + name);
   return packets.empty() ? std::vector<std::byte>{} : packets.front();
@@ -30,7 +30,7 @@ std::vector<std::byte> capturedPacket(const char* name) {
 
 }  // namespace
 
-// Кругообіг: складене нами читається назад тим самим розбирачем.
+// A round trip: what we assembled reads back with the same parser.
 static void testRoundTrip() {
   ExtendedHeader header;
   header.sequence = 5;
@@ -62,14 +62,14 @@ static void testRoundTrip() {
     CHECK_EQ(got.axes[kAxisMouseY], std::int16_t(40));
     CHECK_EQ(got.buttons, kButtonSprint);
     CHECK(got.flag);
-    // Три осі, яких ми не називаємо, лишаються нулем.
+    // The three axes we do not name stay zero.
     CHECK_EQ(got.axes[0], std::int16_t(0));
     CHECK_EQ(got.axes[1], std::int16_t(0));
     CHECK_EQ(got.axes[2], std::int16_t(0));
   }
 }
 
-// Від'ємні осі: хід назад і рух миші вліво.
+// Negative axes: moving backwards and the mouse to the left.
 static void testNegativeAxes() {
   ExtendedHeader header;
   PlayerAction action;
@@ -87,7 +87,7 @@ static void testNegativeAxes() {
   CHECK_EQ(read->actions.front().axes[kAxisMouseX], std::int16_t(-127));
 }
 
-// Пакет без дій розбирачу не належить.
+// A packet with no actions does not belong to the parser.
 static void testPacketWithoutActions() {
   ExtendedHeader header;
   const auto packet =
@@ -95,7 +95,7 @@ static void testPacketWithoutActions() {
   CHECK(!readPlayerActions(packet).has_value());
 }
 
-// Справжній пакет оригінального клієнта: гравець біжить уперед.
+// A real packet of the original client: the player runs forward.
 static void testCapturedRun() {
   const auto packet = capturedPacket("actions-run.bin");
   CHECK(!packet.empty());
@@ -105,16 +105,16 @@ static void testCapturedRun() {
   CHECK(read.has_value());
   if (!read) return;
 
-  // Оригінал кладе в пакет три останні набори — запас на втрату.
+  // The original puts the last three sets into a packet — a reserve against loss.
   CHECK_EQ(read->actions.size(), std::size_t(3));
   if (read->actions.empty()) return;
   const PlayerAction& first = read->actions.front();
-  CHECK_EQ(first.axes[kAxisForward], kAxisFull);  // повний хід уперед
-  CHECK_EQ(first.buttons, std::uint32_t(0));      // спринт не тримає
+  CHECK_EQ(first.axes[kAxisForward], kAxisFull);  // full movement forward
+  CHECK_EQ(first.buttons, std::uint32_t(0));      // sprint is not held
   CHECK(first.flag);
 }
 
-// Той самий гравець зі спринтом.
+// The same player with sprint.
 static void testCapturedSprint() {
   const auto packet = capturedPacket("actions-sprint.bin");
   CHECK(!packet.empty());
@@ -128,7 +128,7 @@ static void testCapturedSprint() {
   CHECK_EQ(first.buttons, kButtonSprint);
 }
 
-// І він же, поки стоїть на місці.
+// And him again, standing still.
 static void testCapturedStill() {
   const auto packet = capturedPacket("actions-still.bin");
   CHECK(!packet.empty());
@@ -141,14 +141,14 @@ static void testCapturedStill() {
   CHECK_EQ(read->actions.front().buttons, std::uint32_t(0));
 }
 
-// Лічильник вводу росте на одиницю за пакет — за ним сервер шикує
-// набори в правильному порядку.
+// The input counter grows by one per packet — by it the server lines the sets up
+// in the right order.
 static void testCapturedTickIsSane() {
   const auto run = readPlayerActions(capturedPacket("actions-run.bin"));
   const auto sprint = readPlayerActions(capturedPacket("actions-sprint.bin"));
   CHECK(run.has_value() && sprint.has_value());
   if (!run || !sprint) return;
-  // Спринт у дампі був пізніше за початок бігу.
+  // The sprint in the dump came later than the start of the run.
   CHECK(sprint->tick > run->tick);
 }
 

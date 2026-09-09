@@ -1,17 +1,17 @@
-// command_audit — що з мови .con ми вже вміємо, а що ні.
+// command_audit — what of the .con language we already can do and what not.
 //
-// Проганяє ВСІ .con і .tweak гри (включно з рівнями) через ті самі
-// обробники, що й рушій, і показує:
-//   * скільки команд виконано і скільки лишилося без обробника;
-//   * які саме команди без обробника, з ПРИКЛАДОМ реальних аргументів
-//     і файлом, де вони трапилися.
+// It runs EVERY .con and .tweak of the game (levels included) through the
+// same handlers the engine uses, and shows:
+//   * how many commands were executed and how many were left with no handler;
+//   * which commands exactly have no handler, with an EXAMPLE of their real
+//     arguments and the file they occurred in.
 //
-// Приклад аргументів важливіший за саму назву: він одразу показує, що
-// команда очікує, і скільки роботи в ній насправді.
+// The example arguments matter more than the name itself: they show at once
+// what the command expects, and how much work is really in it.
 //
-//   command_audit <modDir> [рівень]         — зведення
-//   command_audit <modDir> --missing [N]    — перелік нереалізованого
-//   command_audit <modDir> --target <ціль>  — усе про одну ціль
+//   command_audit <modDir> [level]          — a summary
+//   command_audit <modDir> --missing [N]    — the list of the unimplemented
+//   command_audit <modDir> --target <target>  — everything about one target
 
 #include <algorithm>
 #include <cstdio>
@@ -31,7 +31,7 @@ namespace {
 
 struct Sample {
   int count = 0;
-  std::string arguments;  // приклад реальних аргументів
+  std::string arguments;  // an example of the real arguments
   std::string file;
   int line = 0;
 };
@@ -40,7 +40,7 @@ std::string joinArguments(const obf2::con::Command& command) {
   std::string joined;
   for (const std::string& argument : command.args) {
     if (!joined.empty()) joined += " ";
-    // Довгі шляхи вкорочуємо: у звіті важлива форма, а не вміст.
+    // Long paths are shortened: in the report the shape matters, not the content.
     joined += argument.size() > 40 ? argument.substr(0, 37) + "..." : argument;
   }
   return joined;
@@ -50,7 +50,7 @@ std::string joinArguments(const obf2::con::Command& command) {
 
 int main(int argc, char** argv) {
   if (argc < 2) {
-    std::fputs("usage: command_audit <modDir> [--missing N | --target <ціль> | <рівень>]\n",
+    std::fputs("usage: command_audit <modDir> [--missing N | --target <target> | <level>]\n",
                stderr);
     return 2;
   }
@@ -64,13 +64,13 @@ int main(int argc, char** argv) {
   }
   files.mountDirectory(modDir);
 
-  // Рівень монтуємо теж: у ньому власний набір команд (терен, розстановка,
-  // ігрова логіка), і без нього картина неповна.
+  // We mount the level too: it has a command set of its own (terrain, placement,
+  // game logic), and without it the picture is incomplete.
   std::string levelName;
   if (!mode.empty() && mode.rfind("--", 0) != 0) levelName = mode;
   if (!levelName.empty()) obf2::level::mountLevel(files, modDir, levelName);
 
-  // Ті самі обробники, що й у рушії.
+  // The same handlers as in the engine.
   obf2::engine::Console console;
   obf2::engine::Settings settings;
   obf2::engine::ControlMap controls;
@@ -93,7 +93,7 @@ int main(int argc, char** argv) {
       ++byTarget[target];
     }
 
-    // Порядок як у рушії: спершу спеціалізовані підсистеми, потім консоль.
+    // The order is the engine's: first the specialised subsystems, then the console.
     const bool isObjectTemplate =
         command.lowerPath.rfind("objecttemplate.", 0) == 0 || command.lowerPath == "objecttemplate";
     const bool isHud = command.lowerPath.rfind("hudbuilder.", 0) == 0;
@@ -136,9 +136,9 @@ int main(int argc, char** argv) {
     interpreter.runFile(path, editorArgs);
   }
 
-  std::printf("файлів: %zu\nкоманд виконано: %lld з %lld (%.1f%%)\n", configs.size(), handled,
+  std::printf("files: %zu\ncommands executed: %lld of %lld (%.1f%%)\n", configs.size(), handled,
               total, total == 0 ? 0.0 : 100.0 * static_cast<double>(handled) / static_cast<double>(total));
-  std::printf("унікальних без обробника: %zu\n", missing.size());
+  std::printf("distinct with no handler: %zu\n", missing.size());
 
   std::vector<std::pair<std::string, Sample>> sorted(missing.begin(), missing.end());
   std::sort(sorted.begin(), sorted.end(),
@@ -147,7 +147,7 @@ int main(int argc, char** argv) {
   if (mode == "--target" && argc > 3) {
     std::string wanted = argv[3];
     for (char& c : wanted) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    std::printf("\nбез обробника у цілі \"%s\":\n", wanted.c_str());
+    std::printf("\nwith no handler in target \"%s\":\n", wanted.c_str());
     for (const auto& [name, sample] : sorted) {
       if (name.rfind(wanted + ".", 0) != 0) continue;
       std::printf("  %-44s x%-6d %s\n", name.c_str(), sample.count, sample.arguments.c_str());
@@ -158,7 +158,7 @@ int main(int argc, char** argv) {
   int limit = 40;
   if (mode == "--missing" && argc > 3) limit = std::atoi(argv[3]);
 
-  std::printf("\nнереалізовані команди (топ-%d), з прикладом аргументів:\n", limit);
+  std::printf("\nunimplemented commands (top %d), with example arguments:\n", limit);
   int shown = 0;
   for (const auto& [name, sample] : sorted) {
     if (shown++ >= limit) break;
@@ -166,7 +166,7 @@ int main(int argc, char** argv) {
     std::printf("  %-42s %s:%d\n", "", sample.file.c_str(), sample.line);
   }
 
-  std::puts("\nцілі команд (топ-12):");
+  std::puts("\ncommand targets (top 12):");
   std::vector<std::pair<std::string, long long>> targets(byTarget.begin(), byTarget.end());
   std::sort(targets.begin(), targets.end(),
             [](const auto& a, const auto& b) { return a.second > b.second; });

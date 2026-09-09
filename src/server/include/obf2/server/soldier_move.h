@@ -1,15 +1,14 @@
 #pragma once
-// Один крок руху солдата — цілком: земля, вода, тяжіння, стіни.
+// One step of a soldier's movement — whole: ground, water, gravity, walls.
 //
-// Це та сама дія, яку рушій виконує і на сервері, і на клієнті: сервер
-// рухає тіло, клієнт передбачає рух свого солдата тим самим кроком і тими
-// самими сталими (`PlayerControlObjectNetworkable` живе на клієнті, а
-// фізика солдата в `SoldierResponsePhysics` — одна на обох).
+// This is the same action the engine performs on both the server and the client:
+// the server moves the body, the client predicts its own soldier's movement with
+// the same step and the same constants (`PlayerControlObjectNetworkable` lives
+// on the client, while the soldier's physics in `SoldierResponsePhysics` is shared).
 //
-// Тому й у нас це **одна** функція, а не дві схожі. Коли вона була
-// подвоєна, клієнтська половина знала лише висоту землі — і солдат
-// проходив крізь стіни на справжньому сервері, хоч у власній грі не
-// проходив.
+// So here too it is **one** function, not two similar ones. When it was
+// duplicated, the client's half knew only the ground's height — and the soldier
+// walked through walls on a real server, even though he did not in our own game.
 #include "obf2/core/math.h"
 #include "obf2/level/level.h"
 #include "obf2/server/collision_world.h"
@@ -17,28 +16,28 @@
 
 namespace obf2::server {
 
-// Такт симуляції рушія. Не «звична» стала, а число з бінаря:
-// `dice::hfe::WorldPref::mTickTime` лежить у `.data` лінукс-сервера за
-// 0xf68c50 і дорівнює рівно 0.0333333333333333 (double), тобто 1/30 с.
-// Читає його `WorldPref::getTickTime` (0x74aa60).
+// The engine's simulation tick. Not a "customary" constant but a number from the
+// binary: `dice::hfe::WorldPref::mTickTime` lies in the Linux server's `.data` at
+// 0xf68c50 and equals exactly 0.0333333333333333 (double), that is 1/30 s.
+// It is read by `WorldPref::getTickTime` (0x74aa60).
 //
-// Фізику рушій рахує **тільки** цілими тактами. Тому й у нас крок руху
-// не може бути тривалістю кадру: інакше на 120 кадрах стрибок виходить
-// інакший, ніж на 60, — саме це й було видно.
+// The engine computes physics in **whole** ticks only. So our movement step
+// cannot be a frame's length either: otherwise a jump at 120 frames comes out
+// different from one at 60 — which is exactly what was visible.
 inline constexpr float kTickTime = 1.0f / 30.0f;
 
-// Стан, який переживає крок і не належить самому тілу.
+// The state that outlives a step and does not belong to the body itself.
 struct SwimState {
   bool swimming = false;
 };
 
-// Час, накопичений між тактами. Кадр рідко дорівнює такту, тож залишок
-// переноситься на наступний кадр, а не губиться і не подовжує крок.
+// The time accumulated between ticks. A frame rarely equals a tick, so the
+// remainder carries over to the next frame rather than being lost or lengthening the step.
 struct TickAccumulator {
   float pending = 0.0f;
 
-  // Скільки цілих тактів визріло за `elapsed`. Довга пауза (завантаження,
-  // вікно перетягли) не має намотати сотні тактів за один кадр.
+  // How many whole ticks matured over `elapsed`. A long pause (loading, the
+  // window being dragged) must not wind up hundreds of ticks in one frame.
   int take(float elapsed, int limit = 8) {
     pending += elapsed;
     int ticks = 0;
@@ -51,9 +50,9 @@ struct TickAccumulator {
   }
 };
 
-// wish — бажаний напрямок у площині (вже повернутий на кут огляду),
-// довжина 0..1. terrain і collision можуть бути порожні: без терену
-// землею вважається нуль, без колізій стін немає.
+// wish is the desired direction in the plane (already rotated by the look angle),
+// of length 0..1. terrain and collision may be empty: with no terrain the ground
+// counts as zero, with no collision there are no walls.
 void moveSoldier(BodyState& body, SwimState& swim, const Vec3f& wish, float maxSpeed, bool jump,
                  const PhysicsConstants& physics, const level::Level* terrain,
                  const CollisionWorld* collision, float step);

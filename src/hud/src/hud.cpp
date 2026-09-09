@@ -7,13 +7,13 @@
 namespace obf2::hud {
 namespace {
 
-// createXxxNode <група> <ім'я> <x> <y> <ширина> <висота>
+// createXxxNode <group> <name> <x> <y> <width> <height>
 bool readRect(const con::Command& command, Node& node, int skip = 0) {
   if (command.args.size() < 2) return false;
   node.group = command.args[0];
   node.name = command.args[1];
-  // У смуги перед прямокутником стоїть ще один аргумент — напрям росту,
-  // тож координати зсунуті на одну позицію.
+  // A bar has one more argument before the rectangle — the growth direction —
+  // so the coordinates are shifted by one position.
   node.x = command.argFloat(2 + skip).value_or(0.0f);
   node.y = command.argFloat(3 + skip).value_or(0.0f);
   node.width = command.argFloat(4 + skip).value_or(0.0f);
@@ -47,8 +47,8 @@ std::string_view nodeTypeName(NodeType type) {
 }
 
 Node* Builder::active() {
-  // Активним є або той, що вибрали через setActiveObject, або останній
-  // створений.
+  // The active node is either the one chosen through setActiveObject or the last
+  // one created.
   if (activeIndex_ >= 0 && activeIndex_ < static_cast<int>(nodes_.size())) {
     return &nodes_[static_cast<std::size_t>(activeIndex_)];
   }
@@ -66,20 +66,20 @@ std::string lowered(std::string_view text) {
 }  // namespace
 
 void Builder::finish() {
-  // Батька шукаємо за іменем: у даних гри він тільки так і вказаний.
+  // The parent is looked up by name: in the game's data it is only ever given that way.
   std::map<std::string, int> byName;
   for (std::size_t i = 0; i < nodes_.size(); ++i) {
     byName.emplace(lowered(nodes_[i].name), static_cast<int>(i));
   }
   for (std::size_t i = 0; i < nodes_.size(); ++i) {
     const auto found = byName.find(lowered(nodes_[i].group));
-    // Ділянка (Global, BottomLeftStatic…) вузлом не є, тож не знайдеться
-    // — це і означає корінь. Сам на себе вузол теж не батько.
+    // A region (Global, BottomLeftStatic…) is not a node, so it will not be found
+    // — and that is what a root means. A node is not its own parent either.
     nodes_[i].parent =
         (found != byName.end() && found->second != static_cast<int>(i)) ? found->second : -1;
   }
-  // Абсолютне положення — сума по предках. Лічильник кроків рятує від
-  // кільця: дані гри його не мають, але мод може.
+  // The absolute position is the sum over the ancestors. A step counter saves us
+  // from a cycle: the game's data has none, but a mod may.
   for (std::size_t i = 0; i < nodes_.size(); ++i) {
     float x = 0.0f;
     float y = 0.0f;
@@ -87,8 +87,8 @@ void Builder::finish() {
     int at = static_cast<int>(i);
     for (int step = 0; at >= 0 && step < 64; ++step) {
       const Node& current = nodes_[static_cast<std::size_t>(at)];
-      // setNodeOffset зсуває вузол разом із його дітьми, тож входить
-      // у суму нарівні з x/y.
+      // setNodeOffset shifts a node together with its children, so it enters the
+      // sum alongside x/y.
       x += current.x + current.offsetX;
       y += current.y + current.offsetY;
       area = current.group;
@@ -106,7 +106,7 @@ void Builder::setMapView(MapView view) {
       useMapView(node, view);
     }
   }
-  // Прямокутник вузла змінився — зведені координати треба перерахувати.
+  // The node's rectangle changed — the resolved coordinates have to be recomputed.
   finish();
 }
 
@@ -127,16 +127,16 @@ void useMapView(Node& node, MapView view) {
                         : view == MapView::Commander ? node.mapCommander
                                                      : node.mapMini;
   if (!rect.set) return;
-  // Карта — єдиний вузол, чиї координати відлічені **від центра екрана**,
-  // а не від батька. Тому в даних вони від'ємні. Сходиться відразу тричі:
+  // The map is the only node whose coordinates are counted **from the screen's
+  // centre** rather than from the parent. Hence the negatives. It agrees three times over:
   //
-  //   mini      197/-300 197x197 -> (597, 0),   а рамка MapFrame (596, 0) 200x212
+  //   mini      197/-300 197x197 -> (597, 0),   and the MapFrame frame (596, 0) 200x212
   //   maxi     -122/-273 512x512 -> (278, 27)
-  //   commander -161/-281 561x561 -> (239, 19), правий край рівно 800
+  //   commander -161/-281 561x561 -> (239, 19), the right edge exactly 800
   //
-  // Тобто мінікарта лягає в свою рамку з полем в один піксель, а
-  // командирська впирається в край екрана. Доти ми брали ці числа як є, і
-  // карта йшла за верхній край.
+  // So the minimap lands in its frame with a one-pixel margin, while the
+  // commander's runs into the screen's edge. Until now we took these numbers as
+  // they were, and the map went past the top edge.
   node.x = kReferenceWidth * 0.5f + rect.x;
   node.y = kReferenceHeight * 0.5f + rect.y;
   node.width = rect.width;
@@ -150,19 +150,19 @@ void Builder::feed(const con::Command& command) {
 
   const std::string_view method = std::string_view(command.lowerPath).substr(11);
 
-  // --- створення вузлів ---
-  // Скільки аргументів стоїть між іменем і прямокутником — знято з даних
-  // гри (tools/hud_audit.py):
+  // --- creating nodes ---
+  // How many arguments stand between the name and the rectangle — taken from the
+  // game's data (tools/hud_audit.py):
   //
-  //   createPictureNode  <група> <ім'я> <x> <y> <ш> <в>
-  //   createBarNode      <група> <ім'я> <напрям> <x> <y> <ш> <в>
-  //   createCompassNode  <група> <ім'я> <вид> <x> <y> <ш> <в> <прапорець> <прапорець>
-  //   createOccupiedNode <група> <ім'я> <?> <x> <y> <ш> <в>
-  //   createSliderNode   <група> <ім'я> <мін> <макс> <значення> <крок>   — без прямокутника
-  //   createMapNode      <група> <ім'я>                                  — теж без
+  //   createPictureNode  <group> <name> <x> <y> <w> <h>
+  //   createBarNode      <group> <name> <direction> <x> <y> <w> <h>
+  //   createCompassNode  <group> <name> <kind> <x> <y> <w> <h> <flag> <flag>
+  //   createOccupiedNode <group> <name> <?> <x> <y> <w> <h>
+  //   createSliderNode   <group> <name> <min> <max> <value> <step>   — no rectangle
+  //   createMapNode      <group> <name>                             — none either
   //
-  // Компас через це й виїжджав на пів екрана: ми читали його прямокутник
-  // на одну позицію раніше, і замість 186x32 виходило 165x186.
+  // That is exactly why the compass drove out half a screen: we read its
+  // rectangle one position early, and instead of 186x32 got 165x186.
   if (method == "newlayer") {
     ++layer_;
     return;
@@ -176,9 +176,9 @@ void Builder::feed(const con::Command& command) {
                          type == NodeType::Occupied;
     const int skip = shifted ? 1 : 0;
     if (type == NodeType::Bar) node.barDirection = command.argInt(2).value_or(0);
-    // createListNode <батько> <ім'я> <x> <y> <ш> <в> <висота рядка> <?>
+    // createListNode <parent> <name> <x> <y> <w> <h> <row height> <?>
     if (type == NodeType::List) node.listRowHeight = command.argFloat(6).value_or(0.0f);
-    // Повзунок і карта прямокутника не несуть: у повзунка там межі й крок.
+    // A slider and the map carry no rectangle: a slider has its bounds and step there.
     if (type == NodeType::Slider || type == NodeType::Map) {
       if (command.args.size() >= 2) {
         node.group = command.args[0];
@@ -200,13 +200,13 @@ void Builder::feed(const con::Command& command) {
   if (method == "createbarnode") { create(NodeType::Bar); return; }
   if (method == "createobjectmarkernode") { create(NodeType::ObjectMarker); return; }
   if (method == "createcompassnode") { create(NodeType::Compass); return; }
-  // У DICE трапляється й опечатка «Transfom» — це та сама команда.
+  // DICE also has the typo "Transfom" — it is the same command.
   if (method == "createtransformlistnode" || method == "createtransfomlistnode") {
     create(NodeType::TransformList);
     return;
   }
-  // Вузли, які ми поки не малюємо, але тип у них свій: інакше вони всі
-  // злипаються в «інше» і по дереву не видно, чого бракує.
+  // Nodes we do not draw yet, but with a type of their own: otherwise they all
+  // clump into "other" and the tree does not show what is missing.
   if (method == "createtransformnode") { create(NodeType::TransformList); return; }
   if (method == "createlistnode") { create(NodeType::List); return; }
   if (method == "createeditnode") { create(NodeType::Edit); return; }
@@ -218,12 +218,12 @@ void Builder::feed(const con::Command& command) {
   if (method == "createmapnode") { create(NodeType::Map); return; }
   if (method.rfind("create", 0) == 0) { create(NodeType::Other); return; }
 
-  // setActiveObject перемикає, до якого вузла йдуть наступні команди.
-  // Без нього властивості осідали б на останньому створеному — і частина
-  // інтерфейсу збиралася б неправильно.
+  // setActiveObject switches which node the following commands go to.
+  // Without it the properties would settle on the last one created — and part of
+  // the interface would be assembled wrongly.
   if (method == "setactiveobject") {
-    // setActiveObject <група> <ім'я>. Ім'я — останній аргумент: у формі з
-    // одним аргументом група просто не вказана.
+    // setActiveObject <group> <name>. The name is the last argument: in the
+    // one-argument form the group is simply not given.
     const std::string_view name = command.args.empty()
                                       ? std::string_view()
                                       : std::string_view(command.args.back());
@@ -237,11 +237,11 @@ void Builder::feed(const con::Command& command) {
       }
     }
     ++unknown_;
-    ++unknownByName_["setactiveobject (немає такого вузла)"];
+    ++unknownByName_["setactiveobject (no such node)"];
     return;
   }
 
-  // --- усе інше застосовується до активного вузла ---
+  // --- everything else applies to the active node ---
   Node* node = active();
   if (node == nullptr) {
     ++unknown_;
@@ -249,8 +249,8 @@ void Builder::feed(const con::Command& command) {
     return;
   }
 
-  // Прямокутник вузла можна змінити й після створення — цим користуються
-  // там, де один опис підганяють під кілька місць.
+  // A node's rectangle can be changed after creation too — used where one
+  // description is fitted to several places.
   if (method == "setnodepos") {
     node->x = command.argFloat(0).value_or(node->x);
     node->y = command.argFloat(1).value_or(node->y);
@@ -271,8 +271,8 @@ void Builder::feed(const con::Command& command) {
   }
 
   if (method == "setbarnodetexture") {
-    // setBarNodeTexture <0|1> <файл>: нульова текстура — порожня смуга,
-    // перша — повна. Малюємо повну, обрізану за значенням.
+    // setBarNodeTexture <0|1> <file>: texture zero is the empty bar, the first the
+    // full one. We draw the full one, clipped by the value.
     const int slot = command.argInt(0).value_or(0);
     std::string path(command.argStr(1));
     if (slot == 0) node->barTextureEmpty = path;
@@ -284,18 +284,18 @@ void Builder::feed(const con::Command& command) {
     node->texture = std::string(command.argStr(0));
     return;
   }
-  // У кнопки перед шляхом стоїть **стан**:
+  // A button has a **state** before the path:
   //
-  //   setButtonNodeTexture 1 Ingame/Respawn/kit_selected.tga   спокій
-  //   setButtonNodeTexture 2 Ingame/GeneralIcons/empty.tga     під курсором
+  //   setButtonNodeTexture 1 Ingame/Respawn/kit_selected.tga   at rest
+  //   setButtonNodeTexture 2 Ingame/GeneralIcons/empty.tga     under the cursor
   //
-  // Ми ж брали перший аргумент — і текстурою кнопки ставало саме число
-  // «1» або «2», якого, звісно, немає.
+  // We used to take the first argument — and the button's texture became the
+  // number "1" or "2", which of course does not exist.
   if (method == "setbuttonnodetexture") {
     const int state = command.argInt(0).value_or(1);
     std::string path(command.argStr(1));
     if (path.empty()) {
-      // Трапляється й коротка форма, без стану.
+      // The short form, without a state, occurs too.
       path = std::string(command.argStr(0));
       node->texture = path;
       return;
@@ -328,9 +328,9 @@ void Builder::feed(const con::Command& command) {
     node->showVariable = std::string(command.argStr(0));
     return;
   }
-  // `setNodeLogicShowVariable NOT DisconnectMessageActive 1` — це дія,
-  // змінна і значення, а не одне ім'я. У даних лише чотири дії, і всі з
-  // трьома аргументами.
+  // `setNodeLogicShowVariable NOT DisconnectMessageActive 1` is an action, a
+  // variable and a value, not one name. The data holds only four actions, all
+  // with three arguments.
   if (method == "setnodelogicshowvariable") {
     if (command.args.size() >= 3) {
       ShowTest test;
@@ -346,16 +346,16 @@ void Builder::feed(const con::Command& command) {
     return;
   }
   if (method == "setbuttonnodeconcmd") {
-    // Кнопка виконує консольні команди — так інтерфейс і керує грою.
-    // Форма: `setButtonNodeConCmd "<команда>" <подія>`, де подія 0 це
-    // натискання, а 1 — наведення. На одній кнопці їх кілька:
+    // A button runs console commands — that is how the interface drives the game.
+    // The form is `setButtonNodeConCmd "<command>" <event>`, where event 0 is a
+    // click and 1 a hover. One button has several of them:
     //
     //   setButtonNodeConCmd "spawnManager.setPlayerKit 1" 0
     //   setButtonNodeConCmd "sound.playSound kitSelect"   0
     //   setButtonNodeConCmd "sound.playSound kitOver"     1
     //
-    // Доти ми лишали останню — і кнопка вибору класу «виконувала» звук
-    // наведення замість вибору.
+    // Until now we kept the last — and the kit selection button "ran" the hover
+    // sound instead of the selection.
     if (command.args.empty()) return;
     const std::size_t last = command.args.size() - 1;
     int event = 0;
@@ -372,13 +372,13 @@ void Builder::feed(const con::Command& command) {
     }
     if (joined.empty()) return;
     node->commands.emplace_back(event, joined);
-    // `command` лишається першою дією натискання — за нею кнопка й
-    // вважається дієвою. Натисканню належать події 0 і 3.
+    // `command` stays the first click action — the button counts as active by it.
+    // Events 0 and 3 belong to a click.
     if ((event == 0 || event == 3) && node->command.empty()) node->command = joined;
     return;
   }
   if (method == "setnodecolor") {
-    // Колір у файлах трапляється і як 0..1, і як 0..255.
+    // In the files a colour occurs both as 0..1 and as 0..255.
     float values[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     bool overOne = false;
     for (std::size_t i = 0; i < 4; ++i) {
@@ -401,14 +401,14 @@ void Builder::feed(const con::Command& command) {
     return;
   }
 
-  // --- ефекти появи ---
+  // --- show effects ---
   if (method == "addnodealphashoweffect") {
     node->showEffects.push_back(ShowEffectInfo{ShowEffect::Alpha, 0.0f, 0.0f});
     return;
   }
-  // `addNodeMoveShowEffect <напрям> <відстань>`. У DICE трапляється й
-  // опечатка «addNoDemoveShowEffect» (10 разів), але в нижньому регістрі
-  // вона збігається з правильною назвою, тож окремої гілки не треба.
+  // `addNodeMoveShowEffect <direction> <distance>`. DICE also has the typo
+  // "addNoDemoveShowEffect" (10 times), but lower-cased it coincides with the
+  // correct name, so no separate branch is needed.
   if (method == "addnodemoveshoweffect") {
     node->showEffects.push_back(ShowEffectInfo{ShowEffect::Move,
                                                command.argFloat(0).value_or(0.0f),
@@ -420,21 +420,21 @@ void Builder::feed(const con::Command& command) {
     return;
   }
 
-  // --- списки трансформацій: вузол стає нащадком іншого ---
+  // --- transform lists: a node becomes another's child ---
   if (method == "addtransformlistnode" || method == "addtransfomlistnode") {
     node->children.emplace_back(command.argStr(0));
     return;
   }
-  // setTranformListNodeOffset <x> <y> — крок між сусідніми пунктами
-  // списку. Без нього всі пункти лягають один на одного.
+  // setTranformListNodeOffset <x> <y> — the step between neighbouring items of a
+  // list. Without it every item lands on top of the others.
   if (method == "settranformlistnodeoffset" || method == "settransformlistnodeoffset") {
     node->childOffsetX = command.argFloat(0).value_or(0.0f);
     node->childOffsetY = command.argFloat(1).value_or(0.0f);
     return;
   }
   if (method == "settranformlistnodeposvariable" || method == "setnodeposvariable") {
-    // Ім'я команди в даних саме таке, з опискою в «tranform».
-    // Аргументи: **вісь** (0 = X, 1 = Y) і назва змінної.
+    // The command's name in the data is exactly this, with the typo in "tranform".
+    // The arguments: the **axis** (0 = X, 1 = Y) and the variable's name.
     const int axis = command.argInt(0).value_or(0);
     std::string name(command.argStr(1));
     if (axis == 0) {
@@ -445,7 +445,7 @@ void Builder::feed(const con::Command& command) {
     return;
   }
 
-  // --- кнопки ---
+  // --- buttons ---
   if (method == "setbuttonnodealtconcmd") {
     std::string joined;
     for (const std::string& argument : command.args) {
@@ -463,9 +463,9 @@ void Builder::feed(const con::Command& command) {
     node->mouseHeight = command.argFloat(3).value_or(0.0f);
     return;
   }
-  if (method == "setbuttonnodedebug") return;  // лише для редактора
+  if (method == "setbuttonnodedebug") return;  // for the editor only
 
-  // --- смуги, маркери, компас ---
+  // --- bars, markers, the compass ---
   if (method == "setbarnodevaluevariable") {
     node->valueVariable = std::string(command.argStr(0));
     return;
@@ -479,13 +479,13 @@ void Builder::feed(const con::Command& command) {
     node->texture = std::string(command.argStr(0));
     return;
   }
-  // Пара «x/y» одним словом — так записані всі розміри карти.
+  // The pair "x/y" as one word — that is how every map size is written.
   auto pair = [&](std::size_t i, float& first, float& second) {
     if (i >= command.args.size()) return false;
     const std::string& text = command.args[i];
     const std::size_t slash = text.find('/');
     if (slash == std::string::npos) {
-      // Трапляється й розділена форма: «197 197».
+      // The split form occurs too: "197 197".
       first = command.argFloat(i).value_or(0.0f);
       second = command.argFloat(i + 1).value_or(0.0f);
       return true;
@@ -497,8 +497,8 @@ void Builder::feed(const con::Command& command) {
   auto mapPos = [&](MapRect& rect) {
     if (!pair(0, rect.x, rect.y)) return;
     rect.set = true;
-    // Поки не сказано інакше, карта — мініатюра в кутку: це її вигляд
-    // під час звичайного бою. Екран появи перемикає на велику сам.
+    // Until told otherwise the map is the thumbnail in the corner: that is how it
+    // looks during ordinary combat. The spawn screen switches to the big one itself.
     if (&rect == &node->mapMini) useMapView(*node, MapView::Mini);
   };
   auto mapSize = [&](MapRect& rect) {
@@ -512,11 +512,11 @@ void Builder::feed(const con::Command& command) {
     out.b = command.argFloat(2).value_or(1.0f);
     out.a = command.argFloat(3).value_or(1.0f);
   };
-  // --- решта команд hudBuilder ---------------------------------------
+  // --- the rest of hudBuilder's commands -----------------------------
   //
-  // Форми зняті з даних гри (кількість аргументів у дужках). Кілька імен
-  // у DICE з друкарськими помилками — «Transfom» і «Tranform» замість
-  // «Transform»; це ті самі команди, тож і обробник той самий.
+  // The forms are taken from the game's data (the argument count in brackets).
+  // A few of DICE's names have typos — "Transfom" and "Tranform" instead of
+  // "Transform"; they are the same commands, so the handler is the same too.
   if (method == "setlistnodeselectcolor") { readColor(node->listSelectColor); return; }
   if (method == "setlistnodescrollbarcolor") { readColor(node->listScrollbarColor); return; }
   if (method == "setlistnodescrollbarbackgroundcolor") {
@@ -660,7 +660,7 @@ void Builder::feed(const con::Command& command) {
     return;
   }
 
-  // --- геометрія й змінні картинки ---
+  // --- geometry and a picture's variables ---
   if (method == "setpicturenodecenterpoint") {
     node->centerX = command.argFloat(0).value_or(0.0f);
     node->centerY = command.argFloat(1).value_or(0.0f);
@@ -671,10 +671,10 @@ void Builder::feed(const con::Command& command) {
     return;
   }
   if (method == "addobjectmarkernodelocktextnode") {
-    // Рушій заводить під підпис власний вузол з іменем «<підпис>TextNode»
-    // (видно в BF2_r.exe: до імені дописується саме цей рядок). Далі опис
-    // на нього перемикається через setActiveObject, тож без такого вузла
-    // наступні команди осідали б не там.
+    // The engine creates a node of its own for the caption, named
+    // "<caption>TextNode" (visible in BF2_r.exe: exactly that string is appended
+    // to the name). The description then switches to it through setActiveObject,
+    // so without such a node the following commands would settle in the wrong place.
     const std::string label(command.argStr(0));
     node->lockTextNode = label;
     Node child;
@@ -732,8 +732,8 @@ void Builder::feed(const con::Command& command) {
     return;
   }
 
-  // Команди, які ми впізнаємо, але ще не малюємо: аргументи кладемо у
-  // вузол як є. Таблиця створена з даних гри — tools/hud_audit.py.
+  // The commands we recognise but do not draw yet: the arguments are put into the
+  // node as they are. The table was made from the game's data — tools/hud_audit.py.
   static const std::map<std::string_view, int> recorded = {
 #define HUD_RECORDED(name, count) {name, count},
 #include "hud_recorded.inc"
@@ -741,10 +741,10 @@ void Builder::feed(const con::Command& command) {
   };
   if (const auto found = recorded.find(method); found != recorded.end()) {
     node->extra[std::string(method)] = command.args;
-    // Кількість аргументів звірена з даними гри. Розбіжність означає, що
-    // команду викликають інакше, ніж ми думали, — про це варто знати.
+    // The argument count is cross-checked against the game's data. A mismatch
+    // means the command is called differently than we thought — worth knowing.
     if (static_cast<int>(command.args.size()) != found->second) {
-      ++unknownByName_[std::string(method) + " (несподівано аргументів)"];
+      ++unknownByName_[std::string(method) + " (unexpected argument count)"];
     }
     return;
   }

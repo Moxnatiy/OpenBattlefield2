@@ -1,2 +1,2 @@
-rem *** Тільки ті рівні, які вже вміє наш клієнт.
+rem *** Only the levels our client can already handle.
 mapList.append dalian_plant gpm_cq 16

@@ -1,8 +1,8 @@
 #pragma once
-// UDP-канал до справжнього сервера.
+// A UDP channel to a real server.
 //
-// Досі мережа працювала лише петлею в пам'яті. Тут — звичайний сокет,
-// щоб можна було говорити з оригінальним сервером BF2.
+// Until now the network worked only as an in-memory loop. Here is an ordinary
+// socket, so that we can talk to an original BF2 server.
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -16,13 +16,13 @@ class UdpSocket {
  public:
   ~UdpSocket();
 
-  // Відкриває сокет і запам'ятовує, куди слати. Хост — адреса або ім'я.
+  // Opens the socket and remembers where to send. The host is an address or a name.
   static std::unique_ptr<UdpSocket> connect(const std::string& host, std::uint16_t port,
                                             std::string* error = nullptr);
 
   bool send(std::span<const std::byte> data);
 
-  // Чекає пакет не довше за timeoutMs. nullopt — нічого не прийшло.
+  // Waits for a packet no longer than timeoutMs. nullopt means nothing arrived.
   std::optional<std::vector<std::byte>> receive(int timeoutMs);
 
   const std::string& describe() const { return description_; }

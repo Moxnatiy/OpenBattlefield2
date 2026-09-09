@@ -1,63 +1,73 @@
-# Режим «Захоплення» (gpm_cq): правила з даних гри
+# Conquest (gpm_cq): the rules, from the game's data
 
-Логіку режиму BF2 тримає **не C++, а Python**, який лежить у грі відкритим
-текстом: `mods/bf2/python/game/gamemodes/gpm_cq.py` (621 рядок) і
-`game/scoringCommon.py`. C++ (`ServerGameLogic`) дає лише механіку — квитки,
-стан гри, події, — а хто скільки втрачає й коли, вирішує скрипт.
+BF2 keeps this mode's logic **not in C++ but in Python**, shipped with the
+game in plain text: `mods/bf2/python/game/gamemodes/gpm_cq.py` (621 lines)
+and `game/scoringCommon.py`. The C++ side (`ServerGameLogic`) only
+provides the mechanics — tickets, game state, events — while the script
+decides who loses how much and when.
 
-Тобто RE тут не потрібне: правила відкриті. Нижче — конспект того, що робить
-скрипт; реалізація в `src/server/` пишеться за цим конспектом.
+So no reverse engineering is needed here: the rules are open. Below are
+notes on what the script does; the implementation in `src/server/` is
+written from these notes.
 
-Числа для Dalian Plant (gpm_cq/16) з `GamePlayObjects.con`:
-`radius` 10..20, `areaValueTeam1/2` 35, `timeToGetControl` і `timeToLoseControl`
-20..40, старт 250 квитків на команду (`GameLogicInit.con`), `sv.ticketRatio 100`,
-`sv.spawnTime 15`, `sv.manDownTime 15` (`Settings/ServerSettings.con`).
+Numbers for Dalian Plant (gpm_cq/16) from `GamePlayObjects.con`: `radius`
+10..20, `areaValueTeam1/2` 35, `timeToGetControl` and `timeToLoseControl`
+20..40, 250 tickets per team at the start (`GameLogicInit.con`),
+`sv.ticketRatio 100`, `sv.spawnTime 15`, `sv.manDownTime 15`
+(`Settings/ServerSettings.con`).
 
-## Прапор
+## The flag
 
-Кожна точка має **позицію прапора** — `Top`, `Middle`, `Bottom` — і лічильник
-підйому, який рухається зі швидкістю `takeOverChangePerSecond`. Прапор
-опускається до низу й лише там може змінити «чий» він (`flag`), після чого
-піднімається знову.
+Every point has a **flag position** — `Top`, `Middle`, `Bottom` — and a
+raise counter that moves at `takeOverChangePerSecond`. The flag goes down
+and only at the bottom can it change whose it is (`flag`), after which it
+rises again.
 
-Перерахунок швидкості (при кожному вході/виході з радіуса, смерті, зміні
-власника):
+The speed is recomputed on every entry into or exit from the radius, on
+death, and on an owner change:
 
-1. Рахуємо живих гравців кожної команди в радіусі. У техніці рахується
-   **лише перший** пасажир; той, хто «лежить» (man down), не рахується.
-2. `overweight = t1 - t2`, звідки `attackingTeam` = 1, 2 або 0.
-3. Нікого в радіусі: нейтральна точка **повільно опускається** (`-0.5`),
-   чиясь — **повільно повертається вгору** (`+0.5`), час — `timeToLoseControl`.
-4. Є люди: якщо прапор уже їхній (або він унизу й точка нейтральна) — підйом
-   на `|overweight|` за `timeToGetControl`; інакше спершу **спуск** на
-   `-|overweight|` за `timeToLoseControl`.
+1. Count the living players of each team inside the radius. In a vehicle
+   **only the first** passenger counts; someone who is "man down" does
+   not.
+2. `overweight = t1 - t2`, giving `attackingTeam` = 1, 2 or 0.
+3. Nobody in the radius: a neutral point **slowly goes down** (`-0.5`),
+   an owned one **slowly returns up** (`+0.5`), over `timeToLoseControl`.
+4. People present: if the flag is already theirs (or it is at the bottom
+   and the point is neutral) it rises by `|overweight|` over
+   `timeToGetControl`; otherwise it first **descends** by `-|overweight|`
+   over `timeToLoseControl`.
 5. `takeOverChangePerSecond = attackOverWeight / timeToChangeControl`;
-   вгорі підйом і внизу спуск обнуляються.
-6. `unableToChangeTeam` — точку взагалі не чіпають; `onlyTakeableByTeam`
-   пускає лише вказану команду.
+   rising at the top and descending at the bottom are zeroed.
+6. `unableToChangeTeam` — the point is not touched at all;
+   `onlyTakeableByTeam` admits only the named team.
 
-Коли лічильник дійшов до краю:
+When the counter reaches an end:
 
-- був чийсь і впав до низу → **нейтралізація** (точка стає нічия);
-- був нічий і піднявся → **захоплення** командою прапора;
-- разова втрата квитків противником: `enemyTicketLossWhenCaptured`.
+- it was owned and fell to the bottom → **neutralised** (the point becomes
+  nobody's);
+- it was neutral and rose → **captured** by the flag's team;
+- a one-off ticket loss for the enemy: `enemyTicketLossWhenCaptured`.
 
-## Квитки
+## Tickets
 
-- Старт: `defaultTickets * ticketRatio / 100`.
-- Смерть гравця — **-1 квиток** його команді.
-- Постійний витік залежить від «ваги площі»: сума `areaValue` точок команди.
-  Для команди T витік за секунду:
-  `(defaultTicketLossPerMin(T) / 60) * (перевага_противника / 100)`,
-  і лише якщо площа противника ≥ 100 і перевага додатна. Інакше 0.
-- Якщо в команди **немає жодної точки** і не лишилось живих — вона тече зі
-  швидкістю `defaultTicketLossAtEndPerMin`, друга не тече взагалі.
-- Пороги попереджень (`setTicketLimit`): 0 (кінець), 10, 10 % і 20 % старту.
-  Досягнення нуля (`limitId == -1`) завершує раунд: перемагає інша команда.
-- Ліміт часу: перемагає той, у кого більше квитків.
+- Start: `defaultTickets * ticketRatio / 100`.
+- A player's death costs their team **one ticket**.
+- The constant bleed depends on "area weight": the sum of the team's
+  points' `areaValue`. For team T the bleed per second is
+  `(defaultTicketLossPerMin(T) / 60) * (enemy_advantage / 100)`, and only
+  if the enemy's area is ≥ 100 and the advantage is positive. Otherwise
+  zero.
+- If a team has **no points at all** and nobody alive is left, it bleeds
+  at `defaultTicketLossAtEndPerMin` while the other team does not bleed at
+  all.
+- Warning thresholds (`setTicketLimit`): 0 (the end), 10, 10 % and 20 % of
+  the start. Reaching zero (`limitId == -1`) ends the round: the other
+  team wins.
+- Time limit: whoever has more tickets wins.
 
-## Очки
+## Score
 
-`scoringCommon.py`: захоплення +2, нейтралізація +2, допомога +1, захист +1.
-Очко отримують усі, хто був у радіусі, але «першим» вважається той, хто зайшов
-раніше (`enterCpAt`), — саме йому йде повне captures, решті — assists.
+`scoringCommon.py`: capture +2, neutralise +2, assist +1, defend +1.
+Everyone inside the radius gets a point, but "first" is whoever entered
+earlier (`enterCpAt`) — the full capture goes to them, the rest get
+assists.

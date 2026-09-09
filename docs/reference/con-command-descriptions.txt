@@ -1,6 +1,6 @@
-# Офіційні описи команд .con із редактора BF2
-# Джерело: bf2editor/Help/CommandDescriptions.dat
-# Команд: 546
+# The official descriptions of the .con commands, from the BF2 editor
+# Source: bf2editor/Help/CommandDescriptions.dat
+# Commands: 546
 Addin.SelectAnimationEditor	Activate AnimationEditor
 Addin.SelectLevelEditor	Activate LevelEditor
 Addin.SelectObjectEditor	Activate ObjectEditor

@@ -5,9 +5,9 @@
 namespace obf2::gfx {
 namespace {
 
-// Шейдери подаються як текст MSL: SDL_GPU віддає їх компілятору Metal у
-// рантаймі, тому для macOS окремий крок збірки шейдерів поки не потрібен.
-// Коли дійде до Windows, ці ж шейдери доведеться мати ще й у SPIR-V/DXIL.
+// The shaders are supplied as MSL text: SDL_GPU hands them to the Metal compiler
+// at runtime, so for macOS a separate shader build step is not needed yet.
+// When Windows comes, these same shaders will also have to exist as SPIR-V/DXIL.
 constexpr const char* kShaderSource = R"MSL(
 #include <metal_stdlib>
 using namespace metal;
@@ -23,10 +23,10 @@ struct VertexOut {
     float3 normal;
     float2 uv;
     float viewDepth;
-    // Параметри кадру їдуть у фрагментний шейдер через varyings, а не
-    // власним uniform-буфером: у фрагментного вони до шейдера не доходять
-    // (читаються чужі дані), а вершинний працює надійно. Значення сталі,
-    // тому інтерполяція їм не шкодить.
+    // The frame's parameters travel to the fragment shader through varyings
+    // rather than in a uniform buffer of their own: in the fragment stage they
+    // never reach the shader (other data is read instead), while the vertex
+    // stage works reliably. The values are constant, so interpolation is harmless.
     float4 fogColor;
     float4 fogParams;
     float4 sunColor;
@@ -35,8 +35,8 @@ struct VertexOut {
 
 struct Uniforms {
     float4x4 modelViewProjection;
-    float4 fogColor;   // rgb — колір туману
-    float4 fogParams;  // x: початок, y: кінець (0 = туману немає), z: режим лайтмапи, w: тайлінг детейлу
+    float4 fogColor;   // rgb — the fog's colour
+    float4 fogParams;  // x: start, y: end (0 = no fog), z: light map mode, w: detail tiling
     float4 sunColor;   // TerrainSunColor
     float4 skyColor;   // TerrainSkyColor
 };
@@ -47,8 +47,8 @@ vertex VertexOut vertex_main(VertexIn in [[stage_in]],
     out.position = uniforms.modelViewProjection * float4(in.position, 1.0);
     out.normal = in.normal;
     out.uv = in.uv;
-    // Для перспективної проєкції w у кліп-просторі дорівнює відстані
-    // вздовж погляду — саме те, що потрібно туману.
+    // For a perspective projection w in clip space equals the distance along the
+    // view — exactly what the fog needs.
     out.viewDepth = out.position.w;
     out.fogColor = uniforms.fogColor;
     out.fogParams = uniforms.fogParams;
@@ -68,31 +68,31 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
 
     float3 light;
     if (in.fogParams.z > 0.5) {
-        // Терен: у лайтмапі BF2 червоний канал — це доступ до сонця, синій —
-        // до неба. Кожен множиться на свій колір зі Sky.con, і саме тому
-        // TerrainSunColor буває більшим за одиницю: він підсвічує.
+        // Terrain: in BF2's light map the red channel is exposure to the sun and
+        // the blue one to the sky. Each is multiplied by its own colour from
+        // Sky.con, which is why TerrainSunColor can exceed one: it brightens.
         float3 baked = lightmap.sample(lightSampler, in.uv).rgb;
         light = in.sunColor.rgb * baked.r + in.skyColor.rgb * baked.b;
 
-        // Детейл-мапа сюди НЕ домножується. З'ясувалося, що це не колір, а
-        // карта ваг: канали R/G/B задають частки різних матеріалів терену,
-        // і кожен із них має власну текстуру з MaterialManager. Домноження
-        // її як кольору дає кислотні плями. Текстура вантажиться й лежить
-        // у слоті 2, доки не буде матеріальної системи терену.
+        // The detail map is NOT multiplied in here. It turned out to be not a
+        // colour but a weight map: the R/G/B channels give the shares of the
+        // different terrain materials, and each of them has its own texture from
+        // MaterialManager. Multiplying it in as a colour gives acid stains. The
+        // texture is loaded and sits in slot 2 until there is a terrain material system.
         (void)detail;
         (void)detailSampler;
     } else {
         float3 normal = normalize(in.normal);
         float3 lightDirection = normalize(float3(0.4, 0.9, 0.35));
-        // Півламбертове освітлення: тіньовий бік не стає чорним, і силует
-        // геометрії видно повністю.
+        // Half-Lambert lighting: the shadow side does not go black, and the
+        // geometry's silhouette stays fully visible.
         float lambert = dot(normal, lightDirection) * 0.5 + 0.5;
         light = float3(0.35 + 0.65 * lambert);
     }
 
     float3 color = albedo.rgb * light;
 
-    // fogParams.y == 0 означає, що туману на рівні немає.
+    // fogParams.y == 0 means the level has no fog.
     if (in.fogParams.y > 0.0) {
         float t = saturate((in.viewDepth - in.fogParams.x) /
                            max(in.fogParams.y - in.fogParams.x, 0.001));
@@ -102,7 +102,7 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
 }
 )MSL";
 
-// Шейдер інтерфейсу: текстура як є, з альфою, без освітлення.
+// The interface shader: the texture as it is, with alpha, without lighting.
 constexpr const char* kOverlayShaderSource = R"MSL(
 #include <metal_stdlib>
 using namespace metal;
@@ -119,9 +119,9 @@ struct VertexOut {
 };
 
 struct OverlayUniforms {
-    // Перетворення прямо в NDC: xy — зсув, zw — масштаб. Потрібне, щоб
-    // один готовий прямокутник можна було ставити в різні місця, не
-    // перезбираючи геометрію щокадру.
+    // A transform straight in NDC: xy is the offset, zw the scale. Needed so
+    // that one ready-made quad can be placed in different spots without
+    // rebuilding the geometry every frame.
     float4 offsetScale;
 };
 
@@ -155,8 +155,8 @@ SDL_GPUShader* createOverlayShader(SDL_GPUDevice* gpu, SDL_GPUShaderStage stage,
   info.format = SDL_GPU_SHADERFORMAT_MSL;
   info.stage = stage;
   info.num_samplers = stage == SDL_GPU_SHADERSTAGE_FRAGMENT ? 1 : 0;
-  // Обидва щаблі мають по одному буферу сталих: вершинний бере зсув і
-  // масштаб, фрагментний — відтінок вузла.
+  // Both stages have one constant buffer each: the vertex one takes the offset
+  // and the scale, the fragment one the node's tint.
   info.num_uniform_buffers = 1;
   return SDL_CreateGPUShader(gpu, &info);
 }
@@ -170,7 +170,7 @@ SDL_GPUShader* createShader(SDL_GPUDevice* gpu, SDL_GPUShaderStage stage, const 
   info.format = SDL_GPU_SHADERFORMAT_MSL;
   info.stage = stage;
   info.num_uniform_buffers = isVertex ? 1 : 0;
-  info.num_samplers = isVertex ? 0 : 3;  // колір, лайтмапа, детейл
+  info.num_samplers = isVertex ? 0 : 3;  // colour, light map, detail
   return SDL_CreateGPUShader(gpu, &info);
 }
 
@@ -187,7 +187,7 @@ SDL_GPUTextureFormat toGpuFormat(texture::Format format) {
   return SDL_GPU_TEXTUREFORMAT_INVALID;
 }
 
-// Дзеркало Uniforms із вершинного шейдера: матриця плюс сталі кадру.
+// A mirror of Uniforms from the vertex shader: the matrix plus the frame's constants.
 struct VertexUniforms {
   float modelViewProjection[16]{};
   float fogColor[4]{};
@@ -198,7 +198,7 @@ struct VertexUniforms {
 
 }  // namespace
 
-static_assert(sizeof(mesh::Vertex) == 32, "розкладка вершини має збігатися з шейдером");
+static_assert(sizeof(mesh::Vertex) == 32, "the vertex layout must match the shader");
 
 MeshRenderer::~MeshRenderer() {
   if (device_ == nullptr) return;
@@ -218,11 +218,11 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
 
   SDL_GPUDevice* gpu = device.gpu();
   SDL_GPUShader* vertexShader = createShader(gpu, SDL_GPU_SHADERSTAGE_VERTEX, "vertex_main");
-  if (vertexShader == nullptr) return fail("вершинний шейдер");
+  if (vertexShader == nullptr) return fail("vertex shader");
   SDL_GPUShader* fragmentShader = createShader(gpu, SDL_GPU_SHADERSTAGE_FRAGMENT, "fragment_main");
   if (fragmentShader == nullptr) {
     SDL_ReleaseGPUShader(gpu, vertexShader);
-    return fail("фрагментний шейдер");
+    return fail("fragment shader");
   }
 
   const SDL_GPUVertexBufferDescription bufferDescription{
@@ -244,13 +244,13 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   info.vertex_input_state.vertex_attributes = attributes;
   info.vertex_input_state.num_vertex_attributes = 3;
   info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
-  // Обхід вершин у BF2 — проти годинникової стрілки: на всіх 1635 мешах гри
-  // (2.2 млн трикутників) геометрична нормаль збігається з нормалями вершин
-  // у 99.66% випадків. Тому відсікання задніх граней увімкнене.
+  // Vertex winding in BF2 is counter-clockwise: across all 1635 meshes in the
+  // game (2.2 M triangles) the geometric normal agrees with the vertex normals
+  // in 99.66% of cases. So back-face culling is on.
   info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_BACK;
-  // У лівій системі напрям обходу на екрані протилежний до правої, тож
-  // лицьовими стають трикутники за годинниковою стрілкою. Дані мешів при
-  // цьому не змінилися — змінився бік, з якого ми на них дивимось.
+  // In a left-handed system the winding on screen is the opposite of a
+  // right-handed one, so clockwise triangles become front-facing. The mesh data
+  // has not changed — what changed is the side we look at it from.
   info.rasterizer_state.front_face = SDL_GPU_FRONTFACE_CLOCKWISE;
   info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
   info.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS;
@@ -261,7 +261,7 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   info.target_info.depth_stencil_format = device.depthFormat();
   info.target_info.has_depth_stencil_target = true;
 
-  // Формат глибини стає відомим лише після створення першої текстури глибини.
+  // The depth format only becomes known once the first depth texture is created.
   if (info.target_info.depth_stencil_format == SDL_GPU_TEXTUREFORMAT_INVALID) {
     int width = 0, height = 0;
     SDL_GetWindowSizeInPixels(device.window(), &width, &height);
@@ -272,19 +272,19 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   SDL_GPUGraphicsPipeline* pipeline = SDL_CreateGPUGraphicsPipeline(gpu, &info);
   SDL_ReleaseGPUShader(gpu, vertexShader);
   SDL_ReleaseGPUShader(gpu, fragmentShader);
-  if (pipeline == nullptr) return fail("графічний пайплайн");
+  if (pipeline == nullptr) return fail("graphics pipeline");
 
   auto renderer = std::unique_ptr<MeshRenderer>(new MeshRenderer());
   renderer->device_ = &device;
   renderer->pipeline_ = pipeline;
 
-  // Другий пайплайн — для інтерфейсу: глибини немає (порядок задає сам
-  // виклик), зате є альфа-змішування, без якого гліфи шрифту були б
-  // непрозорими прямокутниками.
+  // The second pipeline is for the interface: no depth (the call order decides
+  // that), but with alpha blending, without which the font's glyphs would be
+  // opaque rectangles.
   SDL_GPUShader* overlayVertex = createOverlayShader(gpu, SDL_GPU_SHADERSTAGE_VERTEX, "overlay_vertex");
   SDL_GPUShader* overlayFragment =
       createOverlayShader(gpu, SDL_GPU_SHADERSTAGE_FRAGMENT, "overlay_fragment");
-  if (overlayVertex == nullptr || overlayFragment == nullptr) return fail("шейдер інтерфейсу");
+  if (overlayVertex == nullptr || overlayFragment == nullptr) return fail("interface shader");
 
   SDL_GPUColorTargetDescription overlayTarget{};
   overlayTarget.format = device.colorFormat();
@@ -309,38 +309,38 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   renderer->overlayPipeline_ = SDL_CreateGPUGraphicsPipeline(gpu, &overlayInfo);
   SDL_ReleaseGPUShader(gpu, overlayVertex);
   SDL_ReleaseGPUShader(gpu, overlayFragment);
-  if (renderer->overlayPipeline_ == nullptr) return fail("пайплайн інтерфейсу");
+  if (renderer->overlayPipeline_ == nullptr) return fail("interface pipeline");
 
   SDL_GPUSamplerCreateInfo samplerInfo{};
   samplerInfo.min_filter = SDL_GPU_FILTER_LINEAR;
   samplerInfo.mag_filter = SDL_GPU_FILTER_LINEAR;
   samplerInfo.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_LINEAR;
-  // Текстури BF2 розраховані на повторення: детейл і дорожні покриття
-  // тайляться десятки разів на одному об'єкті.
+  // BF2's textures are made to repeat: detail and road surfaces tile dozens of
+  // times over one object.
   samplerInfo.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
   samplerInfo.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
   samplerInfo.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
   samplerInfo.max_lod = 1000.0f;
   renderer->sampler_ = SDL_CreateGPUSampler(gpu, &samplerInfo);
-  if (renderer->sampler_ == nullptr) return fail("семплер");
+  if (renderer->sampler_ == nullptr) return fail("sampler");
 
-  // Інтерфейс — інша річ: кожен вузол це окрема картинка, розтягнута
-  // рівно на свій прямокутник, і повторення тут не потрібне взагалі.
-  // З ним білінійна вибірка на самому краю квада бере ще й піксель із
-  // протилежного боку текстури, і по контуру плашок з'являється темна
-  // смужка в один піксель — особливо коли вікно не рівно 800x600 і
-  // край не лягає на цілий піксель. Мипи теж зайві: інтерфейс ніколи
-  // не зменшується.
+  // The interface is another matter: every node is its own picture stretched
+  // exactly over its rectangle, and repeating is not needed there at all.
+  // With it, bilinear sampling right at a quad's edge also takes a pixel from
+  // the opposite side of the texture, and a one-pixel dark line appears along
+  // the plates' outline — especially when the window is not exactly 800x600 and
+  // the edge does not land on a whole pixel. Mips are unnecessary too: the
+  // interface is never minified.
   samplerInfo.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
   samplerInfo.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
   samplerInfo.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
   samplerInfo.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
   samplerInfo.max_lod = 0.0f;
   renderer->overlaySampler_ = SDL_CreateGPUSampler(gpu, &samplerInfo);
-  if (renderer->overlaySampler_ == nullptr) return fail("семплер інтерфейсу");
+  if (renderer->overlaySampler_ == nullptr) return fail("interface sampler");
 
-  // Заглушка для матеріалів, у яких текстури немає або вона не читається:
-  // краще біла поверхня, ніж чорна діра чи падіння.
+  // A placeholder for materials whose texture is missing or unreadable: better a
+  // white surface than a black hole or a crash.
   texture::Texture white;
   white.format = texture::Format::Bgra8;
   white.width = 1;
@@ -348,7 +348,7 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   white.data.assign(4, std::byte{0xFF});
   white.mips.push_back(texture::MipLevel{1, 1, 0, 4});
   renderer->placeholder_ = renderer->uploadTexture(white);
-  if (renderer->placeholder_ == nullptr) return fail("текстура-заглушка");
+  if (renderer->placeholder_ == nullptr) return fail("placeholder texture");
 
   return renderer;
 }
@@ -359,7 +359,7 @@ SDL_GPUTexture* MeshRenderer::uploadTexture(const texture::Texture& source) {
   if (format == SDL_GPU_TEXTUREFORMAT_INVALID || source.mips.empty()) return nullptr;
   if (!SDL_GPUTextureSupportsFormat(gpu, format, SDL_GPU_TEXTURETYPE_2D,
                                     SDL_GPU_TEXTUREUSAGE_SAMPLER)) {
-    return nullptr;  // формат не тягне цей бекенд — вирішується вище
+    return nullptr;  // the backend does not support this format — decided above
   }
 
   SDL_GPUTextureCreateInfo info{};
@@ -427,7 +427,7 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
     return std::nullopt;
   };
   if (source.vertices.empty() || source.indices.empty()) {
-    if (error) *error = "порожня геометрія";
+    if (error) *error = "empty geometry";
     return std::nullopt;
   }
 
@@ -439,7 +439,7 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
   vertexInfo.usage = SDL_GPU_BUFFERUSAGE_VERTEX;
   vertexInfo.size = vertexBytes;
   SDL_GPUBuffer* vertexBuffer = SDL_CreateGPUBuffer(gpu, &vertexInfo);
-  if (vertexBuffer == nullptr) return fail("вершинний буфер");
+  if (vertexBuffer == nullptr) return fail("vertex buffer");
 
   SDL_GPUBufferCreateInfo indexInfo{};
   indexInfo.usage = SDL_GPU_BUFFERUSAGE_INDEX;
@@ -447,10 +447,10 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
   SDL_GPUBuffer* indexBuffer = SDL_CreateGPUBuffer(gpu, &indexInfo);
   if (indexBuffer == nullptr) {
     SDL_ReleaseGPUBuffer(gpu, vertexBuffer);
-    return fail("індексний буфер");
+    return fail("index buffer");
   }
 
-  // Один проміжний буфер на обидва масиви: вершини, за ними індекси.
+  // One transfer buffer for both arrays: the vertices, then the indices.
   SDL_GPUTransferBufferCreateInfo transferInfo{};
   transferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
   transferInfo.size = vertexBytes + indexBytes;
@@ -458,7 +458,7 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
   if (transfer == nullptr) {
     SDL_ReleaseGPUBuffer(gpu, vertexBuffer);
     SDL_ReleaseGPUBuffer(gpu, indexBuffer);
-    return fail("проміжний буфер");
+    return fail("transfer buffer");
   }
 
   auto* mapped = static_cast<std::byte*>(SDL_MapGPUTransferBuffer(gpu, transfer, false));
@@ -466,7 +466,7 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
     SDL_ReleaseGPUTransferBuffer(gpu, transfer);
     SDL_ReleaseGPUBuffer(gpu, vertexBuffer);
     SDL_ReleaseGPUBuffer(gpu, indexBuffer);
-    return fail("мапування проміжного буфера");
+    return fail("mapping the transfer buffer");
   }
   std::memcpy(mapped, source.vertices.data(), vertexBytes);
   std::memcpy(mapped + vertexBytes, source.indices.data(), indexBytes);
@@ -491,14 +491,14 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
   gpuMesh.vertices = vertexBuffer;
   gpuMesh.indices = indexBuffer;
 
-  // Сфера навколо габаритів меша: центр посередині, радіус до кута.
+  // A sphere around the mesh's bounds: the centre in the middle, the radius to a corner.
   const Vec3f minimum{source.bounds.min.x, source.bounds.min.y, source.bounds.min.z};
   const Vec3f maximum{source.bounds.max.x, source.bounds.max.y, source.bounds.max.z};
   gpuMesh.boundsCenter = (minimum + maximum) * 0.5f;
   gpuMesh.boundsRadius = length(maximum - minimum) * 0.5f;
 
-  // Слот 0 матеріалу — базовий колір (`_c`): це видно і з назв technique
-  // ("BaseDetailNDetail"), і з розподілу суфіксів по 4524 матеріалах гри.
+  // A material's slot 0 is the base colour (`_c`): that is visible both from the
+  // technique names ("BaseDetailNDetail") and from the suffix distribution over the game's 4524 materials.
   for (const mesh::DrawRange& source_range : source.ranges) {
     GpuMesh::Range range;
     range.indexStart = source_range.indexStart;
@@ -510,16 +510,16 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
         if (range.texture != nullptr) gpuMesh.ownedTextures.push_back(range.texture);
       }
     }
-    // Третій слот терену — детейл.
+    // The terrain's third slot is the detail map.
     if (source_range.maps.size() > 2 && resolve && source_range.lightmapInSecondSlot) {
       if (const auto decoded = resolve(source_range.maps[2])) {
         range.detail = uploadTexture(*decoded);
         if (range.detail != nullptr) gpuMesh.ownedTextures.push_back(range.detail);
       }
     }
-    // Другий слот терену — запечене освітлення. Для звичайних мешів слот 1
-    // це детейл, який ми поки не використовуємо, тому беремо лайтмапу лише
-    // там, де її явно поклали (див. level::buildTerrainPatches).
+    // The terrain's second slot is the baked lighting. For ordinary meshes slot 1
+    // is the detail map, which we do not use yet, so the light map is taken only
+    // where it was explicitly put (see level::buildTerrainPatches).
     if (source_range.maps.size() > 1 && resolve && source_range.lightmapInSecondSlot) {
       if (const auto decoded = resolve(source_range.maps[1])) {
         range.lightmap = uploadTexture(*decoded);
@@ -551,11 +551,11 @@ void MeshRenderer::renderOverlay(const Frame& frame, const std::vector<DrawItem>
   SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(frame.commands, &colorTarget, 1, nullptr);
   SDL_BindGPUGraphicsPipeline(pass, overlayPipeline_);
 
-  // Порядок малювання і є порядком накладання: спершу тло, далі текст.
+  // The draw order is the layering order: the background first, then the text.
   for (const DrawItem& item : items) {
     if (item.mesh == nullptr || item.mesh->vertices == nullptr) continue;
 
-    // Зсув і масштаб беремо з матриці: перенос у xy, масштаб на діагоналі.
+    // The offset and the scale come from the matrix: the translation in xy, the scale on the diagonal.
     const float offsetScale[4] = {item.transform.m[12], item.transform.m[13],
                                   item.transform.m[0], item.transform.m[5]};
     SDL_PushGPUVertexUniformData(frame.commands, 0, offsetScale, sizeof(offsetScale));
@@ -568,8 +568,8 @@ void MeshRenderer::renderOverlay(const Frame& frame, const std::vector<DrawItem>
 
     for (const GpuMesh::Range& range : item.mesh->ranges) {
       if (range.indexCount == 0) continue;
-      // В інтерфейсі заглушка не годиться: біла текстура на весь екран
-      // просто сховала б кадр. Немає картинки — нічого не малюємо.
+      // In the interface the placeholder will not do: a white texture over the
+      // whole screen would simply hide the frame. No picture — nothing is drawn.
       if (range.texture == nullptr) continue;
       SDL_GPUTextureSamplerBinding binding{range.texture, overlaySampler_};
       SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
@@ -609,14 +609,14 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
 
   SDL_BindGPUGraphicsPipeline(pass, pipeline_);
 
-  // Піраміду видимості беремо з тієї самої матриці, якою малюємо, тож
-  // відсікання гарантовано узгоджене з тим, що бачить камера.
+  // The view frustum is taken from the same matrix we draw with, so the culling
+  // is guaranteed to agree with what the camera sees.
   const Frustum frustum = extractFrustum(viewProjection);
   drawn_ = 0;
   culled_ = 0;
 
-  // Туман і кольори освітлення однакові для кадру; режим лайтмапи —
-  // ні, тому його доводиться штовхати перед кожним діапазоном.
+  // The fog and the lighting colours are the same for the frame; the light map
+  // mode is not, so it has to be pushed before every range.
   VertexUniforms uniforms{};
   uniforms.fogColor[0] = fog_.color.r;
   uniforms.fogColor[1] = fog_.color.g;
@@ -661,11 +661,11 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
       };
       SDL_BindGPUFragmentSamplers(pass, 0, bindings, 3);
 
-      // Режим освітлення змінюється від діапазону до діапазону, тому
-      // uniform штовхаємо перед кожним викликом малювання.
+      // The lighting mode changes from range to range, so the uniform is pushed
+      // before every draw call.
       uniforms.fogParams[2] = range.lightmap != nullptr ? 1.0f : 0.0f;
-      // Скільки разів детейл повторюється на патч. Без текстури тайлінг
-      // нульовий, і вибірка потрапляє в білу заглушку.
+      // How many times the detail repeats over a patch. With no texture the
+      // tiling is zero and the sampling lands in the white placeholder.
       uniforms.fogParams[3] = range.detail != nullptr ? detailTiling_ : 0.0f;
       SDL_PushGPUVertexUniformData(frame.commands, 0, &uniforms, sizeof(uniforms));
 

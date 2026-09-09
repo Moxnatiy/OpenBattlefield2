@@ -1,15 +1,15 @@
 #pragma once
-// Завантаження рівня BF2.
+// Loading a BF2 level.
 //
-// Рівень описує сам себе звичайними .con: Heightdata.con задає розмір і
-// масштаб карти висот, Terrain.con — розбиття на патчі й імена текстур,
-// StaticObjects.con — розстановку об'єктів. Тобто реверс тут не потрібен
-// узагалі, достатньо інтерпретатора, який у нас уже є.
+// A level describes itself in ordinary .con: Heightdata.con gives the size and
+// scale of the height map, Terrain.con the patch split and the texture names,
+// StaticObjects.con the object placement. So no reversing is needed here at all,
+// the interpreter we already have is enough.
 //
-// Одна тонкість: Init.con рівня має дві гілки. Ігрова читає скомпільований
-// terraindata.raw, редакторська — вихідні .raw карти висот. Ми йдемо
-// редакторською (`v_arg1 = BF2Editor`), бо її формат повністю описаний
-// даними, а скомпільований блоб довелося б розбирати реверсом.
+// One subtlety: a level's Init.con has two branches. The game one reads the
+// compiled terraindata.raw, the editor one the source .raw height maps. We take
+// the editor branch (`v_arg1 = BF2Editor`), because its format is fully
+// described by data, while the compiled blob would have to be reversed.
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -26,8 +26,8 @@
 namespace obf2::level {
 
 struct HeightmapInfo {
-  int size = 0;                  // 1025 — вузлів по стороні
-  Vec3f scale{2.0f, 1.0f, 2.0f};  // світових одиниць на вузол / на одиницю висоти
+  int size = 0;                  // 1025 — nodes per side
+  Vec3f scale{2.0f, 1.0f, 2.0f};  // world units per node / per unit of height
   int bitResolution = 16;
   std::string dataPath;
   int clusterX = 0;
@@ -40,37 +40,37 @@ struct TerrainInfo {
   std::string lightmapBase;
   std::string detailmapBase;
   float seaLevel = 0.0f;
-  Vec3f waterColor{0.10f, 0.13f, 0.16f};  // renderer.waterColor з Water.con
+  Vec3f waterColor{0.10f, 0.13f, 0.16f};  // renderer.waterColor from Water.con
 
-  // Туман: Renderer.fogColor задано в діапазоні 0..255, а не 0..1.
+  // Fog: Renderer.fogColor is given in the range 0..255, not 0..1.
   Vec3f fogColor{0.69f, 0.72f, 0.77f};
   float fogStart = 0.0f;
-  float fogEnd = 0.0f;  // 0 = туману немає
+  float fogEnd = 0.0f;  // 0 = no fog
 
-  // Lightmanager.* із Sky.con — поки лише зберігаємо.
+  // Lightmanager.* from Sky.con — stored only, for now.
   Vec3f ambientColor{0.9f, 0.9f, 0.9f};
   Vec3f sunColor{1.0f, 1.0f, 1.0f};
 
-  // LightSettings.TerrainSunColor / TerrainSkyColor — саме ними множиться
-  // запечена лайтмапа терену. Значення бувають більші за 1: вони не лише
-  // фарбують, а й підсвічують.
+  // LightSettings.TerrainSunColor / TerrainSkyColor — the terrain's baked light
+  // map is multiplied by exactly these. The values can exceed 1: they do not
+  // merely tint, they brighten.
   Vec3f terrainSunColor{1.0f, 1.0f, 1.0f};
   Vec3f terrainSkyColor{0.6f, 0.7f, 0.9f};
 };
 
-// Дорога з CompiledRoads.con. Формат `.mesh` окремий від решти мешів:
-// вершини лежать відносно точки `start`, а разом із позицією йдуть дві
-// пари координат текстур і альфа для згасання на краях.
+// A road from CompiledRoads.con. The `.mesh` format differs from the other
+// meshes: the vertices lie relative to the `start` point, and the position is
+// accompanied by two pairs of texture coordinates and an alpha for edge fading.
 //
-// Розкладка (за Project Dalian, engine/formats/mesh/bf2_road_mesh.cpp):
-//   0  u32   версія
+// The layout (after Project Dalian, engine/formats/mesh/bf2_road_mesh.cpp):
+//   0  u32   version
 //   4  float3 start
-//   16 float  довжина
+//   16 float length
 //   20 float3 end
 //   32 float3 misc
-//   48 u32   кількість вершин   (заголовок — 52 байти)
-//   далі   вершини по 32 байти: позиція, u/v, u1/v1, альфа
-//   потім  u32 кількість індексів і самі індекси по 16 біт
+//   48 u32   vertex count      (the header is 52 bytes)
+//   then   vertices of 32 bytes each: position, u/v, u1/v1, alpha
+//   then   u32 index count and the indices themselves, 16 bits each
 struct Road {
   std::string templateName;
   std::string meshPath;
@@ -81,20 +81,20 @@ struct Road {
 std::optional<mesh::RenderMesh> loadRoadMesh(std::span<const std::byte> bytes,
                                              std::string* error = nullptr);
 
-// Розстановка з StaticObjects.con: `Object.create` + absolutePosition/rotation.
+// Placement from StaticObjects.con: `Object.create` + absolutePosition/rotation.
 struct StaticObject {
   std::string templateName;
   Vec3f position;
-  Vec3f rotation;  // yaw/pitch/roll у градусах
+  Vec3f rotation;  // yaw/pitch/roll in degrees
   bool hasRotation = false;
 
-  // Рослинність задається не кутами, а готовою матрицею
-  // (`Object.absoluteTransformation`) — з поворотом і масштабом одразу.
+  // Vegetation is given not by angles but by a ready matrix
+  // (`Object.absoluteTransformation`) — with rotation and scale at once.
   bool hasTransform = false;
   Mat4 transform = Mat4::identity();
 
-  // `Object.isOvergrowth 1`: такі об'єкти в оригіналі малює окрема система
-  // рослинності, а у файлі вони лежать заради зіткнень.
+  // `Object.isOvergrowth 1`: in the original such objects are drawn by a separate
+  // vegetation system, and in the file they exist for collision.
   bool isOvergrowth = false;
 };
 
@@ -104,32 +104,32 @@ struct Level {
   HeightmapInfo primary;
   std::vector<StaticObject> objects;
   std::vector<Road> roads;
-  // Ім'я шаблону дороги -> шлях до текстури (з RoadTemplateTexture).
+  // A road template's name -> the texture's path (from RoadTemplateTexture).
   std::unordered_map<std::string, std::string> roadTextures;
 
-  // Висоти у світових одиницях, розмір size*size, рядки з півночі на південь.
+  // Heights in world units, size*size of them, rows running north to south.
   std::vector<float> heights;
 
-  // Камера екрана появи — її задає сам рівень в Init.con:
+  // The spawn screen's camera — set by the level itself in Init.con:
   //
   //   gameLogic.setBeforeSpawnCamera -50/185/-285 -16/-3/0
   //
-  // Перша трійка — місце, друга — поворот у градусах (рискання, тангаж,
-  // крен). Поки гравець не з'явився, гра дивиться саме звідти, а не
-  // крутиться навколо карти.
+  // The first triple is the position, the second the rotation in degrees (yaw,
+  // pitch, roll). Until the player has spawned the game looks from exactly
+  // there, rather than orbiting the map.
   bool hasBeforeSpawnCamera = false;
 
-  // Назви команд — теж із Init.con рівня:
+  // The team names also come from the level's Init.con:
   //
   //   gameLogic.setTeamName 1 "CH"
   //   gameLogic.setTeamName 2 "US"
   //
-  // Це не просто підпис: саме цим рядком гра підставляє %s у шаблон
-  // значка точки `Ingame/Flags/Icons/Minimap/%s/miniMap_CP.tga`
-  // (BF2.exe, 0x74fb70 — там виклик gameLogic->[0x48](1) і (2) прямо
-  // перед sprintf). Теки значків у грі звуться Ch, Eu, Mec, US,
-  // Neutral, і набір назв команд по всіх 22 рівнях — рівно CH, EU,
-  // MEC, US. Індекс 0 — нейтральна сторона.
+  // This is not merely a caption: it is the string the game substitutes for %s
+  // in the point icon's template `Ingame/Flags/Icons/Minimap/%s/miniMap_CP.tga`
+  // (BF2.exe, 0x74fb70 — the calls gameLogic->[0x48](1) and (2) are right
+  // before the sprintf). The icon directories in the game are called Ch, Eu,
+  // Mec, US, Neutral, and the set of team names across all 22 levels is exactly
+  // CH, EU, MEC, US. Index 0 is the neutral side.
   std::string teamNames[3];
   Vec3f beforeSpawnCameraPos;
   Vec3f beforeSpawnCameraRot;
@@ -139,43 +139,43 @@ struct Level {
     return heights[static_cast<std::size_t>(z) * primary.size + x];
   }
 
-  // Терен центрований на початку координат, як і позиції об'єктів.
+  // The terrain is centred on the origin, as the objects' positions are.
   float worldX(int x) const { return (static_cast<float>(x) - halfExtent()) * primary.scale.x; }
   float worldZ(int z) const { return (static_cast<float>(z) - halfExtent()) * primary.scale.z; }
   float halfExtent() const { return static_cast<float>(primary.size - 1) * 0.5f; }
 
-  // Висота терену під точкою — білінійною вибіркою з карти висот.
+  // The terrain's height under a point — by bilinear sampling of the height map.
   //
-  // Без згладжування солдат стрибав би сходинками по вузлах сітки. Це
-  // потрібно і серверу (він рухає тіла), і клієнту (він передбачає рух
-  // свого солдата, поки чекає на виправлення від сервера), тож живе тут,
-  // біля самої карти висот.
+  // Without smoothing a soldier would step from grid node to grid node. It is
+  // needed both by the server (it moves the bodies) and by the client (it
+  // predicts its own soldier's movement while waiting for a correction), so it
+  // lives here, next to the height map itself.
   float groundHeightAt(const Vec3f& position) const;
 };
 
-// Монтує server.zip і client.zip рівня у точку Levels/<name>.
+// Mounts the level's server.zip and client.zip at the point Levels/<name>.
 bool mountLevel(FileSystem& files, const std::filesystem::path& modDir, std::string_view levelName,
                 std::string* error = nullptr);
 
 std::optional<Level> loadLevel(FileSystem& files, std::string_view levelName,
                                std::string* error = nullptr);
 
-// Один патч терену: сітка patchSize x patchSize квадів зі своєю текстурою.
+// One terrain patch: a grid of patchSize x patchSize quads with its own texture.
 struct TerrainPatch {
   int column = 0;
   int row = 0;
   mesh::RenderMesh geometry;
-  std::string colormap;  // шлях до .dds цього патча
-  std::string lightmap;  // запечене освітлення того ж патча, якщо є
-  std::string detailmap; // детейл: дрібна структура зблизька
+  std::string colormap;  // the path to this patch's .dds
+  std::string lightmap;  // the same patch's baked lighting, if present
+  std::string detailmap; // detail: fine structure seen close up
 };
 
-// Патчі, для яких у грі немає колормапи, повністю під водою — гра їх і не
-// малює. Тому вони пропускаються, а море закриває водна площина.
+// Patches with no colour map in the game are entirely under water — the game
+// does not draw them either. So they are skipped, and the water plane covers the sea.
 std::vector<TerrainPatch> buildTerrainPatches(const Level& level, const FileSystem& files);
 
-// Назва, яку рушій підставляє замість файлу текстури для водної поверхні:
-// колір води задано числом у Water.con, а не картинкою.
+// The name the engine substitutes for the water surface's texture file: the
+// water's colour is given as a number in Water.con, not as a picture.
 inline constexpr const char* kWaterColorMap = "#waterColor";
 
 mesh::RenderMesh buildWaterPlane(const Level& level);

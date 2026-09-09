@@ -1,7 +1,7 @@
 #pragma once
-// Мінімальна математика для рендера. Матриці — 4x4, стовпцями (column-major),
-// як їх очікує Metal (float4x4) і як їх приймає SDL_GPU. Глибина в NDC — [0,1],
-// а не [-1,1]: так працюють і Metal, і D3D12, і Vulkan.
+// Minimal maths for the renderer. Matrices are 4x4, column-major, the way
+// Metal expects them (float4x4) and SDL_GPU takes them. Depth in NDC is [0,1],
+// not [-1,1]: that is how Metal, D3D12 and Vulkan all work.
 #include <array>
 #include <cmath>
 
@@ -95,8 +95,8 @@ inline Mat4 rotationZ(float radians) {
   return out;
 }
 
-// BF2 задає повороти трійкою градусів yaw/pitch/roll (Y, X, Z) — саме в
-// такому порядку вони й застосовуються.
+// BF2 gives rotations as a triple of degrees yaw/pitch/roll (Y, X, Z) — and
+// they are applied in exactly that order.
 inline Mat4 rotationYawPitchRoll(float yawDegrees, float pitchDegrees, float rollDegrees) {
   constexpr float kToRadians = 3.14159265358979323846f / 180.0f;
   return rotationY(yawDegrees * kToRadians) * rotationX(pitchDegrees * kToRadians) *
@@ -109,16 +109,16 @@ inline Vec3f transformPoint(const Mat4& m, Vec3f v) {
           m.m[2] * v.x + m.m[6] * v.y + m.m[10] * v.z + m.m[14]};
 }
 
-// Напрямок — без переносу. Для нерівномірного масштабу знадобилася б
-// обернено-транспонована матриця, але у BF2 частини не масштабуються.
+// A direction, so no translation. Non-uniform scale would need the inverse
+// transpose, but parts are never scaled in BF2.
 inline Vec3f transformDirection(const Mat4& m, Vec3f v) {
   return {m.m[0] * v.x + m.m[4] * v.y + m.m[8] * v.z,
           m.m[1] * v.x + m.m[5] * v.y + m.m[9] * v.z,
           m.m[2] * v.x + m.m[6] * v.y + m.m[10] * v.z};
 }
 
-// Ліва система координат, камера дивиться вздовж +Z — те саме, що робить
-// `D3DXMatrixLookAtLH`: вправо йде cross(up, forward), а не навпаки.
+// Left-handed, the camera looks along +Z — the same as `D3DXMatrixLookAtLH`:
+// right is cross(up, forward), not the other way round.
 inline Mat4 lookAt(Vec3f eye, Vec3f target, Vec3f up) {
   const Vec3f f = normalize(target - eye);
   const Vec3f s = normalize(cross(up, f));
@@ -134,17 +134,17 @@ inline Mat4 lookAt(Vec3f eye, Vec3f target, Vec3f up) {
   return out;
 }
 
-// Ліва система координат — як у рушія гри.
+// Left-handed, as in the game's engine.
 //
-// Це не припущення: `RendDX9.dll` імпортує саме `D3DXMatrixPerspectiveFovLH`,
-// `D3DXMatrixLookAtLH` і `D3DXMatrixOrthoLH`. Refractor 2 — рушій під
-// DirectX 9, де X праворуч, Y вгору, Z **у глибину екрана**.
+// This is not an assumption: `RendDX9.dll` imports exactly
+// `D3DXMatrixPerspectiveFovLH`, `D3DXMatrixLookAtLH` and `D3DXMatrixOrthoLH`.
+// Refractor 2 is a DirectX 9 engine: X right, Y up, Z **into the screen**.
 //
-// Різниця важлива не для глибини, а для лівого й правого: у `LookAtLH`
-// вісь екрана вправо — це `cross(up, forward)`, а в правій системі —
-// `cross(forward, up)`, тобто рівно навпаки. Якщо взяти дані гри й
-// намалювати їх правостороннім конвеєром, увесь світ виходить
-// дзеркальним. Саме це в нас і було.
+// The difference matters not for depth but for left and right: in `LookAtLH`
+// the screen's right axis is `cross(up, forward)`, while in a right-handed
+// system it is `cross(forward, up)` — exactly the opposite. Take the game's
+// data, draw it with a right-handed pipeline, and the whole world comes out
+// mirrored. That is precisely what we had.
 inline Mat4 perspective(float fovYRadians, float aspect, float nearZ, float farZ) {
   const float f = 1.0f / std::tan(fovYRadians * 0.5f);
   Mat4 out;
@@ -156,20 +156,20 @@ inline Mat4 perspective(float fovYRadians, float aspect, float nearZ, float farZ
   return out;
 }
 
-// --- Відсікання невидимого -------------------------------------------------
+// --- Culling ---------------------------------------------------------------
 
 struct Plane {
   Vec3f normal;
-  float distance = 0.0f;  // площина: dot(normal, точка) + distance = 0
+  float distance = 0.0f;  // plane: dot(normal, point) + distance = 0
 
   float signedDistance(Vec3f point) const { return dot(normal, point) + distance; }
 };
 
-// Шість площин піраміди видимості, нормалі дивляться всередину.
+// The six frustum planes, normals pointing inwards.
 struct Frustum {
   Plane planes[6];
 
-  // Сфера повністю за якоюсь площиною -> об'єкт не видно.
+  // The sphere is entirely behind one of the planes -> the object is not visible.
   bool intersectsSphere(Vec3f center, float radius) const {
     for (const Plane& plane : planes) {
       if (plane.signedDistance(center) < -radius) return false;
@@ -178,9 +178,9 @@ struct Frustum {
   }
 };
 
-// Витягує площини з матриці вигляд-проєкція (метод Gribb-Hartmann): рядки
-// матриці вже містять потрібні комбінації, лишається їх скласти й відняти.
-// Матриця у нас по стовпцях, тому m[column * 4 + row].
+// Pulls the planes out of the view-projection matrix (Gribb-Hartmann): the
+// matrix rows already hold the needed combinations, they only have to be
+// added and subtracted. Ours is column-major, hence m[column * 4 + row].
 inline Frustum extractFrustum(const Mat4& m) {
   auto row = [&](int r) {
     return std::array<float, 4>{m.m[0 * 4 + r], m.m[1 * 4 + r], m.m[2 * 4 + r], m.m[3 * 4 + r]};
@@ -196,7 +196,7 @@ inline Frustum extractFrustum(const Mat4& m) {
     plane.normal = Vec3f{b[0] + sign * a[0], b[1] + sign * a[1], b[2] + sign * a[2]};
     plane.distance = b[3] + sign * a[3];
 
-    // Нормуємо, інакше порівняння з радіусом не має сенсу.
+    // Normalise, otherwise comparing with the radius makes no sense.
     const float len = length(plane.normal);
     if (len > 0.0f) {
       plane.normal = plane.normal * (1.0f / len);
@@ -206,19 +206,19 @@ inline Frustum extractFrustum(const Mat4& m) {
   };
 
   Frustum frustum;
-  frustum.planes[0] = makePlane(x, w, true);   // ліва
-  frustum.planes[1] = makePlane(x, w, false);  // права
-  frustum.planes[2] = makePlane(y, w, true);   // нижня
-  frustum.planes[3] = makePlane(y, w, false);  // верхня
-  // Глибина в NDC у нас [0,1], тому ближня площина це просто рядок z,
-  // а не z + w, як було б для діапазону [-1,1].
+  frustum.planes[0] = makePlane(x, w, true);   // left
+  frustum.planes[1] = makePlane(x, w, false);  // right
+  frustum.planes[2] = makePlane(y, w, true);   // bottom
+  frustum.planes[3] = makePlane(y, w, false);  // top
+  // Our NDC depth is [0,1], so the near plane is simply the z row and not
+  // z + w, as it would be for the [-1,1] range.
   frustum.planes[4] = Plane{Vec3f{z[0], z[1], z[2]}, z[3]};
   const float nearLength = length(frustum.planes[4].normal);
   if (nearLength > 0.0f) {
     frustum.planes[4].normal = frustum.planes[4].normal * (1.0f / nearLength);
     frustum.planes[4].distance /= nearLength;
   }
-  frustum.planes[5] = makePlane(z, w, false);  // дальня
+  frustum.planes[5] = makePlane(z, w, false);  // far
 
   return frustum;
 }

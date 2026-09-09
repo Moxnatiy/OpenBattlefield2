@@ -1,13 +1,13 @@
 #pragma once
-// Екран появи: стан вибору й консольні команди, якими його змінюють.
+// The spawn screen: the selection state and the console commands that change it.
 //
-// Назва не наша: в оригіналі це `Code/BF2/Menu/Hud/SpawnInterface.cpp`
-// (шлях видно в `BF2_r.exe`), і наш модуль тримається того самого поділу.
+// The name is not ours: in the original this is `Code/BF2/Menu/Hud/SpawnInterface.cpp`
+// (the path is visible in `BF2_r.exe`), and our module keeps the same split.
 //
-// Кнопки цього екрана не мають власної логіки — кожна виконує консольну
-// команду з `setButtonNodeConCmd` (docs/functions/hud-commands.md). Тому
-// весь екран зводиться до кількох значень і обробників, які їх міняють,
-// а це можна перевірити тестом без вікна.
+// This screen's buttons have no logic of their own — each runs a console command
+// from `setButtonNodeConCmd` (docs/functions/hud-commands.md). So the whole
+// screen comes down to a few values and the handlers that change them, and that
+// can be checked by a test without a window.
 #include <functional>
 #include <string>
 #include <vector>
@@ -16,28 +16,28 @@
 
 namespace obf2::hud {
 
-// Що обрав гравець. Команду призначає сервер, а не гравець: у знятому
-// трафіку оригінальний клієнт `NESelectTeam` навіть не шле — приймає ту,
-// яку дав сервер у `CreatePlayerEvent`.
+// What the player chose. The team is assigned by the server, not by the player:
+// in the captured traffic the original client does not even send `NESelectTeam` —
+// it accepts the one the server gave in `CreatePlayerEvent`.
 struct SpawnChoice {
   int team = 1;
   int kit = 0;
-  // Номер кружечка в переліку місць появи, а не номер точки.
+  // The circle's index in the list of spawn points, not the point's id.
   int marker = 0;
   bool membersTab = false;
 };
 
 class SpawnInterface {
  public:
-  // Реєструє обробники команд екрана появи. `requestSpawn` викликається
-  // з (команда, набір, номер контрольної точки) і повертає, чи запит
-  // справді пішов серверу: якщо ні, екран лишається на місці. Інакше
-  // виходила застигла картинка без гравця.
+  // Registers the spawn screen's command handlers. `requestSpawn` is called with
+  // (team, kit, control point id) and returns whether the request really went to
+  // the server: if not, the screen stays where it is. Otherwise the result was a
+  // frozen picture with no player.
   void bind(engine::Console& console, std::function<bool(int, int, int)> requestSpawn);
 
   const SpawnChoice& choice() const { return choice_; }
-  // Поки екран появи ще наполовину в `main.cpp`, йому потрібен прямий
-  // доступ. Разом із рештою переїзду це має зникнути.
+  // While the spawn screen is still half in `main.cpp`, it needs direct access.
+  // This should disappear along with the rest of the move.
   SpawnChoice& mutableChoice() { return choice_; }
   void markDirty() { dirty_ = true; }
   bool requested() const { return requested_; }
@@ -45,16 +45,16 @@ class SpawnInterface {
   bool dirty() const { return dirty_; }
   void clearDirty() { dirty_ = false; }
 
-  // Команду ставить сервер; при зміні скидається вибір місця, бо кружечки
-  // належать прапорам своєї команди.
+  // The team is set by the server; on a change the point choice is reset, because
+  // the circles belong to your own team's flags.
   void setTeamFromServer(int team);
   void setMarkerPoints(std::vector<int> points) { markerPoints_ = std::move(points); }
   const std::vector<int>& markerPoints() const { return markerPoints_; }
 
-  // Номер контрольної точки під обраним кружечком; нуль — не обрано.
+  // The id of the control point under the chosen circle; zero means not chosen.
   int chosenPoint() const;
 
-  // Гравець з'явився або помер — екран відкривається знову.
+  // The player spawned or died — the screen opens again.
   void reset() { requested_ = false; }
 
  private:

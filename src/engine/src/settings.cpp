@@ -4,7 +4,7 @@
 namespace obf2::engine {
 namespace {
 
-// Прапорці в .con записані як 0/1, але трапляється і true/false.
+// Flags in a .con are written as 0/1, but true/false occurs too.
 bool flagOf(const con::Command& command, bool fallback) {
   return command.argBool(0).value_or(fallback);
 }
@@ -12,7 +12,7 @@ bool flagOf(const con::Command& command, bool fallback) {
 }  // namespace
 
 void Settings::bind(Console& console) {
-  // --- renderer.* : Settings/Video.con і VideoDefault.con ---
+  // --- renderer.* : Settings/Video.con and VideoDefault.con ---
   console.bind("renderer.setFullScreen",
                [this](const con::Command& c) { video.fullScreen = flagOf(c, video.fullScreen); });
   console.bind("renderer.fullScreen",
@@ -28,10 +28,10 @@ void Settings::bind(Console& console) {
   });
   console.bind("renderer.allowAllRefreshRates", [](const con::Command&) {});
 
-  // Роздільність гра тримає ще й тут: `game.setGameDisplayMode 800 600 32 0`
-  // у профілі гравця (Profiles/<профіль>/Video.con). Це та сама
-  // роздільність, з якою BF2 малює HUD, тож беремо її звідси, а не
-  // вигадуємо своєї.
+  // The game keeps the resolution here as well: `game.setGameDisplayMode 800 600 32 0`
+  // in the player's profile (Profiles/<profile>/Video.con). It is the same
+  // resolution BF2 draws the HUD at, so we take it from here rather than
+  // inventing our own.
   console.bind("game.setGameDisplayMode", [this](const con::Command& c) {
     const auto width = c.argInt(0);
     const auto height = c.argInt(1);
@@ -42,7 +42,7 @@ void Settings::bind(Console& console) {
     if (const auto fullScreen = c.argInt(3)) video.fullScreen = *fullScreen != 0;
   });
 
-  // Рівні якості: у грі це цілі 0..3 (низька/середня/висока/дуже висока).
+  // Quality levels: in the game these are integers 0..3 (low/medium/high/very high).
   console.bind("renderer.setTerrainQuality", [this](const con::Command& c) {
     video.terrainQuality = c.argInt(0).value_or(video.terrainQuality);
   });
@@ -68,7 +68,7 @@ void Settings::bind(Console& console) {
     video.antialiasing = c.argInt(0).value_or(video.antialiasing);
   });
   console.bind("renderer.setResolution", [this](const con::Command& c) {
-    // Формат "1280x1024@60" — беремо лише розмір.
+    // The format "1280x1024@60" — we take only the size.
     const std::string_view value = c.argStr(0);
     const std::size_t cross = value.find('x');
     if (cross == std::string_view::npos) return;
@@ -79,7 +79,7 @@ void Settings::bind(Console& console) {
     video.height = std::atoi(std::string(heightText).c_str());
   });
 
-  // --- game.* : Settings/Profiles/<профіль>/GeneralOptions.con ---
+  // --- game.* : Settings/Profiles/<profile>/GeneralOptions.con ---
   console.bind("game.setPlayerName",
                [this](const con::Command& c) { general.playerName = std::string(c.argStr(0)); });
   console.bind("game.setConnection", [this](const con::Command& c) {
@@ -99,7 +99,7 @@ void Settings::bind(Console& console) {
     }
   });
 
-  // --- GeneralSettings.* : те саме, але іменами з бінаря ---
+  // --- GeneralSettings.* : the same, but under the binary's names ---
   console.bind("GeneralSettings.setViewIntroMovie", [this](const con::Command& c) {
     general.viewIntroMovie = flagOf(c, general.viewIntroMovie);
   });
@@ -113,7 +113,7 @@ void Settings::bind(Console& console) {
     general.connectionType = c.argInt(0).value_or(general.connectionType);
   });
 
-  // --- game.*: решта профілю ---
+  // --- game.*: the rest of the profile ---
   console.bind("game.setRadioToolTip", [this](const con::Command& c) {
     general.radioToolTip = flagOf(c, general.radioToolTip);
   });
@@ -135,8 +135,8 @@ void Settings::bind(Console& console) {
   });
   console.bind("game.setRadioToolTipColor", [](const con::Command&) {});
 
-  // Якість графіки профіль задає ще й через game.* — ті самі значення,
-  // що й renderer.set*Quality, лише іншим шляхом.
+  // The profile also sets the graphics quality through game.* — the same values
+  // as renderer.set*Quality, just by another route.
   console.bind("game.setGraphicsQuality", [this](const con::Command& c) {
     video.geometryQuality = c.argInt(0).value_or(video.geometryQuality);
   });
@@ -197,11 +197,11 @@ void Settings::bind(Console& console) {
     chat.ignoreRadioAudio = flagOf(c, chat.ignoreRadioAudio);
   });
 
-  // --- консоль ---
+  // --- the console ---
   console.bind("console.showStats", [](const con::Command&) {});
   console.bind("console.showFps", [](const con::Command&) {});
 
-  // --- звук ---
+  // --- sound ---
   console.bind("AudioSettings.setEffectsVolume", [this](const con::Command& c) {
     audio.effectsVolume = c.argFloat(0).value_or(audio.effectsVolume);
   });

@@ -1,62 +1,62 @@
 #pragma once
-// Ліва кутова ділянка HUD: куди вона їде і як проступають її дві
-// половини — смуги здоров'я й смуги техніки.
+// The HUD's left corner region: where it travels and how its two halves — the
+// health bars and the vehicle bars — fade in.
 //
-// Це не наша вигадка й не одна змінна показу, а маленька машина станів у
-// клієнті: `BF2.exe`, 0x78b600 (вибір цілі, щокадру) і 0x78b870 (вибір
-// режиму). Поля об'єкта HUD, які вона веде, зареєстровані як змінні
-// графа в 0x789480 — саме через них ділянка й рухається.
+// This is not our invention and not one show variable but a small state machine
+// in the client: `BF2.exe`, 0x78b600 (choosing the target, every frame) and
+// 0x78b870 (choosing the mode). The HUD object's fields it drives are registered
+// as graph variables at 0x789480 — and it is through them that the region moves.
 //
-//   +0x170  режим: 0 сховати, 1 здоров'я (пішки), 2 техніка
-//   +0x178  -295  сховане положення        \ усі три задає
-//   +0x17c  -137  положення пішки          | конструктор HUD
-//   +0x180    54  положення в техніці      / 0x78c560
-//   +0x184  `BottomLeft_XPos`      поточне
-//   +0x188  `BottomLeft_nextXPos`  цільове
+//   +0x170  the mode: 0 hide, 1 health (on foot), 2 vehicle
+//   +0x178  -295  the hidden position       \ all three set by
+//   +0x17c  -137  the on-foot position      | the HUD's constructor
+//   +0x180    54  the in-vehicle position   / 0x78c560
+//   +0x184  `BottomLeft_XPos`      the current one
+//   +0x188  `BottomLeft_nextXPos`  the target
 //   +0x18c  `BottomLeft_alpha1` = `BottomLeftHealthAlpha`
 //   +0x190  `BottomLeft_alpha2` = `BottomLeftVehicleAlpha`
 //   +0x194  `BottomLeftHealthFadedAlpha`
 //   +0x198  `BottomLeftVehicleFadedAlpha`
-//   +0x19c  `BottomLeft_nextAlpha1`  ціль для +0x18c
-//   +0x1a0  `BottomLeft_nextAlpha2`  ціль для +0x190
+//   +0x19c  `BottomLeft_nextAlpha1`  the target for +0x18c
+//   +0x1a0  `BottomLeft_nextAlpha2`  the target for +0x190
 //
-// Хто що рухає: **цілі** пише ця машина, а самі значення веде граф
-// `Menu/Ingame` — `SetVariableSineAction {Speed 600}` для положення і
-// `SetVariableSoftAction {Speed 10}` для прозоростей. Обидві дії —
-// рівномірний підхід до цілі (docs/functions/hud-animation.md).
+// Who moves what: this machine writes the **targets**, while the values are
+// driven by the `Menu/Ingame` graph — `SetVariableSineAction {Speed 600}` for the
+// position and `SetVariableSoftAction {Speed 10}` for the alphas. Both actions
+// are a linear approach to the target (docs/functions/hud-animation.md).
 #include "obf2/hud/animation.h"
 
 namespace obf2::hud {
 
-// Режим ділянки. Ставить його 0x78b870: типово «пішки», а «техніка» —
-// коли керований об'єкт гравця не є його солдатом.
+// The region's mode. It is set by 0x78b870: "on foot" by default, and "vehicle"
+// when the player's controlled object is not their soldier.
 enum class BottomLeftMode { Hidden, Health, Vehicle };
 
 struct BottomLeftPanel {
-  // Те, що веде граф.
+  // What the graph drives.
   float x = kBottomLeftHiddenX;
   float healthAlpha = 0.0f;
   float vehicleAlpha = 0.0f;
 
-  // Цілі, які пише машина станів.
+  // The targets the state machine writes.
   float targetX = kBottomLeftHiddenX;
   float targetHealthAlpha = 0.0f;
   float targetVehicleAlpha = 0.0f;
 
-  // Пригашені варіанти — їх рахує та сама функція наприкінці.
+  // The dimmed variants — computed by the same function at its end.
   float healthFadedAlpha = 0.0f;
   float vehicleFadedAlpha = 0.0f;
 
-  // Один крок машини станів. **Рухає значення не вона, а граф**
-  // (`Menu/Ingame`, obf2/meme/graph.h): ця функція лише читає поточні
-  // `x`/`healthAlpha`/`vehicleAlpha` і пише цілі, точнісінько як
-  // 0x78b600 читає й пише поля об'єкта HUD. Тому й `dt` тут не треба.
+  // One step of the state machine. **It is the graph that moves the values, not
+  // this** (`Menu/Ingame`, obf2/meme/graph.h): this function only reads the
+  // current `x`/`healthAlpha`/`vehicleAlpha` and writes the targets, exactly as
+  // 0x78b600 reads and writes the HUD object's fields. So no `dt` is needed here.
   //
-  // `menuBackgroundAlpha` — прозорість плашок із профілю гравця.
+  // `menuBackgroundAlpha` is the plates' alpha from the player's profile.
   void update(BottomLeftMode mode, float menuBackgroundAlpha);
 
-  // Пригашені прозорості за поточними. Кличеться ще раз після того, як
-  // граф зрушив `healthAlpha`/`vehicleAlpha`.
+  // The dimmed alphas from the current ones. Called again after the graph has
+  // moved `healthAlpha`/`vehicleAlpha`.
   void recomputeFaded(float menuBackgroundAlpha);
 };
 

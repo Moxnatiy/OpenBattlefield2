@@ -7,8 +7,8 @@ std::string armyLabelKey(std::string_view teamName) {
   if (teamName == "MEC") return "HUD_TEXT_MENU_SPAWN_ARMY_MEC";
   if (teamName == "US") return "HUD_TEXT_MENU_SPAWN_ARMY_USMC";
   if (teamName == "CH") return "HUD_TEXT_MENU_SPAWN_ARMY_CHINA";
-  // Загальна гілка. Саме нею проходить EU: окремого випадку для нього в
-  // грі немає, і ключ складається з префікса.
+  // The general branch. EU goes through it: the game has no special case for it,
+  // and the key is assembled from a prefix.
   return "HUD_TEXT_MENU_SPAWN_ARMY_" + std::string(teamName);
 }
 

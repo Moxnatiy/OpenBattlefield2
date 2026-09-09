@@ -7,7 +7,7 @@ using namespace obf2;
 
 namespace {
 
-// Годує систему командами напряму — так тест не залежить від файлів гри.
+// Feeds the system commands directly — that way the test does not depend on the game's files.
 anim::System build(const std::vector<std::string>& lines) {
   anim::System system;
   for (const std::string& line : lines) {
@@ -39,8 +39,8 @@ static void testValueHolderRange() {
 }
 
 static void testNegativeRangeIsSwapped() {
-  // У даних від'ємні діапазони записані навпаки (`3p_turn -1 -3 -10`), і
-  // рушій розрізняє це за знаком першої межі.
+  // In the data negative ranges are written the other way round (`3p_turn -1 -3 -10`),
+  // and the engine tells them apart by the first bound's sign.
   anim::ValueHolder holder;
   holder.low = -1.0f;
   holder.high = -3.0f;
@@ -79,8 +79,8 @@ static void testPoseTriggerPicksChildByPose() {
   CHECK_EQ(chosen.size(), std::size_t(1));
   if (!chosen.empty()) CHECK_EQ(chosen[0]->name, std::string("crouchBundle"));
 
-  // Поза поза межами списку зводиться до останньої дитини — так робить
-  // `PoseTrigger::update` у рушії.
+  // A pose outside the list falls back to the last child — that is what
+  // `PoseTrigger::update` does in the engine.
   state.pose = anim::Pose::Swim;
   chosen = system.select(state);
   CHECK_EQ(chosen.size(), std::size_t(1));

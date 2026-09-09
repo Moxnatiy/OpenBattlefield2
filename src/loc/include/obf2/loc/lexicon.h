@@ -1,17 +1,17 @@
 #pragma once
-// Локалізація BF2: файли `.utxt` у `Localization/<мова>/`.
+// BF2 localisation: `.utxt` files in `Localization/<language>/`.
 //
-// Формат простий і теж не потребував реверсу:
+// The format is simple and needed no reversing either:
 //
-//   UTF-16LE з BOM, рядки через CRLF
-//   КЛЮЧ<пробіли до 30 позицій>\x1B\x1B значення \x1B\x1B
+//   UTF-16LE with a BOM, lines separated by CRLF
+//   KEY<spaces up to 30 columns>\x1B\x1B value \x1B\x1B
 //
-// Два символи ESC (0x1B) обрамляють значення з обох боків. Ключі — ті самі,
-// що трапляються у `.con` і `.tweak`: `HUD_INGAME_QUIT`,
-// `WEAPON_NAME_ammobag` тощо.
+// Two ESC characters (0x1B) frame the value on both sides. The keys are the same
+// ones that occur in `.con` and `.tweak`: `HUD_INGAME_QUIT`,
+// `WEAPON_NAME_ammobag` and so on.
 //
-// Значення можуть містити `§` (0xA7) — керуючі послідовності кольору гри.
-// Ми їх поки лишаємо як є.
+// Values may contain `§` (0xA7) — the game's colour control sequences.
+// We leave them as they are for now.
 #include <optional>
 #include <span>
 #include <string>
@@ -22,15 +22,15 @@ namespace obf2::loc {
 
 class Lexicon {
  public:
-  // Додає вміст одного .utxt. Файлів на мову кілька (основний, патчі,
-  // додатки), і пізніші перекривають раніші — так само, як у грі.
+  // Adds the contents of one .utxt. There are several files per language (the
+  // main one, patches, add-ons), and later ones override earlier — as in the game.
   bool addUtxt(std::span<const std::byte> bytes, std::string* error = nullptr);
 
-  // nullopt, якщо ключа немає: підставляти сам ключ чи ні — вирішує той,
-  // хто малює, бо в грі відсутній рядок видно саме як ключ.
+  // nullopt when the key is absent: whether to substitute the key itself is up to
+  // whoever draws it, because in the game a missing string shows as the key.
   std::optional<std::string_view> find(std::string_view key) const;
 
-  // Зручний варіант: повертає сам ключ, якщо перекладу нема.
+  // A convenience variant: returns the key itself when there is no translation.
   std::string_view text(std::string_view key) const;
 
   std::size_t size() const { return entries_.size(); }
@@ -39,7 +39,7 @@ class Lexicon {
   std::unordered_map<std::string, std::string> entries_;
 };
 
-// UTF-16LE -> UTF-8. Сурогатні пари складаються в один символ.
+// UTF-16LE -> UTF-8. Surrogate pairs are combined into one character.
 std::string utf16ToUtf8(std::span<const std::byte> bytes);
 
 }  // namespace obf2::loc

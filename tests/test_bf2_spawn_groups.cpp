@@ -1,7 +1,7 @@
-// Групи появи, які сервер шле подіями CreateSpawnGroupEvent.
+// The spawn groups the server sends as CreateSpawnGroupEvent events.
 //
-// Числа тут не вигадані: це те, що віддає живий сервер на Dalian Plant,
-// і положення прапорців із `GamePlayObjects.con` того ж рівня
+// The numbers here are not invented: this is what a live server gives on Dalian
+// Plant, and the flags' positions from the same level's `GamePlayObjects.con`
 // (docs/functions/network-events.md).
 #include <vector>
 
@@ -12,50 +12,50 @@ using namespace obf2::net::bf2;
 
 namespace {
 
-// Розмір світу Dalian Plant: (1025 - 1) * 2.
+// Dalian Plant's world size: (1025 - 1) * 2.
 constexpr float kWorld = 2048.0f;
 
-// Чотири групи прапорів, як їх шле сервер. Поля — з розбору події:
-// перше число, команда, три прапорці, спаковане місце, мережевий номер.
+// The four flag groups as the server sends them. The fields come from the event's
+// parsing: the first number, the team, three flags, the packed position, the network id.
 std::vector<CreateSpawnGroup> dalianGroups() {
   return {
-      {1, 1, true, false, true, 117, 94, 515},   // powerplant, китайці
-      {2, 2, true, false, true, 106, 119, 516},  // constructionsite, американці
-      {3, 0, true, false, true, 137, 120, 517},  // reactors, нічия
-      {4, 0, true, false, true, 98, 97, 518},    // mainentrance, нічия
+      {1, 1, true, false, true, 117, 94, 515},   // powerplant, the Chinese
+      {2, 2, true, false, true, 106, 119, 516},  // constructionsite, the Americans
+      {3, 0, true, false, true, 137, 120, 517},  // reactors, neutral
+      {4, 0, true, false, true, 98, 97, 518},    // mainentrance, neutral
   };
 }
 
 }  // namespace
 
-// Розпакування місця: `pos = байт / 255 * worldSize - worldSize / 2`
-// (SpawnGroup::getUnsignedWorldPosition, 0x4b94b0; множник 255 сталою за
+// Unpacking the position: `pos = byte / 255 * worldSize - worldSize / 2`
+// (SpawnGroup::getUnsignedWorldPosition, 0x4b94b0; the multiplier 255 as a constant at
 // 0xb355bc).
 static void testUnpackedPositions() {
-  // Центр карти — це 128 з половиною похибки округлення.
+  // The map's centre is 128 plus half a rounding error.
   CHECK(std::abs(spawnGroupWorldPos(128, kWorld) - 3.8f) < 1.0f);
-  // Краї.
+  // The edges.
   CHECK(std::abs(spawnGroupWorldPos(0, kWorld) + 1024.0f) < 0.01f);
   CHECK(std::abs(spawnGroupWorldPos(255, kWorld) - 1024.0f) < 0.01f);
 
-  // Powerplant: сервер каже 117 і 94, прапор у даних рівня стоїть на
-  // (-92.3, -260.8). Розбіжність очікувана — місце групи це середнє її
-  // точок появи.
+  // Powerplant: the server says 117 and 94, while the flag in the level's data stands
+  // at (-92.3, -260.8). The discrepancy is expected — a group's position is the
+  // average of its spawn points.
   const float x = spawnGroupWorldPos(117, kWorld);
   const float z = spawnGroupWorldPos(94, kWorld);
   CHECK(std::abs(x - (-92.3f)) < 40.0f);
   CHECK(std::abs(z - (-260.8f)) < 40.0f);
 }
 
-// Кожен прапор Dalian має знайти свою групу — і саме ту, що поруч.
+// Every Dalian flag has to find its group — and precisely the one next to it.
 static void testEachFlagFindsItsGroup() {
   const auto groups = dalianGroups();
   struct Flag {
     float x, z;
     std::uint8_t expected;
   };
-  // Чекаємо **малий** номер групи: саме його шле оригінальний клієнт
-  // (у знятому трафіку `NESelectSpawnGroup = 2` на другий прапор).
+  // We expect the **small** group number: it is what the original client sends
+  // (`NESelectSpawnGroup = 2` for the second flag in the captured traffic).
   const Flag flags[] = {
       {-92.3f, -260.8f, 1},   // powerplant
       {-151.8f, -58.9f, 2},   // constructionsite
@@ -66,22 +66,21 @@ static void testEachFlagFindsItsGroup() {
     float away = 0.0f;
     const std::uint8_t id = nearestSpawnGroup(groups, flag.x, flag.z, kWorld, &away);
     CHECK_EQ(id, flag.expected);
-    // Група стоїть біля свого прапора, а не десь на карті.
+    // The group stands next to its own flag rather than somewhere on the map.
     CHECK(away < 60.0f);
   }
 }
 
-// Порожній перелік дає нуль — а нуль сервер розуміє як «місце не
-// обране», і гравець просто не з'явиться. Мовчазної підміни тут бути не
-// повинно.
+// An empty list gives zero — and the server understands zero as "no point chosen",
+// so the player simply will not spawn. There must be no silent substitution here.
 static void testNoGroupsGivesZero() {
   float away = -1.0f;
   CHECK_EQ(nearestSpawnGroup({}, 0.0f, 0.0f, kWorld, &away), std::uint8_t(0));
   CHECK_EQ(away, 0.0f);
 }
 
-// Групи загонів сервер шле в центрі карти (127, 127). Прапор, що стоїть
-// далеко від центра, не має на них попастися.
+// The server sends squad groups at the map's centre (127, 127). A flag standing far
+// from the centre must not fall onto them.
 static void testSquadGroupsInTheCentreDoNotWin() {
   auto groups = dalianGroups();
   for (std::uint16_t i = 0; i < 20; ++i) {

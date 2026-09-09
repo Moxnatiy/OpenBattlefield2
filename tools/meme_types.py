@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""Поля кожного класу `dice::meme::*` — прямо з офіційної бібліотеки.
+"""The fields of every `dice::meme::*` class — straight from the official library.
 
-    tools/meme_types.py                 # усі класи, по порядку полів
-    tools/meme_types.py TransformNode   # один клас
-    tools/meme_types.py --slots         # які вважаємо типами полів
+    tools/meme_types.py                 # every class, in field order
+    tools/meme_types.py TransformNode   # one class
+    tools/meme_types.py --slots         # what we take for field types
 
-`MemeDll.dll` і `MemeBf.dll` лежать у теці мода поруч із самим редактором
-(`MemeEdit.exe`) і, на відміну від гри, **експортують повні символи C++**.
-Кожен клас має `onStream`, і кожне поле там передається окремим методом
-потоку — `streamFloat`, `streamInt`, `streamNode`, ... — якому **другим
-аргументом іде назва поля рядком**.
+`MemeDll.dll` and `MemeBf.dll` lie in the mod's directory next to the editor
+itself (`MemeEdit.exe`) and, unlike the game, **export full C++ symbols**.
+Every class has an `onStream`, and every field there is passed by a separate
+stream method — `streamFloat`, `streamInt`, `streamNode`, ... — which takes
+**the field's name as a string as its second argument**.
 
-Тобто розкладку файлу не треба вгадувати: вона записана в бібліотеці
-іменами. Ми лише читаємо порядок викликів.
+So the file's layout need not be guessed: it is written down in the library
+by name. All we do is read the order of the calls.
 
-Методи потоку викликаються віртуально, тож замість імені ми бачимо зсув
-у таблиці. Зсув сталий для методу, тож він і є позначкою типу; людські
-назви для відомих зсувів — у SLOTS, решта лишається числом.
+Stream methods are called virtually, so instead of a name we see an offset in
+the table. The offset is constant per method, so it is the type marker; human
+names for the known offsets are in SLOTS, the rest stay numbers.
 """
 import argparse
 import os
@@ -29,8 +29,8 @@ MOD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
                    "Game Files", "mods", "bf2")
 LIBRARIES = ("MemeDll.dll", "MemeBf.dll")
 
-# Зсув у таблиці методів -> що воно читає. Заповнюється в міру того, як
-# зсув вдається звірити з даними; невідомі лишаються числом.
+# Offset in the method table -> what it reads. Filled in as each offset gets
+# checked against the data; the unknown ones stay numbers.
 SLOTS = {
     0x34: "float",       # Alpha, Width, Red
     0x38: "bool",        # Border or not, Focus
@@ -40,10 +40,10 @@ SLOTS = {
     0x50: "font",        # Font handle
     0x54: "sound",       # Select sound
     0x58: "list",        # Action list, Data list
-    0x5c: "index",       # Button type, Source blend func — перелічення
+    0x5c: "index",       # Button type, Source blend func — an enumeration
     0x64: "event",
     0x68: "action",
-    0x6c: "data",        # найчастіше: значення беруться з окремих вузлів-даних
+    0x6c: "data",        # most often: values are taken from separate data nodes
     0x70: "effect",
     0x74: "function",
     0x78: "object",      # Path node, Destination node
@@ -80,16 +80,16 @@ class Image:
         return None
 
     def follow(self, address):
-        """Експорти тут ведуть у таблицю переходів, а не в саму функцію."""
+        """The exports here lead to the jump table, not to the function itself."""
         at = self.offset(address - self.base)
         if at is not None and self.data[at] == 0xE9:
             return address + 5 + struct.unpack_from("<i", self.data, at + 1)[0]
         return address
 
     def imports(self):
-        """Адреса комірки IAT -> ім'я. MemeBf.dll кличе MemeDll саме так,
-        і без цього виклик до батьківського onStream виглядає як стрибок
-        у нікуди."""
+        """The address of an IAT cell -> a name. MemeBf.dll calls MemeDll exactly
+        that way, and without this a call to the parent `onStream` looks like a
+        jump into nowhere."""
         if hasattr(self, "_imports"):
             return self._imports
         self._imports = {}
@@ -120,8 +120,8 @@ class Image:
             self._by_address = {}
             self._by_address.update(self.imports())
             for name, raw in self.exports().items():
-                # Виклики йдуть на перехідник, а не на саму функцію, тож
-                # знаємо обидві адреси.
+                # The calls go to the thunk, not to the function itself, so
+                # we know both addresses.
                 self._by_address.setdefault(raw, name)
                 self._by_address.setdefault(self.follow(raw), name)
         return self._by_address.get(address)
@@ -139,7 +139,7 @@ class Image:
         return text.decode("latin-1")
 
     def exports(self):
-        """Ім'я -> адреса в пам'яті."""
+        """A name -> an address in memory."""
         d, at = self.data, self.offset(self.export_rva)
         if at is None:
             return {}
@@ -162,10 +162,10 @@ PUSH = re.compile(r"pushl\s+\$(0x[0-9a-f]+)")
 BASE = re.compile(r"\?onStream@([A-Za-z0-9_]+)@meme@dice@@")
 HELPER = re.compile(r"\?stream@(Coordinate2|Rectangle|Color)@meme@dice@@")
 
-# Помічники пишуть кілька чисел підряд і не через таблицю методів, тож у
-# розборі їх видно як звичайний виклик. Що саме вони пишуть — прочитано
-# з них самих: Coordinate2 це два float, Rectangle — два Coordinate2,
-# Color — чотири float з ось такими іменами.
+# The helpers write several numbers in a row and not through the method table,
+# so in the disassembly they look like an ordinary call. What exactly they
+# write was read out of themselves: Coordinate2 is two floats, Rectangle is
+# two Coordinate2, Color is four floats with these very names.
 HELPER_FIELDS = {
     "Rectangle": ["X", "Y", "Width", "Height"],
     "Color": ["Red", "Green", "Blue", "Alpha"],
@@ -173,11 +173,11 @@ HELPER_FIELDS = {
 
 
 def fields(image, address, end=None):
-    """Поля в порядку появи: (назва, зсув методу потоку).
+    """The fields in the order they appear: (name, stream method offset).
 
-    Межу функції беремо з наступного експорту, а не «до першого retl»:
-    onStream часто спершу віддає роботу батьківському класу і повертається
-    з середини, а поля йдуть далі.
+    The function's bound is taken from the next export, not "up to the first
+    retl": `onStream` often hands the work to the parent class first and comes
+    back from the middle, while the fields continue after that.
     """
     if end is None or end <= address:
         end = address + 0x600
@@ -191,9 +191,9 @@ def fields(image, address, end=None):
         push = PUSH.search(line)
         if push:
             name = image.string(int(push.group(1), 16) - image.base)
-            # Назви полів — короткі слова з великої літери; решта сталих
-            # (розміри, прапорці) нас тут не цікавить.
-            # Імена бувають і з приміткою: "Value <do not edit>".
+            # Field names are short capitalised words; the other constants
+            # (sizes, flags) are of no interest here.
+            # A name can carry a note too: "Value <do not edit>".
             if name and re.fullmatch(r"[A-Za-z][A-Za-z0-9 _<>/.-]{0,40}", name):
                 pending.append(name)
             continue
@@ -202,8 +202,8 @@ def fields(image, address, end=None):
             out.append((pending[-1], int(call.group(1), 16)))
             pending = []
             continue
-        # Клас спершу віддає роботу батьківському onStream — саме тому
-        # успадковані поля стоять у файлі перед власними.
+        # The class hands the work to the parent `onStream` first — which is
+        # exactly why inherited fields stand in the file before its own.
         direct = DIRECT.search(line.split("<")[0].strip())
         if direct and not CALL.search(line):
             target = int(direct.group(1), 16)
@@ -216,8 +216,8 @@ def fields(image, address, end=None):
             if helper:
                 kind = helper.group(1)
                 if kind == "Coordinate2":
-                    # Аргументи кладуться справа наліво, тож перше ім'я
-                    # виклику — останнє з покладених.
+                    # Arguments are pushed right to left, so the call's first
+                    # name is the last of the ones pushed.
                     pair = pending[-2:][::-1] if len(pending) >= 2 else ["X", "Y"]
                     for field in pair:
                         out.append((field, 0x34))
@@ -229,8 +229,8 @@ def fields(image, address, end=None):
 
 
 def symbols(image):
-    """Адреса -> коротке ім'я. Саме заради цього ми й беремо DLL: у грі
-    таких імен немає, а тут вони є для кожної функції."""
+    """An address -> a short name. This is exactly what we take the DLL for: the
+    game has no such names, and here they are there for every function."""
     out = {}
     for name, address in image.exports().items():
         target = image.follow(address)
@@ -241,11 +241,11 @@ def symbols(image):
 
 
 def dump(image, wanted, span=0):
-    """Розбір функції з підписаними викликами.
+    """A disassembly of a function with the calls labelled.
 
-    Головне тут — імена: `calll 0x100432a0` нічого не каже, а
-    `calll ... ; IStream::streamInt` каже все. Без цього читати чужий
-    двійковий код — це вгадувати.
+    The names are the point here: `calll 0x100432a0` says nothing, while
+    `calll ... ; IStream::streamInt` says everything. Without them, reading
+    someone else's binary is guesswork.
     """
     names = symbols(image)
     starts = sorted(names)
@@ -282,11 +282,11 @@ VTABLE = re.compile(r"movl\s+\$(0x[0-9a-f]+),\s*\(%\w+\)")
 
 
 def inherited(image, klass):
-    """Чий `onStream` дістався класові, коли свого він не має.
+    """Whose `onStream` the class got when it has none of its own.
 
-    Беремо його конструктор, звідти адресу таблиці методів, а з таблиці
-    — комірку 0x30. Саме її кличе рушій, тож це не здогад, а те, що
-    станеться насправді.
+    We take its constructor, from there the method table's address, and from
+    the table cell 0x30. That is the very one the engine calls, so this is not
+    a guess but what will really happen.
     """
     picked = [a for n, a in image.exports().items()
               if n.startswith("??0%s@meme@dice@@" % klass)]
@@ -308,14 +308,14 @@ def inherited(image, klass):
         slot = struct.unpack_from("<I", image.data, at + 0x30)[0]
         symbol = image.symbol_at(slot) or ""
         match = re.match(r"\?onStream@([A-Za-z0-9_]+)@meme@dice@@", symbol)
-        # Ім'я буває, а буває сама адреса: не всі onStream експортовані.
-        # Тоді розбираємо просто за адресою — вона теж із таблиці методів.
+        # There can be a name, and there can be just an address: not every
+        # onStream is exported. Then we go by address — it is from the table too.
         return (match.group(1) if match else None, image.follow(slot))
     return None, None
 
 
 def classes(image):
-    """Клас -> (початок onStream, початок наступної функції)."""
+    """A class -> (the start of onStream, the start of the next function)."""
     starts = sorted({image.follow(a) for a in image.exports().values()})
     out = {}
     for name, address in image.exports().items():
@@ -331,12 +331,12 @@ def classes(image):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("klass", nargs="?", help="показати один клас")
-    parser.add_argument("--slots", action="store_true", help="які зсуви трапляються")
-    parser.add_argument("--emit", help="записати повний перелік у файл")
-    parser.add_argument("--dump", help="розібрати функцію за початком імені символа")
+    parser.add_argument("klass", nargs="?", help="show one class")
+    parser.add_argument("--slots", action="store_true", help="which offsets occur")
+    parser.add_argument("--emit", help="write the full list into a file")
+    parser.add_argument("--dump", help="disassemble a function by the start of its symbol name")
     parser.add_argument("--span", type=lambda s: int(s, 0), default=0,
-                        help="скільки байтів розбирати (0 = до наступного символа)")
+                        help="how many bytes to disassemble (0 = up to the next symbol)")
     args = parser.parse_args()
 
     images = []
@@ -345,7 +345,7 @@ def main():
         if os.path.exists(path):
             images.append(Image(path))
     if not images:
-        print("немає %s у %s" % (" / ".join(LIBRARIES), MOD), file=sys.stderr)
+        print("no %s in %s" % (" / ".join(LIBRARIES), MOD), file=sys.stderr)
         return 1
 
     found = {}
@@ -364,42 +364,42 @@ def main():
             for _, slot in fields(image, span[0], span[1]):
                 counts[slot] = counts.get(slot, 0) + 1
         for slot, count in sorted(counts.items()):
-            print("  %#-6x %-16s %d полів" % (slot, SLOTS.get(slot, "?"), count))
+            print("  %#-6x %-16s %d fields" % (slot, SLOTS.get(slot, "?"), count))
         return 0
 
     if args.emit:
         with open(args.emit, "w", encoding="utf-8") as out:
-            out.write("# Класи `dice::meme::*` та їхні поля\n\n")
-            out.write("Створено `tools/meme_types.py --emit`. Руками не правити.\n\n")
-            out.write("Порядок полів — це порядок у файлі: `onStream` викликає\n")
-            out.write("методи потоку один за одним, і кожному передає назву поля\n")
-            out.write("рядком. Тип — за тим, який саме метод викликано.\n\n")
+            out.write("# `dice::meme::*` classes and their fields\n\n")
+            out.write("Generated by `tools/meme_types.py --emit`. Do not edit by hand.\n\n")
+            out.write("The field order is the order in the file: `onStream` calls the\n")
+            out.write("stream methods one after another, passing each the field name as\n")
+            out.write("a string. The type follows from which method was called.\n\n")
             for name in sorted(found):
                 image, span = found[name]
                 rows = fields(image, span[0], span[1])
                 out.write("## %s (%s)\n\n" % (name, os.path.basename(image.path)))
                 if not rows:
-                    out.write("Власних полів немає.\n\n")
+                    out.write("No fields of its own.\n\n")
                     continue
                 for field, slot in rows:
                     out.write("* `%s` — %s\n" % (field, SLOTS.get(slot, "?%#x" % slot)))
                 out.write("\n")
-        print("записано %d класів у %s" % (len(found), args.emit))
+        print("written: %d classes into %s" % (len(found), args.emit))
         return 0
 
     wanted = sorted(found) if not args.klass else [
         n for n in found if n.lower() == args.klass.lower()]
     if not wanted:
-        print("такого класу немає; є %d" % len(found), file=sys.stderr)
+        print("no such class; there are %d" % len(found), file=sys.stderr)
         return 1
 
     for name in wanted:
         image, span = found[name]
         rows = fields(image, span[0], span[1])
-        print("%s (%s, %#x): полів %d" %
+        print("%s (%s, %#x): %d fields" %
               (name, os.path.basename(image.path), span[0], len(rows)))
         for field, slot in rows:
-            print("    %-28s %s" % (field, SLOTS.get(slot, "зсув %#x" % slot)))
+            print("    %-28s %s" % (field, SLOTS.get(slot, "offset %#x" % slot)))
     return 0
 
 

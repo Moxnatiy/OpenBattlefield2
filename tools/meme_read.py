@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
-"""Читає файл `MemeFile 2.0` за розкладкою, знятою з офіційної бібліотеки.
+"""Reads a `MemeFile 2.0` file by the layout taken from the official library.
 
-    tools/meme_read.py Ingame            # дерево
-    tools/meme_read.py --check           # перевірити всі такі файли
+    tools/meme_read.py Ingame            # the tree
+    tools/meme_read.py --check           # check every such file
     tools/meme_read.py Ingame --find BottomRight
 
-Розкладка не вгадана — вона прочитана з `MemeDll.dll`, де є повні
-символи C++ (див. docs/formats/hud-meme.md):
+The layout is not guessed — it is read out of `MemeDll.dll`, which has full
+C++ symbols (see docs/formats/hud-meme.md):
 
-* файл: рядок версії, далі словник рядків, кожен із однобайтовою
-  довжиною, до **порожнього** рядка (`IStream::streamStaticString`);
-* корінь: `Object::loadNew` читає **лише двобайтовий номер класу** і
-  одразу віддає слово самому класові;
-* вкладений об'єкт: `Object::load` читає чотирибайтовий **розмір**,
-  двобайтове ім'я об'єкта, двобайтове ім'я класу, а тоді поля. Розмір
-  міряється від себе, і саме ним рушій пропускає незнайоме;
-* у класовому потоці «рядок» — це номер у словнику, нуль означає порожньо
+* the file: a version string, then a string dictionary, each with a
+  one-byte length, up to an **empty** string (`IStream::streamStaticString`);
+* the root: `Object::loadNew` reads **only the two-byte class number** and
+  hands the word straight to the class itself;
+* a nested object: `Object::load` reads a four-byte **size**, a two-byte
+  object name, a two-byte class name, and then the fields. The size is
+  measured from itself, and it is what the engine skips the unknown by;
+* in the class stream a "string" is a number in the dictionary, zero is empty
   (`ClassIStream::streamStaticString`);
-* поля кожного класу перелічує його `onStream`, і починає він із
-  батьківського — тому успадковані поля стоять першими.
+* the fields of each class are listed by its `onStream`, and it starts with
+  the parent's — so inherited fields come first.
 """
 import argparse
 import os
@@ -35,8 +35,8 @@ MOD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
 ARCHIVES = ("Menu_client.zip", "Common_client.zip")
 MAGIC = b"MemeFile"
 
-# Скільки байтів читає кожен метод потоку. Номери — зсуви в таблиці
-# методів `IStream`, знятій з .rdata самої бібліотеки.
+# How many bytes each stream method reads. The numbers are offsets in the
+# `IStream` method table, taken from the .rdata of the library itself.
 FIXED = {
     0x1c: 1,  # Ubyte
     0x20: 1,  # Sbyte
@@ -50,15 +50,15 @@ FIXED = {
     0x48: 2,  # Wchar
     0x5c: 4,  # Index -> Int
 }
-# Ім'я ресурсу: однобайтова довжина, далі байти.
+# A resource name: a one-byte length, then the bytes.
 NAMED = {0x4c, 0x50, 0x54}
-# Вкладений об'єкт.
+# A nested object.
 OBJECT = {0x60, 0x64, 0x68, 0x6c, 0x70, 0x74, 0x78, 0x7c, 0x80, 0x84, 0x88}
 LIST = 0x58
 
 
 class Tables:
-    """Поля кожного класу, разом із успадкованими."""
+    """The fields of each class, together with the inherited ones."""
 
     def __init__(self):
         self.own = {}
@@ -77,12 +77,12 @@ class Tables:
         if klass in self._resolved:
             return self._resolved[klass]
         out = []
-        self._resolved[klass] = out  # захист від кільця
-        # У файлі клас зветься повним іменем, а в бібліотеці — коротким.
+        self._resolved[klass] = out  # guard against a cycle
+        # In the file a class goes by its full name, in the library by a short one.
         table = self.own.get(klass) or self.own.get(klass.split("::")[-1])
         if table is None:
-            # Свого onStream клас не має — питаємо його таблицю методів,
-            # чий саме дістався йому у спадок.
+            # The class has no `onStream` of its own — we ask its method
+            # table whose it inherited.
             short = klass.split("::")[-1]
             for image in self.images:
                 parent, address = meme_types.inherited(image, short)
@@ -90,8 +90,8 @@ class Tables:
                     out.extend(self.fields(parent))
                     break
                 if address:
-                    # Свій onStream є, просто не експортований — читаємо
-                    # його за адресою з таблиці методів.
+                    # It has its own `onStream`, just not exported — we read
+                    # it at the address from the method table.
                     for name, slot in meme_types.fields(image, address, address + 0x200):
                         if name.startswith("@"):
                             out.extend(self.fields(name[1:]))
@@ -118,8 +118,8 @@ class Reader:
         self.unknown = set()
         self.short = {}
         self.path = []
-        # Межа поточного об'єкта: далі за неї поле не читається. Так само
-        # робить рушій — розмір тут головніший за таблицю полів.
+        # The bound of the current object: past it no field is read. The
+        # engine does the same — here the size outranks the field table.
         self.limit = None
 
     def ubyte(self):
@@ -144,7 +144,7 @@ class Reader:
         return text.decode("latin-1")
 
     def word(self):
-        """Рядок у класовому потоці — це номер у словнику."""
+        """A string in the class stream is a number in the dictionary."""
         index = self.ushort()
         return self.words[index] if 0 < index < len(self.words) else ""
 
@@ -168,36 +168,36 @@ class Reader:
         if slot in NAMED:
             return self.raw_string()
         if slot == LIST:
-            # Список не має лічильника: об'єкти йдуть підряд, а край дає
-            # розмір самого власника списку. Це видно в байтах — одразу
-            # після заголовка починається запис об'єкта, а не число.
+            # The list has no counter: the objects follow one another, and
+            # the edge is given by the size of the list's owner. It is visible
+            # in the bytes — an object record starts right after the header.
             out = []
             while self.limit is not None and self.at + 8 <= self.limit:
                 out.append(self.object())
             return out
         if slot in OBJECT:
             return self.object()
-        raise ValueError("невідомий метод потоку %#x" % slot)
+        raise ValueError("unknown stream method %#x" % slot)
 
     def object(self):
-        """Вкладений об'єкт: розмір, ім'я, клас, поля."""
+        """A nested object: size, name, class, fields."""
         start = self.at
         size = self.ulong()
         name = self.word()
         klass = self.word()
-        node = {"клас": klass, "ім'я": name, "поля": {}}
+        node = {"class": klass, "name": name, "fields": {}}
         if klass:
             outer, self.limit = self.limit, start + size
-            node["поля"] = self.body(klass)
+            node["fields"] = self.body(klass)
             self.limit = outer
-            # Розмір дозволяє пропустити хвіст — і тим ховає неповну
-            # таблицю полів. Тому звіряємо: скільки прочитали і скільки
-            # мали. Розбіжність означає, що клас розібраний не до кінця.
+            # The size lets the tail be skipped — and so hides an incomplete
+            # field table. So we check: how much was read against how much
+            # there was. A difference means the class is not fully taken apart.
             left = (start + size) - self.at
             if left:
                 self.short[klass] = max(self.short.get(klass, 0), left)
-        # Розмір міряється від свого ж поля — так рушій пропускає те,
-        # чого не знає. Робимо так само: він тут головний.
+        # The size is measured from its own field — that is how the engine
+        # skips what it does not know. We do the same: here it is in charge.
         self.at = start + size
         return node if klass else None
 
@@ -215,9 +215,9 @@ class Reader:
         return out
 
     def root(self):
-        """Корінь читається інакше: лише номер класу, без розміру."""
+        """The root reads differently: only the class number, no size."""
         klass = self.word()
-        return {"клас": klass, "ім'я": "", "поля": self.body(klass)}
+        return {"class": klass, "name": "", "fields": self.body(klass)}
 
 
 def archives():
@@ -252,11 +252,11 @@ def every():
 def show(node, depth, out, path=""):
     if node is None:
         return
-    label = node["клас"] + (" «%s»" % node["ім'я"] if node["ім'я"] else "")
-    plain = {k: v for k, v in node["поля"].items()
+    label = node["class"] + (" '%s'" % node["name"] if node["name"] else "")
+    plain = {k: v for k, v in node["fields"].items()
              if not isinstance(v, (dict, list)) and v not in ("", 0, 0.0)}
     out.append("  " * depth + label + ("  " + str(plain) if plain else ""))
-    for key, value in node["поля"].items():
+    for key, value in node["fields"].items():
         if isinstance(value, dict):
             out.append("  " * (depth + 1) + key + ":")
             show(value, depth + 2, out)
@@ -266,8 +266,8 @@ def show(node, depth, out, path=""):
                 show(item, depth + 2, out)
 
 
-# Зсув у таблиці методів -> назва типу в C++. Ті самі зсуви, що в
-# meme_types.SLOTS, лише іменами нашого переліку.
+# Offset in the method table -> the type's name in C++. The same offsets as
+# in meme_types.SLOTS, only by the names of our own enumeration.
 CPP_SLOTS = {
     0x1c: "Ubyte", 0x20: "Sbyte", 0x24: "Ushort", 0x28: "Sshort",
     0x2c: "Ulong", 0x30: "Slong", 0x34: "Float", 0x38: "Bool",
@@ -278,15 +278,15 @@ CPP_SLOTS = {
 
 
 def emit_cpp(tables, path):
-    """Таблиця «клас -> поля» для читача на C++.
+    """The "class -> fields" table for the C++ reader.
 
-    Береться з тих самих бібліотек, що й усе решта: руками тут нічого не
-    написано, і повторити можна однією командою.
+    It is taken from the same libraries as everything else: nothing here is
+    written by hand, and it can be repeated with one command.
     """
-    # Класів більше, ніж експортованих `onStream`: частина його не має і
-    # успадковує чужий (NameNode, ShowEffectNode). Тому беремо **всі**
-    # імена, що взагалі трапляються в символах бібліотеки, і кожне
-    # проганяємо через ту саму розв'язку, що й читач.
+    # There are more classes than exported `onStream`s: some have none and
+    # inherit another's (NameNode, ShowEffectNode). So we take **every**
+    # name that occurs in the library's symbols at all, and run each of them
+    # through the same resolution the reader uses.
     seen = set()
     for image in tables.images:
         for symbol in image.exports():
@@ -296,14 +296,14 @@ def emit_cpp(tables, path):
         tables.fields(klass)
     names = sorted(n for n in tables._resolved if n in seen)
     lines = [
-        "// Класи `dice::meme::*` та їхні поля, у порядку читання.",
+        "// `dice::meme::*` classes and their fields, in reading order.",
         "//",
-        "// Створено `tools/meme_read.py --cpp`. **Руками не правити.**",
+        "// Generated by `tools/meme_read.py --cpp`. **Do not edit by hand.**",
         "//",
-        "// Джерело — `MemeDll.dll` і `MemeBf.dll` із теки мода: вони",
-        "// експортують повні символи C++, і кожен `onStream` передає назву",
-        "// поля рядком, а тип поля — це те, який метод потоку викликано.",
-        "// Успадковані поля вже розгорнуті на місці.",
+        "// The source is `MemeDll.dll` and `MemeBf.dll` from the mod's directory:",
+        "// they export full C++ symbols, and every `onStream` passes the field's",
+        "// name as a string, while the field's type is whichever stream method was called.",
+        "// Inherited fields are already expanded in place.",
         "",
     ]
     total = 0
@@ -319,8 +319,8 @@ def emit_cpp(tables, path):
                         0x78: "Object", 0x7c: "Object", 0x80: "Object",
                         0x84: "Object", 0x88: "Object"}.get(slot)
             if kind is None:
-                # Невідомий метод потоку: далі за нього читати не можна,
-                # бо ширина невідома. Позначаємо і зупиняємо клас.
+                # An unknown stream method: nothing past it can be read,
+                # because the width is unknown. We mark it and stop the class.
                 lines.append("  MEME_FIELD(\"%s\", Unknown)" % field)
                 break
             lines.append("  MEME_FIELD(\"%s\", %s)" % (field, kind))
@@ -328,7 +328,7 @@ def emit_cpp(tables, path):
         lines.append("")
     with open(path, "w", encoding="utf-8") as out:
         out.write("\n".join(lines))
-    print("записано %d класів у %s" % (total, path))
+    print("written: %d classes into %s" % (total, path))
     return 0
 
 
@@ -336,9 +336,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("entry", nargs="?")
-    parser.add_argument("--check", action="store_true", help="перевірити всі файли")
-    parser.add_argument("--find", help="показати лише гілки з цим у назві")
-    parser.add_argument("--cpp", help="записати таблицю класів для C++")
+    parser.add_argument("--check", action="store_true", help="check every file")
+    parser.add_argument("--find", help="show only branches with this in the name")
+    parser.add_argument("--cpp", help="write the class table for C++")
     args = parser.parse_args()
 
     tables = Tables()
@@ -354,30 +354,30 @@ def main():
                 reader.header()
                 reader.root()
                 left = len(data) - reader.at
-                mark = "ціло" if left == 0 else "лишилось %d" % left
+                mark = "whole" if left == 0 else "%d left" % left
                 good += left == 0
                 bad += left != 0
             except Exception as error:  # noqa: BLE001
-                mark = "збій: %s" % error
+                mark = "failed: %s" % error
                 bad += 1
-            print("%-22s %-24s %6d б  %s" % (archive, entry, len(data), mark))
+            print("%-22s %-24s %6d b  %s" % (archive, entry, len(data), mark))
             if reader.unknown:
-                print("      класів без таблиці: %s" % ", ".join(sorted(reader.unknown)))
+                print("      classes with no table: %s" % ", ".join(sorted(reader.unknown)))
             if reader.short:
                 for klass, left in sorted(reader.short.items(), key=lambda kv: -kv[1]):
-                    print("      недочитано %-42s %d б" % (klass.split("::")[-1], left))
-        print("\nрозібрано повністю: %d, з залишком чи збоєм: %d" % (good, bad))
+                    print("      short by %-42s %d b" % (klass.split("::")[-1], left))
+        print("\nfully taken apart: %d, with a remainder or a failure: %d" % (good, bad))
         return 0 if bad == 0 else 1
 
     found = find(args.entry)
     if not found:
-        print("не знайдено: %s" % args.entry, file=sys.stderr)
+        print("not found: %s" % args.entry, file=sys.stderr)
         return 1
     archive, entry, data = found
     reader = Reader(data, tables)
     version = reader.header()
     tree = reader.root()
-    print("%s / %s: %s, слів %d, прочитано %d з %d" %
+    print("%s / %s: %s, %d words, read %d of %d" %
           (archive, entry, version, len(reader.words) - 1, reader.at, len(data)))
     lines = []
     show(tree, 0, lines)

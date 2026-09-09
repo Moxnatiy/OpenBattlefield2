@@ -10,7 +10,7 @@ using namespace obf2::con;
 
 namespace {
 
-// Провайдер на мапі — тести не мають залежати від наявності гри на диску.
+// A map-backed provider — the tests must not depend on the game being on disk.
 class MemoryFiles : public FileProvider {
  public:
   std::map<std::string, std::string> files;
@@ -43,7 +43,7 @@ static void testTokenizer() {
   CHECK_EQ(t[0], std::string("ObjectTemplate.weaponHud.hudName"));
   CHECK_EQ(t[1], std::string("WEAPON_NAME_ammobag"));
 
-  // Зворотний слеш усередині лапок — це шлях, а не екранування.
+  // A backslash inside quotes is a path, not an escape.
   const auto p = tokenizeLine(R"(ObjectTemplate.icon "Ingame\Kits\kit.tga")");
   CHECK_EQ(p[1], std::string(R"(Ingame\Kits\kit.tga)"));
 
@@ -95,7 +95,7 @@ static void testBlockComments() {
 
 static void testVarsAndIf() {
   MemoryFiles files;
-  // Точний зразок із гри: Kits/US/US_Common.con + перевірка на BF2Editor.
+  // An exact sample from the game: Kits/US/US_Common.con plus the BF2Editor check.
   files.files["a.con"] =
       "var v_dist = 20\n"
       "GeometryTemplate.setSubGeometryLodDistance 0 0 v_dist\n"
@@ -133,7 +133,7 @@ static void testIncludeAndRun() {
   CHECK_EQ(r.diagnostics.size(), std::size_t(0));
   CHECK_EQ(r.commands.size(), std::size_t(3));
   CHECK_EQ(r.commands[2].argStr(0), std::string_view("42"));
-  // Аргументи виклику лишаються локальними для викликаного файлу.
+  // A call's arguments stay local to the called file.
   CHECK_EQ(r.commands[2].file, std::string("weapons/handheld/shared/lod.con"));
 }
 
@@ -143,10 +143,10 @@ static void testErrors() {
 
   const Result r = run(files, "a.con");
   CHECK_EQ(r.diagnostics.size(), std::size_t(3));
-  // Відсутній include — лише попередження: так поводиться сам Refractor 2.
+  // A missing include is only a warning: that is how Refractor 2 itself behaves.
   CHECK_EQ(r.diagnostics[0].severity, Severity::Warning);
-  CHECK(r.diagnostics[1].isError());  // endIf без if
-  CHECK(r.diagnostics[2].isError());  // незакритий beginRem
+  CHECK(r.diagnostics[1].isError());  // endIf without if
+  CHECK(r.diagnostics[2].isError());  // unclosed beginRem
 }
 
 static void testIncludeCycle() {
@@ -156,7 +156,7 @@ static void testIncludeCycle() {
 
   const Result r = run(files, "a.con");
   CHECK(!r.diagnostics.empty());
-  CHECK_EQ(r.diagnostics.back().message, std::string("циклічний include"));
+  CHECK_EQ(r.diagnostics.back().message, std::string("cyclic include"));
 }
 
 TEST_MAIN({

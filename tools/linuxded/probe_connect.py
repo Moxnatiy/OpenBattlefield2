@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Зонд протоколу під'єднання BF2: шле connect request і читає відповідь.
+"""A probe of BF2's connection protocol: sends a connect request and reads the reply.
 
-Розкладка взята з рушія (NetServer::_update / handleConnectRequest /
-sendConnectAccept / sendConnectDenied у Linux-сервері):
+The layout comes from the engine (NetServer::_update / handleConnectRequest /
+sendConnectAccept / sendConnectDenied in the Linux server):
 
-  заголовок: 4 біти тип, 8 бітів номер з'єднання
-  тип 1 — запит:  u32 0x1002, u32 версія, 1 біт PunkBuster,
-                  u32 токен перепід'єднання, 32 байти пароль,
-                  32 байти тека мода
-  тип 2 — прийнято: u8 номер, u32 час сервера, 1 біт PunkBuster
-  тип 3 — відмова:  u32 причина, 1 біт «є тека», [32 байти теки]
+  the header: 4 bits of type, 8 bits of connection id
+  type 1 — the request:  u32 0x1002, u32 version, 1 bit PunkBuster,
+                         u32 reconnection token, 32 bytes of password,
+                         32 bytes of mod directory
+  type 2 — accepted: u8 id, u32 server time, 1 bit PunkBuster
+  type 3 — denied:   u32 reason, 1 bit "a directory follows", [32 bytes of directory]
 
-Біти пакуються молодшими вперед — так само, як у нашому BitStream.
+Bits are packed low first — the same as in our BitStream.
 """
 import socket
 import struct
@@ -61,28 +61,28 @@ class Reader:
 
 
 DENY = {
-    0x02: "сервер повний",
-    0x09: "версія не підходить",
-    0x11: "невірний пароль",
-    0x16: "адресу заблоковано",
-    0x17: "клієнт застарий",
-    0x18: "клієнт занадто новий",
-    0x1E: "немає вільних місць",
-    0x1F: "потрібен PunkBuster",
-    0x24: "інша тека мода",
+    0x02: "the server is full",
+    0x09: "the version does not match",
+    0x11: "wrong password",
+    0x16: "the address is banned",
+    0x17: "the client is too old",
+    0x18: "the client is too new",
+    0x1E: "no free slots",
+    0x1F: "PunkBuster is required",
+    0x24: "a different mod directory",
 }
 
 
-# Знайдено двійковим пошуком по живому серверу: байти 15 0C 51 00 — це
-# 1.5 і збірка 0x0C51 = 3153, тобто рівно bf2-linuxded-1.5.3153.0.
+# Found by a binary search against a live server: the bytes 15 0C 51 00 are
+# 1.5 and build 0x0C51 = 3153, that is exactly bf2-linuxded-1.5.3153.0.
 GAME_VERSION = 0x150C5100
 
 
 def connect_request(version=GAME_VERSION, mod="mods/bf2", password="", token=0, punkbuster=1):
     writer = Writer()
-    writer.write(1, 4)          # тип: запит на під'єднання
-    writer.write(0, 8)          # номер з'єднання: у клієнта його ще немає
-    writer.write(0x1002, 32)    # стала, яку рушій звіряє першою
+    writer.write(1, 4)          # the type: a connection request
+    writer.write(0, 8)          # the connection id: the client has none yet
+    writer.write(0x1002, 32)    # the constant the engine checks first
     writer.write(version, 32)
     writer.write(punkbuster, 1)
     writer.write(token, 32)
@@ -98,7 +98,7 @@ def probe(version, host="127.0.0.1", port=16567, timeout=2.0, **kwargs):
     try:
         data, _ = sock.recvfrom(2048)
     except socket.timeout:
-        return "тиша"
+        return "silence"
     finally:
         sock.close()
 
@@ -109,42 +109,42 @@ def probe(version, host="127.0.0.1", port=16567, timeout=2.0, **kwargs):
         assigned = reader.read(8)
         server_time = reader.read(32)
         pb = reader.read(1)
-        return "ПРИЙНЯТО: з'єднання %d, час сервера %d, PunkBuster %d" % (assigned, server_time, pb)
+        return "ACCEPTED: connection %d, server time %d, PunkBuster %d" % (assigned, server_time, pb)
     if kind == 3:
         reason = reader.read(32)
         has_mod = reader.read(1)
-        text = DENY.get(reason, "код %d" % reason)
+        text = DENY.get(reason, "code %d" % reason)
         if has_mod:
-            text += " (сервер хоче %r)" % reader.read_bytes(32).split(b"\0")[0].decode("latin-1")
-        return "відмова: " + text
-    return "тип %d, номер %d, %d байтів" % (kind, connection, len(data))
+            text += " (the server wants %r)" % reader.read_bytes(32).split(b"\0")[0].decode("latin-1")
+        return "denied: " + text
+    return "type %d, id %d, %d bytes" % (kind, connection, len(data))
 
 
 if __name__ == "__main__":
     versions = [int(v, 0) for v in sys.argv[1:]] or [0]
     for version in versions:
-        print("версія %#x -> %s" % (version, probe(version)))
+        print("version %#x -> %s" % (version, probe(version)))
 
 
-# --- потік подій у пакеті даних (тип 15) ---
+# --- the event stream in a data packet (type 15) ---
 #
-# Розкладка з рушія: GameEventManager::processReceivedPacket читає
-#   1 біт  «є події», 8 бітів кількість, 5 бітів ?, 1 біт ?
-# далі readGameEvent бере тип у N бітах, де N — найменше, при якому
-# (1<<N)-1 вміщує розмір реєстру подій. На живих пакетах N = 7.
+# The layout from the engine: GameEventManager::processReceivedPacket reads
+#   1 bit  "there are events", 8 bits of count, 5 bits ?, 1 bit ?
+# then readGameEvent takes the type in N bits, where N is the smallest for which
+# (1<<N)-1 covers the event registry's size. On live packets N = 7.
 #
-# Перед цим у пакеті ще 17 бітів каркасу потоків — їх ми поки не розібрали.
+# Before that the packet holds another 17 bits of stream framing — not taken apart yet.
 EVENT_STREAM_OFFSET = 17
 EVENT_TYPE_BITS = 7
 
 
 def decode_events(data):
-    """Розбирає пакет даних і повертає опис подій."""
+    """Parses a data packet and returns a description of its events."""
     r = Reader(data)
     kind = r.read(4)
     r.read(8)
     if kind != 15:
-        return "не пакет даних (тип %d)" % kind
+        return "not a data packet (type %d)" % kind
 
     sequence = r.read(6)
     r.read(6)
@@ -152,38 +152,38 @@ def decode_events(data):
     r.at += EVENT_STREAM_OFFSET
 
     if r.read(1) != 1:
-        return "seq %d: подій немає" % sequence
+        return "seq %d: no events" % sequence
     count = r.read(8)
     r.read(5)
     r.read(1)
 
-    out = ["seq %d: подій %d" % (sequence, count)]
+    out = ["seq %d: events %d" % (sequence, count)]
     for _ in range(count):
         kind = r.read(EVENT_TYPE_BITS)
         if kind == 1:
             challenge = r.read_bytes(10).split(b"\0")[0].decode("latin-1")
             length = r.read(8)
             mod = r.read_bytes(length).decode("latin-1")
-            out.append("  виклик: %r, мод %r" % (challenge, mod))
+            out.append("  challenge: %r, mod %r" % (challenge, mod))
         else:
-            out.append("  подія типу %d (ще не розібрано)" % kind)
+            out.append("  an event of type %d (not parsed yet)" % kind)
             break
     return "\n".join(out)
 
 
-# --- блок відомостей про клієнта ---
+# --- the block with the client's details ---
 #
-# `ClientInfo::setFromDataBlock` читає з блока:
-#   u16 довжина + рядок 1 (ім'я гравця)
-#   u32 число
-#   1 біт знак + 31 біт значення
-#   u16 довжина + рядок 2
-#   u16 довжина + рядок 3
-#   1 біт прапорець
+# `ClientInfo::setFromDataBlock` reads from the block:
+#   u16 length + string 1 (the player's name)
+#   u32 a number
+#   1 sign bit + 31 bits of value
+#   u16 length + string 2
+#   u16 length + string 3
+#   1 flag bit
 #
-# Сам блок їде подією типу 4 (`DataBlockEvent`): спершу заголовок
-# (1 біт = 1, потім u32 тип блока і u32 розмір), далі шматки
-# (1 біт = 0, u8 довжина, байти). Тип блока 1 — це саме ClientInfo
+# The block itself travels as event type 4 (`DataBlockEvent`): first the header
+# (1 bit = 1, then u32 block type and u32 size), then the chunks
+# (1 bit = 0, u8 length, bytes). Block type 1 is exactly ClientInfo
 # (`GameServer::handleDataBlock`).
 CLIENT_INFO_BLOCK = 1
 
@@ -204,41 +204,41 @@ def client_info_blob(name="OpenBF2", second="", third="", number=0, value=0, fla
     return w.data()
 
 
-# --- повне рукостискання ---
+# --- the full handshake ---
 #
-# Порядок такий самий, як у клієнта: запит → підтвердження → відповідь на
-# виклик → блок ClientInfo. Пінги від сервера треба віддзеркалювати, інакше
-# він рве з'єднання.
+# The order is the same as the client's: request -> acknowledgement -> challenge
+# reply -> the ClientInfo block. The server's pings have to be mirrored, otherwise
+# it breaks the connection.
 EVENT_CHALLENGE_RESPONSE = 2
 EVENT_DATA_BLOCK = 4
 EVENT_POST_REMOTE = 11
 
-# `PostRemoteEvent` піднімає подію на тому боці. Категорію 6
-# `GameServer::handleEvent` віддає в `handleNetworkEvent`, а номер 2 у
-# його таблиці переходів — це `clientLoadComplete`.
+# `PostRemoteEvent` raises an event on the other side. Category 6
+# `GameServer::handleEvent` hands to `handleNetworkEvent`, and number 2 in its
+# jump table is `clientLoadComplete`.
 NETWORK_CATEGORY = 6
 NET_LOAD_COMPLETE = 2
 
 
 def data_packet(conn, seq, ack, events, ack_bits=0xFFFFFFFF, pad=0, batch=0):
-    """Пакет даних: заголовок і три потоки в сталому порядку.
+    """A data packet: the header and three streams in a fixed order.
 
-    Заголовок — 72 біти: 4 тип, 8 номер з'єднання, 6 номер пакета,
-    6 підтвердження, 32 маска, і 16 бітів — довжина корисної частини в
-    байтах. Останнє поле знайдено на живому сервері: у його пакеті на
-    26 байтів там стояло 17, а це рівно 26 − 9 байтів заголовка.
+    The header is 72 bits: 4 type, 8 connection id, 6 packet number,
+    6 acknowledgement, 32 mask, and 16 bits of payload length in bytes.
+    The last field was found against a live server: in its 26-byte packet it held
+    17, which is exactly 26 − 9 bytes of header.
 
-    Далі йдуть потоки: дії гравця, події, привиди — саме в такому порядку
-    їх додає `ClientConnection::ClientConnection` через `addStreamManager`.
+    Then come the streams: player actions, events, ghosts — in exactly the order
+    `ClientConnection::ClientConnection` adds them with `addStreamManager`.
 
-    `batch` — номер пачки подій у 5 бітах. `GameEventManager` складає пачки
-    в дерево за цим номером і віддає їх грі лише поспіль, тож рахунок має
-    починатися з нуля й рости на одиницю з кожною пачкою.
+    `batch` is the event batch number in 5 bits. `GameEventManager` puts batches
+    into a tree by this number and hands them to the game only in sequence, so the
+    count has to start at zero and grow by one with every batch.
     """
     body = Writer()
-    body.write(0, 1)               # дій гравця немає
+    body.write(0, 1)               # no player actions
     if not events:
-        body.write(0, 1)           # подій немає
+        body.write(0, 1)           # no events
     else:
         body.write(1, 1)
         body.write(len(events), 8)
@@ -246,7 +246,7 @@ def data_packet(conn, seq, ack, events, ack_bits=0xFFFFFFFF, pad=0, batch=0):
         body.write(0, 1)
         for event in events:
             body.bits.extend(event)
-    body.write(0, 1)               # привидів не шлемо
+    body.write(0, 1)               # we send no ghosts
     for _ in range(pad):
         body.write(0, 8)
 
@@ -276,12 +276,12 @@ def challenge_response_event():
         w.write(0, 32)
         w.write(GAME_VERSION, 32)
         w.write(0, 1)
-        w.write(0x423, 31)     # номер продукту BF2
+        w.write(0x423, 31)     # BF2's product number
     return _event(EVENT_CHALLENGE_RESPONSE, fill)
 
 
 def data_block_events(block_type, blob, chunk=200):
-    """Заголовок блока плюс шматки — так само, як `DataBlockEvent::serialize`."""
+    """A block header plus chunks — the same as `DataBlockEvent::serialize`."""
     def header(w):
         w.write(1, 1)
         w.write(block_type, 32)
@@ -300,39 +300,39 @@ def data_block_events(block_type, blob, chunk=200):
 
 
 def name_hash(name):
-    """Той самий хеш, що звіряє `handleClientInfo` на ranked-серверах."""
+    """The same hash `handleClientInfo` checks on ranked servers."""
     value = 0x1505
     for c in name.encode("latin-1"):
         value = (value * 0x21 ^ (c | 0x20 if 65 <= c <= 90 else c)) & 0xFFFFFFFF
     return value
 
 
-# --- розбір подій, які шле сервер ---
+# --- parsing the events the server sends ---
 #
-# Розкладку кожної події знято з коду сервера через
-# `tools/linuxded/bitfields.py <Клас>::deSerialize`: там видно точну
-# послідовність викликів readBits із кількістю бітів.
+# Every event's layout was taken from the server's code with
+# `tools/linuxded/bitfields.py <Class>::deSerialize`: it shows the exact sequence
+# of readBits calls together with the bit counts.
 def read_create_player(r):
-    """CreatePlayerEvent (тип 5): 3,4,1,8,16,16,1 бітів і 32 байти імені."""
+    """CreatePlayerEvent (type 5): 3,4,1,8,16,16,1 bits and 32 bytes of name."""
     out = {
-        "команда": r.read(3),
-        "загін": r.read(4),
-        "прапорець1": r.read(1),
-        "номер": r.read(8),
-        "поле16a": r.read(16),
-        "поле16b": r.read(16),
-        "прапорець2": r.read(1),
+        "team": r.read(3),
+        "squad": r.read(4),
+        "flag1": r.read(1),
+        "id": r.read(8),
+        "field16a": r.read(16),
+        "field16b": r.read(16),
+        "flag2": r.read(1),
     }
-    out["ім'я"] = r.read_bytes(32).split(b"\0")[0].decode("latin-1")
+    out["name"] = r.read_bytes(32).split(b"\0")[0].decode("latin-1")
     return out
 
 
 def read_data_block(r):
-    """DataBlockEvent (тип 4): заголовок блока або шматок даних."""
+    """DataBlockEvent (type 4): a block header or a chunk of data."""
     if r.read(1) == 1:
-        return {"заголовок": True, "тип блока": r.read(32), "розмір": r.read(32)}
+        return {"header": True, "block type": r.read(32), "size": r.read(32)}
     length = r.read(8)
-    return {"заголовок": False, "байтів": length, "дані": r.read_bytes(length)}
+    return {"header": False, "bytes": length, "data": r.read_bytes(length)}
 
 
 def _float(r):
@@ -340,126 +340,126 @@ def _float(r):
 
 
 def read_create_object(r):
-    """CreateObjectEvent (тип 6): дві взаємно виключні гілки.
+    """CreateObjectEvent (type 6): two mutually exclusive branches.
 
-    Будову знято через `bitfields.py --blocks CreateObjectEvent::deSerialize`,
-    а полярність переходу — з самого коду (`jne` після читання прапорця):
+    The shape was taken with `bitfields.py --blocks CreateObjectEvent::deSerialize`,
+    and the jump's polarity from the code itself (`jne` after the flag is read):
 
-        32  шаблон
-        16  мережевий номер
-         2  поле
-         1  прапорець
-             якщо 1: 8 бітів, і на цьому все
-             якщо 0: 1 біт -> [позиція 3x32], 1 біт -> [поворот 3x32]
+        32  template
+        16  network id
+         2  a field
+         1  a flag
+             if 1: 8 bits, and that is all
+             if 0: 1 bit -> [position 3x32], 1 bit -> [rotation 3x32]
 
-    Плаский список читань показував усі поля поспіль, ніби вони завжди
-    є, — через це розбір збивався на наступній події в пакеті.
+    A flat list of reads showed every field in a row as though they were always
+    there — because of which the parsing went astray on the next event in the packet.
     """
     out = {
-        "шаблон": r.read(32),
-        "мережевий номер": r.read(16),
-        "поле2": r.read(2),
+        "template": r.read(32),
+        "network id": r.read(16),
+        "field2": r.read(2),
     }
     if r.read(1) == 1:
-        out["поле8"] = r.read(8)
+        out["field8"] = r.read(8)
         return out
     if r.read(1):
-        out["позиція"] = tuple(round(_float(r), 2) for _ in range(3))
+        out["position"] = tuple(round(_float(r), 2) for _ in range(3))
     if r.read(1):
-        out["поворот"] = tuple(round(_float(r), 2) for _ in range(3))
+        out["rotation"] = tuple(round(_float(r), 2) for _ in range(3))
     return out
 
 
 def read_create_spawn_group(r):
-    """CreateSpawnGroupEvent (тип 57)."""
+    """CreateSpawnGroupEvent (type 57)."""
     return {
-        "номер": r.read(8),
-        "поле4": r.read(4),
-        "прапорець1": r.read(1),
-        "прапорець2": r.read(1),
-        "прапорець3": r.read(1),
-        "поле8a": r.read(8),
-        "поле8b": r.read(8),
-        "поле16": r.read(16),
+        "id": r.read(8),
+        "field4": r.read(4),
+        "flag1": r.read(1),
+        "flag2": r.read(1),
+        "flag3": r.read(1),
+        "field8a": r.read(8),
+        "field8b": r.read(8),
+        "field16": r.read(16),
     }
 
 
 def read_begin_round(r):
-    """BeginRoundEvent (тип 56): два 32-бітних числа."""
-    return {"поле1": r.read(32), "поле2": r.read(32)}
+    """BeginRoundEvent (type 56): two 32-bit numbers."""
+    return {"field1": r.read(32), "field2": r.read(32)}
 
 
 def read_voip_session(r):
-    """VoipSessionEvent (тип 54): номер сеансу голосового зв'язку."""
-    return {"сеанс": r.read(16)}
+    """VoipSessionEvent (type 54): the voice session's number."""
+    return {"session": r.read(16)}
 
 
 def read_unlock(r):
-    """UnlockEvent (тип 42): що саме відкрито гравцеві."""
-    return {"вид": r.read(2), "гравець": r.read(8), "номер": r.read(4)}
+    """UnlockEvent (type 42): what exactly was unlocked for the player."""
+    return {"kind": r.read(2), "player": r.read(8), "id": r.read(4)}
 
 
 def read_connection_type(r):
-    """ConnectionTypeEvent (тип 3)."""
-    return {"вид": r.read(3)}
+    """ConnectionTypeEvent (type 3)."""
+    return {"kind": r.read(3)}
 
 
 def read_destroy_player(r):
-    """DestroyPlayerEvent (тип 8)."""
-    return {"гравець": r.read(8)}
+    """DestroyPlayerEvent (type 8)."""
+    return {"player": r.read(8)}
 
 
 def read_string_manager(r):
-    """StringManagerEvent (тип 0): рядок словника, яким сервер ділиться.
+    """StringManagerEvent (type 0): a dictionary string the server shares.
 
-    Розкладку видно в `deSerialize`: після 6-бітної довжини йде сам
-    рядок, а вже за ним прапорець із необов'язковим байтом і ще два біти.
-    Ми спершу читали лише перші сім бітів — і все, що було в пакеті далі,
-    з'їжджало, зокрема потік привидів.
+    The layout is visible in `deSerialize`: after a 6-bit length comes the string
+    itself, and after it a flag with an optional byte and two more bits.
+    We used to read only the first seven bits — and everything further in the packet
+    slid, the ghost stream included.
 
-         1  прапорець
-         6  довжина рядка в байтах
-         N  сам рядок
-         1  чи є ще байт -> [8]
+         1  a flag
+         6  the string's length in bytes
+         N  the string itself
+         1  is there another byte -> [8]
          1
          1
     """
-    out = {"прапорець": r.read(1)}
+    out = {"flag": r.read(1)}
     length = r.read(6)
-    out["рядок"] = r.read_bytes(length).decode("latin-1", "replace")
+    out["string"] = r.read_bytes(length).decode("latin-1", "replace")
     if r.read(1) == 1:
-        out["поле8"] = r.read(8)
-    out["біт1"] = r.read(1)
-    out["біт2"] = r.read(1)
+        out["field8"] = r.read(8)
+    out["bit1"] = r.read(1)
+    out["bit2"] = r.read(1)
     return out
 
 
 def read_voip_on_off(r):
-    """VoipOnOffEvent (тип 35): хто говорить і чи ввімкнено."""
-    return {"гравець": r.read(8), "увімкнено": r.read(1)}
+    """VoipOnOffEvent (type 35): who is speaking and whether it is on."""
+    return {"player": r.read(8), "on": r.read(1)}
 
 
 def read_post_remote(r):
-    """PostRemoteEvent (тип 11): «підніми в себе оцю подію»."""
-    out = {"категорія": r.read(4), "подія": r.read(32), "затримка": r.read(32)}
-    out["дані"] = r.read_bytes(r.read(8))
+    """PostRemoteEvent (type 11): \"raise this event on your side\"."""
+    out = {"category": r.read(4), "event": r.read(32), "delay": r.read(32)}
+    out["data"] = r.read_bytes(r.read(8))
     return out
 
 
 def read_invite(r):
-    """InviteEvent (тип 25): запрошення до загону."""
-    return {"від": r.read(8), "кому": r.read(8), "загін": r.read(8), "прапорець": r.read(1)}
+    """InviteEvent (type 25): an invitation to a squad."""
+    return {"from": r.read(8), "to": r.read(8), "squad": r.read(8), "flag": r.read(1)}
 
 
 def read_rank(r):
-    """RankEvent (тип 26): звання гравця."""
-    return {"вид": r.read(2), "звання": r.read(6), "поле32": r.read(32), "гравець": r.read(8)}
+    """RankEvent (type 26): the player's rank."""
+    return {"kind": r.read(2), "rank": r.read(6), "field32": r.read(32), "player": r.read(8)}
 
 
 def read_commander(r):
-    """CommanderEvent (тип 19): 4, 8, 1 біт і 15 бітів в обох гілках."""
-    return {"вид": r.read(4), "гравець": r.read(8), "прапорець": r.read(1),
-            "поле15": r.read(15)}
+    """CommanderEvent (type 19): 4, 8, 1 bit and 15 bits in both branches."""
+    return {"kind": r.read(4), "player": r.read(8), "flag": r.read(1),
+            "field15": r.read(15)}
 
 
 EVENT_READERS = {
@@ -482,18 +482,18 @@ EVENT_READERS = {
 
 
 def walk_events(data):
-    """Проходить пакет даних і розбирає стільки подій, скільки вміємо."""
+    """Walks a data packet and parses as many events as we can."""
     r = Reader(data)
     if r.read(4) != 15:
         return None
     r.read(8)
     seq, ack, bits = r.read(6), r.read(6), r.read(32)
     size = r.read(16)
-    r.read(1)                      # потік дій гравця
+    r.read(1)                      # the player action stream
     if r.read(1) != 1:
-        # Подій немає — але привиди після них є, і саме в таких пакетах
-        # сервер їх переважно й шле. Раніше ми тут поверталися одразу.
-        return {"seq": seq, "розмір": size, "події": [], "привиди": read_ghosts(r)}
+        # There are no events — but there are ghosts after them, and it is in packets
+        # like these that the server mostly sends them. We used to return here at once.
+        return {"seq": seq, "size": size, "events": [], "ghosts": read_ghosts(r)}
     count, batch, repeat = r.read(8), r.read(5), r.read(1)
 
     events = []
@@ -502,87 +502,87 @@ def walk_events(data):
         kind = r.read(EVENT_TYPE_BITS)
         name, reader = EVENT_READERS.get(kind, (None, None))
         if reader is None:
-            events.append({"тип": kind, "невідома": True})
+            events.append({"type": kind, "unknown": True})
             complete = False
             break
         before = r.at
-        events.append({"тип": kind, "клас": name, "біт": before, **reader(r)})
+        events.append({"type": kind, "class": name, "bit": before, **reader(r)})
 
-    out = {"seq": seq, "розмір": size, "пачка": batch, "події": events}
+    out = {"seq": seq, "size": size, "batch": batch, "events": events}
     if complete:
-        out["привиди"] = read_ghosts(r)
+        out["ghosts"] = read_ghosts(r)
     return out
 
 
-# Ширина поля довжини в записі привида. У рушії вона обчислюється на
-# льоту (`GhostManager` тримає її в полі 0x4298), а на дроті виявилася
-# рівно одинадцять бітів: із нею всі 132 пакети зразка розбираються до
-# останнього байта, з будь-якою іншою — жоден.
+# The width of the length field in a ghost record. In the engine it is computed on
+# the fly (`GhostManager` keeps it in field 0x4298), and on the wire it turned out
+# to be exactly eleven bits: with it all 132 packets of the sample parse to the
+# last byte, with any other not one does.
 GHOST_LENGTH_BITS = 11
 
 
 def read_ghost_record(r):
-    """Один запис потоку привидів (`GhostManager::readData`).
+    """One ghost stream record (`GhostManager::readData`).
 
-        2  вид
-       16  мережевий номер
-    вид 1: 1 біт, 11 бітів довжини вмісту, сам вміст
-    вид 0: більше нічого
-    вид 3: об'єкт зникає (рушій шукає його в NetworkManager)
-    вид 2: рушій вважає це помилкою потоку
+        2  kind
+       16  network id
+    kind 1: 1 bit, 11 bits of content length, the content itself
+    kind 0: nothing more
+    kind 3: the object disappears (the engine looks it up in NetworkManager)
+    kind 2: the engine treats this as a stream error
     """
     kind = r.read(2)
-    out = {"вид": kind, "номер": r.read(16)}
+    out = {"kind": kind, "id": r.read(16)}
     if kind == 1:
-        out["прапорець"] = r.read(1)
+        out["flag"] = r.read(1)
         length = r.read(GHOST_LENGTH_BITS)
-        out["бітів вмісту"] = length
-        out["вміст"] = r.at
+        out["content bits"] = length
+        out["content"] = r.at
         r.at += length
     return out
 
 
 def read_ghosts(r):
-    """Потік привидів у хвості пакета (`GhostManager::processReceivedPacket`).
+    """The ghost stream at the packet's tail (`GhostManager::processReceivedPacket`).
 
-    1 біт «є дані»; далі 32 біти часу (ділиться на 30), 8 бітів кількості
-    записів і 1 біт «є стан керованого об'єкта».
+    1 bit "has data"; then 32 bits of time (divided by 30), 8 bits of record count
+    and 1 bit "there is a controlled-object state".
     """
     if r.read(1) != 1:
         return None
     out = {
-        "час": r.read(32),
-        "записів": r.read(8),
-        "керований об'єкт": r.read(1),
+        "time": r.read(32),
+        "record count": r.read(8),
+        "control object": r.read(1),
     }
-    # Стан керованого об'єкта йде перед записами і поки не розібраний,
-    # тож у таких пакетах записи не читаємо.
-    if not out["керований об'єкт"]:
-        out["записи"] = [read_ghost_record(r) for _ in range(out["записів"])]
+    # The controlled-object state comes before the records and is not parsed yet,
+    # so in such packets we do not read the records.
+    if not out["control object"]:
+        out["records"] = [read_ghost_record(r) for _ in range(out["record count"])]
     return out
 
 
-# --- перевірка вмісту ---
+# --- the content check ---
 #
-# `ContentCheckEvent` (тип 46) везе три хеші по 128 бітів. Сервер звіряє
-# їх у `GameServer::onContentCheckEvent` з таблицями, які прочитав із
-# файлів std_archive.md5, std_archive_mod.md5, bst_archive.md5 і
-# bst_archive_mod.md5, беручи рядок за номером із
+# `ContentCheckEvent` (type 46) carries three 128-bit hashes. The server compares
+# them in `GameServer::onContentCheckEvent` against the tables it read from the
+# files std_archive.md5, std_archive_mod.md5, bst_archive.md5 and
+# bst_archive_mod.md5, taking the line by the number from
 # `MapInfo::getChallengeOrdinal()`.
 #
-# Файли — прості пари «номер + md5», і в клієнта вони ті самі, тож ми
-# просто читаємо потрібний рядок.
+# The files are simple "number + md5" pairs, and the client has the same ones, so
+# we simply read the line we need.
 EVENT_CONTENT_CHECK = 46
 
-# Перший хеш перевірки вмісту рахують обидва боки самі:
-# `ChecksumContext::runMiscChecksum` бере MD5 по чотирьох файлах мода,
-# саме в такому порядку. Імена знайдено в самій функції.
+# The content check's first hash both sides compute themselves:
+# `ChecksumContext::runMiscChecksum` takes an MD5 over four of the mod's files, in
+# exactly this order. The names were found in the function itself.
 MISC_CON_FILES = ("ClientArchives.con", "ServerArchives.con",
                   "Init.con", "GameLogicInit.con")
 
 
 def misc_hash(mod_dir):
-    """MD5 по .con-файлах мода — перший хеш перевірки вмісту."""
+    """MD5 over the mod's .con files — the content check's first hash."""
     import hashlib
     import os
 
@@ -597,10 +597,10 @@ def misc_hash(mod_dir):
 
 
 def read_fingerprints(path):
-    """Номер -> md5 із файлу відбитків.
+    """A number -> the md5 from a fingerprint file.
 
-    Файли архівів мають вигляд «номер + md5», а файл рівня — ще й назву
-    попереду: «dalian_plant 0 <md5>». Обидва читаємо однаково.
+    The archive files have the form "number + md5", while the level's file also has
+    a name in front: "dalian_plant 0 <md5>". We read both the same way.
     """
     out = {}
     with open(path) as handle:
@@ -614,23 +614,23 @@ def read_fingerprints(path):
 
 
 def content_check_event(first, second, third):
-    """Три хеші, кожен — 16 байтів."""
+    """Three hashes, 16 bytes each."""
     def fill(w):
         for value in (first, second, third):
             raw = bytes.fromhex(value) if isinstance(value, str) else value
-            assert len(raw) == 16, "хеш має бути 16 байтів"
+            assert len(raw) == 16, "a hash has to be 16 bytes"
             for byte in raw:
                 w.write(byte, 8)
     return _event(EVENT_CONTENT_CHECK, fill)
 
 
 def parse_map_info(block):
-    """Розбирає блок з рівнем.
+    """Parses the level block.
 
-    Перше поле — не звичайне u32, а «1 біт знака + 31 біт значення»
-    (`MapInfo::setFromDataBlock` читає його саме так). Через це байти
-    01 00 00 00 означають нуль, а не одиницю — і це номер виклику, за
-    яким беруться рядки у файлах відбитків.
+    The first field is not an ordinary u32 but "1 sign bit + 31 bits of value"
+    (`MapInfo::setFromDataBlock` reads it exactly that way). Because of that the
+    bytes 01 00 00 00 mean zero rather than one — and that is the challenge number
+    the lines in the fingerprint files are taken by.
     """
     r = Reader(block)
     sign = r.read(1)
@@ -645,4 +645,4 @@ def parse_map_info(block):
     level = text()
     mode = text()
     size = r.read(16)
-    return {"номер виклику": ordinal, "рівень": level, "режим": mode, "розмір": size}
+    return {"challenge number": ordinal, "level": level, "mode": mode, "size": size}

@@ -42,7 +42,7 @@ std::string utf16ToUtf8(std::span<const std::byte> bytes) {
   out.reserve(bytes.size() / 2);
 
   std::size_t index = 0;
-  // BOM, якщо є, пропускаємо.
+  // The BOM, if present, is skipped.
   if (bytes.size() >= 2 && static_cast<std::uint8_t>(bytes[0]) == 0xFF &&
       static_cast<std::uint8_t>(bytes[1]) == 0xFE) {
     index = 2;
@@ -57,7 +57,7 @@ std::string utf16ToUtf8(std::span<const std::byte> bytes) {
     std::uint32_t unit = unitAt(index);
     index += 2;
 
-    // Сурогатна пара: старший сурогат плюс молодший дають один символ.
+    // A surrogate pair: a high surrogate plus a low one give one character.
     if (unit >= 0xD800 && unit <= 0xDBFF && index + 1 < bytes.size()) {
       const std::uint32_t low = unitAt(index);
       if (low >= 0xDC00 && low <= 0xDFFF) {
@@ -72,7 +72,7 @@ std::string utf16ToUtf8(std::span<const std::byte> bytes) {
 
 bool Lexicon::addUtxt(std::span<const std::byte> bytes, std::string* error) {
   if (bytes.size() < 2) {
-    if (error) *error = "файл замалий для .utxt";
+    if (error) *error = "file too small for a .utxt";
     return false;
   }
 
@@ -88,7 +88,7 @@ bool Lexicon::addUtxt(std::span<const std::byte> bytes, std::string* error) {
     if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
     if (line.empty()) continue;
 
-    // Ключ і значення розділені двома ESC; ще два обрамляють значення справа.
+    // Key and value are separated by two ESCs; two more frame the value on the right.
     const std::size_t separator = line.find(kSeparator);
     if (separator == std::string_view::npos) continue;
 
@@ -105,7 +105,7 @@ bool Lexicon::addUtxt(std::span<const std::byte> bytes, std::string* error) {
   }
 
   if (added == 0) {
-    if (error) *error = "жодного рядка не розібрано";
+    if (error) *error = "not a single line was parsed";
     return false;
   }
   return true;

@@ -1,14 +1,14 @@
 #pragma once
-// Ігровий клієнт — інша половина тієї самої пари.
+// The game client — the other half of the same pair.
 //
-// Клієнт шле ввід із тією ж частотою, з якою сервер крутить симуляцію,
-// і згладжує чужі позиції між пакетами. Передбачення власного руху
-// (client-side prediction) поки немає — див. docs/TODO.md.
+// The client sends input at the rate the server runs its simulation, and smooths
+// other players' positions between packets. Client-side prediction of its own
+// movement does not exist yet — see docs/TODO.md.
 //
-// Клієнт нічого не вигадує сам: він просить під'єднання, дістає свій id і
-// назву рівня, підтверджує — і далі лише отримує стан світу. В одиночній грі
-// по той бік петлі стоїть локальний сервер, у мережі — віддалений; для
-// клієнта різниці немає.
+// The client invents nothing itself: it asks to connect, gets its id and the
+// level's name, acknowledges — and from then on only receives the world's state.
+// In a single-player game the other side of the loop is a local server, on a
+// network a remote one; to the client there is no difference.
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -22,9 +22,9 @@ namespace obf2::server {
 
 enum class ClientState {
   Disconnected,
-  Requesting,   // надіслали ConnectionRequest, чекаємо відповіді
-  Accepted,     // дістали id і рівень, надіслали підтвердження
-  InWorld,      // отримуємо об'єкти
+  Requesting,   // a ConnectionRequest was sent, waiting for the reply
+  Accepted,     // got the id and the level, sent the acknowledgement
+  InWorld,      // receiving objects
   Denied,
 };
 
@@ -36,8 +36,8 @@ struct RemoteObject {
   Vec3f position;
   Vec3f rotation;
 
-  // Попередній стан — для згладжування. Сервер шле 30 разів на секунду,
-  // а малюємо ми частіше, тому між пакетами позицію інтерполюємо.
+  // The previous state — for smoothing. The server sends 30 times a second
+  // while we draw more often, so the position is interpolated between packets.
   Vec3f previousPosition;
   bool moved = false;
 };
@@ -47,16 +47,16 @@ class GameClient {
   GameClient(std::unique_ptr<net::Connection> connection, std::string playerName)
       : connection_(std::move(connection)), playerName_(std::move(playerName)) {}
 
-  // Надсилає ConnectionRequest.
+  // Sends a ConnectionRequest.
   bool connect();
   void tick(float deltaSeconds);
   void disconnect();
 
-  // Ввід із клавіатури й миші. Клієнт сам додає порядковий номер.
+  // Input from the keyboard and mouse. The client adds the sequence number itself.
   void setInput(const net::PlayerInput& input) { input_ = input; }
   const net::PlayerInput& input() const { return input_; }
 
-  // Позиція об'єкта, згладжена між двома останніми станами від сервера.
+  // An object's position, smoothed between the last two states from the server.
   Vec3f interpolatedPosition(std::uint32_t objectId) const;
 
   std::uint32_t inputSequence() const { return inputSequence_; }
@@ -89,7 +89,7 @@ class GameClient {
   std::uint32_t inputSequence_ = 0;
   long long inputsSent_ = 0;
   float sendAccumulator_ = 0.0f;
-  float interpolation_ = 0.0f;  // 0..1 між попереднім і поточним станом
+  float interpolation_ = 0.0f;  // 0..1 between the previous and the current state
 };
 
 }  // namespace obf2::server

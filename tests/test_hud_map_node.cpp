@@ -1,5 +1,5 @@
-// Карта: ціль за станом HUD (BF2.exe 0x777dc0) і виведення
-// MapFullSize/MapMinSize з поточного розміру (0x77c330).
+// The map: the target by the HUD's state (BF2.exe 0x777dc0) and deriving
+// MapFullSize/MapMinSize from the current size (0x77c330).
 #include <cmath>
 
 #include "obf2/hud/map_node.h"
@@ -9,7 +9,7 @@ using namespace obf2;
 
 namespace {
 
-// Прокрутити секунди кроком такту рушія (1/30).
+// Run seconds forward in the engine's tick steps (1/30).
 void run(hud::MapNode& map, float seconds) {
   const float step = 1.0f / 30.0f;
   for (float t = 0.0f; t < seconds; t += step) map.update(step);
@@ -17,9 +17,9 @@ void run(hud::MapNode& map, float seconds) {
 
 }  // namespace
 
-// У бою карта стоїть мініатюрою в кутку: 197x197 на (597, 0) —
-// setMiniPos 197/-300 плюс пів екрана. І це той стан, у якому ввімкнена
-// `MapMinSize`, а не `MapFullSize`.
+// In combat the map stands as a thumbnail in the corner: 197x197 at (597, 0) —
+// setMiniPos 197/-300 plus half a screen. And that is the state in which
+// `MapMinSize` is on rather than `MapFullSize`.
 void testIngameIsMiniMap() {
   hud::MapNode map;
   map.applyState(hud::kMapStateIngame);
@@ -33,8 +33,8 @@ void testIngameIsMiniMap() {
   CHECK(map.settled());
 }
 
-// Клавіша M — це стан 2: карта їде на setMaxiPos -122/-273 і виростає до
-// 512x512, після чого вмикається `MapFullSize`.
+// The M key is state 2: the map travels to setMaxiPos -122/-273 and grows to
+// 512x512, after which `MapFullSize` comes on.
 void testBigMapGrowsToMaxi() {
   hud::MapNode map;
   map.applyState(hud::kMapStateIngame);
@@ -51,9 +51,9 @@ void testBigMapGrowsToMaxi() {
   CHECK(!map.minSize());
 }
 
-// Головне, заради чого це й розбиралося: **поки розмір у дорозі, не
-// ввімкнена жодна** зі змінних показу. Доти ми перемикали їх разом зі
-// станом, і рамки мінікарти й великої карти встигали накластися.
+// The main thing this was taken apart for: **while the size is in transit neither**
+// of the show variables is on. Until now we switched them together with the state,
+// and the minimap's and the big map's frames managed to overlap.
 void testNeitherFlagWhileMoving() {
   hud::MapNode map;
   map.applyState(hud::kMapStateIngame);
@@ -65,14 +65,14 @@ void testNeitherFlagWhileMoving() {
   CHECK(!map.fullSize());
   CHECK(!map.minSize());
   CHECK(!map.settled());
-  // Розмір уже пішов угору, але до кінця не доїхав.
+  // The size has already started growing but has not arrived.
   CHECK(map.size().x > 197.0f);
   CHECK(map.size().x < 512.0f);
 }
 
-// Швидке меню масштабу (стан 19, `MapMenuShow`) лягає поверх карти й
-// саму карту не рухає — у 0x777e11 цей номер потрапляє в гілку, що
-// цілі не чіпає.
+// The quick zoom menu (state 19, `MapMenuShow`) lands over the map and does not
+// move the map itself — in 0x777e11 that number falls into a branch that leaves the
+// target alone.
 void testMapMenuDoesNotMoveMap() {
   hud::MapNode map;
   map.applyState(hud::kMapStateBigMap);
@@ -85,7 +85,7 @@ void testMapMenuDoesNotMoveMap() {
   CHECK(map.fullSize());
 }
 
-// Командирська карта більша за велику: 561x561 на (239, 19).
+// The commander's map is larger than the big one: 561x561 at (239, 19).
 void testCommanderMap() {
   hud::MapNode map;
   map.applyState(hud::kMapStateCommander);
@@ -96,8 +96,8 @@ void testCommanderMap() {
   CHECK(map.fullSize());
 }
 
-// Компас доводить кут до напряму гравця. Двома згладжувачами поспіль,
-// тож і повільніше за один.
+// The compass drives the angle towards the player's direction. Through two
+// smoothers in a row, so more slowly than through one.
 void testCompassFollowsTheLook() {
   hud::MapAngle angle;
   angle.setTarget(1.5f);
@@ -107,8 +107,8 @@ void testCompassFollowsTheLook() {
   CHECK(std::abs(angle.delayed() - 1.5f) < 0.01f);
 }
 
-// Затриманий кут відстає від згладженого — саме через це в оригіналі
-// компас доїжджає після повороту, а не разом із ним.
+// The delayed angle lags behind the smoothed one — which is exactly why in the
+// original the compass arrives after the turn rather than with it.
 void testDelayedLagsBehind() {
   hud::MapAngle angle;
   angle.setTarget(1.5f);
@@ -118,8 +118,8 @@ void testDelayedLagsBehind() {
   CHECK(angle.delayed() < angle.angle());
 }
 
-// Через нуль кут іде найкоротшим шляхом, а не через півкола: 3.0 -> -3.0
-// це 0.28 радіана вперед, а не 6.0 назад.
+// Across zero the angle goes the shortest way rather than round the half circle:
+// 3.0 -> -3.0 is 0.28 radians forward, not 6.0 back.
 void testShortestWayAroundZero() {
   hud::MapAngle angle;
   angle.setTarget(3.0f);
@@ -127,12 +127,12 @@ void testShortestWayAroundZero() {
 
   angle.setTarget(-3.0f);
   angle.update(1.0f / 30.0f);
-  // Пішли далі за пі, тобто перескочили межу, а не поповзли назад до нуля.
+  // We went past pi, that is jumped the boundary rather than crawling back to zero.
   CHECK(angle.angle() > 3.0f || angle.angle() < -3.0f);
 }
 
-// Мінікарта їде за гравцем: центр доводиться до його місця, а не
-// стрибає. Саме через це в оригіналі карта повзе, а не смикається.
+// The minimap follows the player: the centre is driven towards his position rather
+// than jumping. That is exactly why in the original the map creeps rather than jerks.
 void testCentreFollowsThePlayer() {
   hud::MapNode map;
   map.applyState(hud::kMapStateIngame);
@@ -140,7 +140,7 @@ void testCentreFollowsThePlayer() {
 
   map.setCentre(0.75f, 0.25f);
   map.update(1.0f / 30.0f);
-  // Зрушило, але ще не доїхало.
+  // It moved but has not arrived.
   CHECK(map.centre().x > 0.5f);
   CHECK(map.centre().x < 0.75f);
 
@@ -149,8 +149,8 @@ void testCentreFollowsThePlayer() {
   CHECK(std::abs(map.centre().y - 0.25f) < 0.001f);
 }
 
-// Масштаб: кожен наступний номер наближає в 2.3 раза, і значення теж
-// доводиться, а не перемикається.
+// The zoom: every next index magnifies by 2.3, and the value is driven towards it
+// rather than switched.
 void testZoomIsAPowerOfBase() {
   hud::MapNode map;
   CHECK(std::abs(map.zoomScale() - 1.0f) < 0.001f);
@@ -161,7 +161,7 @@ void testZoomIsAPowerOfBase() {
   CHECK(std::abs(map.zoomScale() - 2.3f * 2.3f) < 0.05f);
 }
 
-// Номерів рівно три — більше в таблицях вузла карти немає.
+// There are exactly three indices — the map node's tables hold no more.
 void testZoomIndexIsClamped() {
   hud::MapNode map;
   map.setZoomIndex(7);

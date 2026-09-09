@@ -88,7 +88,7 @@ std::array<std::byte, 16> Md5::finish() {
   const std::byte zero{0};
   while (pending_ != 56) update(std::span<const std::byte>(&zero, 1));
 
-  // Довжину дописуємо самі: `update` збільшила б лічильник ще раз.
+  // We append the length ourselves: `update` would increment the counter again.
   for (int i = 0; i < 8; ++i) {
     buffer_[56 + i] = static_cast<std::byte>((bits >> (i * 8)) & 0xFF);
   }

@@ -7,8 +7,8 @@ namespace obf2::hud {
 void SpawnInterface::setTeamFromServer(int team) {
   if (team <= 0 || team == choice_.team) return;
   choice_.team = team;
-  // Кружечки належать прапорам своєї команди, тож вибір при зміні
-  // команди більше не має сенсу.
+  // The circles belong to your own team's flags, so a choice made before the team
+  // changed no longer makes sense.
   choice_.marker = 0;
   dirty_ = true;
 }
@@ -21,8 +21,8 @@ int SpawnInterface::chosenPoint() const {
 void SpawnInterface::bind(engine::Console& console, std::function<bool(int, int, int)> request) {
   requestSpawn_ = std::move(request);
 
-  // Імена команд — із `setButtonNodeConCmd` самих кнопок екрана
-  // (docs/functions/hud-commands.md), а не наші.
+  // The command names come from the screen's own buttons' `setButtonNodeConCmd`
+  // (docs/functions/hud-commands.md), not from us.
   console.bind("spawnManager.setPlayerKit", [this](const con::Command& command) {
     choice_.kit = command.argInt(0).value_or(choice_.kit);
     dirty_ = true;
@@ -42,29 +42,29 @@ void SpawnInterface::bind(engine::Console& console, std::function<bool(int, int,
       return;
     }
     const int point = chosenPoint();
-    // **Екран закриваємо лише тоді, коли запит справді пішов.** Раніше
-    // прапорець ставився першим ділом, і коли місце не було обране,
-    // запит не йшов — а екран уже зникав. Виходила застигла картинка
-    // без гравця, з якої немає виходу.
+    // **We close the screen only when the request really went out.** The flag used
+    // to be set first, and when no spawn point had been chosen the request did not
+    // go — while the screen was already gone. The result was a frozen picture with
+    // no player and no way out.
     if (point == 0 || !requestSpawn_) {
-      std::printf("  екран появи: місце появи не обране — запит не пішов\n");
+      std::printf("  spawn screen: no spawn point chosen — the request did not go\n");
       return;
     }
     requested_ = requestSpawn_(choice_.team, choice_.kit, point);
-    if (!requested_) std::printf("  екран появи: запит не пішов, екран лишається\n");
+    if (!requested_) std::printf("  spawn screen: the request did not go, the screen stays\n");
   });
 
-  // Наша власна команда, не з рушія: кружечки місць появи вузлів у даних
-  // не мають — їх ловить сама карта, тож консольного імені для них у грі
-  // немає. Потрібна для перевірок, щоб вибирати місце командою, а не
-  // наведенням миші в піксель.
+  // Our own command, not the engine's: the spawn circles have no nodes in the
+  // data — the map catches them itself, so the game has no console name for them.
+  // Needed for the checks, so a point can be chosen by a command rather than by
+  // pointing the mouse at a pixel.
   console.bind("openbf2.selectSpawn", [this](const con::Command& command) {
     choice_.marker = command.argInt(0).value_or(0);
     dirty_ = true;
   });
 
-  // Ці дві ще не мають за чим працювати, але команду треба з'їсти —
-  // інакше консоль вважатиме її невідомою.
+  // These two have nothing to work on yet, but the command has to be eaten —
+  // otherwise the console will consider it unknown.
   console.bind("spawnManager.selectNextUnlock", [](const con::Command&) {});
   console.bind("spawnManager.commitSuicide", [](const con::Command&) {});
 }

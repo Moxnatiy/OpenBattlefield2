@@ -1,50 +1,51 @@
-# MemeFile 2.0 — граф шарів HUD
+# MemeFile 2.0 — the HUD layer graph
 
-Файли без розширення в корені `Menu_client.zip`: `Global`, `Ingame`,
+Extensionless files at the root of `Menu_client.zip`: `Global`, `Ingame`,
 `TopLayer`, `BottomLeftStatic`, `BottomRightAnimate`, `TopLeft`, `Left`,
-`Top`, `TopRight`, `PreGlobal`. Це двійковий граф сцени DICE
-(`dice::meme::*`), а не `.con`.
+`Top`, `TopRight`, `PreGlobal`. This is DICE's binary scene graph
+(`dice::meme::*`), not `.con`.
 
-Формат **розібраний повністю**: усі 12 файлів читаються до останнього
-байта, і в жодному не лишилося класу без переліку полів
+The format is **fully taken apart**: all 12 files read to the last byte,
+and not one class is left without a field list
 (`tools/meme_read.py --check`).
 
-## Звідки взято
+## Where it came from
 
-Нічого не вгадано. Поруч із редактором (`MemeEdit.exe`) у теці мода
-лежать `MemeDll.dll` і `MemeBf.dll`, і вони, на відміну від гри,
-**експортують повні символи C++** — 2124 імені. Розкладку прочитано
-просто з коду читача:
+Nothing was guessed. Next to the editor (`MemeEdit.exe`) in the mod's
+directory sit `MemeDll.dll` and `MemeBf.dll`, and unlike the game they
+**export full C++ symbols** — 2124 names. The layout was read straight out
+of the reader's code:
 
-| що | де прочитано |
+| what | where it was read |
 |---|---|
-| заголовок і словник | `ClassIStream` (звіряє `MemeFile 2.0`, далі рядки до порожнього) |
-| рядок у словнику | `IStream::streamStaticString` — **однобайтова довжина** |
-| корінь | `Object::loadNew` — **лише двобайтовий номер класу** |
-| вкладений об'єкт | `Object::load` — розмір, ім'я, клас, поля |
-| «рядок» у класовому потоці | `ClassIStream::streamStaticString` — **двобайтовий номер**, 0 = порожньо |
-| поля класу | його `onStream`, кожному полю передається назва рядком |
-| порядок полів | `onStream` починає з батьківського — успадковані першими |
+| header and dictionary | `ClassIStream` (checks `MemeFile 2.0`, then strings up to an empty one) |
+| a string in the dictionary | `IStream::streamStaticString` — **a one-byte length** |
+| the root | `Object::loadNew` — **only a two-byte class number** |
+| a nested object | `Object::load` — size, name, class, fields |
+| a "string" in the class stream | `ClassIStream::streamStaticString` — **a two-byte index**, 0 = empty |
+| a class's fields | its `onStream`, each field is passed its name as a string |
+| field order | `onStream` starts with the parent's — inherited fields come first |
 
-## Розкладка
+## Layout
 
-    файл    := рядок версії, {рядок}, порожній рядок, корінь
-    корінь  := u16 номер класу, поля
-    об'єкт  := u32 розмір, u16 ім'я, u16 клас, поля
+    file    := version string, {string}, empty string, root
+    root    := u16 class number, fields
+    object  := u32 size, u16 name, u16 class, fields
 
-Розмір міряється **від себе**: `Object::save` запам'ятовує позицію,
-пише нуль, а наприкінці вертається й кладе `кінець − позиція`. Ним
-рушій пропускає незнайомий об'єкт, і ми робимо так само.
+The size is measured **from itself**: `Object::save` remembers the
+position, writes a zero, and at the end comes back and puts
+`end − position` there. The engine uses it to skip an object it does not
+know, and so do we.
 
-Список (`streamList`) лічильника не має: об'єкти йдуть підряд, а край
-дає розмір власника.
+A list (`streamList`) has no counter: the objects follow one another and
+the owner's size gives the edge.
 
-## Типи полів
+## Field types
 
-Зсуви — це комірки таблиці методів `IStream`, знятої з `.rdata` самої
-бібліотеки, тож зіставлення точне:
+The offsets are slots in `IStream`'s method table, taken from the
+library's own `.rdata`, so the mapping is exact:
 
-| зсув | метод | байтів |
+| offset | method | bytes |
 |---|---|---|
 | 0x1c / 0x20 | Ubyte / Sbyte | 1 |
 | 0x24 / 0x28 | Ushort / Sshort | 2 |
@@ -53,39 +54,41 @@
 | 0x38 | Bool | 1 |
 | 0x3c / 0x5c | Int / Index | 4 |
 | 0x48 | Wchar | 2 |
-| 0x4c / 0x50 / 0x54 | Picture / Font / Sound | рядок з однобайтовою довжиною |
-| 0x58 | List | об'єкти до кінця власника |
-| 0x60..0x88 | Object, Event, Action, Data, Effect, Function, Node, Style, Tree, ChildNode, NextNode | вкладений об'єкт |
+| 0x4c / 0x50 / 0x54 | Picture / Font / Sound | a string with a one-byte length |
+| 0x58 | List | objects until the owner ends |
+| 0x60..0x88 | Object, Event, Action, Data, Effect, Function, Node, Style, Tree, ChildNode, NextNode | a nested object |
 
-Пари й прямокутники йдуть повз таблицю методів, прямим викликом:
-`Coordinate2::stream` — два float, `Rectangle::stream` — чотири,
+Pairs and rectangles go past the method table, through a direct call:
+`Coordinate2::stream` — two floats, `Rectangle::stream` — four,
 `Color::stream` — Red, Green, Blue, Alpha.
 
-Повний перелік класів і полів — `meme-classes.md`
+The full list of classes and fields is in `meme-classes.md`
 (`tools/meme_types.py --emit`).
 
-## Що з цього для HUD
+## What this gives the HUD
 
-Кутові шари в `.con` лише згадані як групи й ніде не позиціонуються.
-Якір лежить тут:
+The corner layers are only mentioned as groups in the `.con` files and are
+never positioned there. The anchor is here:
 
     BottomLeft   TransformNode  X=-1   Y=563  400x64
     BottomRight  TransformNode  X=401  Y=563  400x64
     MiddleLeft   TransformNode  X=0    Y=0    400x600
 
-`TransformNode::iteratePaint` **додає** X і Y до батьківського
-прямокутника й нічого не масштабує — тобто це звичайний зсув.
+`TransformNode::iteratePaint` **adds** X and Y to the parent's rectangle
+and scales nothing — so this is a plain offset.
 
-Ліворуч це сходиться з даними інтерфейсу: `BottomLeftBar` описаний від
-−103 до 297, тобто рівно в чотирьохсотці шару. Праворуч ще ні: вузли
-`BottomRightPrimaryAmmo` мають y від 5 до 103 — вони під інший шар,
-600x100, який у файлі стоїть поруч із `BottomRight/BottomRight_XPos`.
-Куди саме він стає, ще не доведено.
+On the left that agrees with the interface data: `BottomLeftBar` is
+described from −103 to 297, exactly within the layer's four hundred. On
+the right it does not yet: the `BottomRightPrimaryAmmo` nodes have y from
+5 to 103 — they belong to another layer, 600x100, which sits in the file
+next to `BottomRight/BottomRight_XPos`. Where exactly it goes is not yet
+proven.
 
-Самі значення теж читаються:
+The values themselves read too:
 
     BottomLeft/BottomLeft_XPos    -295
     BottomRight/BottomRight_XPos   503   (old 201, new 503)
     Kit/ShowIngame                 1
 
-Це змінні руху: ними шар від'їжджає, коли гра ховає інтерфейс.
+These are the movement variables: the layer slides away on them when the
+game hides the interface.

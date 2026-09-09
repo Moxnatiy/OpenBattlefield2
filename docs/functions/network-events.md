@@ -1,1000 +1,1015 @@
-# Мережеві події
+# Network events
 
-Це окремий словник від ігрових подій: ним сторони керують самим
-з'єднанням, а не світом. Номер їде в `PostRemoteEvent` (ігрова подія
-типу 11) разом із категорією.
+This is a dictionary separate from the game events: with it the two sides drive
+the connection itself, not the world. The number travels in `PostRemoteEvent`
+(game event type 11) together with a category.
 
-## Звідки взято
+## Where it comes from
 
-`BF2.exe` реєструє їх сам, і в тій самій функції видно і номер, і назву:
+`BF2.exe` registers them itself, and both the number and the name are visible
+in that same function:
 
 ```c
 basic_string(local_20, "ECNetworkNELoadComplete");
 (**(code **)(*DAT_009ff964 + 0x34))(6, 2, local_20);
 ```
 
-Тобто «категорія 6, номер 2, назва». Символів у клієнті немає, але є
-рядки з іменами подій — вони й дали всю таблицю.
+That is "category 6, number 2, name". There are no symbols in the client, but
+there are the strings with the events' names — and they gave the whole table.
 
-Кожен номер, який ми до того вивели вимірюванням на сервері, збігся:
-2 і 4 з таблиці переходів `GameServer::handleNetworkEvent`, 6 — окремою
-пробою, 11, 13, 17, 18, 19, 20 — за тим, що ці гілки викликають.
+Every number we had previously derived by measurement against the server
+matched: 2 and 4 from the jump table of `GameServer::handleNetworkEvent`, 6 by
+a separate trial, and 11, 13, 17, 18, 19, 20 from what those branches call.
 
-## Таблиця
+## The table
 
-| № | назва | що означає |
+| # | name | what it means |
 |---:|---|---|
-| 1 | `NEDataBlockReady` | блок даних зібрано |
-| 2 | `NELoadComplete` | клієнт завантажив рівень |
-| 3 | `NEStartSimulation` | почати відлік |
-| 4 | `NEDatabaseComplete` | клієнт отримав базу гравців |
-| 5 | `NEReset` | скидання |
-| 6 | `NESelectSpawnGroup` | гравець обрав місце появи |
-| 7 | `NESelectTeam` | гравець обрав команду |
-| 8 | `NESelectKit` | гравець обрав набір |
-| 9 | `NEPlayerSpawned` | гравець з'явився |
-| 10 | `NEPlayerDead` | гравець загинув |
-| 11 | `NEStringReceived` | отримано рядок |
-| 12 | `NESuicide` | самогубство |
-| 13 | `NERadioMessageReceived` | радіоповідомлення |
-| 14–16 | `NETraceComplete`, `NETraceFailed`, `NETraceResourceConnect` | трасування |
-| 17 | `NENetworkableDestroyed` | об'єкт зник — оновити видимість |
-| 18 | `NERemoteConsoleCommand` | команда в Python |
-| 19 | `NERemoteConsoleFeedback` | відповідь консолі блоком даних |
-| 20 | `NEEndOfRoundGuard` | підтвердження кінця раунду |
+| 1 | `NEDataBlockReady` | a data block has been assembled |
+| 2 | `NELoadComplete` | the client has loaded the level |
+| 3 | `NEStartSimulation` | start counting |
+| 4 | `NEDatabaseComplete` | the client has received the player base |
+| 5 | `NEReset` | reset |
+| 6 | `NESelectSpawnGroup` | the player picked a spawn point |
+| 7 | `NESelectTeam` | the player picked a team |
+| 8 | `NESelectKit` | the player picked a kit |
+| 9 | `NEPlayerSpawned` | the player has spawned |
+| 10 | `NEPlayerDead` | the player has died |
+| 11 | `NEStringReceived` | a string was received |
+| 12 | `NESuicide` | suicide |
+| 13 | `NERadioMessageReceived` | a radio message |
+| 14–16 | `NETraceComplete`, `NETraceFailed`, `NETraceResourceConnect` | tracing |
+| 17 | `NENetworkableDestroyed` | an object is gone — refresh visibility |
+| 18 | `NERemoteConsoleCommand` | a command in Python |
+| 19 | `NERemoteConsoleFeedback` | the console's answer as a data block |
+| 20 | `NEEndOfRoundGuard` | end-of-round acknowledgement |
 
-## Як їх слати
+## How to send them
 
-`PostRemoteEvent` (тип 11) везе: 4 біти категорії, 32 біти номера,
-32 біти затримки (float), 8 бітів довжини даних і самі байти.
+`PostRemoteEvent` (type 11) carries: 4 bits of category, 32 bits of number,
+32 bits of delay (float), 8 bits of data length and the bytes themselves.
 
-Ті події, що несуть значення, чекають у даних **32-бітне число**. Видно
-в `handleNetworkEvent`: для вибору місця появи він бере перші чотири
-байти буфера й передає їх у `gameLogic`:
+The events that carry a value expect a **32-bit number** in the data. That is
+visible in `handleNetworkEvent`: for the spawn-point choice it takes the
+buffer's first four bytes and passes them to `gameLogic`:
 
 ```
-rax = node->[0x30]      // вказівник на дані
-r12d = *(int*)rax       // саме значення
+rax = node->[0x30]      // pointer to the data
+r12d = *(int*)rax       // the value itself
 gameLogic->[0xe8](gameLogic, player, r12d)
 ```
 
-## Поява гравця
+## The player spawning
 
-Сервер спавнить тих, у кого `Player::getSpawnGroup() > 0` — це видно в
-`ServerGameLogic::uPlayingSpawning`, а сама перевірка сидить у записі
-0x2b0 таблиці методів `Player`. Виставляє це поле саме `NESelectSpawnGroup`.
+The server spawns those whose `Player::getSpawnGroup() > 0` — that is visible
+in `ServerGameLogic::uPlayingSpawning`, and the check itself sits in entry
+0x2b0 of `Player`'s method table. It is `NESelectSpawnGroup` that sets that
+field.
 
-Отже ланцюжок появи: `NESelectTeam`, `NESelectKit`, `NESelectSpawnGroup`.
-Перевірено, що кожна з них доходить і розводиться сервером.
+So the spawn chain is: `NESelectTeam`, `NESelectKit`, `NESelectSpawnGroup`.
+Each of them has been verified to arrive and to be dispatched by the server.
 
-## Пастка з NEDatabaseComplete
+## The NEDatabaseComplete trap
 
-Спершу здавалося, що події губляться в дорозі: надіслана окремо подія 7
-спрацьовувала, а в черзі з іншими — ні. Вимірювання показало інше.
-Точка зупину в `GameEventManager::processReceivedPacket` друкувала номер
-кожної прийнятої пачки:
-
-```
-пачка 0, 1, 2, 3, 4 — і далі тиша
-```
-
-Пачки 5, 6, 7 до розбору подій навіть не доходили. Заразом видно було,
-що після події 4 сервер **перестає слати пінги**. Тобто це не втрата
-пакетів і не наше пакування: після `NEDatabaseComplete` сервер просто
-припиняє з нами розмову.
-
-Прибрали цю подію — і весь ланцюжок пройшов: 2, 7, 8, 6, а за ним
-`ServerGameLogic::spawnPlayer`. Справжній клієнт, вочевидь, шле її не
-тут; ми її не шлемо взагалі.
-
-Урок загальніший: коли щось «губиться», спершу варто перевірити, чи не
-ми самі це зламали попередньою дією.
-
-## Чому немає привидів: перевірка вмісту
-
-Виміряли по черзі й дійшли до кінця ланцюжка.
-
-Сервер **таки шле привидів** — точка зупину на гілці запису спрацьовує
-сотні разів. Але не нам: у нашій сесії всі пакети йдуть із подіями, а
-привиди сервер кладе саме в порожні. Отже наше з'єднання до потрібного
-стану не доросло.
-
-Стан рухає `GameServer::clientSendDatabaseComplete`, і в ньому все й
-видно:
+At first it looked as though events were being lost in transit: event 7 sent on
+its own worked, but in a queue with others it did not. Measurement showed
+otherwise. A breakpoint in `GameEventManager::processReceivedPacket` printed
+the number of every batch received:
 
 ```
-якщо (номер клієнта != 0x81 і serverInfo->[0x4a]):
-    якщо (client->getContentValid())  -> далі
-    інакше -> у чергу на від'єднання, причина 27
-client->стан = 4                 // саме цього вимагає isClientReady (> 3)
-надіслати клієнтові NEStartSimulation
+batches 0, 1, 2, 3, 4 — and then silence
 ```
 
-Тобто подія `NEDatabaseComplete` не «ламає з'єднання» — вона доводить
-сервер до перевірки, якої ми не проходимо, і той нас від'єднує. Звідси
-й тиша, яку ми бачили: після неї сервер просто перестає з нами
-розмовляти.
+Batches 5, 6, 7 never even reached the event parsing. At the same time it was
+visible that after event 4 the server **stops sending pings**. So it is neither
+packet loss nor our packing: after `NEDatabaseComplete` the server simply stops
+talking to us.
 
-Прапорець `serverInfo->[0x4a]` ставить `GameServer::init` за
-`loadMiscFingerprints`, а той рахує контрольну суму сам
-(`ChecksumContext::runMiscChecksum`) — вимкнути його налаштуванням не
-вийде.
+We removed that event — and the whole chain went through: 2, 7, 8, 6, and after
+it `ServerGameLogic::spawnPlayer`. The real client evidently does not send it
+here; we do not send it at all.
 
-Виставляє `contentValid` подія `ContentCheckEvent` (тип 46): три хеші по
-128 бітів. Сервер звіряє їх у `GameServer::onContentCheckEvent`,
-використовуючи `MapInfo::getChallengeOrdinal()`.
+The more general lesson: when something is "lost", it is worth checking first
+whether we broke it ourselves with the previous action.
 
-Отже повний ланцюжок такий:
+## Why there are no ghosts: the content check
+
+We measured one thing at a time and got to the end of the chain.
+
+The server **does** send ghosts — a breakpoint on the write branch fires
+hundreds of times. But not to us: in our session every packet goes out with
+events, and the server puts ghosts into the empty ones. So our connection has
+not grown into the required state.
+
+The state is moved by `GameServer::clientSendDatabaseComplete`, and everything
+is visible in it:
+
+```
+if (client number != 0x81 and serverInfo->[0x4a]):
+    if (client->getContentValid())  -> continue
+    else -> queue for disconnection, reason 27
+client->state = 4                 // exactly what isClientReady wants (> 3)
+send the client NEStartSimulation
+```
+
+So `NEDatabaseComplete` does not "break the connection" — it drives the server
+to a check we do not pass, and it disconnects us. Hence the silence we saw:
+after it the server simply stops talking to us.
+
+The flag `serverInfo->[0x4a]` is set by `GameServer::init` from
+`loadMiscFingerprints`, and that computes the checksum itself
+(`ChecksumContext::runMiscChecksum`) — it cannot be turned off by a setting.
+
+`contentValid` is set by the `ContentCheckEvent` (type 46): three 128-bit
+hashes. The server compares them in `GameServer::onContentCheckEvent`, using
+`MapInfo::getChallengeOrdinal()`.
+
+So the full chain is:
 
 1. `ClientInfo`
-2. **`ContentCheckEvent`** — три хеші
-3. `NEDatabaseComplete` — стан 4, сервер шле `NEStartSimulation`
+2. **`ContentCheckEvent`** — three hashes
+3. `NEDatabaseComplete` — state 4, the server sends `NEStartSimulation`
 4. `NELoadComplete`
 5. `NESelectTeam`, `NESelectKit`, `NESelectSpawnGroup`
-6. і аж тоді потік привидів
+6. and only then the ghost stream
 
-Ми зупинилися на другому кроці: щоб його пройти, треба повторити
-підрахунок контрольних сум так само, як це робить гра.
+We stopped at the second step: to pass it, the checksum computation has to be
+repeated exactly as the game does it.
 
-## Поява працює, привидів усе одно немає
+## Spawning works, and there are still no ghosts
 
-`capture.py --stage spawn` проходить увесь шлях і сервер спавнить
-гравця — це видно точкою зупину. Але потік привидів так і лишається
-порожнім, і причина ще не знайдена. Розбір подій при цьому майже
-точний: із 25 пакетів лише в одному лишається довгий непрочитаний
-хвіст, тож на зсув це не схоже.
+`capture.py --stage spawn` goes the whole way and the server spawns the player
+— that is visible from a breakpoint. But the ghost stream stays empty, and the
+cause has not been found. The event parsing is nearly exact at that: of 25
+packets only one is left with a long unread tail, so it does not look like a
+shift.
 
-Найпевніша підозра — стан з'єднання: `GameServer::isClientReady` вимагає,
-щоб він перевалив за три, а рухають його `clientLoadComplete` і
-`clientSendDatabaseComplete`. Друга — це якраз та подія, яка обриває нам
-розмову. Схоже, її має піднімати сам сервер, а не клієнт.
+The likeliest suspicion is the connection's state: `GameServer::isClientReady`
+requires it to be above three, and it is moved by `clientLoadComplete` and
+`clientSendDatabaseComplete`. The second is exactly the event that cuts our
+conversation short. Apparently the server itself is supposed to raise it, not
+the client.
 
-## Перенесення імен у BF2.exe
+## Transplanting names into BF2.exe
 
-У BF2.exe немає символів, зате в обох бінарях є ті самі перевірки
-`Debug`, і кожна несе шлях до вихідного файлу з номером рядка. У
-Linux-сервері поруч із такою перевіркою відоме й ім'я функції.
+BF2.exe has no symbols, but both binaries have the same `Debug` checks, and
+each carries the path of a source file with a line number. In the Linux server
+the function's name is known next to such a check.
 
-`tools/transplant_symbols.py` зіставляє пари «файл + рядок» і дає
-таблицю «адреса в BF2.exe -> функція»: 335 збігів, 249 різних функцій,
-сім секунд роботи. З `--script` виходить готовий скрипт для Ghidra,
-який перейменовує все за раз.
+`tools/transplant_symbols.py` matches the "file + line" pairs and gives a table
+"address in BF2.exe -> function": 335 matches, 249 distinct functions, seven
+seconds of work. With `--script` it produces a ready Ghidra script that renames
+everything at once.
 
-Перевірка на відомому: інструмент назвав `ClientConnection::ClientConnection`
-саме ту функцію, яку до того довелося вираховувати вручну за кількістю
-перевірок у конструкторі.
+A check against something known: the tool named
+`ClientConnection::ClientConnection` exactly the function we had previously had
+to work out by hand from the number of checks in the constructor.
 
 
-## Перевірка вмісту: як вона влаштована
+## The content check: how it works
 
-`GameServer::onContentCheckEvent(клієнт, хеш1, хеш2, хеш3)`:
+`GameServer::onContentCheckEvent(client, hash1, hash2, hash3)`:
 
 ```
-клієнт = getClient(номер)
-якщо (клієнт і клієнт->стан <= 1)   -> вийти, нічого не робити
-якщо (serverInfo->[0x4a] == 0)      -> вийти
-три хеші -> у рядки
-номер = MapInfo::getChallengeOrdinal()
-чотири пошуки в таблицях відбитків за цим номером
-порівняння; при збігу -> контент вважається дійсним
+client = getClient(number)
+if (client and client->state <= 1)   -> return, do nothing
+if (serverInfo->[0x4a] == 0)         -> return
+the three hashes -> into strings
+number = MapInfo::getChallengeOrdinal()
+four lookups in the fingerprint tables by that number
+comparison; on a match -> the content is considered valid
 ```
 
-Дві речі, які коштували часу:
+Two things that cost time:
 
-**Стан має бути більшим за одиницю.** Поки клієнт щойно зареєструвався,
-його стан рівно 1, і перевірку сервер просто ігнорує — мовчки. Тобто
-спершу треба надіслати `NELoadComplete`, і аж тоді перевірку.
+**The state has to be greater than one.** While the client has only just
+registered, its state is exactly 1, and the server simply ignores the check —
+silently. So `NELoadComplete` has to be sent first, and only then the check.
 
-**Перший хеш — не з файлу.** Таблиці `std_archive.md5`,
-`std_archive_mod.md5`, `bst_archive.md5`, `bst_archive_mod.md5` лежать у
-теці мода й мають вигляд «номер + md5», але з ними звіряються другий і
-третій хеші. Перший порівнюється з тим, що сервер порахував сам при
-старті (`loadMiscFingerprints` -> `ChecksumContext::runMiscChecksum`), і
-зберігає в полі `0x208` свого об'єкта.
+**The first hash is not from a file.** The tables `std_archive.md5`,
+`std_archive_mod.md5`, `bst_archive.md5`, `bst_archive_mod.md5` lie in the
+mod's directory and have the form "number + md5", but the second and third
+hashes are compared against them. The first is compared against what the server
+computed itself at startup (`loadMiscFingerprints` ->
+`ChecksumContext::runMiscChecksum`) and keeps in field `0x208` of its object.
 
-Значення для нашого стенда — `1bb87eb2398987fe2111d26dca42e505`; воно
-однакове між перезапусками, бо це контрольна сума файлів. Прочитати його
-можна точкою зупину, і саме так ми перевірили, що збіг настає.
+The value for our rig is `1bb87eb2398987fe2111d26dca42e505`; it is the same
+between restarts, because it is a checksum of files. It can be read with a
+breakpoint, and that is exactly how we verified that a match occurs.
 
-Номер виклику з `getChallengeOrdinal()` — **0**, а не те число, що стоїть
-на початку блока з рівнем. Це різні речі.
+The challenge number from `getChallengeOrdinal()` is **0**, not the number that
+stands at the start of the level block. Those are different things.
 
-## Порядок, який працює
+## The order that works
 
 ```
 ClientInfo
-NELoadComplete          (стан стає більшим за 1)
-ContentCheckEvent       (перевірка вмісту збігається)
+NELoadComplete          (the state becomes greater than 1)
+ContentCheckEvent       (the content check matches)
 NEDatabaseComplete
 NESelectTeam, NESelectKit, NESelectSpawnGroup
 ```
 
-Привидів це поки не дало: після перевірки вмісту `clientSendDatabaseComplete`
-не дійшов ні до гілки «стан 4», ні до гілки відмови. Що саме його спиняє —
-наступне питання.
+That has not produced ghosts yet: after the content check
+`clientSendDatabaseComplete` reached neither the "state 4" branch nor the
+refusal branch. What exactly stops it is the next question.
 
-## Справжня перешкода: п'ять пачок
+## The real obstacle: five batches
 
-Після перевірки вмісту виявилося, що річ узагалі не в подіях.
+After the content check it turned out the matter was not about events at all.
 
-Надіслали вісім однакових нешкідливих подій поспіль. Сервер прийняв
-**рівно п'ять пачок** — номери 0, 1, 2, 3, 4 — і замовк:
-
-```
->>пачка поле5=0
->>пачка поле5=1
->>пачка поле5=2
->>пачка поле5=3
->>пачка поле5=4
-```
-
-Далі точка зупину не спрацьовує вже і в `ClientConnection::processReceivedPacket`,
-тобто пакети зникають ще на мережевому рівні, до розбору потоків. При
-цьому:
-
-- **від'єднання немає** — `closeClientConnection` не викликається;
-- сервер перестає слати й **пінги**, тобто мовчить в обидва боки;
-- це не залежить від змісту подій: те саме з `NEDatabaseComplete`, з
-  перевіркою вмісту й з вісьмома однаковими `NELoadComplete`.
-
-Отже все, що ми раніше пояснювали змістом подій, насправді впиралося в
-цю межу. Ланцюжок появи спрацьовував лише тому, що вкладався в п'ять
-пачок.
-
-### Що показав розбір нумерації
-
-У `NetServer::handleDataPacket` є перевірка: пакет із **тим самим
-номером**, що й попередній прийнятий, відкидається. Це видно прямо:
+We sent eight identical harmless events in a row. The server accepted
+**exactly five batches** — numbers 0, 1, 2, 3, 4 — and fell silent:
 
 ```
->>дані seq=0 очікує=0   -> відкинуто
->>дані seq=0 очікує=0   -> відкинуто
->>дані seq=1 очікує=0   -> віддано клієнтові
+>>batch field5=0
+>>batch field5=1
+>>batch field5=2
+>>batch field5=3
+>>batch field5=4
 ```
 
-Тобто шестибітний лічильник має зростати з **кожним** надісланим
-пакетом, і відповіді на пінги теж його витрачають.
+Beyond that the breakpoint no longer fires even in
+`ClientConnection::processReceivedPacket`, so the packets vanish at the network
+level, before the streams are parsed. And at that:
 
-Спершу я вирішив був навпаки — що лічильник рахує лише пакети даних, а
-пінги його чіпати не повинні, — і навіть отримав був кращі числа на
-зонді. Це виявилося хибним: у клієнті та сама зміна лишила один пакет
-замість дванадцяти, а замір показав чому — пінг і наступний пакет даних
-діставали однаковий номер, і другий відкидався як дублікат. Зміну
-скасовано в обох місцях.
+- **there is no disconnection** — `closeClientConnection` is not called;
+- the server stops sending **pings** too, so it is silent in both directions;
+- it does not depend on the events' content: the same with
+  `NEDatabaseComplete`, with the content check and with eight identical
+  `NELoadComplete`.
 
-### Стіни в п'ять пакетів немає
+So everything we had previously explained by the events' content was actually
+running into this limit. The spawn chain worked only because it fitted into
+five batches.
 
-Окремо перевірено фільтр пакетів (`PacketFilter::processPacket`, через
-який проходить усе, що приходить у сокет): він пропустив усі 17 наших
-пакетів, жодного не відкинув.
+### What taking the numbering apart showed
 
-І в чистому досліді зонд спокійно проходить увесь ланцюжок — рівень,
-перевірка вмісту, база, команда, набір, місце появи — і отримує від
-сервера повний потік світу. Тобто попереднє «сервер приймає рівно п'ять
-пачок» було наслідком зіпсованої нумерації в тих спробах, а не окремою
-межею.
-
-## Стан з'єднання: виміряно
-
-Прочитали поле стану прямо з об'єкта з'єднання на кожному прийнятому
-пакеті:
+`NetServer::handleDataPacket` has a check: a packet with **the same number** as
+the previous one accepted is discarded. That is visible directly:
 
 ```
-стан 0 -> 0 -> 0 -> 1 -> 3
+>>data seq=0 expects=0   -> discarded
+>>data seq=0 expects=0   -> discarded
+>>data seq=1 expects=0   -> handed to the client
 ```
 
-- `1` ставить `clientSendPlayerDatabase` під час реєстрації;
-- `3` ставить `NELoadComplete`;
-- `4` ставить **тільки** `clientSendDatabaseComplete`, а `isClientReady`
-  вимагає саме більше трьох.
+So the six-bit counter has to grow with **every** packet sent, and ping replies
+spend it too.
 
-## Межа в п'ять пакетів даних усе-таки є
+At first I decided the opposite — that the counter counts only data packets and
+that pings must not touch it — and even got better numbers on the probe. That
+turned out to be wrong: in the client the same change left one packet instead
+of twelve, and a measurement showed why — a ping and the next data packet got
+the same number, and the second was discarded as a duplicate. The change was
+reverted in both places.
 
-Виміряно чисто: сервер обробляє рівно **п'ять** наших пакетів даних, далі
-жоден не доходить до `handleDataPacket`. Відповіді на пінги не рахуються
-і продовжують ходити. Фільтр (`PacketFilter::processPacket`) пропускає
-все, тож пакети зникають усередині `NetServer::_update` — між фільтром і
-розбором. Чому саме — ще не з'ясовано.
+### There is no five-packet wall
 
-Обійти можна: покласти **всі події в один пакет**. Тоді ланцюжок
-вкладається в п'ять пакетів, і `clientSendDatabaseComplete` нарешті
-викликається.
+The packet filter was checked separately (`PacketFilter::processPacket`, which
+everything arriving in the socket passes through): it let all 17 of our packets
+through and discarded none.
 
-## Де стоїмо зараз
+And in a clean experiment the probe calmly goes the whole chain — the level,
+the content check, the base, the team, the kit, the spawn point — and receives
+the full world stream from the server. So the earlier "the server accepts
+exactly five batches" was a consequence of the broken numbering in those
+attempts, not a separate limit.
 
-Тверді факти, кожен виміряний не один раз:
+## The connection's state: measured
 
-- стан з'єднання росте `0 -> 1 -> 3`; `isClientReady` вимагає більше трьох,
-  а четвірку ставить лише `clientSendDatabaseComplete`;
-- сервер пише привидів (десятки разів за сеанс), але **у власне локальне
-  з'єднання**, не нам — бо ми не проходимо `isClientReady`;
-- `GameServer::getConnection(0)` для нас працює: 758 успішних пошуків
-  поспіль. Наше з'єднання в таблиці є;
-- наші пакети даних перестають оброблятися після четвертого-п'ятого.
-  Фільтр пропускає все, отже вони зникають усередині `NetServer::_update`.
+We read the state field straight out of the connection object on every packet
+received:
 
-Що перевірено й **не** пояснює втрату:
+```
+state 0 -> 0 -> 0 -> 1 -> 3
+```
 
-| припущення | результат |
+- `1` is set by `clientSendPlayerDatabase` during registration;
+- `3` is set by `NELoadComplete`;
+- `4` is set **only** by `clientSendDatabaseComplete`, and `isClientReady`
+  requires exactly more than three.
+
+## There is a five-data-packet limit after all
+
+Measured cleanly: the server processes exactly **five** of our data packets,
+after which none reaches `handleDataPacket`. Ping replies do not count and keep
+going. The filter (`PacketFilter::processPacket`) lets everything through, so
+the packets vanish inside `NetServer::_update` — between the filter and the
+parsing. Why exactly is not established yet.
+
+It can be worked around: put **all the events into one packet**. Then the chain
+fits into five packets, and `clientSendDatabaseComplete` is finally called.
+
+## Where we stand now
+
+Hard facts, each measured more than once:
+
+- the connection's state grows `0 -> 1 -> 3`; `isClientReady` requires more
+  than three, and only `clientSendDatabaseComplete` sets the four;
+- the server does write ghosts (dozens of times per session), but **into its
+  own local connection**, not to us — because we do not pass `isClientReady`;
+- `GameServer::getConnection(0)` works for us: 758 successful lookups in a row.
+  Our connection is in the table;
+- our data packets stop being processed after the fourth or fifth. The filter
+  lets everything through, so they vanish inside `NetServer::_update`.
+
+What has been checked and does **not** explain the loss:
+
+| assumption | result |
 |---|---|
-| обмеження за швидкістю | паузи по 8 секунд дали не більше, а менше (4 замість 5) |
-| маска підтверджень | нульова маска замість `0xFFFFFFFF` нічого не змінила |
-| номер пакета | сервер відкидає лише дублікати, наші номери зростають правильно |
-| перевірка вмісту | сама по собі проходить, збіг хешів настає |
+| rate limiting | 8-second pauses gave not more but fewer (4 instead of 5) |
+| the acknowledgement mask | a zero mask instead of `0xFFFFFFFF` changed nothing |
+| the packet number | the server discards only duplicates, our numbers grow correctly |
+| the content check | it passes on its own, the hashes do match |
 
-Втрата пакетів і є вузьким місцем: усе інше, що ми по черзі приймали за
-причину — подія `NEDatabaseComplete`, перевірка вмісту, порожній
-`getConnection` — виявлялося наслідком того, що потрібний пакет просто не
-дійшов. Три рази поспіль висновок робився з одного спостереження і три
-рази виявлявся хибним; далі варто перевіряти кожну гіпотезу принаймні
-двома прогонами.
+The packet loss is the bottleneck: everything else we took in turn for the
+cause — the `NEDatabaseComplete` event, the content check, an empty
+`getConnection` — turned out to be a consequence of the needed packet simply
+not arriving. Three times in a row a conclusion was drawn from a single
+observation and three times it proved wrong; from here on every hypothesis is
+worth checking with at least two runs.
 
-Наступний крок: розібрати `NetServer::_update` до кінця — від фільтра до
-`handleDataPacket` — і знайти гілку, якою наші пакети відкидаються.
+The next step: take `NetServer::_update` apart to the end — from the filter to
+`handleDataPacket` — and find the branch our packets are discarded by.
 
-## Що з'ясовано про сам вимір
+## What was learned about the measurement itself
 
-Наприкінці виявилося, що частина спостережень була артефактом
-інструментування. Точки зупину в gdb спиняють процес на кожному
-спрацюванні, а їх бувало по сотні на секунду — сервер від цього
-гальмує, і його черга сокета переповнюється. Саме звідси бралися
-«зникнення» пакетів у частині дослідів.
+In the end it turned out that part of the observations was an artefact of the
+instrumentation. gdb breakpoints stop the process on every hit, and there were
+hundreds a second — the server slows down from that and its socket queue
+overflows. That is precisely where the packet "disappearances" in some of the
+experiments came from.
 
-Без gdb картина інша: пакети доходять, але ланцюжок усе одно не
-завершується.
+Without gdb the picture is different: the packets arrive, but the chain still
+does not complete.
 
-Друга пастка була в тимчасових скриптах. `capture.py --stage player`
-надійно реєструє гравця (`admin.listPlayers` показує запис), а мої
-дописані нашвидкуруч сценарії — ні, хоча роблять начебто те саме.
-Тобто розбіжність у них, а не в протоколі. Висновок для роботи далі:
-досліди ставити тільки через `capture.py`, а не через одноразові
-скрипти.
+The second trap was in the temporary scripts. `capture.py --stage player`
+registers a player reliably (`admin.listPlayers` shows the entry), while the
+scripts I hacked together do not, even though they apparently do the same
+thing. So the discrepancy is in them, not in the protocol. The conclusion for
+further work: run experiments only through `capture.py`, not through one-off
+scripts.
 
-Перевірку вмісту додано в `capture.py --stage spawn` (перший хеш
-передається прапорцем `--misc-hash`), але наскрізний прогін поки не
-сходиться: блок із рівнем на цьому етапі не встигає прийти.
+The content check was added to `capture.py --stage spawn` (the first hash is
+passed with the `--misc-hash` flag), but an end-to-end run does not yet add up:
+the level block does not arrive in time at this stage.
 
-## Групи появи: номер дає сервер, а не рівень
+## Spawn groups: the number comes from the server, not from the level
 
-Одразу після реєстрації сервер шле **24** події `CreateSpawnGroupEvent`
-(тип 57). Саме їхній номер чекає `NESelectSpawnGroup` — наші номери
-контрольних точок із `GamePlayObjects.con` серверу нічого не кажуть.
+Right after registration the server sends **24** `CreateSpawnGroupEvent` events
+(type 57). It is their number that `NESelectSpawnGroup` expects — our control
+point numbers from `GamePlayObjects.con` mean nothing to the server.
 
-Розкладка з `CreateSpawnGroupEvent::deSerialize` (0x424520) звірена з
-конструктором, чия сигнатура вціліла в символах:
+The layout from `CreateSpawnGroupEvent::deSerialize` (0x424520) is cross-checked
+against the constructor, whose signature survived in the symbols:
 
 ```
 CreateSpawnGroupEvent(unsigned char, unsigned short, int,
                       bool, bool, bool, unsigned char, unsigned char)
 ```
 
-Дротовий порядок інший, ніж у конструктора; він видно з послідовності
-читань і зсувів, куди вони лягають:
+The wire order differs from the constructor's; it is visible from the sequence
+of reads and the offsets they land in:
 
-| біти | зсув | що це |
+| bits | offset | what it is |
 |---|---|---|
-| 8 | +0x10 | номер групи в переліку сервера |
-| 4 | +0x14 | команда (`group->[0x38]()`) |
+| 8 | +0x10 | the group's number in the server's list |
+| 4 | +0x14 | the team (`group->[0x38]()`) |
 | 1 | +0x18 | `group->[0x58](0)` |
-| 1 | +0x19 | поле 0x9a групи |
-| 1 | +0x1a | поле 0xa0 групи |
-| 8 | +0x1b | місце, вісь X |
-| 8 | +0x1c | місце, вісь Z |
-| 16 | +0x1e | **мережевий номер** — його й шлемо |
+| 1 | +0x19 | the group's field 0x9a |
+| 1 | +0x1a | the group's field 0xa0 |
+| 8 | +0x1b | the position, X axis |
+| 8 | +0x1c | the position, Z axis |
+| 16 | +0x1e | **the network id** — this is what we send |
 
-Створює подію `SpawnManager::createSpawnGroupOnClients` (0x4b96e0).
+The event is created by `SpawnManager::createSpawnGroupOnClients` (0x4b96e0).
 
-### Пакування місця
+### Packing the position
 
 `SpawnGroup::getUnsignedWorldPosition` (0x4b94b0):
 
 ```
-half = GLSWorldSizeX / 2            (типово 1024, рівень ставить своє)
+half = GLSWorldSizeX / 2            (1024 by default, the level sets its own)
 pos >  half -> 255
 pos < -half -> 0
-інакше  байт = (int)((pos + half) / (2 * half) * 255)
+otherwise  byte = (int)((pos + half) / (2 * half) * 255)
 ```
 
-Множник 255 лежить сталою за 0xb355bc. Назад:
-`pos = байт / 255 * worldSize - worldSize / 2`.
+The multiplier 255 sits as a constant at 0xb355bc. In reverse:
+`pos = byte / 255 * worldSize - worldSize / 2`.
 
-### Що дає живий сервер
+### What a live server gives
 
-Dalian Plant, 16 місць:
+Dalian Plant, 16 slots:
 
 ```
-номер 515, команда 1, місце -84 -269     powerplant       (-92.3, -260.8)
-номер 516, команда 2, місце -173 -68     constructionsite (-151.8, -58.9)
-номер 517, команда 0, місце  76  -60     reactors         (88.0, -40.0)
-номер 518, команда 0, місце -237 -245    mainentrance     (-254.0, -210.0)
+id 515, team 1, position -84 -269     powerplant       (-92.3, -260.8)
+id 516, team 2, position -173 -68     constructionsite (-151.8, -58.9)
+id 517, team 0, position  76  -60     reactors         (88.0, -40.0)
+id 518, team 0, position -237 -245    mainentrance     (-254.0, -210.0)
 ```
 
-Дві незалежні ознаки сходяться: поле команди дає 1, 2, 0, 0 — точно як
-`gameLogic.setTeamName` і власники прапорів у `Init.con`, а розпаковані
-місця лягають за 12..39 м від прапорів. Розбіжність очікувана: місце
-групи — це середнє її точок появи, а не сам прапор.
+Two independent signs agree: the team field gives 1, 2, 0, 0 — exactly like
+`gameLogic.setTeamName` and the flag owners in `Init.con`, and the unpacked
+positions land 12..39 m from the flags. The discrepancy is expected: a group's
+position is the average of its spawn points, not the flag itself.
 
-Решта 20 груп мають номери 578..597, поле «перше» 192..211, команду
-через одну (1, 2, 1, 2, ...) і місце рівно в центрі — це групи загонів.
+The other 20 groups have ids 578..597, a "first" field of 192..211, alternating
+teams (1, 2, 1, 2, ...) and a position exactly at the centre — those are the
+squad groups.
 
-## Сервер розриває з'єднання на двох подіях
+## The server breaks the connection on two events
 
-Довго здавалося, що потоку привидів немає через нашу помилку розбору.
-Насправді сервер просто **відключав нас**, а ми рахували його пакет як
-«інший».
+For a long time it looked as though there was no ghost stream because of a
+parsing error of ours. In fact the server was simply **disconnecting us**, and
+we were counting its packet as "other".
 
-Пакет розриву — `05 b0 01 00 00 00 00 10`, вид 5 (`Disconnect`),
-приходить тричі поспіль. Виміряно з боку сервера теж: у
-`admin.listPlayers` наш гравець зникає на тій самій секунді.
+The disconnect packet is `05 b0 01 00 00 00 00 10`, kind 5 (`Disconnect`), and
+it arrives three times in a row. Measured from the server's side too: in
+`admin.listPlayers` our player vanishes on the same second.
 
-Два досліди (`--no-content`, `--no-database` у нашому клієнті):
+Two experiments (`--no-content`, `--no-database` in our client):
 
-| що шлемо | коли розрив |
+| what we send | when the break happens |
 |---|---|
-| перевірка вмісту + `NEDatabaseComplete` | одразу після перевірки |
-| лише `NEDatabaseComplete` | одразу після неї |
-| ні того, ні того | **розриву немає** |
+| the content check + `NEDatabaseComplete` | right after the check |
+| `NEDatabaseComplete` alone | right after it |
+| neither | **no break** |
 
-Без цих двох подій увесь ланцюжок появи проходить, з'єднання лишається
-живим (14 пінгів за 30 секунд проти 4-5 із ними), і сервер тримає
-гравця в переліку.
+Without those two events the whole spawn chain goes through, the connection
+stays alive (14 pings over 30 seconds against 4-5 with them), and the server
+keeps the player in the list.
 
-## Номер виклику: знайдено, звідки його брати
+## The challenge number: found, where to take it from
 
-Це й був увесь затор. Сервер обирає номер **випадково при завантаженні
-рівня** — `GameServer::loadPath` (0x45e490) робить `srand(час)` і
-`rand() % 10`, а тоді `MapInfo::setChallengeOrdinal`. Далі
-`onContentCheckEvent` (0x462390) бере `getChallengeOrdinal()` і шукає
-саме той рядок у чотирьох таблицях відбитків. Не збігся — гравця
-відключають.
+That was the whole blockage. The server picks the number **at random when it
+loads the level** — `GameServer::loadPath` (0x45e490) does `srand(time)` and
+`rand() % 10`, and then `MapInfo::setChallengeOrdinal`. Then
+`onContentCheckEvent` (0x462390) takes `getChallengeOrdinal()` and looks for
+exactly that line in the four fingerprint tables. No match — the player is
+disconnected.
 
-Ми брали номер із першого числа блока 5 і завжди отримували 1. Насправді
-блок 5 (28 байтів) простий: `u32`, назва рівня, режим, розмір. Номера
-там немає взагалі.
+We were taking the number from the first number of block 5 and always got 1. In
+fact block 5 (28 bytes) is simple: `u32`, level name, mode, size. There is no
+number in it at all.
 
-Номер лежить у **блоці типу 2** — це справжній `MapInfo`, той, що
-складає `MapInfo::updateNetBuffer` (0x4168b0). Порядок полів звідти:
+The number lies in **block type 2** — that is the real `MapInfo`, the one
+`MapInfo::updateNetBuffer` (0x4168b0) assembles. The field order from there:
 
 ```
-u16 довжина + рядок   режим гри
-u16 довжина + рядок   шлях до рівнів
-u16 довжина + рядок   назва рівня
-1 біт знак + 31 біт   скільки місць
-1 біт                 чи є командир
-1 біт знак + 31 біт   номер виклику
+u16 length + string   the game mode
+u16 length + string   the path to the levels
+u16 length + string   the level's name
+1 sign bit + 31 bits  how many slots
+1 bit                 whether there is a commander
+1 sign bit + 31 bits  the challenge number
 ```
 
-Числа пишуться не цілим словом, а знаком і 31 бітом — саме тому їх не
-було видно, коли блок читали байтами.
+The numbers are written not as a whole word but as a sign and 31 bits — which
+is exactly why they were invisible when the block was read as bytes.
 
-Живий блок (40 байтів):
+A live block (40 bytes):
 
 ```
 06 00 "gpm_cq"  07 00 "Levels/"  0c 00 "dalian_plant"  20 00 00 00 11 00 00 00 00
 ```
 
-Хвіст `20 00 00 00 11 00 00 00 00` бітами дає **місць 16**, **командир
-є**, **номер виклику 4**. Перші два збігаються з `sv.maxPlayers 16` і з
-тим, що командир на сервері ввімкнений, — три незалежні підтвердження на
-одному хвості.
+The tail `20 00 00 00 11 00 00 00 00` gives, in bits, **16 slots**, **there is a
+commander**, **challenge number 4**. The first two match `sv.maxPlayers 16` and
+the fact that the commander is enabled on the server — three independent
+confirmations on one tail.
 
-Із правильним номером перевірка вмісту проходить, розриву немає, і
-сервер одразу починає слати світ: 63 пакети потоку привидів, 166 оновлень
-стану, 41 об'єкт, і в першому ж пакеті «є стан керованого об'єкта» —
-тобто наш солдат.
+With the right number the content check passes, there is no break, and the
+server starts sending the world at once: 63 ghost-stream packets, 166 state
+updates, 41 objects, and in the very first packet "there is a controlled-object
+state" — that is our soldier.
 
-## Як це виглядало, поки номера не знали
+## How it looked while the number was unknown
 
-Прапорець потоку привидів у пакеті даних тепер читаємо окремо
-(`ghostFlag`), і він відповідає однозначно: у 8 пакетах із 9 сервер
-**сам ставить нуль**. Тобто розбір у нас цілий, а світу немає тому, що
-сервер його не шле.
+The ghost-stream flag in a data packet is now read separately (`ghostFlag`),
+and it answers unambiguously: in 8 packets out of 9 the server **sets it to zero
+itself**. So our parsing is sound, and the world is absent because the server
+does not send it.
 
-Отже самого ланцюжка `NESelectTeam`/`NESelectKit`/`NESelectSpawnGroup`
-для появи не досить: бракує ще чогось, що робить справжній клієнт.
-Наступний крок — знайти, за якою умовою `ServerGameLogic` починає
-слати стан, і чим саме перевірка вмісту не влаштовує сервер.
+So the chain `NESelectTeam`/`NESelectKit`/`NESelectSpawnGroup` alone is not
+enough for spawning: something else the real client does is missing. The next
+step is to find the condition under which `ServerGameLogic` starts sending
+state, and what exactly the server dislikes about the content check.
 
-## Умова появи на сервері: зреверсовано повністю
+## The spawn condition on the server: fully reversed
 
-`ServerGameLogic::uPlayingSpawning` (0x4ab5a0) — цикл по гравцях, і в
-ньому рівно дві перевірки:
-
-```
-для кожного гравця:
-    якщо player->getIsAlive()          -> пропустити   (слот +0xd8)
-    якщо player->getSpawnGroup() <= 0  -> пропустити   (слот +0x2b0)
-    група = spawnManager->getSpawnGroup(player->getSpawnGroup())
-    точка = група->getSpawnPoint(player->getIsAIPlayer())
-```
-
-Імена слотів узяті з таблиці методів `dice::hfe::Player` (0xb34da0), а не
-вгадані.
-
-`ServerGameLogic::selectSpawnGroup` (0x4a4160) не робить нічого, крім
-`player->setSpawnGroup(значення)` (слот +0x2a8). Тобто число, яке ми
-шлемо в `NESelectSpawnGroup`, лягає в поле **як є**, без перекладу.
-
-Ключ у мапі груп видно з `SpawnManager::addSpawnPoint` (0x4ba820): коли
-номер групи не заданий (-1), вона бере `spawnPoint->[0x60]()` і кличе
-`getCreateSpawnGroup` із ним. Тобто ключ — це ідентифікатор самої точки
-появи, а не мережевий номер із `CreateSpawnGroupEvent`.
-
-### Номер групи: малий, а не мережевий
-
-Знятий трафік оригінального клієнта (`sudo tcpdump -i any -w /tmp/bf2.pcap
-"udp port 16567"`, розбір — `tools/linuxded/pcap_bf2.py`) відповів на це
-за один захід:
+`ServerGameLogic::uPlayingSpawning` (0x4ab5a0) is a loop over the players, and
+it holds exactly two checks:
 
 ```
-23.54с  кл->св  NELoadComplete
-24.67с  кл->св  NEDatabaseComplete
-24.96с  св->кл  NEStartSimulation        <- це шле сервер, не клієнт
-25.06с  кл->св  NESelectKit = 2
-32.44с  кл->св  NESelectKit = 4          <- гравець обрав інженера
-34.38с  кл->св  NESelectSpawnGroup = 2   <- натиснуто DONE
-34.48с  св->кл  NEPlayerSpawned = 1      <- сервер підтверджує появу
+for every player:
+    if player->getIsAlive()          -> skip   (slot +0xd8)
+    if player->getSpawnGroup() <= 0  -> skip   (slot +0x2b0)
+    group = spawnManager->getSpawnGroup(player->getSpawnGroup())
+    point = group->getSpawnPoint(player->getIsAIPlayer())
 ```
 
-Тобто `NESelectSpawnGroup` чекає **мале число** — те саме, що приходить
-першим полем `CreateSpawnGroupEvent` (1..4 на чотири прапори Dalian).
-Ні мережевий номер групи (515..518), ні номер контрольної точки з рівня
-(401..404) не годяться, хоч обидва й виглядали правдоподібно.
+The slot names are taken from `dice::hfe::Player`'s method table (0xb34da0),
+not guessed.
 
-Ще два висновки з того ж дампу:
+`ServerGameLogic::selectSpawnGroup` (0x4a4160) does nothing but
+`player->setSpawnGroup(value)` (slot +0x2a8). So the number we send in
+`NESelectSpawnGroup` lands in the field **as is**, without translation.
 
-* `NEStartSimulation` шле **сервер клієнтові**, а не навпаки — наш дослід
-  `--start-sim` був хибним здогадом;
-* `NESelectTeam` оригінал у цьому заході не шле взагалі: приймає команду,
-  яку призначив сервер.
+The key into the group map is visible from `SpawnManager::addSpawnPoint`
+(0x4ba820): when the group number is not given (-1), it takes
+`spawnPoint->[0x60]()` and calls `getCreateSpawnGroup` with it. So the key is
+the identifier of the spawn point itself, not the network id from
+`CreateSpawnGroupEvent`.
 
-Із правильним номером усе працює: сервер відповідає `NEPlayerSpawned`, і
-поруч із прапором з'являється новий об'єкт-солдат.
+### The group number: the small one, not the network one
 
-### Який об'єкт наш
-
-Солдат у BF2 — теж керований об'єкт, і гравець «займає» його так само, як
-техніку. Відповідь на появу сервер шле **одним пакетом**, і в ньому все
-потрібне:
+Captured traffic of the original client (`sudo tcpdump -i any -w /tmp/bf2.pcap
+"udp port 16567"`, parsed with `tools/linuxded/pcap_bf2.py`) answered this in
+one go:
 
 ```
-34.48с  сервер->клієнт  120б
-   CreateObjectEvent: шаблон 3284, номер 1794
-   EnterVehicleEvent: гравець 1 -> об'єкт 1794
+23.54s  cl->sv  NELoadComplete
+24.67s  cl->sv  NEDatabaseComplete
+24.96s  sv->cl  NEStartSimulation        <- this the server sends, not the client
+25.06s  cl->sv  NESelectKit = 2
+32.44s  cl->sv  NESelectKit = 4          <- the player picked the engineer
+34.38s  cl->sv  NESelectSpawnGroup = 2   <- DONE was pressed
+34.48s  sv->cl  NEPlayerSpawned = 1      <- the server confirms the spawn
+```
+
+So `NESelectSpawnGroup` expects a **small number** — the same one that arrives
+as the first field of `CreateSpawnGroupEvent` (1..4 for Dalian's four flags).
+Neither the group's network id (515..518) nor the level's control point number
+(401..404) will do, plausible though both looked.
+
+Two more conclusions from the same dump:
+
+* `NEStartSimulation` is sent by the **server to the client**, not the other way
+  round — our `--start-sim` experiment was a wrong guess;
+* the original does not send `NESelectTeam` at all in this pass: it accepts the
+  team the server assigned.
+
+With the right number everything works: the server answers `NEPlayerSpawned`,
+and a new soldier object appears next to the flag.
+
+### Which object is ours
+
+A soldier in BF2 is a controlled object too, and the player "occupies" it just
+as they do a vehicle. The server sends the spawn reply in **one packet**, and it
+holds everything needed:
+
+```
+34.48s  server->client  120b
+   CreateObjectEvent: template 3284, id 1794
+   EnterVehicleEvent: player 1 -> object 1794
    CreateKitEvent; HandlePickupEvent
    NEPlayerSpawned = 1
 ```
 
-Отже: свій номер гравця беремо з `CreatePlayerEvent` (сервер складає ім'я
-як «тег клану + пробіл + ім'я», тож порівнюємо хвостом), а свій об'єкт —
-з `EnterVehicleEvent` за цим номером. `ExitVehicleEvent` (тип 10) його
-знімає. Ніяких відстаней до прапора й ніяких здогадів.
+So: our own player number comes from `CreatePlayerEvent` (the server assembles
+the name as "clan tag + space + name", so we compare by the tail), and our own
+object from `EnterVehicleEvent` by that number. `ExitVehicleEvent` (type 10)
+clears it. No distances to a flag and no guesses.
 
-Той самий `CreatePlayerEvent` каже і **команду**, яку призначив сервер. Це
-і є джерело істини: оригінальний клієнт `NESelectTeam` у цьому заході не
-шле взагалі, а приймає те, що дали. Тому екран появи має показувати
-кружечки на прапорах саме тієї команди — інакше DONE просить прапор
-чужої, і сервер має право відмовити.
+The same `CreatePlayerEvent` also says the **team** the server assigned. That is
+the source of truth: the original client does not send `NESelectTeam` at all in
+this pass but takes what it is given. So the spawn screen has to show the
+circles on the flags of exactly that team — otherwise DONE asks for another
+team's flag, and the server is entitled to refuse.
 
-### Свого солдата рухає клієнт, а не сервер
+### Our own soldier is moved by the client, not by the server
 
-Це головне, чого ми не розуміли. Після появи сервер **не шле нам
-позицію нашого ж солдата**: у записах потоку привидів його немає взагалі
-(перевірено — об'єкт 1794 у переліку записів відсутній), а стан
-керованого об'єкта приходить лише один раз.
+That is the main thing we did not understand. After spawning the server **does
+not send us the position of our own soldier**: it is not in the ghost stream's
+records at all (verified — object 1794 is absent from the record list), and the
+controlled-object state arrives only once.
 
-Пояснення просте й підтверджується назвою методу:
-`PlayerControlObjectNetworkable::predict(float)`. Клієнт **сам** рахує рух
-свого солдата зі свого ж вводу, а сервер лише виправляє його, коли
-розходження завелике. Тому:
+The explanation is simple and confirmed by the method's name:
+`PlayerControlObjectNetworkable::predict(float)`. The client computes its own
+soldier's movement **itself** from its own input, and the server only corrects
+it when the divergence is too large. So:
 
-* щоб рухатися, треба слати потік дій гравця (перший біт у пакеті даних
-  — саме він, і в клієнтських пакетах він стоїть);
-* щоб не висіти над землею, треба той рух рахувати самим: сервер ставить
-  солдата на точку появи, а падіння з неї — уже наша справа.
+* to move, the player-action stream has to be sent (the first bit in a data
+  packet is exactly that, and in the client's packets it is set);
+* to avoid hanging in the air, that movement has to be computed by us: the
+  server puts the soldier on the spawn point, and the fall from it is our
+  business.
 
-Обидві задачі — одна й та сама.
+Both tasks are the same task.
 
-### Стан керованого об'єкта: початок розкладки
+## The controlled-object state: the start of the layout
 
-`GhostManager::readControlObjectState` (0x445c30), викликається з
-`processReceivedPacket` (0x446cc0) одразу після заголовка потоку, коли в
-тому стоїть прапорець:
+`GhostManager::readControlObjectState` (0x445c30), called from
+`processReceivedPacket` (0x446cc0) right after the stream's header, when the
+flag is set in it:
 
 ```
-12 біт                 число на початку
-1 біт знак + 31 біт    лічильник
-32, 32, 32             місце — воно ж опорна точка стиснення
-16 біт                 мережевий номер керованого об'єкта
-1 біт ...              решта стану
+12 bits                 a number at the start
+1 sign bit + 31 bits    a counter
+32, 32, 32              the position — also the compression reference point
+16 bits                 the network id of the controlled object
+1 bit ...               the rest of the state
 ```
 
-Два поля названі не за здогадом, а за тим, що з ними робить сама функція:
+Two fields are named not by guesswork but by what the function does with them:
 
-* **трійка чисел — опорна точка стиснення.** Перед нею стоїть
-  `BitStream::resetCompressionVector` (0x445cf7), після неї —
-  `setCompressionVector` із цією ж трійкою (0x445d4b). Далі в потоці
-  вектори пишуться як різниця до неї. Заразом вона і є місцем солдата;
-* **16 біт — номер нашого об'єкта.** Рушій одразу віддає його в
-  `NetworkManager::getObject` (0x445dc3), а результат — у `getSoldier`
+* **the triple of numbers is the compression reference point.** Before it comes
+  `BitStream::resetCompressionVector` (0x445cf7), after it
+  `setCompressionVector` with that same triple (0x445d4b). Further along the
+  stream the vectors are written as a difference from it. At the same time it is
+  the soldier's position;
+* **the 16 bits are our object's id.** The engine hands it straight to
+  `NetworkManager::getObject` (0x445dc3), and the result to `getSoldier`
   (0x445e01).
 
-Друге закриває борг «впізнавання власного солдата — здогад». На живому
-сервері номер зі стану збігається з тим, що дала подія посадки (обидва
-1794), а до появи керований об'єкт інший — камера екрана появи (257/258
-на Dalian, із місцем `setBeforeSpawnCamera`). Тому виправляти місце
-солдата станом керованого об'єкта можна лише тоді, коли номери збігаються:
-інакше при появі виходив стрибок на 232 метри — з камери на точку появи.
+The second closes the debt "recognising one's own soldier is a guess". On a
+live server the id from the state matches the one the enter event gave (both
+1794), and before spawning the controlled object is a different one — the spawn
+screen's camera (257/258 on Dalian, with the position from
+`setBeforeSpawnCamera`). So the soldier's position may be corrected by the
+controlled-object state only when the ids match: otherwise spawning produced a
+232-metre jump — from the camera to the spawn point.
 
-### Чому керування смикалося
+### Why the controls were jittering
 
-Три причини, і жодна не в протоколі:
+Three causes, and none of them in the protocol:
 
-1. **Черга сокета росла.** За кадр ми брали з неї **один** пакет, а
-   сервер шле більше. Різниця накопичувалася: за 30 секунд ми встигали
-   розібрати 41 пакет даних і 17 станів керованого об'єкта замість
-   ~286 і 268. Ми дивилися на світ таким, яким він був кілька секунд
-   тому, і кожне виправлення відкидало солдата назад.
-2. **Крок передбачення був твердий, 1/60**, незалежно від того, скільки
-   насправді тривав кадр.
-3. **Виправляли й до появи** — місцем камери екрана появи.
+1. **The socket queue was growing.** We took **one** packet from it per frame,
+   while the server sends more. The difference accumulated: over 30 seconds we
+   managed to parse 41 data packets and 17 controlled-object states instead of
+   ~286 and 268. We were looking at the world as it had been several seconds
+   earlier, and every correction threw the soldier back.
+2. **The prediction step was fixed at 1/60**, regardless of how long the frame
+   actually lasted.
+3. **We corrected before spawning too** — with the spawn screen camera's
+   position.
 
-Після виправлення розходження між нашим передбаченням і сервером —
-**0.69 м у середньому, 1.0 м найбільше** (було 16.3 і 232). Це дрібно
-настільки, що згладжувати підміну місця поки нема потреби — а отже, і
-вигадувати для неї сталу не доводиться.
+After the fix the divergence between our prediction and the server is
+**0.69 m on average, 1.0 m at most** (it was 16.3 and 232). That is small
+enough that there is no need to smooth the position substitution yet — and so
+no need to invent a constant for it.
 
-Про згладжування в рушії відомо, що воно є, але **не для нашого
-солдата**: `PlayerControlObjectNetworkable::predict` порожній (`rep retq`
-за 0x5d44e0 у лінукс-сервері), а `local-prediction-lerpTime` (типово 1.0)
-і `local-prediction-minDelay` (0.15) читає лише
-`GenericProjectileNetworkable::predict`. Значення взяті з
-`Vars::getFloat` у статичному ініціалізаторі (0x5cd025 і 0x5cd037),
-скриптом `tools/elf_symbol.py`.
+About smoothing in the engine it is known that it exists, but **not for our
+soldier**: `PlayerControlObjectNetworkable::predict` is empty (`rep retq` at
+0x5d44e0 in the Linux server), and `local-prediction-lerpTime` (1.0 by default)
+and `local-prediction-minDelay` (0.15) are read only by
+`GenericProjectileNetworkable::predict`. The values were taken from
+`Vars::getFloat` in a static initialiser (0x5cd025 and 0x5cd037) with the script
+`tools/elf_symbol.py`.
 
-Розшифровка перевірена точним збігом: перший такий пакет на Dalian дає
-`-50.0 185.0 -285.0`, а в `Init.con` рівня стоїть
-`gameLogic.setBeforeSpawnCamera -50/185/-285`. Тобто до появи сервер
-тримає нас на камері екрана появи й шле саме її.
+The decoding was verified by an exact match: the first such packet on Dalian
+gives `-50.0 185.0 -285.0`, and the level's `Init.con` has
+`gameLogic.setBeforeSpawnCamera -50/185/-285`. So before spawning the server
+holds us on the spawn screen's camera and sends exactly that.
 
-### Затримка появи була нашою
+### The spawn delay was ours
 
-Три події вибору ми розділяли паузою в три секунди, і після DONE до
-появи минало майже десять. У знятому трафіку оригінал шле їх тоді, коли
-гравець тисне, а сервер відповідає `NEPlayerSpawned` за 100 мс. Пауза
-лишилася тільки між кроками рукостискання — та й там оригінал шле
-`NELoadComplete` і перевірку вмісту **одним пакетом**, а
-`NEDatabaseComplete` через 1.1 с.
+We separated the three selection events with a three-second pause, and after
+DONE almost ten seconds passed before spawning. In the captured traffic the
+original sends them when the player presses, and the server answers
+`NEPlayerSpawned` within 100 ms. A pause is left only between the handshake's
+steps — and even there the original sends `NELoadComplete` and the content check
+**in one packet**, with `NEDatabaseComplete` 1.1 s later.
 
-### Чому ми висимо над землею
+### Why we hang above the ground
 
-Точно й без здогадів: усі 24 точки появи Dalian мають
-`setSpawnPositionOffset 0/1.25/0`. Сервер ставить солдата на 1.25 м вище
-землі, і в оригіналі він одразу падає — але падіння рахує клієнт, а ми
-його поки не рахуємо.
+Exactly and without guesses: all 24 of Dalian's spawn points have
+`setSpawnPositionOffset 0/1.25/0`. The server puts the soldier 1.25 m above the
+ground, and in the original he falls at once — but the fall is computed by the
+client, and we do not compute it yet.
 
-## Потік дій гравця
+## The player-action stream
 
-Це те, чим клієнт рухає свого солдата, і те, через що наш розбирач
-спотикався на клієнтських пакетах: перший біт після заголовка — саме він.
+This is what the client moves its soldier with, and what our parser used to
+stumble on in the client's packets: the first bit after the header is exactly
+it.
 
-Читає його `PlayerActionManager::processReceivedPacket` (0x44d670):
-
-```
-1 біт                 чи є дії
-4 біти                скільки наборів у пакеті
-9 бітів               номер (у дампі 200, 232, 334 — змінюється)
-1 біт знак + 31 біт   лічильник вводу, +1 за пакет
-на кожен набір:
-    6 разів: 1 біт знака + 15 бітів значення
-    32 біти  маска кнопок
-    9 бітів  (у дампі завжди нуль)
-    1 біт    прапорець (у дампі одиниця)
-```
-
-Розмір набору в пам'яті — 28 байтів, і зсуви сходяться точно: шість слів
-за +4..+0xe, `u32` за +0x10, `u32` за +0x14, байт за +0x18.
-
-### Що означають осі
-
-Знятий трафік відповів прямо. Оригінал шле три набори в пакеті (запас на
-втрату) тридцять разів на секунду, і в секунди, коли гравець біг:
+It is read by `PlayerActionManager::processReceivedPacket` (0x44d670):
 
 ```
-38.58с  вперед 99, кнопки 0     побіг
-38.88с  вперед 99, кнопки 32    натиснув спринт
-39.45с  вперед 99, кнопки 0     відпустив
-39.95с  вперед 99, кнопки 32    знову спринт
-40.21с  вперед 0                зупинився
+1 bit                  are there actions
+4 bits                 how many sets in the packet
+9 bits                 a number (200, 232, 334 in the dump — it varies)
+1 sign bit + 31 bits   the input counter, +1 per packet
+for every set:
+    6 times: 1 sign bit + 15 bits of value
+    32 bits  the button mask
+    9 bits   (always zero in the dump)
+    1 bit    a flag (one in the dump)
 ```
 
-Отже **третя ось — хід уперед**, і повний хід це рівно 99. **П'ята й
-шоста** весь час дрібно смикаються від −169 до 169 — це миша. **Маска
-кнопок: біт 5 (значення 32) — спринт.** Решта трьох осей у всьому дампі
-жодного разу не відхилилася від нуля, тож їх ми не називаємо.
+The set's size in memory is 28 bytes, and the offsets match exactly: six words
+at +4..+0xe, a `u32` at +0x10, a `u32` at +0x14, a byte at +0x18.
 
-### І сервер одразу почав нас виправляти
+### What the axes mean
 
-Доки ми не слали вводу, стан керованого об'єкта приходив **один раз** —
-камера екрана появи. Щойно потік дій пішов, сервер став слати його
-раз у раз (лічильник 0, 6, 12 ...) із справжнім місцем солдата:
-`-149.2 158.6 -47.4` при прапорі constructionsite на `-151.8, -58.9`.
-
-Це і є те, що ми ставимо камері, — тож і висіння на 1.25 м зникло: місце
-від сервера вже осіле, а не точка появи зі зсувом.
-
-### Чого ми ще не вміємо
-
-Гравець у нас **не з'являється** на живому сервері, хоч розмова й
-проходить цілком: розриву немає, потік привидів іде, сервер тримає нас у
-`admin.listPlayers`. Перебрані як номер групи 1, 2, 401, 402, 515, 516 —
-жоден не дав солдата.
-
-Що з цього випливає: найпевніше, наш `PostRemoteEvent` узагалі не
-доходить до обробника подій, і тоді ні вибір команди, ні вибір місця не
-спрацьовують. Непрямий доказ — сервер садить нас у команду 2 незалежно
-від того, просимо ми 1 чи 2.
-
-Досліди, які лишилися прапорцями: `--start-sim` (додає `NEStartSimulation`),
-`--block-ready` (підтверджує кожен зібраний блок подією
-`NEDataBlockReady`). Жоден не змінив результату, але й розриву не
-спричинив.
-
-Наступний крок — перевірити саме доставку: надіслати подію, наслідок
-якої видно ззовні (наприклад, повідомлення в чат), і подивитися в
-оригінальному клієнті, чи вона дійшла.
-
-## Записи потоку привидів: що вже відомо точно
-
-`GhostManager::readData` (0x445820 у лінукс-сервері):
+The captured traffic answered directly. The original sends three sets per packet
+(a reserve against loss) thirty times a second, and in the seconds when the
+player was running:
 
 ```
-2 біти    вид
-16 біт    мережевий номер
-вид 1 — оновлення стану:
-    1 біт     чи це повний стан (baseline), а не різниця
-    N біт     довжина вмісту; N — це поле самого GhostManager (+0x4298),
-              а не стала. На нашому сервері воно дорівнює 11
-    далі      вміст завдовжки рівно стільки біт
-вид 3 — об'єкт зникає: disableObject + removeActiveDescriptor
-вид 2 — рушій вважає це помилкою потоку (кладе 2 у своє поле +0x20)
+38.58s  forward 99, buttons 0     started running
+38.88s  forward 99, buttons 32    pressed sprint
+39.45s  forward 99, buttons 0     released
+39.95s  forward 99, buttons 32    sprint again
+40.21s  forward 0                 stopped
 ```
 
-Довжина в записі й дозволяє пропустити незнайомий об'єкт — саме так
-рушій і чинить, і саме тому наш розбирач уміє пройти весь потік, не
-розуміючи вмісту.
+So **the third axis is forward movement**, and full movement is exactly 99.
+**The fifth and sixth** twitch slightly all the time between −169 and 169 — that
+is the mouse. **The button mask: bit 5 (value 32) is sprint.** The other three
+axes never once departed from zero in the whole dump, so we do not name them.
 
-Далі рушій бере `NetworkManager::getDescriptor(номер)`, з дескриптора —
-об'єкт, і кличе `setNetUpdate` його мережевого класу.
+### And the server began correcting us at once
 
-### Чому місце чужого солдата ще не читається
+While we sent no input, the controlled-object state arrived **once** — the spawn
+screen's camera. As soon as the action stream started, the server began sending
+it again and again (counter 0, 6, 12 ...) with the soldier's real position:
+`-149.2 158.6 -47.4` with the constructionsite flag at `-151.8, -58.9`.
 
-`SoldierNetworkable::setNetUpdate` (0x5dc640) — це не проста розкладка:
+And that is what we set the camera to — so the 1.25 m hover disappeared too: the
+position from the server has already settled, rather than being the spawn point
+with its offset.
 
-* стан лежить кільцем структур по **0xa0 байтів**
-  (`getUpdateAndMarkUsed` / `getUpdate` і `memcpy` між ними), тобто
-  клієнт тримає кілька останніх станів і інтерполює між ними
+### What we still cannot do
+
+Our player **does not spawn** on a live server, even though the conversation
+goes through completely: there is no break, the ghost stream flows, the server
+keeps us in `admin.listPlayers`. We tried 1, 2, 401, 402, 515, 516 as the group
+number — none produced a soldier.
+
+What follows from this: most likely our `PostRemoteEvent` does not reach the
+event handler at all, in which case neither the team choice nor the spawn choice
+takes effect. An indirect proof is that the server puts us in team 2 regardless
+of whether we ask for 1 or 2.
+
+The experiments that remain as flags: `--start-sim` (adds `NEStartSimulation`),
+`--block-ready` (acknowledges every assembled block with a `NEDataBlockReady`
+event). Neither changed the result, but neither caused a break either.
+
+The next step is to check the delivery itself: send an event whose consequence
+is visible from outside (a chat message, say) and look in the original client to
+see whether it arrived.
+
+## Ghost-stream records: what is already known for certain
+
+`GhostManager::readData` (0x445820 in the Linux server):
+
+```
+2 bits    kind
+16 bits   network id
+kind 1 — a state update:
+    1 bit     whether this is a full state (baseline) rather than a difference
+    N bits    the content's length; N is a field of GhostManager itself (+0x4298),
+              not a constant. On our server it equals 11
+    then      content of exactly that many bits
+kind 3 — the object disappears: disableObject + removeActiveDescriptor
+kind 2 — the engine treats this as a stream error (puts 2 into its field +0x20)
+```
+
+The length in the record is what allows an unknown object to be skipped — that
+is exactly what the engine does, and exactly why our parser can walk the whole
+stream without understanding the content.
+
+Then the engine takes `NetworkManager::getDescriptor(id)`, the object from the
+descriptor, and calls `setNetUpdate` of its networked class.
+
+### Why another soldier's position is not read yet
+
+`SoldierNetworkable::setNetUpdate` (0x5dc640) is not a simple layout:
+
+* the state lies in a ring of **0xa0-byte** structures
+  (`getUpdateAndMarkUsed` / `getUpdate` with a `memcpy` between them), that is
+  the client keeps several of the latest states and interpolates between them
   (`SoldierNetworkable::setPredictedState`);
-* власні поля читаються не одним блоком: 21 біт, 8, 3, 3, а поза тим
-  окремо йде `dice::anim::RagDoll::readCurrentState`;
-* частину полів визначає маска стану (`getGhostStateMask`) і
-  `BaseLineData` — тобто без повного стану різницю не прочитати.
+* its own fields are not read as one block: 21 bits, 8, 3, 3, and beyond that
+  `dice::anim::RagDoll::readCurrentState` runs separately;
+* part of the fields is determined by the state mask (`getGhostStateMask`) and
+  `BaseLineData` — that is, without a full state the difference cannot be read.
 
-Тому заповнювач чужого солдата поки стоїть там, де об'єкт **створено**:
-місце з `CreateObjectEvent` у нас є, а рух — ні. Наступний крок — саме
-ця функція, і починати варто з того, які з полів дає маска стану.
+So another player's soldier placeholder still stands where the object was
+**created**: we have the position from `CreateObjectEvent`, but not the
+movement. The next step is precisely that function, and it is worth starting
+from which of the fields the state mask gives.
 
-## Номер шаблона: чим він **не** є
+## The template number: what it is **not**
 
-Сервер шле в `CreateObjectEvent` номер шаблона, а не ім'я. Щоб малювати
-справжню геометрію замість заповнювача, цей номер треба перекласти в ім'я.
+The server sends a template number in `CreateObjectEvent`, not a name. To draw
+real geometry instead of a placeholder, that number has to be translated into a
+name.
 
-Що з'ясовано:
+What has been established:
 
-* **переліком він не передається.** За всю розмову сервер шле лише три
-  блоки даних: 0, 2 і 5 (`--connect` друкує кожен). Таблиці «номер ->
-  ім'я» серед них немає;
-* **рушій бере шаблон із `ObjectTemplateManager::getTemplate(unsigned)`**
-  (лінукс-сервер, 0x6a1110) — а це звичайний `std::map` за номером. Тобто
-  номери роздаються під час завантаження й мають однаково лягти на обох
-  боках;
-* клієнт створює об'єкт викликом фабрики за цим номером, і при невдачі
-  каже «Failed to create requested object templ id» (`BF2.exe`,
-  `CreateObjectEvent::executeClient`, рядок 0x9f у
-  `CreateObjectEvent.cpp`).
+* **it is not sent as a list.** Over the whole conversation the server sends
+  only three data blocks: 0, 2 and 5 (`--connect` prints each). There is no
+  "number -> name" table among them;
+* **the engine takes the template from
+  `ObjectTemplateManager::getTemplate(unsigned)`** (Linux server, 0x6a1110) —
+  and that is an ordinary `std::map` by number. So the numbers are handed out
+  during loading and must land identically on both sides;
+* the client creates an object by calling the factory with that number, and on
+  failure says "Failed to create requested object templ id" (`BF2.exe`,
+  `CreateObjectEvent::executeClient`, line 0x9f in `CreateObjectEvent.cpp`).
 
-Найпростіше припущення — «номер = порядок створення шаблона» —
-**перевірено й хибне**: `--calibrate` зіставляє номери з іменами за
-місцем об'єкта, і з 21 пари не збіглася **жодна** (наших шаблонів 10594).
+The simplest assumption — "the number is the order of template creation" — has
+been **checked and is wrong**: `--calibrate` matches numbers to names by an
+object's position, and of 21 pairs **not one** matched (we have 10594
+templates).
 
-Але напрям правильний. Видно, що номери йдуть послідовно за порядком
-даних: контрольні точки Dalian дістали 5679, 5680, 5681, 5682 — рівно в
-тому порядку, в якому вони стоять у `GamePlayObjects.con`. Отже
-відрізняється не сама ідея, а **набір і порядок** того, що ми
-завантажуємо.
+But the direction is right. It is visible that the numbers run consecutively in
+the data's order: Dalian's control points got 5679, 5680, 5681, 5682 — exactly
+the order in which they stand in `GamePlayObjects.con`. So what differs is not
+the idea but **the set and the order** of what we load.
 
-Мірило для наступного заходу просте й перевіряється однією командою:
+The measure for the next attempt is simple and checked with one command:
 
 ```bash
 openbf2 --level dalian_plant --calibrate tests/data/bf2-world.bin
 ```
 
-має показати «збіглося 21, ні 0».
+it has to show "matched 21, unmatched 0".
 
-## Чому чужий солдат не рухається
+## Why another player's soldier does not move
 
-Три речі з'ясовано, і одна лишається.
+Three things have been established, and one remains.
 
-**Розкладка солдата інша, ніж у простого об'єкта.** Мережевий клас у
-нього свій — `SoldierNetworkable` (0x5dc640):
+**A soldier's layout differs from a simple object's.** Its networked class is
+its own — `SoldierNetworkable` (0x5dc640):
 
-| | простий об'єкт | солдат |
+| | simple object | soldier |
 |---|---|---|
-| ширина маски | 19 (`readBits ..., 0x13`) | **21** (`readBits ..., 0x15`) |
+| mask width | 19 (`readBits ..., 0x13`) | **21** (`readBits ..., 0x15`) |
 | `getGhostStateMask` | 0x5849b (0x5d6990) | 0x1950ff (0x5dabe0) |
-| біт місця | 1 (`testb $0x2`) | **7** (`testb %dl,%dl; js` за 0x5dc941) |
-| опора | з `BaseLineData` | **`nullVec`**, тобто нуль (0x5dd367) |
-| точність | 0.0005 | **0.01** (0xb6d934) |
+| position bit | 1 (`testb $0x2`) | **7** (`testb %dl,%dl; js` at 0x5dc941) |
+| the reference | from `BaseLineData` | **`nullVec`**, that is zero (0x5dd367) |
+| precision | 0.0005 | **0.01** (0xb6d934) |
 
-Ширина маски — це не свавілля: вона дорівнює кількості бітів у
-`getGhostStateMask` того класу.
+The mask's width is not arbitrary: it equals the number of bits in that class's
+`getGhostStateMask`.
 
-**Хто з об'єктів солдат, знати не треба вгадувати.** `CreatePlayerEvent`
-дає команду гравця, `EnterVehicleEvent` — об'єкт, який той зайняв.
+**Which object is a soldier need not be guessed.** `CreatePlayerEvent` gives the
+player's team, `EnterVehicleEvent` the object they occupied.
 
-**А ось чого бракує.** Записи привидів ми читаємо лише в пакетах **без**
-стану керованого об'єкта — бо не вміємо його пропустити. Після появи
-гравця такий стан їде майже в кожному пакеті: у заміряному заході 389 із
-393. Тобто ми викидаємо майже весь потік, і чужі солдати лишаються там,
-де їх створено.
+**And here is what is missing.** We read ghost records only in packets
+**without** a controlled-object state — because we cannot skip it. After a
+player spawns such a state travels in almost every packet: 389 of 393 in the
+measured run. So we throw away nearly the whole stream, and other players'
+soldiers stay where they were created.
 
-Отже наступний крок конкретний: дочитати `GhostManager::readControlObjectState`
-(0x445c30) до кінця — не заради полів, а щоб знати, **де він
-закінчується**. Далі за ним ідуть звичайні записи, які ми вже вміємо.
+So the next step is concrete: read
+`GhostManager::readControlObjectState` (0x445c30) to the end — not for the
+fields' sake but to know **where it ends**. After it come ordinary records,
+which we already handle.
 
-## Прохід повз стан керованого об'єкта
+## Walking past the controlled-object state
 
-Виписано знаряддям `tools/linuxded/bitfields.py --blocks
-GhostManager::readControlObjectState`, гілка за гілкою:
-
-```
-12                 число на початку
-1 + 31             лічильник (знак і величина; обидві гілки по 31)
-32, 32, 32         опорна точка стиснення -> setCompressionVector
-16                 мережевий номер керованого об'єкта
-1                  прапорець A; якщо 1 -> ще 16 біт (0x445f93)
-1                  прапорець B (0x445db3, після getObject)
-                   якщо 1 -> 1 біт (0x445f33); якщо той 1 -> 16 (0x445f66)
-1                  прапорець C (0x445e52)
-3                  обидві гілки читають по 3 біти (0x445e80 / 0x445fde)
-```
-
-Перевірено даними, а не оком: на знятку `tests/data/bf2-spawned.bin`
-(знято вже після появи, зі своїм вводом) після проходу читається рівно
-стільки записів, скільки назвав заголовок, — **199 пакетів зі 200**.
-Один пакет бере гілку, якої ми ще не з'ясували: у функції є читання по
-10 бітів у циклі (0x44633a). Такий пакет просто не дає записів.
-
-Наслідок одразу видно на живому сервері: оновлень стану в потоці стало
-**521 замість 48**.
-
-## Чому чужого гравця все одно немає
-
-Тепер точно відомо, що це **не** розбір. Об'єкт чужого гравця (1602)
-**жодного разу не з'являється в записах привидів**, тоді як наш власний
-(1794) у них є:
+Written out with `tools/linuxded/bitfields.py --blocks
+GhostManager::readControlObjectState`, branch by branch:
 
 ```
-гравець 1 -> об'єкт 1602: у записах привидів НЕМАЄ
-гравець 2 -> об'єкт 1794: у записах привидів Є
+12                 a number at the start
+1 + 31             a counter (sign and magnitude; both branches 31)
+32, 32, 32         the compression reference point -> setCompressionVector
+16                 the network id of the controlled object
+1                  flag A; if 1 -> 16 more bits (0x445f93)
+1                  flag B (0x445db3, after getObject)
+                   if 1 -> 1 bit (0x445f33); if that is 1 -> 16 (0x445f66)
+1                  flag C (0x445e52)
+3                  both branches read 3 bits (0x445e80 / 0x445fde)
 ```
 
-Отже сервер нам його не шле. Наступне питання — не розкладка, а
-**область видимості**: за яких умов рушій кладе об'єкт у потік для
-конкретного клієнта. Шукати в `GhostManager` (кого й коли додає в
-активні дескриптори) і в `Player::getUpdateFrequencyType` /
-`Object::getUpdateFrequency`.
+Verified with data rather than by eye: on the capture
+`tests/data/bf2-spawned.bin` (taken after spawning, with our own input) after
+the walk exactly as many records are read as the header named — **199 packets of
+200**. One packet takes a branch we have not worked out yet: the function has a
+read of 10 bits in a loop (0x44633a). Such a packet simply yields no records.
 
-## Опора стисненого вектора — попереднє місце самого об'єкта
+The consequence is visible at once on a live server: state updates in the
+stream went to **521 instead of 48**.
 
-У розкладці солдата аргументом опори стоїть `dice::hfe::nullVec`
-(0x5dd367), і спершу ми взяли його буквально. Вимірювання показало інше.
+## Why another player is still absent
 
-Дослід простий і повторюваний: два наші клієнти на одному сервері,
-обидва з'являються, і другий друкує, що прочитав про першого.
-
-```
-з нулем за опору:        чужий солдат 1794 -> -0.3 0.0 13.4
-з опорою потоку:         чужий солдат 1794 -> -50.3 185.0 -272.8
-з попереднім місцем:     чужий солдат 1794 -> -186.3 154.3 -35.5
-```
-
-Перше — чиста різниця в метрах. Друге — та різниця, додана не до тієї
-точки (опорою тоді була камера екрана появи). Третє лягає на карту й на
-ту саму висоту, що й решта солдатів (154.3).
-
-Отже база стисненого вектора — **останнє відоме місце цього ж об'єкта**,
-а не одна точка на весь потік. Поки об'єкта не бачили, за базу править
-місце з `CreateObjectEvent`.
-
-Мірило пройдено: місце чужого гравця приходить із потоку привидів і
-лягає на карту.
-
-## Виправлення: місце чужого солдата ми читати ще НЕ вміємо
-
-Попередній розділ («опора — попереднє місце самого об'єкта») зроблено з
-**одного** вдалого зразка, і це виявилося передчасним висновком. Вимір на
-двох клієнтах, де обидва стоять на місці, показав інше:
+Now it is known for certain that this is **not** the parsing. The other
+player's object (1602) **never once appears in the ghost records**, while our
+own (1794) does:
 
 ```
-чужий солдат 1602 -> -138.0 -128.8 22.1        (рельєф там 154)
-чужий солдат 1794 -> -6.7e27 0.0 -0.0
+player 1 -> object 1602: NOT in the ghost records
+player 2 -> object 1794: IS in the ghost records
 ```
 
-Причина видна в самій функції. У `SoldierNetworkable::setNetUpdate`
-місце лежить **не одразу за маскою**: перед ним ідуть інші поля за
-іншими бітами маски, і принаймні одне з них читається першим —
+So the server does not send it to us. The next question is not the layout but
+the **visibility scope**: under what conditions the engine puts an object into
+the stream for a particular client. To be looked for in `GhostManager` (who is
+added to the active descriptors and when) and in
+`Player::getUpdateFrequencyType` / `Object::getUpdateFrequency`.
+
+## The compressed vector's reference is the object's own previous position
+
+In the soldier's layout the reference argument is `dice::hfe::nullVec`
+(0x5dd367), and at first we took it literally. Measurement showed otherwise.
+
+The experiment is simple and repeatable: two of our clients on one server, both
+spawned, and the second prints what it read about the first.
 
 ```
-маска 21 біт
-якщо маска & 0x40  -> 8 бітів     (0x5dc753)
-якщо маска & 0x20  -> 3 біти      (0x5dc7f3, 0x5dc83f)
+with zero as the reference:      other soldier 1794 -> -0.3 0.0 13.4
+with the stream's reference:     other soldier 1794 -> -50.3 185.0 -272.8
+with the previous position:      other soldier 1794 -> -186.3 154.3 -35.5
+```
+
+The first is a pure difference in metres. The second is that difference added to
+the wrong point (the reference then was the spawn screen's camera). The third
+lands on the map and at the same height as the other soldiers (154.3).
+
+So the compressed vector's base is **the last known position of that same
+object**, not a single point for the whole stream. Until the object has been
+seen, the position from `CreateObjectEvent` serves as the base.
+
+The measure is passed: another player's position arrives from the ghost stream
+and lands on the map.
+
+## Correction: we can NOT read another soldier's position yet
+
+The previous section ("the reference is the object's own previous position") was
+done from **one** successful sample, and that turned out to be a premature
+conclusion. A measurement with two clients, both standing still, showed
+otherwise:
+
+```
+other soldier 1602 -> -138.0 -128.8 22.1        (the terrain there is 154)
+other soldier 1794 -> -6.7e27 0.0 -0.0
+```
+
+The cause is visible in the function itself. In
+`SoldierNetworkable::setNetUpdate` the position does **not** lie immediately
+after the mask: other fields under other mask bits come before it, and at least
+one of them is read first —
+
+```
+mask 21 bits
+if mask & 0x40  -> 8 bits     (0x5dc753)
+if mask & 0x20  -> 3 bits     (0x5dc7f3, 0x5dc83f)
 ...
-місце                              (0x5dd35f, під іншим бітом)
+the position                   (0x5dd35f, under a different bit)
 ```
 
-`bitfields.py --blocks SoldierNetworkable::setNetUpdate` показує понад
-двадцять місць читання, серед них навіть рядки. Тобто це не «уточнити
-біт», а дочитати функцію цілком — окремий захід за правилом 3.
+`bitfields.py --blocks SoldierNetworkable::setNetUpdate` shows over twenty read
+sites, strings among them. So this is not "adjust a bit" but reading the whole
+function through — a separate pass under rule 3.
 
-Поки цього не зроблено, клієнт **не показує того, чого не вміє
-прочитати**: місце солдата приймається лише якщо воно скінченне, лежить
-у межах карти й не далі кількох метрів від землі. Скільки відкинуто —
-друкується у звіті, щоб борг не сховався за фільтром.
+Until that is done, the client **does not show what it cannot read**: a
+soldier's position is accepted only if it is finite, lies within the map's
+bounds and is no more than a few metres from the ground. How many were rejected
+is printed in the report, so the debt does not hide behind the filter.
 
-Мірило лишається те саме: слід чужого солдата має мати «над землею в
-середньому 0.0 м», а коли той стоїть — «поїхав на 0.0 м».
+The measure stays the same: another soldier's track has to have "above the
+ground 0.0 m on average", and when he stands still, "travelled 0.0 m".
 
-## Розкладка стану солдата — з клієнта
+## The soldier state's layout — from the client
 
-Дочитано в `BF2.exe`, `SoldierNetworkable::setNetUpdate` (0x62d4e0).
-Декомпіляція клієнта дає порядок полів прямо, з гілками — на відміну від
-читання дизасемблера за адресами, на якому ми двічі помилилися.
-
-```
-маска                      21 біт
-якщо маска & 0x40          8 біт, потім 1 біт
-якщо маска & 0x20          3 біти, потім 3 біти      (діапазон 0..4)
-якщо маска & 0x8000        інша гілка (ragdoll) — далі не наше
-якщо маска & 0x1           МІСЦЕ: стиснений вектор, точність 0.001
-якщо маска & 0x80          швидкість (точність 0.001 / 0.01)
-якщо маска & 0x2           12 біт -> рискання, розгортається в +-360
-якщо маска & 0x4           12 біт -> тангаж, +-90
-якщо маска & 0x8           12 біт -> +-180
-якщо маска & 0x10          12 біт -> +-90
-далі                       ще з десяток полів
-```
-
-Дві помилки, які це виправило:
-
-* **місце вмикає біт 0, а не 7.** Біт 7 — це швидкість. Читаючи з нього,
-  ми отримували числа на кшталт -6.7e27;
-* **перед місцем ідуть інші поля.** Без пропуску 8+1 бітів (маска 0x40)
-  і 3+3 бітів (0x20) читання зсувається.
-
-Опора — **вектор стиснення потоку**, той самий, що ставить стан
-керованого об'єкта: `FUN_0062bd60` читає вектор із поля `потік+0x54`.
-Нуль (`nullVec`) передають сусідні поля, не місце.
-
-Перевірка на живому сервері: чужий гравець 1602 дає стійкий слід —
+Read through in `BF2.exe`, `SoldierNetworkable::setNetUpdate` (0x62d4e0). The
+client's decompilation gives the field order directly, with the branches — as
+opposed to reading the disassembly by addresses, which we got wrong twice.
 
 ```
-чужий солдат 1602 -> -177.9 154.2 -106.4
-чужий солдат 1602 -> -177.6 154.2 -106.7
-слід солдата 1602: оновлень 4, поїхав на 0.4 м, над землею в середньому 1.00 м
+mask                       21 bits
+if mask & 0x40             8 bits, then 1 bit
+if mask & 0x20             3 bits, then 3 bits       (range 0..4)
+if mask & 0x8000           a different branch (ragdoll) — not ours from here
+if mask & 0x1              THE POSITION: a compressed vector, precision 0.001
+if mask & 0x80             velocity (precision 0.001 / 0.01)
+if mask & 0x2              12 bits -> yaw, expanded to +-360
+if mask & 0x4              12 bits -> pitch, +-90
+if mask & 0x8              12 bits -> +-180
+if mask & 0x10             12 bits -> +-90
+then                       a dozen more fields
 ```
 
-Числа на карті, висота стала. Рівно 1.00 м над рельєфом — стала різниця,
-а не дрейф: схоже, мережеве місце солдата це початок об'єкта, а не ноги.
-Звідки саме береться цей метр — **ще не з'ясовано**, тому заповнювач
-поки малюється там, де прийшло.
+Two mistakes this fixed:
+
+* **the position is enabled by bit 0, not bit 7.** Bit 7 is velocity. Reading
+  from it we were getting numbers like -6.7e27;
+* **other fields come before the position.** Without skipping 8+1 bits (mask
+  0x40) and 3+3 bits (0x20) the read is shifted.
+
+The reference is the **stream's compression vector**, the same one the
+controlled-object state sets: `FUN_0062bd60` reads the vector from the field
+`stream+0x54`. It is the neighbouring fields that are passed `nullVec`, not the
+position.
+
+A check on a live server: player 1602 gives a stable track —
+
+```
+other soldier 1602 -> -177.9 154.2 -106.4
+other soldier 1602 -> -177.6 154.2 -106.7
+soldier 1602's track: 4 updates, travelled 0.4 m, above the ground 1.00 m on average
+```
+
+The numbers are on the map and the height is steady. Exactly 1.00 m above the
+terrain is a constant difference, not a drift: it looks as though a soldier's
+networked position is the object's origin rather than his feet. Where exactly
+that metre comes from is **not established yet**, so the placeholder is drawn
+where it arrived.

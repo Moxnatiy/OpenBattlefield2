@@ -1,14 +1,14 @@
 #pragma once
-// Ігровий сервер.
+// The game server.
 //
-// У BF2 сервер працює **завжди**, навіть в одиночній грі: рушій піднімає
-// локальний сервер і під'єднується до нього петлею в пам'яті. Тому це не
-// «мультиплеєрна добавка», а ядро — світом володіє сервер, а клієнт лише
-// показує те, що йому надіслали.
+// In BF2 the server runs **always**, even in a single-player game: the engine
+// brings up a local server and connects to it through an in-memory loop. So this
+// is not a "multiplayer add-on" but the core — the server owns the world and the
+// client only shows what it was sent.
 //
-// Структура повторює оригінал (`BF2/Game/GameServer/` за шляхами з
-// вихідників): сервер тримає стан світу, приймає під'єднання, розсилає
-// оновлення об'єктів.
+// The structure follows the original (`BF2/Game/GameServer/` by the paths from
+// the sources): the server holds the world's state, accepts connections and
+// broadcasts object updates.
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -26,25 +26,25 @@
 
 namespace obf2::server {
 
-// Стан раунду. В оригіналі це `dice::hfe::GameStatus`, і всю гру крутить
-// машина станів `ServerGameLogic::update`.
+// The round's state. In the original this is `dice::hfe::GameStatus`, and the
+// whole game is driven by the `ServerGameLogic::update` state machine.
 enum class GameStatus { PreGame, Playing, EndGame };
 
-// Положення прапора на щоглі. Змінити власника точки можна лише внизу —
-// звідси й «нейтралізація» перед захопленням.
+// The flag's position on the pole. A point's owner can only change at the
+// bottom — hence the "neutralisation" before a capture.
 enum class FlagPosition { Bottom, Middle, Top };
 
-// Квитки команди. Втрата дробова (витік за секунду), а показуємо ціле.
+// A team's tickets. The loss is fractional (bleed per second), while we show an integer.
 struct TeamState {
   int tickets = 0;
-  float fraction = 0.0f;              // накопичена дробова частина втрати
-  float ticketChangePerSecond = 0.0f;  // < 0 — тече
-  int ticketState = 0;                 // рівень попередження для інтерфейсу
-  float areaValue = 0.0f;              // сума ваг утримуваних точок
+  float fraction = 0.0f;              // the accumulated fractional part of the loss
+  float ticketChangePerSecond = 0.0f;  // < 0 means bleeding
+  int ticketState = 0;                 // the warning level for the interface
+  float areaValue = 0.0f;              // the sum of the held points' weights
   int controlPoints = 0;
 };
 
-// Об'єкт у світі сервера.
+// An object in the server's world.
 struct WorldObject {
   std::uint32_t id = 0;
   std::string templateName;
@@ -53,11 +53,11 @@ struct WorldObject {
   Vec3f velocity;
   bool onGround = false;
 
-  // Статику надсилаємо раз при появі, рухоме — щотакту. Без цього поділу
-  // 907 будинків їхали б у мережу шістдесят разів на секунду.
+  // Statics are sent once on spawn, moving things every tick. Without that split
+  // 907 buildings would go over the network sixty times a second.
   bool dynamic = false;
-  std::uint32_t ownerPlayerId = 0;  // 0 = нічий
-  // Техніка зі спавнера: щоб знати, що переставляти при зміні власника точки.
+  std::uint32_t ownerPlayerId = 0;  // 0 = nobody's
+  // A vehicle from a spawner: so we know what to re-place when a point's owner changes.
   int spawnerIndex = -1;
 };
 
@@ -66,30 +66,30 @@ struct Player {
   std::string name;
   std::unique_ptr<net::Connection> connection;
   bool acknowledged = false;
-  // Чи надіслали ми цьому гравцеві початковий стан світу.
+  // Whether we have sent this player the world's initial state.
   bool worldSent = false;
 
-  net::PlayerInput input;          // останній отриманий ввід
-  std::uint32_t lastSequence = 0;  // щоб не застосувати старий пакет двічі
-  std::uint32_t soldierId = 0;     // об'єкт, яким гравець керує
+  net::PlayerInput input;          // the last input received
+  std::uint32_t lastSequence = 0;  // so an old packet is not applied twice
+  std::uint32_t soldierId = 0;     // the object the player controls
 
   int team = 1;
-  // Обране місце появи — номер контрольної точки, з якої гравець просив
-  // з'явитися. Нуль означає «ще не обрав», і це не наша вигадка: у
-  // рушії сервер спавнить рівно тих, у кого `Player::getSpawnGroup() > 0`
-  // (`ServerGameLogic::uPlayingSpawning`), а виставляє це поле подія
-  // `NESelectSpawnGroup` — див. docs/functions/network-events.md.
+  // The chosen spawn point — the id of the control point the player asked to
+  // spawn from. Zero means "has not chosen yet", and that is not our invention:
+  // in the engine the server spawns exactly those whose `Player::getSpawnGroup() > 0`
+  // (`ServerGameLogic::uPlayingSpawning`), and the field is set by the event
+  // `NESelectSpawnGroup` — see docs/functions/network-events.md.
   int spawnGroup = 0;
-  // Обраний набір (`NESelectKit`). Поки лише запам'ятовуємо: спорядження
-  // наборів ще не розібране.
+  // The chosen kit (`NESelectKit`). Only remembered for now: the kits'
+  // equipment has not been taken apart yet.
   int kit = 0;
   bool alive = false;
-  // Здоров'я з даних солдата (`ObjectTemplate.armor.maxHitPoints 100`).
+  // Health from the soldier's data (`ObjectTemplate.armor.maxHitPoints 100`).
   float health = 100.0f;
-  // Пливе. Перемикається з гістерезисом: пороги входу й виходу різні
-  // (`phy-soldier-start-float` / `stop-float`), інакше на межі смикається.
+  // Floating. Switched with hysteresis: the entry and exit thresholds differ
+  // (`phy-soldier-start-float` / `stop-float`), otherwise it jitters at the boundary.
   bool swimming = false;
-  float respawnTimer = 0.0f;  // скільки лишилося чекати до появи
+  float respawnTimer = 0.0f;  // how long is left to wait before spawning
 };
 
 struct ServerSettings {
@@ -97,55 +97,55 @@ struct ServerSettings {
   std::string gameMode = "gpm_cq";
   int maxPlayers = 16;
 
-  // Частота симуляції. Не «звична» стала: `WorldPref::mTickTime` лежить
-  // у `.data` лінукс-сервера за 0xf68c50 і дорівнює 0.0333333333333333
-  // (double), тобто рівно 1/30 с. Див. `obf2::server::kTickTime`.
+  // The simulation's rate. Not a "customary" constant: `WorldPref::mTickTime`
+  // lies in the Linux server's `.data` at 0xf68c50 and equals 0.0333333333333333
+  // (double), that is exactly 1/30 s. See `obf2::server::kTickTime`.
   float tickRate = 30.0f;
 
-  // Швидкості солдата беруться з констант рушія (`phy-soldier-run-speed`
-  // 3.9 і `phy-soldier-sprint-speed` 7), але лишаються тут, щоб тест міг
-  // задати свої. Нуль означає «взяти з фізики».
+  // The soldier's speeds come from the engine's constants (`phy-soldier-run-speed`
+  // 3.9 and `phy-soldier-sprint-speed` 7), but stay here so a test can set its
+  // own. Zero means "take it from the physics".
   float walkSpeed = 0.0f;
   float sprintSpeed = 0.0f;
 
-  // Радіус солдата для зіткнень — з `coll-soldier-radius` (0.25).
-  // Лишається тут лише для сумісності; форму задає PhysicsConstants.
+  // The soldier's collision radius — from `coll-soldier-radius` (0.25).
+  // Kept here only for compatibility; the shape is set by PhysicsConstants.
   float soldierRadius = 0.25f;
-  // Здоров'я солдата: у всіх наборах BF2 це рівно 100.
+  // The soldier's health: in every BF2 kit it is exactly 100.
   float soldierMaxHealth = 100.0f;
   Vec3f spawnPosition{0.0f, 0.0f, 0.0f};
   std::string soldierTemplate = "player_soldier";
 
-  // Константи руху з даних гри (Vars.Set phy-soldier-*).
+  // Movement constants from the game's data (Vars.Set phy-soldier-*).
   PhysicsConstants physics;
 
-  // Скільки секунд гравець чекає до появи. В оригіналі це залежить від
-  // режиму й квитків; поки що стала.
+  // How many seconds a player waits before spawning. In the original it depends
+  // on the mode and the tickets; a constant for now.
   float respawnDelay = 3.0f;
-  // З'являтися одразу після підтвердження, не чекаючи вибору місця.
-  // **Це наше, а не з рушія**: в оригіналі такого шляху немає взагалі,
-  // справжній клієнт завжди проходить екран появи і шле
-  // `NESelectSpawnGroup`. Прапорець потрібен тестам і безголовим
-  // запускам; застосунок гасить його, щойно показує екран появи.
+  // Spawn right after the acknowledgement, without waiting for a point to be chosen.
+  // **This is ours, not the engine's**: the original has no such path at all,
+  // and a real client always goes through the spawn screen and sends
+  // `NESelectSpawnGroup`. The flag is for tests and headless runs; the
+  // application clears it as soon as it shows the spawn screen.
   bool spawnOnJoin = true;
 
-  // Скільки гравців потрібно, щоб раунд почався (`sv.numPlayersNeededToStart`,
-  // типово 2). Поки їх менше, гра тримає посеред екрана напис
+  // How many players are needed for a round to start (`sv.numPlayersNeededToStart`,
+  // 2 by default). While there are fewer, the game holds a caption in the middle
   // HUD_STARTOFROUND_NRPLAYERSNEEDED.
   int playersNeededToStart = 2;
 
-  // --- квитки (значення з даних і з коду оригіналу) ---
+  // --- tickets (values from the data and from the original's code) ---
   //
-  // Стартова кількість задається `gameLogic.setDefaultNumberOfTickets` у
-  // GameLogicInit.con (для bf2 — 250 на команду), у самому рушії за
-  // замовчуванням 50. Множник `sv.ticketRatio` — 100 %.
+  // The starting count is set by `gameLogic.setDefaultNumberOfTickets` in
+  // GameLogicInit.con (250 per team for bf2), while the engine's own default is
+  // 50. The multiplier `sv.ticketRatio` is 100 %.
   int defaultTickets[3] = {0, 50, 50};
   float ticketRatio = 100.0f;
-  // Швидкість витоку при повній перевазі противника, квитків за хвилину.
-  // У ServerGameLogic::reset це 10 на команду.
+  // The bleed rate at the enemy's full advantage, tickets per minute.
+  // In ServerGameLogic::reset it is 10 per team.
   float ticketLossPerMin[3] = {0.0f, 10.0f, 10.0f};
-  // Коли в команди не лишилось ні точок, ні живих — вона тече ось так
-  // (у конструкторі оригіналу 1000 за хвилину, тобто майже миттєво).
+  // When a team has neither points nor anyone alive left, it bleeds like this
+  // (1000 per minute in the original's constructor, that is almost instantly).
   float ticketLossAtEndPerMin = 1000.0f;
 };
 
@@ -153,38 +153,38 @@ class GameServer {
  public:
   explicit GameServer(ServerSettings settings) : settings_(std::move(settings)) {}
 
-  // Наповнює світ статичними об'єктами рівня. Саме сервер вирішує, що у
-  // світі є, — клієнт про це дізнається лише з мережі.
+  // Fills the world with the level's static objects. It is the server that
+  // decides what is in the world — the client only learns it from the network.
   void loadWorld(const level::Level& level, std::size_t limit = 0);
 
-  // Рельєф для зіткнення з землею. Без нього солдат падає без кінця.
+  // The terrain, for collision with the ground. Without it a soldier falls forever.
   void setTerrain(const level::Level* level) { terrain_ = level; }
 
-  // Геометрія зіткнень рівня. Будує її застосунок (у нього є VFS і реєстр),
-  // а володіє сервер — бо саме він вирішує, куди гравець дійшов.
+  // The level's collision geometry. The application builds it (it has the VFS and
+  // the registry) and the server owns it — because it decides where the player got to.
   void setCollision(std::unique_ptr<CollisionWorld> world) { collision_ = std::move(world); }
   const CollisionWorld* collision() const { return collision_.get(); }
 
-  // Логіка режиму: контрольні точки й спавнери техніки.
+  // The mode's logic: control points and vehicle spawners.
   void setGameplay(level::GameplayObjects gameplay);
 
-  // Стан захоплення однієї точки. Модель — як у gpm_cq.py: прапор їде
-  // вгору-вниз, власник змінюється лише коли прапор унизу.
+  // One point's capture state. The model is as in gpm_cq.py: the flag travels up
+  // and down, and the owner changes only when the flag is at the bottom.
   struct ControlPointState {
     int id = 0;
     std::string nameKey;
     Vec3f position;
     float radius = 10.0f;
-    int team = 0;  // власник; 0 — нейтральна
+    int team = 0;  // the owner; 0 is neutral
 
-    int flagTeam = 0;        // чий прапор зараз на щоглі
-    float takeOver = 0.0f;   // 0 — низ, 1 — верх
+    int flagTeam = 0;        // whose flag is on the pole right now
+    float takeOver = 0.0f;   // 0 is the bottom, 1 the top
     float takeOverChangePerSecond = 0.0f;
     FlagPosition flagPosition = FlagPosition::Bottom;
     int occupantsTeam1 = 0;
     int occupantsTeam2 = 0;
 
-    // З шаблону ControlPoint у GamePlayObjects.con.
+    // From the ControlPoint template in GamePlayObjects.con.
     float timeToGetControl = 20.0f;
     float timeToLoseControl = 20.0f;
     float areaValueTeam1 = 0.0f;
@@ -193,7 +193,7 @@ class GameServer {
     int onlyTakeableByTeam = 0;
     int enemyTicketLossWhenCaptured = 0;
 
-    // Сумісність із попереднім виглядом: скільки лишилось до зміни.
+    // Compatibility with the previous shape: how much is left until the change.
     int capturingTeam() const { return flagTeam; }
     float progress() const { return takeOver; }
   };
@@ -202,26 +202,26 @@ class GameServer {
   GameStatus status() const { return status_; }
   const TeamState& team(int index) const { return teams_[index == 2 ? 2 : 1]; }
   int tickets(int index) const { return team(index).tickets; }
-  // 0 — раунд триває, інакше номер команди-переможця.
+  // 0 means the round goes on, otherwise the winning team's number.
   int winner() const { return winner_; }
   float groundHeightAt(const Vec3f& position) const;
 
-  // Вбиває гравця: команда втрачає квиток, далі чекання й нова поява.
-  // Так само, як onPlayerDeath у gpm_cq.py.
+  // Kills a player: the team loses a ticket, then comes the wait and a new spawn.
+  // Just as onPlayerDeath does in gpm_cq.py.
   void killPlayer(std::uint32_t playerId, std::string_view reason);
 
-  // Гравець натиснув DONE на екрані появи: команда, набір і номер
-  // контрольної точки, з якої він хоче з'явитися. Нуль у `spawnGroup`
-  // означає «будь-яка своя точка». Сам солдат з'явиться наступним
-  // тактом — так само, як у рушії, де це робить прохід
-  // `ServerGameLogic::uPlayingSpawning`, а не сама подія.
+  // The player pressed DONE on the spawn screen: the team, the kit and the id of
+  // the control point they want to spawn from. Zero in `spawnGroup` means
+  // "any point of ours". The soldier itself appears on the next tick — just as
+  // in the engine, where it is done by the `ServerGameLogic::uPlayingSpawning`
+  // pass rather than by the event itself.
   bool requestSpawn(std::uint32_t playerId, int team, int kit, int spawnGroup);
 
-  // Приймає нове під'єднання. Сервер бере канал у власність.
+  // Accepts a new connection. The server takes ownership of the channel.
   void accept(std::unique_ptr<net::Connection> connection);
 
-  // Розбирає вхідні пакети й крутить симуляцію фіксованим кроком.
-  // deltaSeconds — реальний час кадру; всередині він накопичується.
+  // Parses incoming packets and runs the simulation at a fixed step.
+  // deltaSeconds is the frame's real time; inside it is accumulated.
   void tick(float deltaSeconds);
 
   std::uint64_t tickCount() const { return tickCount_; }
@@ -243,24 +243,24 @@ class GameServer {
   void broadcastDynamic();
   WorldObject* findObject(std::uint32_t id);
   std::uint32_t spawnSoldier(Player& player);
-  // Ставить техніку зі спавнерів: шаблон залежить від того, чия точка,
-  // до якої спавнер прив'язаний.
+  // Places vehicles from the spawners: the template depends on whose the point
+  // the spawner is bound to is.
   void spawnVehicles();
   void updateControlPoints(float step);
-  // Перерахунок швидкості підйому прапора однієї точки.
+  // Recomputes the flag's raising rate for one point.
   void refreshTakeOver(ControlPointState& point);
-  // Прапор дійшов до краю: захоплення або нейтралізація.
+  // The flag reached an end: a capture or a neutralisation.
   void onFlagReachedEnd(ControlPointState& point, bool top);
-  // Витік квитків залежно від того, хто скільки точок тримає.
+  // The ticket bleed depending on who holds how many points.
   void updateTicketLoss();
   void updateTickets(float step);
   void endGame(int winner);
-  // Де з'явитися гравцеві: найближча точка своєї команди, інакше стартова.
-  // Вибір точки появи за логікою рушія (див. docs/functions/spawn.md).
-  // `spawnGroup` — номер контрольної точки, якою обмежений вибір. Нуль
-  // знімає обмеження. Група в рушії — це і є набір точок одного прапора
-  // (`SpawnGroup::getControlPointId`), а всередині групи точка береться
-  // випадково (`SpawnGroup::getSpawnPoint`).
+  // Where a player spawns: the nearest point of their own team, otherwise the start.
+  // The point is picked by the engine's logic (see docs/functions/spawn.md).
+  // `spawnGroup` is the id of the control point the choice is limited to. Zero
+  // lifts the limit. A group in the engine is exactly the set of points of one
+  // flag (`SpawnGroup::getControlPointId`), and within a group the point is taken
+  // at random (`SpawnGroup::getSpawnPoint`).
   const level::SpawnPoint* pickSpawnPoint(int team, bool forHuman, int spawnGroup) const;
   bool spawnPointActive(const level::SpawnPoint& spawn, int team, bool forHuman) const;
   Vec3f chooseSpawn(int team, int spawnGroup);
@@ -284,12 +284,12 @@ class GameServer {
   long long packetsReceived_ = 0;
   std::vector<std::string> log_;
 
-  // Час у світі — потрібен для затримки повторної появи на тій самій точці
-  // (`spawnPreventionDelay`), і скільки його минуло з останньої появи.
+  // The world's time — needed for the delay before spawning again at the same
+  // point (`spawnPreventionDelay`), and how much of it has passed since the last spawn.
   float worldTime_ = 0.0f;
   std::map<const level::SpawnPoint*, float> lastSpawnTime_;
-  // Вибір точки в оригіналі випадковий (`rand() % кількість`). Свій
-  // генератор тримаємо, щоб тести лишалися відтворюваними.
+  // In the original the point is chosen at random (`rand() % count`). We keep our
+  // own generator so the tests stay reproducible.
   mutable std::minstd_rand random_{12345};
 };
 

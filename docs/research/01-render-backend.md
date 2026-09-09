@@ -1,40 +1,42 @@
-# Рішення: SDL3 + SDL_GPU як графічний бекенд
+# Decision: SDL3 + SDL_GPU as the graphics backend
 
-Дата: 2026-08-25. Статус: **прийнято**, реалізовано в `src/gfx`.
+Date: 2026-08-25. Status: **accepted**, implemented in `src/gfx`.
 
-## Контекст
+## Context
 
-Цілі проєкту — arm64 macOS (основна робоча платформа) і x86_64 Windows
-(відкладена, але база має лишатися портованою). Project Dalian, найближчий
-до нас проєкт, використовує SDL2 + OpenGL.
+The project's targets are arm64 macOS (the main working platform) and
+x86_64 Windows (deferred, but the base has to stay portable). Project
+Dalian, the project closest to ours, uses SDL2 + OpenGL.
 
-## Чому не OpenGL
+## Why not OpenGL
 
-На macOS OpenGL заморожений на версії 4.1 і має статус deprecated: немає
-compute-шейдерів вище 4.3, немає нічого сучаснішого, і Apple може прибрати
-його будь-коли. Це означає, що на **основній** платформі проєкту ми з першого
-дня будували б на тому, що вмирає.
+On macOS, OpenGL is frozen at version 4.1 and deprecated: no compute
+shaders above 4.3, nothing newer, and Apple can drop it at any time. That
+would mean building on something dying from day one, on the project's
+**main** platform.
 
-## Рішення
+## The decision
 
-`SDL_GPU` — графічна абстракція всередині SDL3. Один і той самий код рендера
-лягає на Metal (macOS), Vulkan і D3D12 (Windows), без платформних гілок у
-нашому коді. SDL3 заодно закриває вікно, ввід, аудіо й таймери.
+`SDL_GPU` — the graphics abstraction inside SDL3. The same renderer code
+maps onto Metal (macOS), Vulkan and D3D12 (Windows) with no platform
+branches in our code. SDL3 also covers the window, input, audio and
+timers.
 
-Ціна: шейдери потрібно постачати у форматі кожного бекенда — MSL для Metal,
-SPIR-V для Vulkan, DXIL для D3D12. Тобто у збірку рано чи пізно доведеться
-завести крос-компіляцію шейдерів (SDL_shadercross або власний крок на
-DXC + SPIRV-Cross). Поки шейдерів нема, ця ціна ще не сплачена.
+The price: shaders have to be shipped in each backend's format — MSL for
+Metal, SPIR-V for Vulkan, DXIL for D3D12. Sooner or later the build will
+need shader cross-compilation (SDL_shadercross, or our own step over
+DXC + SPIRV-Cross). While there are no shaders, that price is not yet
+paid.
 
-Альтернатива, яку відкинули: bgfx — зріліший і теж крос-платформний, але тягне
-власну екосистему й дублює те, що SDL3 уже дає (вікно, ввід), тоді як SDL3
-нам потрібен у будь-якому разі.
+The alternative we rejected: bgfx — more mature and cross-platform too,
+but it pulls in its own ecosystem and duplicates what SDL3 already gives
+us (window, input), while SDL3 is needed either way.
 
-## Перевірено
+## Verified
 
 ```
 OpenBattlefield2 | macos/arm64
-мод: Game Files/mods/bf2 | архівів: 10 | точок монтування: 11
-GPU-бекенд: metal
-кадрів намальовано: 60
+mod: Game Files/mods/bf2 | archives: 10 | mount points: 11
+GPU backend: metal
+frames drawn: 60
 ```

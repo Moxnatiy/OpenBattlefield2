@@ -6,15 +6,15 @@
 namespace obf2::net::bf2 {
 
 bool WorldView::isSoldier(std::uint16_t id) const {
-  // Солдат — це об'єкт, який зайняв гравець. Каже це сам сервер подією
-  // `EnterVehicleEvent` (тип 9), тож здогадів тут немає.
+  // A soldier is an object a player occupied. The server says so itself with the
+  // `EnterVehicleEvent` (type 9), so there is no guesswork here.
   return owners_.find(id) != owners_.end();
 }
 
 Vec3f WorldView::referenceFor(std::uint16_t id) const {
-  // Місце солдата пакується відносно **вектора стиснення потоку**:
-  // `BF2.exe`, 0x62bd60 читає вектор із поля `потік+0x54`, куди його
-  // поклав стан керованого об'єкта.
+  // A soldier's position is packed relative to the **stream's compression
+  // vector**: `BF2.exe`, 0x62bd60 reads the vector from the field `stream+0x54`,
+  // where the controlled-object state put it.
   if (isSoldier(id)) return compressionReference_;
   const auto found = objects_.find(id);
   if (found != objects_.end()) return found->second.position;
@@ -23,27 +23,27 @@ Vec3f WorldView::referenceFor(std::uint16_t id) const {
 
 bool WorldView::looksSane(const Vec3f& at, bool soldier) const {
   if (!std::isfinite(at.x) || !std::isfinite(at.y) || !std::isfinite(at.z)) return false;
-  // Карти BF2 не більші за 2048 метрів у поперечнику (`GLSWorldSizeX`,
-  // типове 2048 — див. spawnGroupWorldPos), тож усе поза цим — сміття.
+  // BF2's maps are no larger than 2048 metres across (`GLSWorldSizeX`, 2048 by
+  // default — see spawnGroupWorldPos), so anything outside that is rubbish.
   if (std::abs(at.x) > 1024.0f || std::abs(at.z) > 1024.0f) return false;
 
-  // Перевірку по землі робимо **лише для солдата**: він на ній стоїть.
-  // Техніка й майно бувають і на дахах, і на кранах — там перевищення в
-  // десятки метрів звичайне, і відкидати їх було б помилкою.
+  // The ground check is done **for a soldier only**: he stands on it. Vehicles
+  // and property are found on roofs and cranes too — dozens of metres above the
+  // ground is ordinary there, and rejecting them would be a mistake.
   if (!soldier || !ground_) return true;
   const float above = at.y - ground_(at);
   return above > -5.0f && above < 5.0f;
 }
 
 void WorldView::feed(std::span<const std::byte> packet) {
-  // 1. Події: хто грає, які об'єкти є, хто чим керує.
+  // 1. The events: who is playing, which objects exist, who controls what.
   for (const Event& event : readEvents(packet)) {
     if (event.player) {
       RemotePlayer& player = players_[event.player->id];
       player.name = event.player->name;
       player.team = static_cast<int>(event.player->team);
-      // Себе впізнаємо за хвостом імені: сервер складає його як «тег
-      // клану, пробіл, ім'я», і на сервері без рейтингу тег порожній.
+      // We recognise ourselves by the name's tail: the server assembles it as
+      // "clan tag, space, name", and on a server without ranking the tag is empty.
       const std::string& name = event.player->name;
       if (ownPlayer_ < 0 && !ownName_.empty() && name.size() >= ownName_.size() &&
           name.compare(name.size() - ownName_.size(), ownName_.size(), ownName_) == 0) {
@@ -53,7 +53,7 @@ void WorldView::feed(std::span<const std::byte> packet) {
     }
     if (event.object && event.object->position) {
       RemoteObject& object = objects_[event.object->networkId];
-      // Місце з події створення — це початкове; далі його уточнює потік.
+      // The position from the create event is the initial one; the stream refines it later.
       if (!object.fromGhostStream) object.position = *event.object->position;
     }
     if (event.enter) {
@@ -77,19 +77,19 @@ void WorldView::feed(std::span<const std::byte> packet) {
     }
   }
 
-  // 2. Стан керованого об'єкта: опорна точка стиснення на весь пакет
-  //    (`BF2.exe` / лінукс-сервер, GhostManager::readControlObjectState,
-  //    0x445c30 — три числа перед мережевим номером).
+  // 2. The controlled-object state: the compression reference point for the whole
+  //    packet (`BF2.exe` / the Linux server, GhostManager::readControlObjectState,
+  //    0x445c30 — the three numbers before the network id).
   if (const auto state = readControlObjectState(packet)) {
     compressionReference_ = state->compressionReference;
   }
 
-  // 3. Записи потоку привидів: де все рухається.
+  // 3. The ghost stream's records: where everything is moving.
   const auto soldier = [this](std::uint16_t id) { return isSoldier(id); };
   const auto reference = [this](std::uint16_t id) { return referenceFor(id); };
   for (const GhostRecord& record : readGhostRecords(packet, reference, soldier)) {
-    // Вид 3 — об'єкт зник (GhostManager::readData, 0x445820: гілка кличе
-    // disableObject і removeActiveDescriptor).
+    // Kind 3 — the object is gone (GhostManager::readData, 0x445820: the branch
+    // calls disableObject and removeActiveDescriptor).
     if (record.kind == 3) {
       objects_.erase(record.networkId);
       continue;

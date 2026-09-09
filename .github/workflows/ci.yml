@@ -16,8 +16,8 @@ jobs:
           - name: macOS arm64
             os: macos-14
             preset: macos-arm64-debug
-          # Windows-збірка поки не потрібна: пресет windows-x64 у
-          # CMakePresets.json лишається робочим, але в CI не ганяється.
+          # A Windows build is not needed yet: the windows-x64 preset in
+          # CMakePresets.json is kept working, but is not run in CI.
     steps:
       - uses: actions/checkout@v4
       - name: Install Ninja

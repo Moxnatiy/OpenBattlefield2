@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Рядок у бінарі -> хто на нього посилається -> код навколо.
+"""A string in the binary -> who refers to it -> the code around it.
 
     tools/exe_xref.py setBarNodeSnapDir
     tools/exe_xref.py --exe BF2.exe "Failed to receive" --window 60
 
-Це заміна ручному ходінню по Ghidra для найчастішого питання: «де
-обробляється ось ця команда». Працює локально через objdump і розбирає
-лише вікно навколо посилання, тож відповідь приходить за пів секунди, а
-не за хвилини.
+This replaces walking Ghidra by hand for the commonest question: "where is this
+command handled". It works locally through objdump and disassembles only the
+window around the reference, so the answer comes in half a second rather than
+in minutes.
 
-Розбір PE тут свій і навмисно куций: нам треба тільки перекласти зсув у
-файлі на адресу в пам'яті й назад.
+The PE parsing here is our own and deliberately meagre: all we need is to turn
+an offset in the file into an address in memory and back.
 """
 import argparse
 import os
@@ -23,7 +23,7 @@ GAME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Game File
 
 
 def sections(data):
-    """(ім'я, адреса в пам'яті, розмір, зсув у файлі) для кожної секції."""
+    """(name, address in memory, size, offset in the file) for every section."""
     pe = struct.unpack_from("<I", data, 0x3C)[0]
     count = struct.unpack_from("<H", data, pe + 6)[0]
     optional = struct.unpack_from("<H", data, pe + 20)[0]
@@ -46,7 +46,7 @@ def to_address(parts, offset):
 
 
 def find_string(data, text):
-    """Усі місця, де лежить рівно цей рядок (із нулем у кінці)."""
+    """Every place this exact string lies (with a trailing zero)."""
     needle = text.encode("latin-1") + b"\0"
     out, at = [], data.find(needle)
     while at >= 0:
@@ -58,7 +58,7 @@ def find_string(data, text):
 
 
 def find_refs(data, parts, address):
-    """Де в коді трапляється ця адреса чотирма байтами."""
+    """Where in the code this address occurs as four bytes."""
     needle = struct.pack("<I", address)
     out = []
     for name, start, size, raw in parts:
@@ -82,29 +82,29 @@ def disassemble(path, start, stop):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("text", help="рядок, який шукаємо")
+    parser.add_argument("text", help="the string we are looking for")
     parser.add_argument("--exe", default="BF2_r.exe")
     parser.add_argument("--window", type=int, default=20,
-                        help="скільки команд показати навколо посилання")
+                        help="how many instructions to show around the reference")
     parser.add_argument("--near", type=int, default=0,
-                        help="показати ще й сусідні рядки в таблиці (штук)")
+                        help="also show the neighbouring strings in the table (how many)")
     args = parser.parse_args()
 
     path = args.exe if os.path.exists(args.exe) else os.path.join(GAME, args.exe)
     if not os.path.exists(path):
-        print("немає такого файлу: %s" % path, file=sys.stderr)
+        print("no such file: %s" % path, file=sys.stderr)
         return 1
     data = open(path, "rb").read()
     parts = sections(data)
 
     places = find_string(data, args.text)
     if not places:
-        print("такого рядка в %s немає" % os.path.basename(path))
+        print("there is no such string in %s" % os.path.basename(path))
         return 1
 
     for offset in places:
         address = to_address(parts, offset)
-        print("рядок %r: зсув %#x, адреса %#x" % (args.text, offset, address))
+        print("string %r: offset %#x, address %#x" % (args.text, offset, address))
         if args.near:
             at = offset
             for _ in range(args.near):
@@ -113,16 +113,16 @@ def main():
                     break
                 at = found + 1
             shown = data[at:offset + len(args.text) + 1].split(b"\0")
-            print("  поряд: %s" %
+            print("  nearby: %s" %
                   b" | ".join(x for x in shown if x)[-200:].decode("latin-1"))
 
         refs = find_refs(data, parts, address)
         if not refs:
-            print("  на нього ніхто не посилається прямо")
+            print("  nothing refers to it directly")
             continue
         needle = hex(address)[2:]
         for ref in refs:
-            print("  посилання @ %#x" % ref)
+            print("  reference @ %#x" % ref)
             lines = disassemble(path, ref - 5 - args.window * 6, ref + args.window * 6)
             mark = next((i for i, l in enumerate(lines) if needle in l), None)
             if mark is None:

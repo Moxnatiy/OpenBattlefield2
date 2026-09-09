@@ -1,10 +1,10 @@
 #pragma once
-// Канал між клієнтом і сервером.
+// The channel between the client and the server.
 //
-// У Battlefield 2 **одиночна гра — це теж клієнт і сервер**: рушій піднімає
-// локальний сервер і під'єднується до нього. Тому канал абстрактний: для
-// одиночної гри це петля в пам'яті, для мережі — UDP. Логіка гри однакова,
-// і це головна причина, чому серверну частину не можна відкладати.
+// In Battlefield 2 **a single-player game is a client and a server too**: the
+// engine brings up a local server and connects to it. So the channel is
+// abstract: for a single-player game it is an in-memory loop, for a network UDP.
+// The game's logic is the same, and that is the main reason the server side cannot be deferred.
 #include <cstddef>
 #include <deque>
 #include <memory>
@@ -22,7 +22,7 @@ class Connection {
   virtual ~Connection() = default;
 
   virtual bool send(std::span<const std::byte> data) = 0;
-  // nullopt — нічого не прийшло; це не помилка.
+  // nullopt means nothing arrived; that is not an error.
   virtual std::optional<Packet> receive() = 0;
   virtual bool connected() const = 0;
   virtual void close() = 0;
@@ -30,9 +30,9 @@ class Connection {
   virtual std::string_view describe() const = 0;
 };
 
-// Петля в пам'яті: два кінці, з'єднані чергами. Пакети не серіалізуються
-// двічі й не проходять через сокет, але формат той самий, що й у мережі —
-// інакше одиночна гра перевіряла б не той код, який працює в мультиплеєрі.
+// An in-memory loop: two ends joined by queues. The packets are not serialised
+// twice and do not go through a socket, but the format is the same as on the
+// network — otherwise a single-player game would exercise code other than the multiplayer one.
 class LoopbackConnection : public Connection {
  public:
   bool send(std::span<const std::byte> data) override;
@@ -45,7 +45,7 @@ class LoopbackConnection : public Connection {
   long long sentPackets() const { return sent_; }
   long long receivedPackets() const { return received_; }
 
-  // Створює пару зв'язаних кінців: [клієнт, сервер].
+  // Creates a pair of joined ends: [client, server].
   static std::pair<std::unique_ptr<LoopbackConnection>, std::unique_ptr<LoopbackConnection>>
   createPair();
 

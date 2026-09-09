@@ -7,7 +7,7 @@ using obf2::joinAssetPath;
 using obf2::normalizeAssetPath;
 
 static void testNormalize() {
-  // Головний кейс: шляхи в ассетах BF2 — Windows-стилю і будь-якого регістру.
+  // The main case: BF2's asset paths are Windows-style and of any case.
   CHECK_EQ(normalizeAssetPath(R"(Ingame\Weapons\Icons\Hud\icon_M16m203.tga)"),
            std::string("ingame/weapons/icons/hud/icon_m16m203.tga"));
   CHECK_EQ(normalizeAssetPath("Objects//Weapons///Handheld/"),

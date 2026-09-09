@@ -26,7 +26,7 @@ game::Registry buildRegistry(const std::string& source) {
   return registry;
 }
 
-// Дерево за зразком реальної техніки: корпус -> башта -> ствол.
+// A tree modelled on a real vehicle: hull -> turret -> barrel.
 constexpr const char* kVehicle =
     "ObjectTemplate.create PlayerControlObject apc\n"
     "ObjectTemplate.geometry apc\n"
@@ -70,7 +70,7 @@ static void testTransformsAccumulate() {
     CHECK(near(turret->transform.m[14], 1.0f));
   }
 
-  // Ствол має опинитися у сумі трансформів: 1.6+0.25 по Y, 1.0+0.5 по Z.
+  // The barrel has to end up in the sum of the transforms: 1.6+0.25 along Y, 1.0+0.5 along Z.
   const auto* barrel = findPart(*instance, "apc_barrel");
   CHECK(barrel != nullptr);
   if (barrel != nullptr) {
@@ -81,8 +81,8 @@ static void testTransformsAccumulate() {
 }
 
 static void testRotationAppliesToChildOffset() {
-  // Поворот батька має повертати і зміщення нащадка, а не лише його власну
-  // орієнтацію — інакше башта крутилася б на місці, а ствол лишався б збоку.
+  // The parent's rotation has to rotate the child's offset too, not only its own
+  // orientation — otherwise the turret would spin in place while the barrel stayed aside.
   const game::Registry registry = buildRegistry(
       "ObjectTemplate.create PlayerControlObject apc\n"
       "ObjectTemplate.addTemplate turret\n"
@@ -99,7 +99,7 @@ static void testRotationAppliesToChildOffset() {
   CHECK(instance.has_value());
   if (!instance) return;
 
-  // Поворот на 90° навколо Y переносить зміщення +2 по Z у +2 по X.
+  // A 90° rotation about Y turns an offset of +2 along Z into +2 along X.
   const auto* barrel = findPart(*instance, "barrel");
   CHECK(barrel != nullptr);
   if (barrel != nullptr) {
@@ -115,9 +115,9 @@ static void testApplyPartTransforms() {
   if (!instance) return;
 
   const auto transforms = game::partTransformMap(*instance);
-  CHECK_EQ(transforms.size(), std::size_t(2));  // корпус без geometryPart
+  CHECK_EQ(transforms.size(), std::size_t(2));  // the hull has no geometryPart
 
-  // Три вершини: корпус (частина 0), башта (2) і ствол (3).
+  // Three vertices: the hull (part 0), the turret (2) and the barrel (3).
   mesh::RenderMesh target;
   target.vertices = {
       mesh::Vertex{{1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
@@ -128,20 +128,20 @@ static void testApplyPartTransforms() {
   target.indices = {0, 1, 2};
 
   const std::size_t moved = game::applyPartTransforms(target, transforms);
-  CHECK_EQ(moved, std::size_t(2));  // корпус лишився на місці
+  CHECK_EQ(moved, std::size_t(2));  // the hull stayed in place
 
-  CHECK(near(target.vertices[0].position.x, 1.0f));  // частини 0 в мапі немає
+  CHECK(near(target.vertices[0].position.x, 1.0f));  // part 0 is not in the map
   CHECK(near(target.vertices[1].position.y, 1.6f));
   CHECK(near(target.vertices[2].position.y, 1.85f));
   CHECK(near(target.vertices[2].position.z, 1.5f));
 
-  // Габарити мають перерахуватися під складену геометрію.
+  // The bounds have to be recomputed for the assembled geometry.
   CHECK(near(target.bounds.max.y, 1.85f));
   CHECK(near(target.bounds.min.y, 0.0f));
 }
 
 static void testMismatchedPartArrayIsIgnored() {
-  // Для static/skinned мешів vertexPart порожній — складати нічого.
+  // For static/skinned meshes vertexPart is empty — there is nothing to assemble.
   mesh::RenderMesh target;
   target.vertices.resize(3);
   std::unordered_map<int, Mat4> transforms;
@@ -151,7 +151,7 @@ static void testMismatchedPartArrayIsIgnored() {
 }
 
 static void testCycleGuard() {
-  // Цикл A -> B -> A у даних не має розкручувати обхід до межі глибини.
+  // A cycle A -> B -> A in the data must not spin the walk out to the depth limit.
   const game::Registry registry = buildRegistry(
       "ObjectTemplate.create Bundle a\n"
       "ObjectTemplate.addTemplate b\n"
@@ -166,7 +166,7 @@ static void testCycleGuard() {
 }
 
 static void testRepeatedSiblingsAreKept() {
-  // А от той самий шаблон у різних гілках — норма: шість однакових коліс.
+  // The same template in different branches, on the other hand, is normal: six identical wheels.
   const game::Registry registry = buildRegistry(
       "ObjectTemplate.create PlayerControlObject car\n"
       "ObjectTemplate.addTemplate wheel\n"
@@ -185,7 +185,7 @@ static void testRepeatedSiblingsAreKept() {
 
 static void testUnknownRoot() {
   const game::Registry registry = buildRegistry(kVehicle);
-  CHECK(!game::flattenObject(registry, "немаєТакого").has_value());
+  CHECK(!game::flattenObject(registry, "noSuchThing").has_value());
 }
 
 TEST_MAIN({

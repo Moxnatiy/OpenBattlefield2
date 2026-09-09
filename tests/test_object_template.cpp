@@ -38,19 +38,19 @@ static void testCreateAndProperties() {
   CHECK_EQ(registry.size(), std::size_t(1));
   CHECK_EQ(registry.stats().created, 1);
 
-  const auto* object = registry.find("AMMOKIT");  // пошук нечутливий до регістру
+  const auto* object = registry.find("AMMOKIT");  // the lookup is case-insensitive
   CHECK(object != nullptr);
   if (object == nullptr) return;
 
   CHECK_EQ(object->className, std::string("GenericFireArm"));
   CHECK_EQ(object->text("geometry"), std::string_view("ammokit"));
   CHECK_EQ(object->text("Geometry"), std::string_view("ammokit"));
-  CHECK(object->property("немаєТакого") == nullptr);
+  CHECK(object->property("noSuchThing") == nullptr);
 }
 
 static void testTweakReopensTemplate() {
-  // Основний сценарій гри: .con створює шаблон, .tweak відкриває його
-  // через activeSafe і дописує/перезаписує властивості.
+  // The game's main scenario: a .con creates a template, a .tweak reopens it
+  // through activeSafe and adds to or overwrites its properties.
   MemoryFiles files;
   files.files["a.con"] =
       "ObjectTemplate.create GenericFireArm ammokit\n"
@@ -62,7 +62,7 @@ static void testTweakReopensTemplate() {
       "ObjectTemplate.geometry ammokit_hi\n";
 
   const game::Registry registry = runInto(files, "a.con");
-  CHECK_EQ(registry.size(), std::size_t(1));  // не два шаблони, а один
+  CHECK_EQ(registry.size(), std::size_t(1));  // one template, not two
   CHECK_EQ(registry.stats().created, 1);
   CHECK_EQ(registry.stats().reopened, 1);
 
@@ -70,10 +70,10 @@ static void testTweakReopensTemplate() {
   CHECK(object != nullptr);
   if (object == nullptr) return;
 
-  // Діє останнє присвоєння — те, що з .tweak.
+  // The last assignment applies — the one from the .tweak.
   CHECK_EQ(object->text("geometry"), std::string_view("ammokit_hi"));
   CHECK_EQ(object->text("castsDynamicShadow"), std::string_view("1"));
-  // Але історія зберігається: видно, що властивість перезаписали і звідки.
+  // But the history is kept: it is visible that the property was overwritten and from where.
   const auto* history = object->propertyHistory("geometry");
   CHECK(history != nullptr);
   if (history != nullptr) {
@@ -84,8 +84,8 @@ static void testTweakReopensTemplate() {
 }
 
 static void testAccumulatingProperties() {
-  // mapMaterial викликається по кілька разів на шаблон — усі значення
-  // мають лишатися, а не затирати одне одного.
+  // mapMaterial is called several times per template — every value has to remain
+  // rather than overwrite the others.
   MemoryFiles files;
   files.files["a.con"] =
       "ObjectTemplate.create PlayerControlObject apc\n"
@@ -120,11 +120,11 @@ static void testComponents() {
   CHECK(object != nullptr);
   if (object == nullptr) return;
 
-  // createComponent і звертання ObjectTemplate.<щось>.<властивість> —
-  // два різні способи завести підоб'єкт, обидва мають працювати.
+  // createComponent and the reference ObjectTemplate.<something>.<property> are
+  // two different ways of making a sub-object, and both have to work.
   CHECK_EQ(object->components.size(), std::size_t(3));
 
-  const auto* ammo = object->component("Ammo");  // регістр не має значення
+  const auto* ammo = object->component("Ammo");  // the case does not matter
   CHECK(ammo != nullptr);
   if (ammo != nullptr) {
     CHECK_EQ(ammo->properties.size(), std::size_t(2));
@@ -139,8 +139,8 @@ static void testComponents() {
 }
 
 static void testChildTemplatesWithPositions() {
-  // Ієрархія техніки: setPosition після addTemplate стосується ОСТАННЬОГО
-  // доданого нащадка, а не самого шаблону.
+  // A vehicle's hierarchy: setPosition after addTemplate applies to the LAST child
+  // added, not to the template itself.
   MemoryFiles files;
   files.files["a.con"] =
       "ObjectTemplate.create PlayerControlObject apc\n"
@@ -166,18 +166,18 @@ static void testChildTemplatesWithPositions() {
   CHECK(apc->children[1].position.y > 1.63f && apc->children[1].position.y < 1.64f);
   CHECK(apc->children[1].hasRotation);
 
-  // Позиція нащадка не має осісти як властивість батька.
+  // A child's position must not settle as the parent's property.
   CHECK(apc->property("setPosition") == nullptr);
 
-  // Нащадок резолвиться в реєстрі як самостійний шаблон.
+  // The child resolves in the registry as a template in its own right.
   const auto* turret = registry.find(apc->children[1].name);
   CHECK(turret != nullptr);
   if (turret != nullptr) CHECK_EQ(turret->className, std::string("RotationalBundle"));
 }
 
 static void testCommandsBeforeAnyCreate() {
-  // Команда до першого create нікуди не належить — її треба порахувати,
-  // а не тихо приписати випадковому шаблону.
+  // A command before the first create belongs nowhere — it has to be counted rather
+  // than quietly attributed to a random template.
   MemoryFiles files;
   files.files["a.con"] =
       "ObjectTemplate.geometry orphan\n"

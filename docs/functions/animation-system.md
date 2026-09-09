@@ -1,13 +1,14 @@
-# Система анімацій солдата
+# The soldier animation system
 
-Уся вона **описана в даних гри**, а не в коді: `soldiers/Common/Animations/
-AnimationSystem3p.inc` (728 рядків) плюс `ValueHolders.inc` (66). Це
-звичайний `.con`, тож читає його наш же інтерпретатор.
+All of it is **described in the game's data**, not in code:
+`soldiers/Common/Animations/AnimationSystem3p.inc` (728 lines) plus
+`ValueHolders.inc` (66). It is ordinary `.con`, so our own interpreter
+reads it.
 
-Для Dalian Plant це дає: **78 анімацій, 57 бандлів, 62 тригери, 31
-діапазон**, і рівно один корінь — `completeTree`.
+For Dalian Plant that gives **78 animations, 57 bundles, 62 triggers, 31
+ranges**, and exactly one root — `completeTree`.
 
-## Дерево
+## The tree
 
 ```
 completeTree
@@ -19,64 +20,67 @@ completeTree
   die               -> standDie, crouchDie, face_dead ...
 ```
 
-## Як обходиться (реверс)
+## How it is walked (reversed)
 
-`Trigger::update` спершу питає дітей, а потім додає свої бандли. Типи
-відрізняються лише умовою:
+`Trigger::update` asks its children first and then adds its own bundles.
+The types differ only in the condition:
 
-**`PoseTrigger::update` (0x08353040)** — бере дитину **за номером пози**:
+**`PoseTrigger::update` (0x08353040)** — takes the child **by pose
+number**:
 ```
-index = поза; якщо index >= кількість дітей: index = кількість - 1
-якщо діти[index]->update() дало false -> нічого не застосовувати
+index = pose; if index >= child count: index = count - 1
+if children[index]->update() returned false -> apply nothing
 ```
-Порядок дітей у даних — `stand, crouch, prone, swim`, тобто номери поз
-збігаються з тими, що у фізиці (`SoldierResponsePhysics::getSoldierHeight`
-для пози 3 бере висоту присідання — це якраз плавання).
+The children's order in the data is `stand, crouch, prone, swim`, so the
+pose numbers match those in physics
+(`SoldierResponsePhysics::getSoldierHeight` takes the crouch height for
+pose 3 — which is swimming).
 
-**`MovementTrigger::update` (0x08353d70)** — спершу маски повідомлень
-(вимагається одна, забороняється інша), потім `isWithinRange(швидкість)`,
-і лише тоді звичайний обхід.
+**`MovementTrigger::update` (0x08353d70)** — first the message masks (one
+required, another forbidden), then `isWithinRange(speed)`, and only then
+the ordinary walk.
 
 **`MovementTrigger::isWithinRange` (0x08353d00)**:
 ```
-якщо діапазону немає -> так
-a == b -> так
-a >= 0 -> межі [a, b], інакше [b, a]
-поза межами -> ні
+no range -> yes
+a == b -> yes
+a >= 0 -> bounds [a, b], otherwise [b, a]
+outside the bounds -> no
 ```
-Тобто **перші два числа `AnimationValueHolder.values` — це межі**, а третє
-рушій використовує окремо. Від'ємні діапазони записані навпаки
-(`3p_turn -1 -3 -10`), і саме знак першої межі їх розрізняє.
+So **the first two numbers of `AnimationValueHolder.values` are the
+bounds**, and the engine uses the third separately. Negative ranges are
+written the other way round (`3p_turn -1 -3 -10`), and it is the sign of
+the first bound that tells them apart.
 
-## Числа сходяться з фізикою
+## The numbers agree with physics
 
-| Діапазон | Значення | Порівняння |
+| Range | Values | Compare with |
 |---|---|---|
 | `3p_stand_walk` | 0.1 .. 1.5 | `phy-soldier-walk-speed` = **1.5** |
 | `3p_stand_run` | 0.1 .. 3.9 | `phy-soldier-run-speed` = **3.9** |
 | `3p_sprint` | 5.5 .. 6.3 | `phy-soldier-sprint-speed` = 7 |
 
-Межі анімацій — це ті самі швидкості, що ми раніше витягли з рушія
-(`docs/functions/soldier-physics.md`). Дві незалежні дороги дали одні й ті
-самі числа.
+The animation bounds are the same speeds we pulled out of the engine
+earlier (`docs/functions/soldier-physics.md`). Two independent routes gave
+the same numbers.
 
-## Перевірити
+## Checking
 
 ```bash
 anim_info "Game Files/mods/bf2" objects/soldiers/Common/Animations/AnimationSystem3p.inc 0 0
 anim_info "Game Files/mods/bf2" objects/soldiers/Common/Animations/AnimationSystem3p.inc 0 3.9
 ```
 
-На нулі вибирається `stand_rightFootBack` (`3p_stand.baf`), на 3.9 до
-нього додається `stand_run` — рівно як і має бути.
+At zero it picks `stand_rightFootBack` (`3p_stand.baf`); at 3.9 `stand_run`
+is added to it — exactly as it should be.
 
-## Чого ще немає
+## What is still missing
 
-Умови, які ми поки не моделюємо: повідомлення (`MessageTrigger`),
-випадковий вибір (`RandomTrigger`), простій (`IdleTrigger`), напрямок
-(`ForwardTrigger`/`SideTrigger` дивляться не на модуль швидкості, а на її
-складову). Через це у вибірці трапляються зайві бандли на кшталт
-`skydive` — вони відсіюються саме тими умовами.
+Conditions we do not model yet: messages (`MessageTrigger`), random choice
+(`RandomTrigger`), idling (`IdleTrigger`), direction (`ForwardTrigger` and
+`SideTrigger` look at a component of the velocity, not its magnitude).
+Because of that the selection sometimes includes stray bundles such as
+`skydive` — those are exactly what those conditions filter out.
 
-Також немає часу: бандли мають `fadeInTime`/`fadeOutTime` й свою довжину,
-а програвання з переходами веде `BundlePlayer`.
+Time is missing too: bundles have `fadeInTime`/`fadeOutTime` and their own
+length, and playback with transitions is driven by `BundlePlayer`.

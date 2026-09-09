@@ -1,7 +1,7 @@
-# Команди .con, знайдені у BF2.exe
-# функцій у програмі: 27630
-# рядків проаналізовано: 11061
-# кандидатів у команди: 1735
+# The .con commands found in BF2.exe
+# functions in the program: 27630
+# strings analysed: 11061
+# candidate commands: 1735
 AanimationManager.fadeInTime
 ability.hasAmmoAbility
 ability.hasHealingAbility

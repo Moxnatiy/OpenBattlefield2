@@ -5,8 +5,8 @@
 namespace obf2::net::bf2 {
 namespace {
 
-// Рядки в запиті — рівно 32 байти з доповненням нулями (рушій читає
-// 0x100 бітів і далі поводиться з ними як із C-рядком).
+// The strings in the request are exactly 32 bytes padded with zeroes (the engine
+// reads 0x100 bits and then treats them as a C string).
 constexpr std::size_t kStringBytes = 32;
 
 void writeFixedString(BitWriter& writer, const std::string& text) {
@@ -21,7 +21,7 @@ std::string readFixedString(BitReader& reader) {
   bool ended = false;
   for (std::size_t i = 0; i < kStringBytes; ++i) {
     const auto value = reader.readBits(8);
-    if (!value) break;  // пакет обірвано
+    if (!value) break;  // the packet is truncated
     const auto byte = static_cast<char>(*value);
     if (byte == '\0') ended = true;
     if (!ended) out.push_back(byte);
@@ -30,16 +30,16 @@ std::string readFixedString(BitReader& reader) {
 }
 
 
-// --- пакет даних ---
+// --- the data packet ---
 //
-// Заголовок пакета даних — рівно 72 біти:
-//   4 біти  тип, 8 бітів номер з'єднання
-//   6 бітів номер пакета, 6 бітів підтвердження, 32 біти маска
-//   16 бітів довжина корисної частини в байтах
+// A data packet's header is exactly 72 bits:
+//   4 bits  type, 8 bits connection id
+//   6 bits  packet number, 6 bits acknowledgement, 32 bits mask
+//   16 bits the payload's length in bytes
 //
-// Останнє поле виміряне на живому сервері: у його пакеті на 26 байтів там
-// стояло 17, а це рівно 26 - 9 байтів заголовка. Без нього всі три потоки
-// читаються зі зсувом і сервер падає на перевірці ghostmanager.
+// The last field was measured against a live server: in its 26-byte packet it
+// held 17, which is exactly 26 - 9 bytes of header. Without it all three streams
+// read shifted and the server fails its ghostmanager check.
 constexpr std::size_t kDataHeaderBytes = 9;
 
 void writeDataHeader(BitWriter& writer, std::uint8_t connectionId, const ExtendedHeader& header) {
@@ -48,23 +48,23 @@ void writeDataHeader(BitWriter& writer, std::uint8_t connectionId, const Extende
   writer.writeBits(header.sequence & 0x3F, 6);
   writer.writeBits(header.ack & 0x3F, 6);
   writer.writeBits(header.ackBits, 32);
-  writer.writeBits(0, 16);  // місце під довжину: заповнимо, коли знатимемо
+  writer.writeBits(0, 16);  // room for the length: filled in once we know it
 }
 
-// Каркас потоку подій. `batch` — номер пачки: `GameEventManager` складає
-// пачки в дерево за цим номером і віддає їх грі лише поспіль, тож рахунок
-// має починатися з нуля й рости на одиницю з кожною пачкою.
+// The event stream's framing. `batch` is the batch number: `GameEventManager`
+// puts batches into a tree by this number and hands them to the game only in
+// sequence, so the count has to start at zero and grow by one with every batch.
 void writeEventFraming(BitWriter& writer, std::uint8_t batch, std::uint8_t count) {
-  writer.writeBits(0, 1);  // потік дій гравця: дій немає
-  writer.writeBits(1, 1);  // події є
+  writer.writeBits(0, 1);  // the player action stream: no actions
+  writer.writeBits(1, 1);  // there are events
   writer.writeBits(count, 8);
   writer.writeBits(batch & 0x1F, 5);
   writer.writeBits(0, 1);
 }
 
-// Хвіст пакета: потік привидів (нічого не шлемо) і довжина в заголовку.
+// The packet's tail: the ghost stream (we send nothing) and the length in the header.
 std::vector<std::byte> finishDataPacket(std::vector<std::byte>& buffer, BitWriter& writer) {
-  writer.writeBits(0, 1);  // привидів немає
+  writer.writeBits(0, 1);  // no ghosts
   const auto bytes = writer.byteSize();
   const auto payload = static_cast<std::uint16_t>(bytes - kDataHeaderBytes);
   buffer[7] = static_cast<std::byte>(payload & 0xFF);
@@ -77,17 +77,17 @@ std::vector<std::byte> finishDataPacket(std::vector<std::byte>& buffer, BitWrite
 
 std::string_view denyReasonName(DenyReason reason) {
   switch (reason) {
-    case DenyReason::ServerFull: return "сервер повний";
-    case DenyReason::VersionMismatch: return "версія не підходить";
-    case DenyReason::WrongPassword: return "невірний пароль";
-    case DenyReason::Banned: return "адресу заблоковано";
-    case DenyReason::ClientTooOld: return "клієнт застарий";
-    case DenyReason::ClientTooNew: return "клієнт занадто новий";
-    case DenyReason::NoFreeSlots: return "немає вільних місць";
-    case DenyReason::PunkBusterRequired: return "потрібен PunkBuster";
-    case DenyReason::WrongMod: return "інша тека мода";
+    case DenyReason::ServerFull: return "the server is full";
+    case DenyReason::VersionMismatch: return "the version does not match";
+    case DenyReason::WrongPassword: return "wrong password";
+    case DenyReason::Banned: return "the address is banned";
+    case DenyReason::ClientTooOld: return "the client is too old";
+    case DenyReason::ClientTooNew: return "the client is too new";
+    case DenyReason::NoFreeSlots: return "no free slots";
+    case DenyReason::PunkBusterRequired: return "PunkBuster is required";
+    case DenyReason::WrongMod: return "a different mod directory";
   }
-  return "невідома причина";
+  return "unknown reason";
 }
 
 std::vector<std::byte> writeConnectRequest(const ConnectRequest& request) {
@@ -95,12 +95,12 @@ std::vector<std::byte> writeConnectRequest(const ConnectRequest& request) {
   BitWriter writer(buffer);
 
   writer.writeBits(static_cast<std::uint32_t>(PacketKind::ConnectRequest), 4);
-  writer.writeBits(0, 8);  // номера з'єднання ще немає
+  writer.writeBits(0, 8);  // there is no connection id yet
   writer.writeBits(request.magic, 32);
   writer.writeBits(request.version, 32);
   writer.writeBits(request.punkBuster ? 1u : 0u, 1);
   writer.writeBits(request.reconnectToken, 32);
-  // Спершу пароль, потім тека мода — саме в такому порядку їх читає рушій.
+  // The password first, then the mod's directory — exactly the order the engine reads them in.
   writeFixedString(writer, request.password);
   writeFixedString(writer, request.modDirectory);
 
@@ -126,7 +126,7 @@ std::vector<std::byte> writePingResponse(std::uint8_t connectionId, const Extend
   writer.writeBits(header.sequence & 0x3F, 6);
   writer.writeBits(header.ack & 0x3F, 6);
   writer.writeBits(header.ackBits, 32);
-  // Прапорець підтвердження, далі час сервера й наш власний.
+  // The acknowledgement flag, then the server's time and our own.
   writer.writeBits(1, 1);
   writer.writeBits(time, 32);
   writer.writeBits(time, 32);
@@ -141,13 +141,13 @@ std::vector<std::byte> writeChallengeResponse(std::uint8_t connectionId,
   writeDataHeader(writer, connectionId, header);
   writeEventFraming(writer, batch, 1);
 
-  writer.writeBits(2, kEventTypeBits);  // тип 2 — відповідь на виклик
-  // Блок відповіді на 73 байти: без автентифікатора сервер його не читає.
+  writer.writeBits(2, kEventTypeBits);  // type 2 — the challenge reply
+  // A 73-byte response block: without an authenticator the server does not read it.
   for (int i = 0; i < 73; ++i) writer.writeBits(0, 8);
   writer.writeBits(0, 32);
   writer.writeBits(kGameVersion, 32);
-  writer.writeBits(0, 1);       // знак
-  writer.writeBits(0x423, 31);  // номер продукту BF2
+  writer.writeBits(0, 1);       // the sign
+  writer.writeBits(0x423, 31);  // BF2's product number
 
   return finishDataPacket(buffer, writer);
 }
@@ -161,7 +161,7 @@ std::vector<std::byte> writeDataBlockHeader(std::uint8_t connectionId,
   writeEventFraming(writer, batch, 1);
 
   writer.writeBits(kDataBlockEvent, kEventTypeBits);
-  writer.writeBits(1, 1);  // це заголовок блока
+  writer.writeBits(1, 1);  // this is a block header
   writer.writeBits(blockType, 32);
   writer.writeBits(size, 32);
 
@@ -176,7 +176,7 @@ std::vector<std::byte> writeDataBlockChunk(std::uint8_t connectionId, const Exte
   writeEventFraming(writer, batch, 1);
 
   writer.writeBits(kDataBlockEvent, kEventTypeBits);
-  writer.writeBits(0, 1);  // це шматок даних
+  writer.writeBits(0, 1);  // this is a data chunk
   writer.writeBits(static_cast<std::uint32_t>(chunk.size()), 8);
   for (const auto byte : chunk) writer.writeBits(std::to_integer<std::uint32_t>(byte), 8);
 
@@ -189,12 +189,12 @@ std::vector<std::byte> writePlayerActions(std::uint8_t connectionId, const Exten
   BitWriter writer(buffer);
   writeDataHeader(writer, connectionId, header);
 
-  writer.writeBits(1, 1);  // дії є
+  writer.writeBits(1, 1);  // there are actions
   WriteCursor cursor(writer);
-  PlayerActions copy = stream;  // курсор працює зі змінним посиланням
+  PlayerActions copy = stream;  // the cursor works with a mutable reference
   serializePlayerActions(cursor, copy);
 
-  writer.writeBits(0, 1);  // подій немає
+  writer.writeBits(0, 1);  // no events
   return finishDataPacket(buffer, writer);
 }
 
@@ -203,7 +203,7 @@ std::optional<PlayerActions> readPlayerActions(std::span<const std::byte> packet
 
   const auto kind = reader.readBits(4);
   if (!kind || *kind != static_cast<std::uint32_t>(PacketKind::Data)) return std::nullopt;
-  // номер з'єднання, sequence, ack, ackBits і довжина корисної частини
+  // the connection id, sequence, ack, ackBits and the payload's length
   if (!reader.skipBits(8 + 6 + 6 + 32 + 16)) return std::nullopt;
 
   const auto hasActions = reader.readBits(1);
@@ -227,7 +227,7 @@ std::vector<std::byte> writePostRemoteEvent(std::uint8_t connectionId,
   writer.writeBits(kPostRemoteEvent, kEventTypeBits);
   writer.writeBits(category, 4);
   writer.writeBits(event, 32);
-  writer.writeBits(0, 32);  // затримка: float 0.0
+  writer.writeBits(0, 32);  // the delay: float 0.0
   if (value) {
     writer.writeBits(4, 8);
     const auto raw = static_cast<std::uint32_t>(*value);
@@ -263,7 +263,7 @@ std::optional<std::array<std::byte, 16>> readFingerprint(std::string_view text, 
     const std::string_view line = text.substr(at, end == std::string_view::npos ? end : end - at);
     at = end == std::string_view::npos ? text.size() : end + 1;
 
-    // Розбираємо на слова: останнє — сам хеш, передостаннє — номер.
+    // Split into words: the last is the hash itself, the one before it the number.
     std::vector<std::string_view> words;
     std::size_t from = 0;
     while (from < line.size()) {
@@ -351,7 +351,7 @@ std::optional<Incoming> readPacket(std::span<const std::byte> data) {
     const auto assigned = reader.readBits(8);
     const auto time = reader.readBits(32);
     const auto punkBuster = reader.readBits(1);
-    if (!assigned || !time || !punkBuster) return incoming;  // обірваний пакет
+    if (!assigned || !time || !punkBuster) return incoming;  // a truncated packet
 
     ConnectAccept accept;
     accept.connectionId = static_cast<std::uint8_t>(*assigned);
@@ -365,7 +365,7 @@ std::optional<Incoming> readPacket(std::span<const std::byte> data) {
 
     ConnectDenied denied;
     denied.reason = static_cast<DenyReason>(*reason);
-    // Теку сервер додає лише коли причина — інший мод.
+    // The server adds the directory only when the reason is a different mod.
     if (hasMod && *hasMod != 0) denied.modDirectory = readFixedString(reader);
     incoming.denied = denied;
   } else if (incoming.kind == PacketKind::PingRequest || incoming.kind == PacketKind::Data ||
@@ -382,11 +382,11 @@ std::optional<Incoming> readPacket(std::span<const std::byte> data) {
     incoming.extended = header;
 
     if (incoming.kind == PacketKind::PingRequest) {
-      // Після заголовка йде прапорець і час сервера.
+      // After the header come a flag and the server's time.
       reader.readBits(1);
       if (const auto time = reader.readBits(32)) incoming.pingTime = *time;
     } else if (incoming.kind == PacketKind::Data) {
-      // 16 бітів довжини, далі потік дій гравця — його ми не розбираємо.
+      // 16 bits of length, then the player action stream — we do not parse it.
       for (unsigned i = 0; i < kStreamFramingBits; ++i) reader.readBits(1);
       reader.readBits(1);
 
@@ -398,11 +398,11 @@ std::optional<Incoming> readPacket(std::span<const std::byte> data) {
       if (!count) return incoming;
       incoming.eventCount = static_cast<int>(*count);
 
-      // Розбираємо лише подію-виклик: решта типів ще попереду.
+      // We parse only the challenge event: the other types are still ahead.
       const auto type = reader.readBits(kEventTypeBits);
       if (type && *type == 1) {
         ChallengeEvent event;
-        // Рядок виклику — рівно 80 бітів, десять байтів із нулем у кінці.
+        // The challenge string is exactly 80 bits, ten bytes with a zero at the end.
         for (int i = 0; i < 10; ++i) {
           const auto byte = reader.readBits(8);
           if (!byte) break;

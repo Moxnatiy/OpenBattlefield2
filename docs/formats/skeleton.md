@@ -1,49 +1,51 @@
-# `.ske` — скелет
+# `.ske` — skeleton
 
-Перевірено на даних гри: розмір, порахований за цією розкладкою, збігається
-з файлом байт у байт (`soldiers/Common/Animations/3p_setup.ske` — 80 кісток,
-3399 байтів; `Common/Cloth_Line/cloth_line_setup.ske` — 3 кістки, 132 байти).
+Verified against the game's data: the size computed from this layout
+matches the file byte for byte
+(`soldiers/Common/Animations/3p_setup.ske` — 80 bones, 3399 bytes;
+`Common/Cloth_Line/cloth_line_setup.ske` — 3 bones, 132 bytes).
 
 ```
-u32  версія (у всіх файлах гри 2)
-u32  кількість кісток
-для кожної кістки:
-    u16   довжина імені **разом із завершальним нулем**
-    char  ім'я[довжина]
-    i16   номер батька (-1 у кореня)
-    f32   поворот x, y, z, w  (кватерніон)
-    f32   зсув x, y, z
+u32  version (2 in every file in the game)
+u32  bone count
+for each bone:
+    u16   name length **including the terminating zero**
+    char  name[length]
+    i16   parent index (-1 at the root)
+    f32   rotation x, y, z, w  (quaternion)
+    f32   translation x, y, z
 ```
 
-Розмір кістки — `2 + довжина_імені + 2 + 28`.
+A bone is `2 + name_length + 2 + 28` bytes.
 
-## Що означають числа
+## What the numbers mean
 
-Поворот і зсув **локальні, відносно батька**, а не обернена матриця
-прив'язки. Видно з самих значень скелета солдата: від коліна до гомілки
-рівно 0.075, від гомілки до стопи 0.385 — це довжини кісток, а не
-координати у світі.
+Rotation and translation are **local, relative to the parent**, not an
+inverse bind matrix. It shows in the soldier skeleton's own values: knee
+to shin is exactly 0.075, shin to foot 0.385 — those are bone lengths,
+not world coordinates.
 
-Ієрархія плоска й уже впорядкована: батько завжди йде раніше за дитину,
-тож світові матриці рахуються одним проходом уперед.
+The hierarchy is flat and already ordered: a parent always comes before
+its child, so world matrices are computed in a single forward pass.
 
-## Скелети в грі
+## Skeletons in the game
 
-Усього 9 файлів. Головні:
+Nine files in total. The main ones:
 
-| Файл | Кісток | Для чого |
+| File | Bones | What for |
 |---|---|---|
-| `soldiers/Common/Animations/3p_setup.ske` | 80 | солдат, вигляд збоку |
-| `soldiers/Common/Animations/1p_setup.ske` | ~60 | руки й зброя від першої особи |
-| `Vehicles/Air/parachute/parachute_setup.ske` | — | парашут |
-| `Common/Flags/flag_setup.ske` | — | прапор на щоглі |
+| `soldiers/Common/Animations/3p_setup.ske` | 80 | soldier, third person |
+| `soldiers/Common/Animations/1p_setup.ske` | ~60 | first-person arms and weapon |
+| `Vehicles/Air/parachute/parachute_setup.ske` | — | parachute |
+| `Common/Flags/flag_setup.ske` | — | flag on a pole |
 
-Дивитися так:
+To look at one:
 
 ```bash
 ske_info "Game Files/mods/bf2" objects/soldiers/Common/Animations/3p_setup.ske
 ```
 
-## Далі
+## Next
 
-Анімації лежать окремо — 3470 файлів `.baf`. Їх ще не розібрано.
+Animations live separately — 3470 `.baf` files. They have not been taken
+apart yet.

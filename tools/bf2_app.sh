@@ -1,40 +1,40 @@
 #!/bin/sh
-# Збирає macOS-обгортку навколо оригінального BF2 — щоб гра під Wine була
-# **рідним застосунком** із власним bundle id.
+# Builds a macOS wrapper around the original BF2 — so that the game under Wine
+# is a **native application** with a bundle id of its own.
 #
-#   tools/bf2_app.sh            зібрати обгортку
-#   open -a "$HOME/Applications/OpenBF2 Original.app"   запустити
+#   tools/bf2_app.sh            build the wrapper
+#   open -a "$HOME/Applications/OpenBF2 Original.app"   run it
 #
-# Навіщо це взагалі.
+# What this is for at all.
 #
-# Wine, запущений із оболонки, для macOS — процес без bundle id
-# (`lsappinfo` показує `bundleID=[ NULL ]`). Через це його не бачить
-# нічого, що працює через LaunchServices: ані керування застосунком, ані
-# запис екрана «однієї програми», ані Metal-трасування Xcode, яке теж
-# питає, який саме застосунок трасувати. Ті обгортки, що робить сам
-# CrossOver, тут не годяться: вони запускають ярлик із меню «Пуск», а нам
-# потрібні свої прапорці (`+loadLevel`, `+szx`, `+joinServer`).
+# Wine started from a shell is, to macOS, a process with no bundle id
+# (`lsappinfo` shows `bundleID=[ NULL ]`). Because of that nothing working
+# through LaunchServices can see it: neither application control, nor
+# single-application screen recording, nor Xcode's Metal capture, which also
+# asks which application to trace. The wrappers CrossOver makes itself will
+# not do here: they start a shortcut from the Start menu, and we need flags of
+# our own (`+loadLevel`, `+szx`, `+joinServer`).
 #
-# Обгортка — це найменший можливий `.app`: `Info.plist` із власним
-# bundle id і скрипт, який **заміщає себе** (`exec`) процесом Wine. Через
-# `exec` pid лишається тим самим, LaunchServices далі вважає його тим
-# застосунком, і вікно гри дістає його ім'я та значок.
+# The wrapper is the smallest possible `.app`: an `Info.plist` with a bundle id
+# of its own and a script that **replaces itself** (`exec`) with the Wine
+# process. Thanks to `exec` the pid stays the same, LaunchServices still takes
+# it for that application, and the game window gets its name and icon.
 #
-# Прапорці гри беруться з тих самих змінних, що й `tools/bf2_run.sh`:
-# BF2_LEVEL, BF2_SERVER, BF2_RES, BF2_NAME. Задавати їх треба **перед
-# збиранням** — вони запікаються в скрипт запуску.
+# The game's flags come from the same variables as `tools/bf2_run.sh`:
+# BF2_LEVEL, BF2_SERVER, BF2_RES, BF2_NAME. They have to be set **before
+# building** — they are baked into the launch script.
 #
-# `BF2_METAL_CAPTURE=1` вмикає Apple-івське трасування Metal: без
-# `MTL_CAPTURE_ENABLED`, поставленої **при старті процесу**,
-# `MTLCaptureManager` мовчки відмовляє. Типово вимкнено: у цьому режимі
-# Metal помітно повільніший, а трасу знімають рідко.
+# `BF2_METAL_CAPTURE=1` turns Apple's Metal capture on: without
+# `MTL_CAPTURE_ENABLED` set **at process start**, `MTLCaptureManager` refuses
+# silently. Off by default: in that mode Metal is noticeably slower, and a
+# capture is taken rarely.
 #
-# **Відоме обмеження.** Із `+joinServer` на справжній сервер гра,
-# запущена цією обгорткою, каже «You have failed to connect» ще в меню.
-# Причина не з'ясована: дозвіл на локальну мережу ні до чого (ping із
-# самого застосунку проходить), `MTL_CAPTURE_ENABLED` теж (без нього те
-# саме), а наш власний клієнт до того ж сервера в ту саму мить
-# під'єднується. Для гри на сервері поки годиться `tools/bf2_run.sh`.
+# **A known limitation.** With `+joinServer` to a real server, the game
+# started by this wrapper says "You have failed to connect" while still in the
+# menu. The cause is not established: the local network permission has nothing
+# to do with it (a ping from the application itself goes through), nor does
+# `MTL_CAPTURE_ENABLED` (the same without it), and our own client connects to
+# the same server at the same moment. For playing on a server, use bf2_run.sh.
 set -e
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 NAME=${BF2_APP_NAME:-OpenBF2 Original}
@@ -82,13 +82,13 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>NSHighResolutionCapable</key><true/>
-  <!-- Сервер зазвичай у локальній мережі (192.168.x.x), а macOS від
-       Sonoma питає на це окремий дозвіл — і питає **на застосунок**.
-       Запуск із оболонки успадковує дозвіл терміналу, а свіжий bundle
-       його не має: гра тоді каже «You have failed to connect» ще в
-       меню. Без цього рядка система навіть не показує запиту. -->
+  <!-- The server is usually on the local network (192.168.x.x), and macOS
+       since Sonoma asks a separate permission for that — and asks it **per
+       application**. A start from a shell inherits the terminal's permission,
+       a fresh bundle does not: the game then says "You have failed to
+       connect" while still in the menu. Without this key nothing is asked. -->
   <key>NSLocalNetworkUsageDescription</key>
-  <string>Гра з'єднується з сервером Battlefield 2 у локальній мережі.</string>
+  <string>The game connects to a Battlefield 2 server on the local network.</string>
 </dict>
 </plist>
 PLIST
@@ -96,7 +96,7 @@ PLIST
 METAL=${BF2_METAL_CAPTURE:-}
 cat > "$APP/Contents/MacOS/run" <<RUN
 #!/bin/sh
-# Створено tools/bf2_app.sh — руками не правити.
+# Created by tools/bf2_app.sh — do not edit by hand.
 export WINEPREFIX="$B"
 export WINEDLLOVERRIDES="d3d9=n"
 ${METAL:+export MTL_CAPTURE_ENABLED=1}
@@ -104,21 +104,21 @@ export ROSETTA_X87_PATH="$SIDECAR"
 "$WINE" reg add 'HKCU\\Software\\Wine\\Explorer\\Desktops' \\
     /v Default /d "$DESKTOP" /f >/dev/null 2>&1 || true
 cd "$B/drive_c/Program Files (x86)/EA GAMES/Battlefield 2" || exit 1
-# exec, а не запуск дитини: pid має лишитися тим самим, інакше
-# LaunchServices втратить зв'язок із застосунком.
+# exec, not starting a child: the pid has to stay the same, otherwise
+# LaunchServices loses the link with the application.
 exec "$WINE" "$GAME\\\\BF2.exe" $ARGS > "$LOG" 2>&1
 RUN
 chmod +x "$APP/Contents/MacOS/run"
 
-# Підпис хоч і власний, але потрібен: без нього macOS не тримає за
-# застосунком дозволів (локальна мережа, керування) — вони прив'язані до
-# підпису, а не до шляху.
+# The signature is our own, but it is needed: without it macOS does not keep
+# permissions (local network, control) attached to the application — they are
+# tied to the signature, not to the path.
 codesign --force --sign - "$APP" >/dev/null 2>&1 || true
 
-# Без цього LaunchServices може не помітити щойно створений застосунок.
+# Without this LaunchServices may not notice the application just created.
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
     -f "$APP" 2>/dev/null || true
 
-echo "зібрано: $APP"
-echo "  прапорці: $ARGS"
-echo "  запуск:   open -a \"$APP\""
+echo "built: $APP"
+echo "  flags: $ARGS"
+echo "  run:   open -a \"$APP\""

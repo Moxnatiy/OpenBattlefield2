@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
-"""Шукає в знятому трафіку стан `ScoreManager` — той, що несе квитки.
+"""Looks for the `ScoreManager` state — the one carrying the tickets — in captured traffic.
 
-Розкладка знята з BF2.exe 0x5c9650 (docs/functions/score-manager.md):
-32-бітова маска, далі на кожен виставлений біт 18-бітове число, у тому
-порядку, у якому їх читає сама функція. Два біти несуть квитки команд.
+The layout is taken from BF2.exe 0x5c9650 (docs/functions/score-manager.md):
+a 32-bit mask, then an 18-bit number per set bit, in the order the function
+itself reads them. Two of the bits carry the teams' tickets.
 """
 import struct, sys
 
-# Порядок читання і ширини — дослівно з 0x5c9650.
+# The reading order and the widths — verbatim from 0x5c9650.
 ORDER = [
     (0x00000001, [18]), (0x00000002, [18]), (0x01000000, [18, 18]),
     (0x04000000, [18]), (0x10000000, [18]), (0x00000004, [18]),
     (0x00000008, [18]), (0x00000010, [18, 18]), (0x00000020, [18]),
     (0x00000040, [18]), (0x00000080, [18]), (0x00000100, [18]),
     (0x00000200, [18]),
-    (0x00000400, [18, 1, 18]),          # квитки команди 1
+    (0x00000400, [18, 1, 18]),          # team 1 tickets
     (0x00000800, [18]), (0x00001000, [18]), (0x00002000, [18]),
     (0x02000000, [18, 18]), (0x08000000, [18]), (0x20000000, [18]),
     (0x00004000, [18]), (0x00008000, [18]), (0x00010000, [18, 18]),
     (0x00020000, [18]), (0x00040000, [18]), (0x00080000, [18]),
     (0x00100000, [18]), (0x00200000, [18]),
-    (0x00400000, [18, 1, 18]),          # квитки команди 2
+    (0x00400000, [18, 1, 18]),          # team 2 tickets
     (0x00800000, [18]), (0x40000000, [3]), (0x80000000, [3, 18, 18]),
 ]
 
@@ -98,7 +98,7 @@ def main(path, low=50, high=1000):
             hits.setdefault(key, []).append((index, start, mask))
     for key in sorted(hits, key=lambda k: -len(hits[k]))[:12]:
         rows = hits[key]
-        print("квитки %4d / %4d — %3d збігів, перший: пакет %d біт %d маска %#010x"
+        print("tickets %4d / %4d — %3d matches, first: packet %d bit %d mask %#010x"
               % (key[0], key[1], len(rows), rows[0][0], rows[0][1], rows[0][2]))
 
 

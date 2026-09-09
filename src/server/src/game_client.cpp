@@ -3,8 +3,8 @@
 namespace obf2::server {
 namespace {
 
-// Далі цього за один пакет солдат пройти не може: за 1/30 с навіть бігом
-// це менш ніж метр. Отже це переміщення, а не рух.
+// A soldier cannot travel further than this in one packet: over 1/30 s even at a
+// run it is less than a metre. So this is a teleport, not movement.
 constexpr float kTeleportDistance = 5.0f;
 
 }  // namespace
@@ -12,7 +12,7 @@ namespace {
 
 constexpr std::size_t kPacketBytes = 1200;
 
-// Ввід шлемо з тією ж частотою, що сервер крутить симуляцію.
+// The input is sent at the rate the server runs its simulation.
 constexpr float kInputInterval = 1.0f / 30.0f;
 
 }  // namespace
@@ -40,7 +40,7 @@ bool GameClient::connect() {
   if (!connection_->send(std::span(buffer).first(writer.byteSize()))) return false;
 
   state_ = ClientState::Requesting;
-  log_.push_back("надіслано запит під'єднання від \"" + playerName_ + "\"");
+  log_.push_back("connection request sent from \"" + playerName_ + "\"");
   return true;
 }
 
@@ -57,11 +57,11 @@ void GameClient::handlePacket(const net::Packet& packet) {
       levelName_ = accept->levelName;
       gameMode_ = accept->gameMode;
       state_ = ClientState::Accepted;
-      log_.push_back("прийнято: id " + std::to_string(playerId_) + ", рівень " + levelName_ +
-                     ", режим " + gameMode_);
+      log_.push_back("accepted: id " + std::to_string(playerId_) + ", level " + levelName_ +
+                     ", mode " + gameMode_);
 
-      // Підтверджуємо одразу — сервер чекає саме на це, щоб почати
-      // надсилати світ.
+      // We acknowledge at once — that is exactly what the server waits for before
+      // it starts sending the world.
       std::vector<std::byte> buffer(kPacketBytes);
       net::BitWriter writer(buffer);
       if (net::writeConnectionAcknowledge(writer)) {
@@ -73,9 +73,9 @@ void GameClient::handlePacket(const net::Packet& packet) {
     case net::PacketType::ConnectionDenied: {
       denyReason_ = net::readConnectionDenied(reader);
       state_ = ClientState::Denied;
-      log_.push_back("відмовлено: " + std::string(denyReason_
+      log_.push_back("denied: " + std::string(denyReason_
                                                       ? net::denyReasonName(*denyReason_)
-                                                      : std::string_view("невідома причина")));
+                                                      : std::string_view("unknown reason")));
       return;
     }
 
@@ -85,12 +85,12 @@ void GameClient::handlePacket(const net::Packet& packet) {
       for (const net::ObjectUpdate& update : *updates) {
         RemoteObject& object = objects_[update.objectId];
         object.id = update.objectId;
-        // Ім'я шаблону приходить лише при появі; далі його не перезаписуємо.
+        // The template's name arrives only on spawn; we do not overwrite it later.
         if (update.spawn) object.templateName = update.templateName;
-        // Попередній стан лишаємо для згладжування. Але стрибок через
-        // півсвіту — це не рух, а поява на новому місці: згладжувати його
-        // не можна, інакше камера пролітає крізь рівень, і здається, ніби
-        // зіткнень немає взагалі.
+        // The previous state is kept for smoothing. But a jump across half the
+        // world is not movement, it is appearing somewhere new: it must not be
+        // smoothed, otherwise the camera flies through the level and it looks as
+        // though there is no collision at all.
         const Vec3f jump = update.position - object.position;
         const bool teleported = length(jump) > kTeleportDistance;
         if (!update.spawn && !teleported) {
@@ -106,7 +106,7 @@ void GameClient::handlePacket(const net::Packet& packet) {
       interpolation_ = 0.0f;
       if (state_ == ClientState::Accepted) {
         state_ = ClientState::InWorld;
-        log_.push_back("отримано перший пакет світу");
+        log_.push_back("the first world packet received");
       }
       return;
     }
@@ -127,7 +127,7 @@ void GameClient::sendInput() {
   net::BitWriter writer(buffer);
 
   net::PlayerInput input = input_;
-  // Нумерація з одиниці: нуль у сервера означає "ще нічого не приходило".
+  // Numbering starts at one: zero on the server means "nothing has arrived yet".
   input.sequence = ++inputSequence_;
   if (inputSequence_ > 0xFFFF) inputSequence_ = 1;
 
@@ -150,7 +150,7 @@ void GameClient::tick(float deltaSeconds) {
   if (connection_ == nullptr) return;
   while (auto packet = connection_->receive()) handlePacket(*packet);
 
-  // Наближаємося до останнього отриманого стану рівно за час між пакетами.
+  // We approach the last state received over exactly the time between packets.
   interpolation_ += deltaSeconds / kInputInterval;
 
   sendAccumulator_ += deltaSeconds;

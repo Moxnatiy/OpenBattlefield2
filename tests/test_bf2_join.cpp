@@ -1,7 +1,7 @@
-// Послідовність приєднання до оригінального сервера BF2.
+// The sequence for joining an original BF2 server.
 //
-// Кожна перевірка тут — це правило, здобуте вимірюванням на живому
-// сервері (docs/functions/network-events.md), а не наша вигадка.
+// Every check here is a rule won by measurement against a live server
+// (docs/functions/network-events.md), not an invention of ours.
 #include <chrono>
 
 #include "check.h"
@@ -12,11 +12,11 @@ using Clock = JoinSequence::Clock;
 
 namespace {
 
-// Зручність: просунути годинник рівно на паузу між кроками.
+// A convenience: advance the clock by exactly the pause between steps.
 Clock::time_point after(Clock::time_point at) { return at + JoinSequence::kStepDelay; }
 
-// Пройти крок: переконатися, що послідовність просить саме його, і
-// відзвітувати, що ми його відіслали.
+// Go through a step: make sure the sequence asks for exactly it, and report that we
+// sent it.
 bool take(JoinSequence& join, Clock::time_point& at, JoinStep expected) {
   const auto step = join.next(at);
   if (!step || *step != expected) return false;
@@ -27,9 +27,9 @@ bool take(JoinSequence& join, Clock::time_point& at, JoinStep expected) {
 
 }  // namespace
 
-// Доки сервер не назвав рівень і доки ми його не завантажили, слати
-// нічого не можна: під час завантаження ми мовчимо, і сервер розриває
-// з'єднання за мовчанку.
+// Until the server has named the level and we have loaded it, nothing may be sent:
+// during loading we stay silent, and the server breaks the connection for that
+// silence.
 static void testWaitsForLevelAndLoad() {
   JoinSequence join;
   Clock::time_point at{};
@@ -37,7 +37,7 @@ static void testWaitsForLevelAndLoad() {
   CHECK(!join.next(at).has_value());
 
   join.setLevelReady();
-  CHECK(!join.next(at).has_value());  // рівень названо, але ще не завантажено
+  CHECK(!join.next(at).has_value());  // the level is named but not loaded yet
 
   join.setClientLoaded();
   const auto step = join.next(at);
@@ -45,10 +45,10 @@ static void testWaitsForLevelAndLoad() {
   if (step) CHECK(*step == JoinStep::Level);
 }
 
-// Перевірка вмісту йде разом із «рівень завантажено», а пауза стоїть
-// уже перед повідомленням про базу гравців. Так це в знятому трафіку
-// оригіналу, і саме так воно й має бути за змістом: сервер питає про
-// вміст тоді, коли клієнт щойно його прочитав.
+// The content check goes together with "the level is loaded", while the pause
+// stands before the message about the player base. That is how it is in the
+// original's captured traffic, and that is how it should be by its meaning: the
+// server asks about the content when the client has just read it.
 static void testContentGoesWithLoadComplete() {
   JoinSequence join;
   join.setLevelReady();
@@ -60,13 +60,13 @@ static void testContentGoesWithLoadComplete() {
   if (first) CHECK(*first == JoinStep::Level);
   join.commit(at);
 
-  // Тієї ж миті — перевірка вмісту, без чекання.
+  // At the same moment — the content check, without waiting.
   const auto second = join.next(at);
   CHECK(second.has_value());
   if (second) CHECK(*second == JoinStep::Content);
   join.commit(at);
 
-  // А от база гравців чекає свої 1.1 с.
+  // The player base, on the other hand, waits its 1.1 s.
   CHECK(!join.next(at).has_value());
   CHECK(!join.next(at + std::chrono::milliseconds(900)).has_value());
   const auto third = join.next(after(at));
@@ -74,7 +74,7 @@ static void testContentGoesWithLoadComplete() {
   if (third) CHECK(*third == JoinStep::Database);
 }
 
-// Без DONE послідовність спиняється на екрані появи й далі не йде.
+// Without DONE the sequence stops at the spawn screen and goes no further.
 static void testStopsAtSpawnScreen() {
   JoinSequence join;
   join.setLevelReady();
@@ -85,7 +85,7 @@ static void testStopsAtSpawnScreen() {
   CHECK(take(join, at, JoinStep::Content));
   CHECK(take(join, at, JoinStep::Database));
 
-  // Тут стоїмо, скільки б часу не минуло.
+  // Here we stand, however much time passes.
   CHECK(!join.next(at).has_value());
   CHECK(!join.next(at + std::chrono::minutes(5)).has_value());
   CHECK(join.step() == JoinStep::Ready);
@@ -102,8 +102,8 @@ static void testStopsAtSpawnScreen() {
   CHECK_EQ(join.choice().group, 515);
 }
 
-// Безголовий запуск: вибір задано ще до рукостискання, тож `Ready`
-// проходиться без зупинки.
+// A headless run: the choice is set before the handshake, so `Ready` passes without
+// stopping.
 static void testChoiceMadeEarlyDoesNotStop() {
   JoinSequence join;
   join.ask(JoinChoice{1, 0, 515});
@@ -120,8 +120,8 @@ static void testChoiceMadeEarlyDoesNotStop() {
   CHECK(join.done());
 }
 
-// Досліди --no-content і --no-database: пропущені кроки не з'їдають
-// власної паузи, бо нічого не шлють.
+// The --no-content and --no-database experiments: skipped steps do not eat a pause
+// of their own, because they send nothing.
 static void testSkippedStepsCostNoDelay() {
   JoinSequence join;
   join.setSkipContent(true);
@@ -132,7 +132,7 @@ static void testSkippedStepsCostNoDelay() {
 
   Clock::time_point at{};
   CHECK(take(join, at, JoinStep::Level));
-  // Одразу після рівня має йти команда: перевірку й базу пропущено.
+  // Right after the level the team has to come: the check and the base are skipped.
   CHECK(take(join, at, JoinStep::Team));
   CHECK(take(join, at, JoinStep::Kit));
   CHECK(take(join, at, JoinStep::Group));

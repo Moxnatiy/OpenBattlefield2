@@ -1,21 +1,22 @@
-# Реєстр ігрових подій
+# The game-event registry
 
-Джерело: `dice::hfe::*Event::getType()` у 64-бітному Linux-сервері —
-кожен клас повертає свою сталу. Список знято пакетно: адреси з
-`info functions ::getType`, далі `x/2i` на кожну (`mov $N,%eax; ret`).
+Source: `dice::hfe::*Event::getType()` in the 64-bit Linux server — every
+class returns its own constant. The list was taken in bulk: the addresses
+from `info functions ::getType`, then `x/2i` on each (`mov $N,%eax; ret`).
 
-Номер типу їде в пакеті у 7 бітах: `GameEventManager::readGameEvent` бере
-найменше N, при якому `(1<<N)-1` вміщує розмір реєстру, а тут 69 типів.
+The type number travels in the packet in 7 bits: `GameEventManager::readGameEvent`
+takes the smallest N for which `(1<<N)-1` covers the registry's size, and here
+there are 69 types.
 
-Кілька номерів мають по два класи — це події, які не їздять мережею, а
-лише сповіщають гру всередині процесу (`DataBlockReadyEvent`,
+Several numbers have two classes each — those are events that do not travel over
+the network but only notify the game inside the process (`DataBlockReadyEvent`,
 `StringReceivedEvent`, `RadioMessageReceivedEvent`, `PostRemoteEvent`).
 
-`StringManagerEvent` повертає нуль через `xor %eax,%eax`, тож у першому
-проході його не було видно — але саме він приходить у хвості перших
-пакетів після реєстрації.
+`StringManagerEvent` returns zero through `xor %eax,%eax`, so it was not visible
+on the first pass — but it is exactly what arrives at the tail of the first
+packets after registration.
 
-| № | клас |
+| # | class |
 |---:|---|
 | 0 | `StringManagerEvent` |
 | 1 | `ChallengeEvent`, `DataBlockReadyEvent` |
@@ -82,112 +83,112 @@
 | 68 | `VerifyPlayerTeamEvent` |
 | 69 | `FixPlayerTeamEvent` |
 
-## Розкладка полів
+## Field layouts
 
-Знімається пакетно: `tools/linuxded/bitfields.py <Клас>::deSerialize`.
-Інструмент розбирає функцію в 64-бітному сервері й виписує всі виклики
-`BitStream::readBits` разом із кількістю бітів — третій аргумент їде в
-`%edx`, тож розмір поля видно прямо в коді.
+Taken in bulk: `tools/linuxded/bitfields.py <Class>::deSerialize`. The
+instrument takes the function in the 64-bit server apart and writes out every
+`BitStream::readBits` call together with the bit count — the third argument
+travels in `%edx`, so a field's size is visible right in the code.
 
-Що вже перевірено на живому сервері:
+What has already been verified against a live server:
 
-| подія | поля |
+| event | fields |
 |---|---|
-| `StringManagerEvent` (0) | 1 біт; якщо нуль — на цьому все |
+| `StringManagerEvent` (0) | 1 bit; if zero, that is all |
 | `ConnectionTypeEvent` (3) | 3 |
-| `DataBlockEvent` (4) | 1 біт вид; заголовок: u32 тип, u32 розмір; шматок: u8 довжина + байти |
-| `CreatePlayerEvent` (5) | 3, 4, 1, 8, 16, 16, 1 бітів і 32 байти імені |
-| `CreateObjectEvent` (6) | 32, 16, 2, 1, 8, 1, 1 бітів і шість 32-бітних чисел (позиція й поворот) |
+| `DataBlockEvent` (4) | 1 bit kind; header: u32 type, u32 size; chunk: u8 length + bytes |
+| `CreatePlayerEvent` (5) | 3, 4, 1, 8, 16, 16, 1 bits and 32 bytes of the name |
+| `CreateObjectEvent` (6) | 32, 16, 2, 1, 8, 1, 1 bits and six 32-bit numbers (position and rotation) |
 | `DestroyPlayerEvent` (8) | 8 |
 | `UnlockEvent` (42) | 2, 8, 4 |
 | `VoipSessionEvent` (54) | 16 |
 | `BeginRoundEvent` (56) | 32, 32 |
 | `CreateSpawnGroupEvent` (57) | 8, 4, 1, 1, 1, 8, 8, 16 |
 
-Перший пакет, який сервер шле після реєстрації, розбирається повністю:
+The first packet the server sends after registration parses completely:
 
 ```
-CreatePlayerEvent  команда 2, номер 0, ім'я ' OpenBF2'
-VoipSessionEvent   сеанс 13413
-UnlockEvent        вид 1, гравець 0
-StringManagerEvent порожня
-StringManagerEvent порожня
+CreatePlayerEvent  team 2, id 0, name ' OpenBF2'
+VoipSessionEvent   session 13413
+UnlockEvent        kind 1, player 0
+StringManagerEvent empty
+StringManagerEvent empty
 ```
 
-Ім'я з пробілом попереду — не помилка розбору: на сервері без рейтингу
-`GameServer::handleClientInfo` складає його як «тег клану + пробіл + ім'я»,
-а тег у нас порожній.
+The leading space in the name is not a parsing error: on a server without
+ranking `GameServer::handleClientInfo` assembles it as "clan tag + space +
+name", and our tag is empty.
 
-## Умовні поля
+## Conditional fields
 
-Плаский список читань бреше там, де поля лежать за умовою. Обидві наші
-помилки були саме такі, тож інструмент навчено показувати будову:
+A flat list of reads lies where fields sit behind a condition. Both of our
+mistakes were exactly that, so the instrument was taught to show the shape:
 
 ```bash
 tools/linuxded/bitfields.py --blocks CreateObjectEvent::deSerialize
 ```
 
 ```
-блок 0x4237d0   32, 16, 2, 1     -> 0x4238a4 (за умовою)
-блок 0x423862   8
-блок 0x4238a4   1                -> 0x423910 (за умовою)
-блок 0x4238d9   1                -> 0x423970 (за умовою)
-блок 0x423910   32, 32, 32       -> 0x4238d9
-блок 0x423970   32, 32, 32       -> 0x423881
+block 0x4237d0   32, 16, 2, 1     -> 0x4238a4 (conditional)
+block 0x423862   8
+block 0x4238a4   1                -> 0x423910 (conditional)
+block 0x4238d9   1                -> 0x423970 (conditional)
+block 0x423910   32, 32, 32       -> 0x4238d9
+block 0x423970   32, 32, 32       -> 0x423881
 ```
 
-Звідси видно, що в `CreateObjectEvent` дві **взаємно виключні** гілки, а
-полярність переходу треба дивитися в самому коді (`cmpl $0x1; jne` —
-тобто гілка з вісьмома бітами йде, коли прапорець дорівнює одиниці):
+From this it is visible that `CreateObjectEvent` has two **mutually exclusive**
+branches, and the jump's polarity has to be looked up in the code itself
+(`cmpl $0x1; jne` — that is, the eight-bit branch is taken when the flag equals one):
 
 ```
-32  шаблон
-16  мережевий номер
- 2  поле
- 1  прапорець
-     якщо 1: 8 бітів, і на цьому все
-     якщо 0: 1 біт -> [позиція 3x32], 1 біт -> [поворот 3x32]
+32  template
+16  network id
+ 2  a field
+ 1  a flag
+     if 1: 8 bits, and that is all
+     if 0: 1 bit -> [position 3x32], 1 bit -> [rotation 3x32]
 ```
 
-Поки цього не врахували, розбір збивався на наступній події в пакеті.
-Після виправлення весь потік світу читається без жодного невідомого
-типу: 50 об'єктів із позиціями, 24 точки появи.
+Until this was accounted for, parsing went astray on the next event in the
+packet. After the fix the whole world stream reads with not a single unknown
+type: 50 objects with positions, 24 spawn points.
 
-## Розкладка полів усіх подій
+## Field layouts of every event
 
-Знято пакетно: `tools/linuxded/bitfields.py <Клас>::deSerialize` для
-всього реєстру — 63 події за десять секунд. Числа — розміри полів у
-бітах, у порядку читання.
+Taken in bulk: `tools/linuxded/bitfields.py <Class>::deSerialize` over the
+whole registry — 63 events in ten seconds. The numbers are field sizes in
+bits, in the order they are read.
 
-Кілька подій пишуть більше, ніж читають (`CreatePlayerEvent` — два
-зайвих біти, `CreateObjectEvent` — три між позицією і поворотом):
-порівняння з `::serialize` це показує, і на дроті треба зважати саме
-на запис.
+A few events write more than they read (`CreatePlayerEvent` — two extra bits,
+`CreateObjectEvent` — three between the position and the rotation): a
+comparison with `::serialize` shows it, and on the wire it is the write that
+matters.
 
-| № | клас | поля (бітів) |
+| # | class | fields (bits) |
 |---:|---|---|
-| 0 | `StringManagerEvent` | 1, 6, рядок, 1, 1, 1, 8 |
-| 1 | `ChallengeEvent` | 80, 8, рядок |
+| 0 | `StringManagerEvent` | 1, 6, string, 1, 1, 1, 8 |
+| 1 | `ChallengeEvent` | 80, 8, string |
 | 2 | `ChallengeResponseEvent` | 584, 32, 32, 1, 31, 31 |
 | 3 | `ConnectionTypeEvent` | 3 |
-| 4 | `DataBlockEvent` | 1, 32, 32, 8, рядок |
+| 4 | `DataBlockEvent` | 1, 32, 32, 8, string |
 | 5 | `CreatePlayerEvent` | 3, 4, 1, 8, 16, 16, 1, 256 |
 | 6 | `CreateObjectEvent` | 32, 16, 2, 1, 8, 1, 1, 32, 32, 32, 32, 32, 32 |
 | 7 | `DestroyObjectEvent` | 16 |
 | 8 | `DestroyPlayerEvent` | 8 |
 | 9 | `EnterVehicleEvent` | 8, 16, 1 |
 | 10 | `ExitVehicleEvent` | 8, 1 |
-| 11 | `PostRemoteEvent` | 4, 32, 32, 8, рядок |
+| 11 | `PostRemoteEvent` | 4, 32, 32, 8, string |
 | 12 | `ChangePlayerNameEvent` | 8, 256 |
 | 13 | `HandleDropEvent` | 8, 16, 16, 32, 32, 32 |
 | 14 | `HandlePickupEvent` | 8, 16, 16 |
-| 15 | `StringBlockEvent` | 1, 8, 8, рядок |
+| 15 | `StringBlockEvent` | 1, 8, 8, string |
 | 16 | `JoinSquadEvent` | 8, 8, 8 |
 | 17 | `LeaveSquadEvent` | 8, 8, 8, 1 |
 | 19 | `CommanderEvent` | 4, 8, 1, 15, 15 |
 | 20 | `RadioMessageEvent` | 8, 8, 2, 8, 5, 3 |
 | 21 | `KilledByEvent` | 8, 8, 1, 16, 32, 32, 8 |
-| 22 | `ChangeSquadNameEvent` | 8, 8, 8, 8, рядок |
+| 22 | `ChangeSquadNameEvent` | 8, 8, 8, 8, string |
 | 23 | `SetPrivateSquadEvent` | 8, 8, 1 |
 | 24 | `IssueSquadOrderEvent` | 8, 8, 8, 1, 16, 8, 1, 32, 32, 32, 32, 32, 32, 32, 32, 32 |
 | 25 | `InviteEvent` | 8, 8, 8, 1 |
@@ -230,40 +231,41 @@ tools/linuxded/bitfields.py --blocks CreateObjectEvent::deSerialize
 | 68 | `VerifyPlayerTeamEvent` | 8, 8, 8, 8 |
 | 69 | `FixPlayerTeamEvent` | 8, 8, 8, 8 |
 
-## Потік дій гравця
+## The player-action stream
 
-Це те, чим клієнт шле введення (`PlayerActionManager::processReceivedPacket`,
-знято через `--blocks`):
+This is what the client sends input with
+(`PlayerActionManager::processReceivedPacket`, taken via `--blocks`):
 
 ```
- 1  чи є дії        -> якщо 0, на цьому все
- 4  скільки дій
- 9  поле
- 1  знак + 31 біт   базовий такт
- далі на кожну дію:
-    (1 біт «є вісь» -> 15 бітів значення) кілька разів
-    32 біти, 9 бітів, 1 біт
+ 1  are there actions  -> if 0, that is all
+ 4  how many actions
+ 9  a field
+ 1  sign + 31 bits     the base tick
+ then, for every action:
+    (1 bit "axis present" -> 15 bits of value) several times
+    32 bits, 9 bits, 1 bit
 ```
 
-## Мережеві події
+## Network events
 
-Це вже не ігрові події, а окремий словник — те, чим сторони керують самим
-з'єднанням. Номер їде в `PostRemoteEvent` з категорією 6, а таблиця
-переходів `GameServer::handleNetworkEvent` розводить їх так:
+These are no longer game events but a separate dictionary — what the two sides
+drive the connection itself with. The number travels in `PostRemoteEvent` with
+category 6, and the jump table of `GameServer::handleNetworkEvent` sorts them
+out like this:
 
-| № | що робить |
+| # | what it does |
 |---:|---|
-| 1 | блок даних |
-| 2 | клієнт завантажив рівень |
-| 4 | клієнт отримав базу гравців |
-| 6, 7, 8, 12 | дії над самим з'єднанням |
-| 11 | отримано рядок |
-| 13 | радіоповідомлення |
-| 17 | об'єкт став видимим для з'єднання |
-| 18 | подія в Python (число + рядок) |
-| 19 | надіслати блок даних |
-| 20 | підтвердження кінця раунду |
+| 1 | a data block |
+| 2 | the client has loaded the level |
+| 4 | the client has received the player base |
+| 6, 7, 8, 12 | actions on the connection itself |
+| 11 | a string was received |
+| 13 | a radio message |
+| 17 | an object became visible to the connection |
+| 18 | an event in Python (a number + a string) |
+| 19 | send a data block |
+| 20 | end-of-round acknowledgement |
 
-Явної «появи гравця» тут немає: сервер спавнить тих, у кого вже виставлено
-відповідне поле, у `ServerGameLogic::uPlayingSpawning`. Чим клієнт просить
-появу — ще не знайдено.
+There is no explicit "player spawn" here: the server spawns those who already
+have the corresponding field set, in `ServerGameLogic::uPlayingSpawning`. What
+the client asks to spawn with has not been found yet.

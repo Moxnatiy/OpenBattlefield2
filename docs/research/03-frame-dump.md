@@ -1,73 +1,73 @@
-# Знімок кадру з оригіналу
+# A frame dump from the original
 
-Наш драйвер `mtld3d` (D3D9 -> Metal) уміє за одним натисканням виписати
-весь кадр: кожну ціль рендеру, кожне очищення і **кожен виклик малювання**
-разом зі станом, шейдерами й прив'язаними текстурами. Це дає еталон, з
-яким можна звіряти HUD число в число, а не на око.
+Our `mtld3d` driver (D3D9 -> Metal) can write out a whole frame at a single
+keypress: every render target, every clear and **every draw call** together
+with the state, the shaders and the bound textures. That gives a reference to
+check the HUD against number by number rather than by eye.
 
-Ліцензія mtld3d — zlib, тож патчити його вільно.
+mtld3d's licence is zlib, so patching it is free.
 
-## Як зняти
+## How to take one
 
-1. Запустити гру: `BF2_LEVEL=dalian_plant BF2_RES=800x600 tools/bf2_run.sh`
-2. У грі натиснути **Ctrl+Shift+D** — знімаються три кадри поспіль.
-3. Рядки `[dump]` осідають у журналі запуску.
+1. Start the game: `BF2_LEVEL=dalian_plant BF2_RES=800x600 tools/bf2_run.sh`
+2. In the game press **Ctrl+Shift+D** — three consecutive frames are taken.
+3. The `[dump]` lines land in the launch log.
 
-(`F12` там же вмикає повний GPU-захват Metal у `.gputrace`, але для
-розкладки він надлишковий.)
+(`F12` in the same place starts a full Metal GPU capture into `.gputrace`,
+but for the layout it is overkill.)
 
-## Чого бракувало і що дописано
+## What was missing and what was added
 
-Дамп називав, *яку* текстуру малюють, але не казав, **де**. Патч
-`tools/mtld3d_frame_dump_geom.patch` додає габарит: позиція — це перші
-два `float` кожної вершини, тож min/max по них і дає прямокутник.
-Накладено на три точки входу — `DrawPrimitiveUP`,
-`DrawIndexedPrimitiveUP` і, головне, `DrawPrimitive`/
-`DrawIndexedPrimitive`: інтерфейс BF2 йде саме зі **зв'язаних буферів
-вершин**, а не через `*UP`, тож без цього шляху жоден із 853 викликів
-кадру габариту не давав.
+The dump named *which* texture was drawn but not **where**. The patch
+`tools/mtld3d_frame_dump_geom.patch` adds the bounds: the position is the
+first two `float`s of every vertex, so a min/max over them gives the
+rectangle. It is applied at three entry points — `DrawPrimitiveUP`,
+`DrawIndexedPrimitiveUP` and, most importantly,
+`DrawPrimitive`/`DrawIndexedPrimitive`: BF2's interface goes through **bound
+vertex buffers**, not through `*UP`, so without that path not one of the
+frame's 853 calls gave any bounds.
 
-Рядок виглядає так:
+A line looks like this:
 
 ```
 [dump] draw 257: rt=… vs=… ps=… tex=[s0=TextureId(64)/…/2048x2048]
        geom=[-385.5,-139.5 150.0x44.0]
 ```
 
-## Дві речі, які видно одразу
+## Two things that are visible at once
 
-**Координати центровані.** Нуль стоїть посередині екрана, тож екранне
-положення — це `(400 + x, 300 + y)` при 800x600.
+**The coordinates are centred.** Zero sits in the middle of the screen, so
+the screen position is `(400 + x, 300 + y)` at 800x600.
 
-**Текстури атласні.** Майже все тягнеться з одного аркуша 2048x2048
-(`TextureId(64)`) — це `GSUseEffectTextureAtlas`. Тому впізнавати
-елемент за розміром текстури не вийде; цінність дампу саме в
-прямокутниках.
+**The textures are atlased.** Almost everything is pulled from a single
+2048x2048 sheet (`TextureId(64)`) — that is `GSUseEffectTextureAtlas`. So
+recognising an element by its texture's size will not work; the dump's value
+lies precisely in the rectangles.
 
-## Звірка: наша розкладка збігається точно
+## Cross-check: our layout matches exactly
 
-Список класів на екрані появи — сім рядків із кроком 66. У дампі:
+The kit list on the spawn screen is seven rows with a step of 66. In the
+dump:
 
 ```
-150x44 на y = 160.5, 226.5, 292.5, 358.5, 425.5, 490.5
-58x17  на y = 142.5, 208.5, 273.5, 340.5, 407.5, 472.5
+150x44 at y = 160.5, 226.5, 292.5, 358.5, 425.5, 490.5
+58x17  at y = 142.5, 208.5, 273.5, 340.5, 407.5, 472.5
 ```
 
-У `HudElementsSpawn.con`:
+In `HudElementsSpawn.con`:
 
 ```
 createPictureNode Kit1Info      Kit1WeaponIcon     15 161 150 44
 createPictureNode Kit1Unlocked  Kit1AltWeaponIcon 174 143  58 17
 ```
 
-Тобто `(15, 161)` проти `(14.5, 160.5)` — різниця рівно піврозміру
-пікселя, який D3D9 додає для вирівнювання текселів. **Геометрія в нас
-правильна.**
+So `(15, 161)` against `(14.5, 160.5)` — a difference of exactly the half
+pixel D3D9 adds to align texels. **Our geometry is right.**
 
-## Чого нам бракує насправді
+## What we are actually missing
 
-Не координат, а **стану**. Панелі класів висять на змінних, які гра
-виставляє з даних набору:
+Not the coordinates but the **state**. The kit panels hang on variables the
+game sets from the kit's data:
 
 ```
 createSplitNode KitsSelectionInfo Kit0Info
@@ -78,66 +78,66 @@ setNodeShowVariable Kit0Show
   setNodeShowVariable PlayerKitIcon0SelectShow
 ```
 
-Поки наш клієнт не заповнює `Kit0Show`…`Kit6Show`,
-`PlayerKitIcon<N>SelectShow`, `KitUnlock<N>Show` тощо, екран появи
-лишається порожнім — хоча малює він усе правильно.
+Until our client fills `Kit0Show`…`Kit6Show`,
+`PlayerKitIcon<N>SelectShow`, `KitUnlock<N>Show` and so on, the spawn screen
+stays empty — even though it draws everything correctly.
 
-Повна таблиця з 172 прямокутників оригіналу — у
+The full table of the original's 172 rectangles is in
 `docs/research/spawn-screen-reference.md`.
 
-## Як зняти без клавіатури — і чому це знадобилося
+## How to take one without a keyboard — and why that was needed
 
-`Ctrl+Shift+D` потребує руки на клавіатурі, а це виключає все
-автоматичне: скрипт, запуск із оболонки, агента. Тому зроблено два
-знаряддя.
+`Ctrl+Shift+D` needs a hand on the keyboard, and that rules out everything
+automatic: a script, a launch from a shell, an agent. So two instruments were
+made.
 
-### 1. Файловий тригер у mtld3d
+### 1. A file trigger in mtld3d
 
-`tools/mtld3d_file_trigger.patch` додає до `windows/d3d9/src/capture.rs`
-перевірку двох файлів раз на 15 кадрів:
+`tools/mtld3d_file_trigger.patch` adds a check of two files every 15 frames
+to `windows/d3d9/src/capture.rs`:
 
 ```
-/tmp/mtld3d_dump      = Ctrl+Shift+D   (розбір кадру в журнал)
-/tmp/mtld3d_capture   = F12            (трасa Metal у .gputrace)
+/tmp/mtld3d_dump      = Ctrl+Shift+D   (a frame breakdown into the log)
+/tmp/mtld3d_capture   = F12            (a Metal trace into .gputrace)
 ```
 
-Wine відображає `Z:` на `/`, тому в самому драйвері шляхи записані як
-`Z:\tmp\...`. Файл видаляється, щойно запит узято, — один `touch`
-спрацьовує один раз.
+Wine maps `Z:` onto `/`, so inside the driver itself the paths are written as
+`Z:\tmp\...`. The file is removed as soon as the request is taken — one
+`touch` fires once.
 
 ```
 touch /tmp/mtld3d_dump && sleep 4 && grep -c 'geom=' /tmp/bf2run.log
 ```
 
-### 2. `.app`-обгортка навколо Wine
+### 2. An `.app` wrapper around Wine
 
-Wine, запущений із оболонки, для macOS — процес **без bundle id**
-(`lsappinfo` показує `bundleID=[ NULL ]`). Через це його не бачить нічого,
-що працює через LaunchServices: ані керування застосунком, ані
-Metal-трасування Xcode, яке теж питає, який саме застосунок трасувати.
+Wine started from a shell is, to macOS, a process **with no bundle id**
+(`lsappinfo` shows `bundleID=[ NULL ]`). Because of that nothing that works
+through LaunchServices can see it: neither application control nor Xcode's
+Metal tracing, which also asks which application to trace.
 
-`tools/bf2_app.sh` збирає найменший можливий `.app`: `Info.plist` із
-власним bundle id (`org.openbf2.original`) і скрипт, який **заміщає
-себе** (`exec`) процесом Wine — pid лишається тим самим, тож
-LaunchServices далі вважає його тим застосунком.
+`tools/bf2_app.sh` assembles the smallest possible `.app`: an `Info.plist`
+with its own bundle id (`org.openbf2.original`) and a script that **replaces
+itself** (`exec`) with the Wine process — the pid stays the same, so
+LaunchServices goes on considering it that application.
 
 ```
 BF2_LEVEL=dalian_plant tools/bf2_app.sh
 open -a "$HOME/Applications/OpenBF2 Original.app"
 ```
 
-Після цього гра видима як звичайний застосунок:
+After that the game is visible as an ordinary application:
 
 ```
 98) "OpenBF2 Original" ASN:0x0-0x1614613:
     bundleID="org.openbf2.original"
 ```
 
-Обгортка ставить і `MTL_CAPTURE_ENABLED=1` — без цієї змінної, заданої
-**при старті процесу**, `MTLCaptureManager` мовчки відмовляє, і жодне
-трасування Metal не почнеться.
+The wrapper also sets `MTL_CAPTURE_ENABLED=1` — without that variable, set
+**at the process's start**, `MTLCaptureManager` silently refuses and no Metal
+trace will begin.
 
-### 3. Трасування Metal — те саме, але засобами самої macOS
+### 3. Metal tracing — the same thing, but by macOS's own means
 
 ```
 touch /tmp/mtld3d_capture
@@ -148,43 +148,44 @@ INFO mtld3d::unix] started GPU capture -> /tmp/mtld3d_capture.gputrace
 INFO mtld3d::unix] stopped GPU capture -> /tmp/mtld3d_capture.gputrace
 ```
 
-Виходить справжній `.gputrace` (у нашому заміру — 146 МБ, 1314 записів:
-`MTLBuffer-*`, `MTLTexture-*`, `CAMetalLayer-*`). Відкривається в Xcode
-як звичайне GPU-захоплення, з усіма ресурсами й проходами.
+The result is a genuine `.gputrace` (146 MB in our measurement, 1314 records:
+`MTLBuffer-*`, `MTLTexture-*`, `CAMetalLayer-*`). It opens in Xcode as an
+ordinary GPU capture, with all the resources and passes.
 
-Коли що брати: текстовий `[dump]` дає **прямокутники**, і саме він
-годиться для звірки розкладки числом; `.gputrace` дає стан GPU цілком —
-шейдери, буфери, вміст текстур — і потрібен тоді, коли питання не «де»,
-а «чим намальовано».
+Which to take when: the textual `[dump]` gives the **rectangles**, and it is
+what suits checking the layout numerically; the `.gputrace` gives the GPU's
+state in full — shaders, buffers, texture contents — and is needed when the
+question is not "where" but "drawn with what".
 
-### Чого так зняти **не** вдається
+### What **cannot** be taken this way
 
-Знімок і рух миші проходять, а **натискання — ні**: BF2 читає мишу через
-DirectInput, і фонове введення до нього не доходить. Тому вибрати місце
-появи й натиснути DONE із фонового режиму не виходить — для цього
-потрібне повноекранне керування, яке користувач підтверджує окремо.
+A screenshot and mouse movement get through, but **clicks do not**: BF2 reads
+the mouse through DirectInput, and background input does not reach it. So
+picking a spawn point and pressing DONE from the background does not work —
+that needs full-screen control, which the user confirms separately.
 
-Тобто екран появи знімається сам, а бойовий HUD — лише після того, як
-хтось натисне DONE.
+In other words the spawn screen takes itself, while the combat HUD only after
+someone presses DONE.
 
-## Другий знімок екрана появи
+## A second spawn-screen dump
 
-`docs/research/spawn-screen-reference-2.md` — знято вже цим способом,
-46 викликів. Порівняння з нашим клієнтом:
+`docs/research/spawn-screen-reference-2.md` — taken this way already, 46
+calls. A comparison with our client:
 
 ```
 tools/hud_coverage.py /tmp/bf2run.log ours.txt
-   оригінал: 46 викликів, у нас: 474 прямокутників
-   збіглося: 24 (52%)
+   original: 46 calls, ours: 474 rectangles
+   matched: 24 (52%)
 ```
 
-Найцікавіше з невідтвореного — **смуга заголовка**:
+The most interesting thing not reproduced is the **title bar**:
 
 ```
-виклик 243   249.5  -0.5   536.0 x 47.0     (сама смуга)
-виклик 244   335.5   4.5    98.5 x 11.0     («SELECT SPAWNPOINT»)
+call 243   249.5  -0.5   536.0 x 47.0     (the bar itself)
+call 244   335.5   4.5    98.5 x 11.0     ("SELECT SPAWNPOINT")
 ```
 
-Вузла 536x47 у даних HUD **немає жодного** — перевірено пошуком по всіх
-`HudSetup/*.con`. Тобто цю смугу малює не `hudBuilder`, і хто саме — ще
-не з'ясовано. У нас її немає взагалі.
+There is **no** 536x47 node in the HUD's data at all — checked by searching
+every `HudSetup/*.con`. So that bar is drawn by something other than
+`hudBuilder`, and by what exactly is not established yet. We do not have it
+at all.

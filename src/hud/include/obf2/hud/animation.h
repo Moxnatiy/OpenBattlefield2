@@ -1,31 +1,31 @@
 #pragma once
-// Поява і зникнення вузлів HUD — те, що робить його живим.
+// The appearing and disappearing of HUD nodes — what makes it feel alive.
 //
-// У грі це не окремий код, а той самий граф MemeFile, що й меню. Видно
-// це прямо з будівника (`Menu/Bf2HudBuilder.cpp`, за 0x79b2c0 і 0x79db80):
-// кожна команда ефекту шукає вже готовий вузол `<ім'я>CullNode` і чіпляє
-// до нього новий вузол графа з іменем `<ім'я>MoveEffect` або
-// `<ім'я>AlphaShowEffect`. Клас вузла руху зветься
-// `dice::meme::Bf2MoveEffect` (RTTI за 0x937a44), поряд із ним лежить
-// окремий `dice::meme::Bf2SinMoveEffect` — тобто звичайний рух саме
-// рівномірний, а синусоїда це інший, окремий клас.
+// In the game this is not separate code but the same MemeFile graph as the menu.
+// That is visible straight from the builder (`Menu/Bf2HudBuilder.cpp`, at
+// 0x79b2c0 and 0x79db80): every effect command looks for an already existing
+// node `<name>CullNode` and attaches a new graph node to it, named
+// `<name>MoveEffect` or `<name>AlphaShowEffect`. The movement node's class is
+// called `dice::meme::Bf2MoveEffect` (RTTI at 0x937a44), and beside it lies a
+// separate `dice::meme::Bf2SinMoveEffect` — so ordinary movement is precisely
+// linear, and the sine curve is a different, separate class.
 //
-// Тому тут: cull-вузол дає нам «показувати чи ні», а ефект розтягує цей
-// перехід у часі — за `setNodeInTime` секунд туди і `setNodeOutTime`
-// назад.
+// So here: the cull node gives us "show or not", and the effect stretches that
+// transition over time — `setNodeInTime` seconds in and `setNodeOutTime`
+// seconds out.
 //
-// Напрям руху взято з коду, а не з міркувань:
+// The direction of movement is taken from the code, not from reasoning:
 // `dice::meme::MoveEffect::picturePaint` (`MemeDll.dll`, 0x10001b27)
-// рахує зсув як **(-cos a, +sin a) * довжина * (1 - хід)**.
+// computes the offset as **(-cos a, +sin a) * length * (1 - progress)**.
 //
-// Раніше тут стояло `(+cos a, -sin a)`, виведене з міркування «панель
-// голосування має виїжджати знизу». Знаки виявилися протилежними, тобто
-// всі елементи прилітали не з того боку.
+// It used to hold `(+cos a, -sin a)`, derived from the reasoning "the voting
+// panel has to drive in from below". The signs turned out to be the opposite, so
+// every element flew in from the wrong side.
 //
-// Хід показу веде `dice::meme::CullNode::iterateUpdate` (`MemeDll.dll`,
-// 0x10004a57), і він **рівномірний**: `хід += dt / «In time»` при показі
-// і `хід -= dt / «Out time»` при сховуванні. Поля `In time`/`Out time`
-// належать самому `CullNode` — саме їх пишуть `setNodeInTime` і
+// The show progress is driven by `dice::meme::CullNode::iterateUpdate`
+// (`MemeDll.dll`, 0x10004a57), and it is **linear**: `progress += dt / "In time"`
+// while showing and `progress -= dt / "Out time"` while hiding. The `In time`/
+// `Out time` fields belong to `CullNode` itself — `setNodeInTime` and
 // `setNodeOutTime`.
 #include <string>
 #include <unordered_map>
@@ -35,90 +35,95 @@
 
 namespace obf2::hud {
 
-// --- кутові ділянки HUD ------------------------------------------------
+// --- the HUD's corner regions ------------------------------------------
 //
-// Це окрема від вузлів річ: ділянки їздять не за `setNodeInTime`, а за
-// змінними графа `Menu/Ingame`. Прочитати їх можна командою
+// This is a thing apart from the nodes: the regions travel not by
+// `setNodeInTime` but by the `Menu/Ingame` graph's variables. They can be read with
 // `tools/meme_read.py Ingame --find BottomRight`:
 //
 //   SetVariableSineAction {Speed: 600}
-//     Variable: FloatData «BottomRight/BottomRight_XPos»    503
-//     Data:     ToggleData «BottomRight/BottomRight_NextPos»
-//                 Data 1: «BottomRight_newXPos»             503
-//                 Data 2: «BottomRight_oldXPos»             201
+//     Variable: FloatData 'BottomRight/BottomRight_XPos'    503
+//     Data:     ToggleData 'BottomRight/BottomRight_NextPos'
+//                 Data 1: 'BottomRight_newXPos'             503
+//                 Data 2: 'BottomRight_oldXPos'             201
 //
-// Сховане положення — 503, і воно з файлу.
+// These two numbers in the file are only the variables' **initial** values: both
+// are bound to fields of the HUD object, and the game rewrites them. The binding
+// is done by 0x7a62c0 (`BF2.exe`): `BottomRight_oldXPos` -> field +0x28,
+// `BottomRight_newXPos` -> +0x2c, `BottomRight_direction` -> +0x18.
 //
-// **Висунуте — 336.5, і воно з виміру, а не з файлу.** 201 у файлі — це
-// початкове значення змінної, яку гра переписує під час роботи (так само,
-// як ліворуч переписує `BottomLeft_nextXPos`). Знімок кадру оригіналу
-// (`Ctrl+Shift+D`, docs/research/03-frame-dump.md) дає 336.5, і на ньому
-// сходяться три різні вузли:
+// **On the right there are three positions, not two** — the same as on the left.
+// They are set by the same object's constructor (`BF2.exe`, 0x7a5b10), in the fields
+// +0x1c, +0x20, +0x24:
 //
-//   BottomRightBar  301 -> 637.5     ShotSelect 449 -> 785.5
-//   безіменний 16x10 431 -> 767.5
+//   0x43fb8000 = 503   hidden
+//   0x43a88000 = 337   on foot
+//   0x43250000 = 165   in a vehicle
 //
-// Значення стале в усіх трьох знятих кадрах, тобто це не проміжок
-// анімації. З 201 плашка набоїв сидить на 135 пікселів лівіше, ніж в
-// оригіналі — це вже перевірялося.
+// A frame dump of the original (`Ctrl+Shift+D`,
+// docs/research/03-frame-dump.md) gave 336.5, and it is the same number: the
+// dump measures the quads' corners, while the whole HUD is drawn with a half
+// pixel offset (the same dump has `MapFrame` at 595.5 against 596 in the data).
+// Now the number comes from the binary rather than from the screen.
 inline constexpr float kBottomRightHiddenX = 503.0f;
-inline constexpr float kBottomRightShownX = 336.5f;
+inline constexpr float kBottomRightShownX = 337.0f;
+inline constexpr float kBottomRightVehicleX = 165.0f;
 
-// **Ліворуч положень три, а не два.** Їх задає конструктор об'єкта HUD
-// (`BF2.exe`, 0x78c560), полями +0x178, +0x17c, +0x180:
+// **On the left there are three positions, not two.** They are set by the HUD
+// object's constructor (`BF2.exe`, 0x78c560), in the fields +0x178, +0x17c, +0x180:
 //
-//   0xc3938000 = -295   сховане
-//   0xc3090000 = -137   пішки
-//   0x42580000 =   54   у техніці
+//   0xc3938000 = -295   hidden
+//   0xc3090000 = -137   on foot
+//   0x42580000 =   54   in a vehicle
 //
-// Поточне й цільове положення — сусідні поля +0x184 (`BottomLeft_XPos`)
-// і +0x188 (`BottomLeft_nextXPos`), зареєстровані як змінні графа
-// (0x7895f5 і 0x78963f). Вибирає між трьома функція 0x78b600.
+// The current and target positions are the neighbouring fields +0x184
+// (`BottomLeft_XPos`) and +0x188 (`BottomLeft_nextXPos`), registered as graph
+// variables (0x7895f5 and 0x78963f). The choice among the three is made by 0x78b600.
 //
-// Раніше тут стояв заповнювач -1, і саме через нього плашка під
-// здоров'ям тягнулася на всю ширину, ніби гравець у техніці: вузол
-// `BottomLeftBar` (400 завширшки, зсув -103) при -1 доходив до x = 296,
-// тоді як пішки має доходити до 160.
+// It used to hold the placeholder -1, and that is exactly why the plate under
+// the health stretched over the full width as if the player were in a vehicle:
+// the node `BottomLeftBar` (400 wide, offset -103) reached x = 296 at -1, while
+// on foot it has to reach 160.
 inline constexpr float kBottomLeftHiddenX = -295.0f;
 inline constexpr float kBottomLeftFootX = -137.0f;
 inline constexpr float kBottomLeftVehicleX = 54.0f;
 
-// Швидкість руху ділянок — з того самого файлу (`SetVariableSineAction`).
+// The regions' movement speed comes from the same file (`SetVariableSineAction`).
 inline constexpr float kCornerMoveSpeed = 600.0f;
 
-// Прозорість тих самих ділянок веде **інша** дія — `SetVariableSoftAction`
-// зі швидкістю 10 (чотири штуки: BottomLeft_alpha1/2, BottomRight_alpha).
+// The same regions' alpha is driven by a **different** action —
+// `SetVariableSoftAction` at speed 10 (four of them: BottomLeft_alpha1/2, BottomRight_alpha).
 inline constexpr float kCornerAlphaSpeed = 10.0f;
 
-// Обидві дії, якими граф рухає змінні HUD, живуть у `obf2::meme`:
-// це той самий `Menu/Ingame`, що веде кутові ділянки
+// Both actions the graph moves HUD variables with live in `obf2::meme`:
+// it is the same `Menu/Ingame` that drives the corner regions
 // (obf2/meme/graph.h, `approachVariable`).
 
-// Стан переходу одного вузла.
+// One node's transition state.
 struct ShowState {
-  // Чи аніматор узагалі чув про цей вузол. Ні — значить, за нього
-  // відповідає звичайна умова показу, а не хід переходу.
+  // Whether the animator has heard of this node at all. If not, an ordinary show
+  // condition governs it rather than a transition's progress.
   bool known = false;
-  float progress = 1.0f;  // 0 — сховано, 1 — на місці
-  float alpha = 1.0f;     // множник прозорості від alpha-ефекту
-  float offsetX = 0.0f;   // зсув від move-ефекту, у базових 800x600
+  float progress = 1.0f;  // 0 is hidden, 1 is in place
+  float alpha = 1.0f;     // the alpha multiplier from the alpha effect
+  float offsetX = 0.0f;   // the offset from the move effect, in the base 800x600
   float offsetY = 0.0f;
 };
 
 class Animator {
  public:
-  // Просунути час. `visible` — це відповідь cull-вузла для кожного вузла.
+  // Advance time. `visible` is the cull node's answer for each node.
   void advance(float dt);
 
-  // Ціль для вузла на цьому кадрі. Викликати до `advance` не обов'язково:
-  // вузол, про який ми ще не чули, з'являється відразу в кінцевому стані,
-  // якщо він видимий, і в нульовому, якщо ні.
+  // The target for a node on this frame. Calling it before `advance` is not
+  // required: a node we have not heard of appears straight in its final state
+  // when it is visible and in the zero state when it is not.
   void setVisible(const Node& node, bool visible);
 
   ShowState state(const Node& node) const;
 
-  // Чи є вузол, що зараз посеред переходу. Поки так — екран доводиться
-  // перебудовувати щокадру.
+  // Whether some node is mid-transition right now. While it is, the screen has
+  // to be rebuilt every frame.
   bool animating() const { return animating_; }
 
  private:

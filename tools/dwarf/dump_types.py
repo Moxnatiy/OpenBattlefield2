@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Витягує з DWARF Linux-сервера BF2 опис класів: поля, зміщення, типи.
+"""Pulls the class descriptions out of the BF2 Linux server's DWARF: fields, offsets, types.
 
-Це специфікація, а не код: за нею ми пишемо власну реалізацію (clean-room).
-Використання:
-    python tools/dwarf/dump_types.py <binary> <ім'я класу> [ще класи...]
-    python tools/dwarf/dump_types.py <binary> --list <підрядок>
+This is a specification, not code: we write our own implementation from it (clean room).
+Usage:
+    python tools/dwarf/dump_types.py <binary> <class name> [more classes...]
+    python tools/dwarf/dump_types.py <binary> --list <substring>
 """
 import sys
 from elftools.elf.elffile import ELFFile
@@ -41,7 +41,7 @@ def name_of(die):
 
 def describe(die, out):
     size = die.attributes.get("DW_AT_byte_size")
-    out.append("class %s  (розмір %s)" % (name_of(die), size.value if size else "?"))
+    out.append("class %s  (size %s)" % (name_of(die), size.value if size else "?"))
     for child in die.iter_children():
         if child.tag == "DW_TAG_inheritance":
             out.append("  : %s" % type_name(ref(child)))

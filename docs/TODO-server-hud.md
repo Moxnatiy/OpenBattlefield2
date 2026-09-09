@@ -1,181 +1,200 @@
-# План: серверна логіка та ігровий HUD
+# Plan: server logic and the in-game HUD
 
-Джерело істини — **Linux-сервер BF2 1.5** (`Game Files/OtherFiles/linuxded/bin/amd-64/bf2`,
-ELF x86-64, **не стрипнутий**: 36 076 функцій із повними C++-сигнатурами). Карта
-символів вивантажена в `docs/reference/linuxded-symbols.txt` і
-`docs/reference/linuxded-functions.txt`. DWARF у бінарі є лише для стартового
-коду glibc, тож розкладки структур беремо не з нього, а з поведінки, `.con`-даних
-і декомпіляції окремих функцій.
+The source of truth is the **BF2 1.5 Linux server**
+(`Game Files/OtherFiles/linuxded/bin/amd-64/bf2`, ELF x86-64, **not
+stripped**: 36 076 functions with full C++ signatures). The symbol map is
+dumped into `docs/reference/linuxded-symbols.txt` and
+`docs/reference/linuxded-functions.txt`. The binary's DWARF covers only
+glibc's startup code, so structure layouts come not from it but from
+behaviour, `.con` data and the decompilation of individual functions.
 
-Порядок роботи не змінюється: конспект → тест → реалізація. Копіювати
-декомпільований код не можна (CLAUDE.md, п. 8).
+The order of work does not change: notes → test → implementation. Copying
+decompiled code is not allowed (CLAUDE.md, rule 8).
 
-## Що вже є
+## What already exists
 
-- фіксований тік 30 Гц, петлевий канал, роздача об'єктів клієнту;
-- рух солдата з константами `phy-soldier-*`, зіткнення з геометрією;
-- контрольні точки: захоплення за сталим часом, поява на своїй точці;
-- розбір `GamePlayObjects.con`: 4 точки, 27 спавнерів на Dalian Plant.
+- a fixed 30 Hz tick, a loopback channel, handing objects out to the client;
+- soldier movement with the `phy-soldier-*` constants, collision with
+  geometry;
+- control points: capture over a fixed time, spawning at your own point;
+- parsing of `GamePlayObjects.con`: 4 points, 27 spawners on Dalian Plant.
 
-## Кістяк оригіналу, за яким рівняємось
+## The original's skeleton, which we follow
 
-`dice::hfe::ServerGameLogic` — машина станів, яку крутить `update(float)`:
+`dice::hfe::ServerGameLogic` — the state machine driven by `update(float)`:
 
 ```
-uFirstPreGame -> uPreGame        (розігрів, чекаємо гравців)
-uFirstPlaying -> uPlaying        (гра; всередині:)
-                   uPlayingSpawning       — черга появи, хвилі
-                   uPlayingTicketSystem   — квитки й витік
-                   uPlayingInsideGameArea — межі бойової зони
-                   uPlayingWinner         — умова перемоги
-uFirstEndGame -> uEndGame        (підсумки, наступна карта)
+uFirstPreGame -> uPreGame        (warm-up, waiting for players)
+uFirstPlaying -> uPlaying        (the game; inside it:)
+                   uPlayingSpawning       — the spawn queue, waves
+                   uPlayingTicketSystem   — tickets and bleed
+                   uPlayingInsideGameArea — the combat area's bounds
+                   uPlayingWinner         — the win condition
+uFirstEndGame -> uEndGame        (results, the next map)
 ```
 
-Ключові методи, які нам треба відтворити: `spawnPlayer`, `reSpawnPlayer`,
+The key methods we have to reproduce: `spawnPlayer`, `reSpawnPlayer`,
 `killPlayer`, `suicide`, `giveDamage`, `heal`, `resurrect`, `replenishAmmo`,
 `selectTeam`, `selectKitAndUnlockLevel`, `getNewKit`, `handlePickup`,
-`handleDrop`, `handleExplosion`, `checkPlayerTriggers`, `setTicket*`/`getTicket*`,
-`getTicketLimitReachedId`, `loadNextLevel`, `restartMap`.
+`handleDrop`, `handleExplosion`, `checkPlayerTriggers`,
+`setTicket*`/`getTicket*`, `getTicketLimitReachedId`, `loadNextLevel`,
+`restartMap`.
 
-## Етапи
+## Stages
 
-### S1. Стан гри та квитки
-- [x] `GameStatus` і машина станів у `GameServer::tick` (PreGame → Playing → EndGame).
-- [x] Квитки на команду: `gamelogic.setDefaultNumberOfTickets` читається з
-      `GameLogicInit.con`, множник — `sv.ticketRatio` із `ServerSettings.con`.
-- [x] Витік квитків за вагою площі + окремий «кінцевий» темп.
-- [x] `enemyTicketLossWhenCaptured` — разова втрата при захопленні точки.
-- [x] Умова перемоги за квитками (`endGame`).
-- [ ] Пороги попереджень `setTicketLimit`/`ticketState` (10, 10 %, 20 %).
-- [ ] Ліміт часу раунду.
-- [x] Смерть гравця — мінус квиток команді (`killPlayer`).
+### S1. Game state and tickets
+- [x] `GameStatus` and the state machine in `GameServer::tick`
+      (PreGame → Playing → EndGame).
+- [x] Tickets per team: `gamelogic.setDefaultNumberOfTickets` is read from
+      `GameLogicInit.con`, the multiplier is `sv.ticketRatio` from
+      `ServerSettings.con`.
+- [x] Ticket bleed by area weight plus a separate "final" rate.
+- [x] `enemyTicketLossWhenCaptured` — the one-off loss on capturing a point.
+- [x] The win condition by tickets (`endGame`).
+- [ ] Warning thresholds `setTicketLimit`/`ticketState` (10, 10 %, 20 %).
+- [ ] The round's time limit.
+- [x] A player's death costs the team a ticket (`killPlayer`).
 
-### S2. Контрольні точки 1:1
-- [x] Параметри шаблону замість наших сталих: `timeToGetControl`,
+### S2. Control points 1:1
+- [x] Template parameters instead of our own constants: `timeToGetControl`,
       `timeToLoseControl`, `areaValueTeam1/2`, `unableToChangeTeam`,
       `onlyTakeableByTeam`, `enemyTicketLossWhenCaptured`.
-- [x] Нейтралізація перед захопленням (прапор донизу, потім угору).
-- [x] Вплив кількості гравців у радіусі на швидкість.
-- [ ] `radiusOffset` і півсферичний радіус (`isHemisphere`).
-- [ ] Гравець у техніці рахується лише як перший пасажир.
-- [ ] Зв'язок точки зі спавнером техніки (`teamOnVehicle`, `teamFromClosestCP`).
+- [x] Neutralisation before capture (the flag goes down, then up).
+- [x] The number of players in the radius affects the speed.
+- [ ] `radiusOffset` and the hemispherical radius (`isHemisphere`).
+- [ ] A player in a vehicle counts only as the first passenger.
+- [ ] The link between a point and a vehicle spawner (`teamOnVehicle`,
+      `teamFromClosestCP`).
 
-### S3. Команди, набори, поява
-- [ ] Команди 1 і 2 з назвами (`setTeamName`, `getTeamName`), автобаланс.
-- [x] `SpawnPoint` із `GamePlayObjects.con` — реальні точки появи (24 на
-      Dalian) із `setSpawnPositionOffset`, по колу, лише на своїх точках.
-- [x] Вибір точки 1:1 із рушієм: випадкова серед придатних, прапор має
-      бути наш, поруч не має нікого стояти (`docs/functions/spawn.md`).
-- [ ] `SpawnGroup` і поява біля командира/загону.
-- [ ] Поява одразу в техніці, якщо всі точки зайняті (`enterOnSpawn`).
-- [ ] Набори (kits): `menuTeamManager.addKit/addTeam/addWeapon` (зараз без
-      обробника), вибір набору при появі.
-- [ ] Хвилі появи: `getDefaultTimeToNextAIWave`, черга `uPlayingSpawning`.
-- [ ] Екран появи: вибір точки клієнтом → пакет серверу.
+### S3. Teams, kits, spawning
+- [ ] Teams 1 and 2 with names (`setTeamName`, `getTeamName`), autobalance.
+- [x] `SpawnPoint` from `GamePlayObjects.con` — the real spawn points (24 on
+      Dalian) with `setSpawnPositionOffset`, in a circle, only at your own
+      points.
+- [x] Picking a point 1:1 with the engine: random among the suitable ones,
+      the flag must be ours, nobody must be standing nearby
+      (`docs/functions/spawn.md`).
+- [ ] `SpawnGroup` and spawning next to the commander/squad.
+- [ ] Spawning straight into a vehicle when every point is taken
+      (`enterOnSpawn`).
+- [ ] Kits: `menuTeamManager.addKit/addTeam/addWeapon` (currently without a
+      handler), picking a kit on spawn.
+- [ ] Spawn waves: `getDefaultTimeToNextAIWave`, the `uPlayingSpawning` queue.
+- [ ] The spawn screen: the client picks a point → a packet to the server.
 
-### S4b. Фізика солдата (сталі з рушія)
-- [x] Форма солдата — стовпчик сфер (5 стоячи), радіус 0.25, висота 1.7.
-- [x] Земля рахується й по геометрії об'єктів, а не лише по рельєфу.
-- [x] Сходинки: нижче за діаметр нижньої сфери солдат переступає.
-- [x] Техніка бере участь у зіткненнях.
-- [x] Плавання з порогами `start-float` / `stop-float` і своєю швидкістю.
-- [x] Швидкості з рушія: біг 3.9, спринт 7, плавом 2.1.
-- [ ] Пози (присів, лежить) — 3 і 1 сфера, свої висоти й швидкості.
-- [ ] Витривалість спринту (`sprint-limit`, `dissipation`, `recover`).
-- [ ] Втоплення (`soldier-drown-damage` 8/с) і шкода від падіння.
-- [ ] Нахил поверхні: зараз тримає будь-яка, треба відсікати за
-      `phy-soldier-feet-contact-normal` і зісковзувати.
+### S4b. Soldier physics (constants from the engine)
+- [x] The soldier's shape is a column of spheres (5 standing), radius 0.25,
+      height 1.7.
+- [x] The ground is computed from objects' geometry too, not only from the
+      terrain.
+- [x] Steps: below the diameter of the lowest sphere the soldier steps over.
+- [x] Vehicles take part in collision.
+- [x] Swimming with the `start-float` / `stop-float` thresholds and its own
+      speed.
+- [x] Speeds from the engine: running 3.9, sprinting 7, swimming 2.1.
+- [ ] Poses (crouched, prone) — 3 and 1 spheres, their own heights and speeds.
+- [ ] Sprint stamina (`sprint-limit`, `dissipation`, `recover`).
+- [ ] Drowning (`soldier-drown-damage` 8/s) and fall damage.
+- [ ] Surface slope: right now any surface holds; it has to be cut off by
+      `phy-soldier-feet-contact-normal` and slid off.
 
-### S4. Здоров'я, шкода, смерть
-- [x] Здоров'я солдата (100 з `ObjectTemplate.armor.maxHitPoints`), смерть,
-      мінус квиток, поява через `sv.spawnTime` (15 с) із повним здоров'ям.
-- [x] Провалився крізь світ — смерть, а не вічне падіння.
-- [ ] `giveDamage` з типом шкоди й зброя.
-- [ ] Шкода від падіння: у даних її нема, константи сидять у рушії —
-      треба дивитися `ArmorGLComp::damage` у Linux-сервері.
-- [ ] `suicide`, падіння з висоти, вихід за межі бойової зони.
-- [ ] Матеріали й множники шкоди (потребує `materialManager`).
+### S4. Health, damage, death
+- [x] The soldier's health (100 from `ObjectTemplate.armor.maxHitPoints`),
+      death, a ticket lost, respawn after `sv.spawnTime` (15 s) at full
+      health.
+- [x] Falling through the world is death, not eternal falling.
+- [ ] `giveDamage` with a damage type and a weapon.
+- [ ] Fall damage: it is not in the data, the constants sit in the engine —
+      `ArmorGLComp::damage` in the Linux server has to be looked at.
+- [ ] `suicide`, falling from a height, leaving the combat area.
+- [ ] Materials and damage multipliers (needs `materialManager`).
 
-### S5. Техніка й спавнери
-- [x] Поява техніки зі спавнерів: шаблон за командою-власником точки
-      (`setObjectTemplate`), переставляння при зміні власника. 18 машин.
-- [ ] Таймер повернення знищеної техніки.
-- [ ] Вхід/вихід із техніки (`PlayerControlObject`, entry points).
+### S5. Vehicles and spawners
+- [x] Vehicles appearing from spawners: the template by the owning point's
+      team (`setObjectTemplate`), re-placement when the owner changes. 18
+      vehicles.
+- [ ] The timer that brings a destroyed vehicle back.
+- [ ] Entering/leaving a vehicle (`PlayerControlObject`, entry points).
 
-### S6. Рахунок і статистика
-- [ ] Очки гравця: вбивства, смерті, захоплення, допомога.
-- [ ] Табло (`Scoreboard` у HUD).
+### S6. Score and statistics
+- [ ] A player's points: kills, deaths, captures, assists.
+- [ ] The scoreboard (`Scoreboard` in the HUD).
 
-### S7. Мережа
-- [ ] Нові пакети: стан гри, квитки, точки, здоров'я, рахунок.
-- [ ] Клієнтський прогноз руху; звірка з сервером.
-- [ ] UDP-транспорт (абстракція готова, працює лише петля).
+### S7. Network
+- [ ] New packets: game state, tickets, points, health, score.
+- [ ] Client-side prediction of movement; reconciliation with the server.
+- [ ] UDP transport (the abstraction is ready, only the loopback works).
 
-## Ігровий HUD
+## The in-game HUD
 
-Дані вже розбираються: `Menu/HUD/HudSetup/HudSetupMain.con` дає **1615 вузлів**
-у 100+ групах. Головна група — `IngameHud` (60 вузлів), і майже все в ній —
-вузли типу `split`, тобто посилання на інші групи.
+The data already parses: `Menu/HUD/HudSetup/HudSetupMain.con` gives **1615
+nodes** in 100+ groups. The main group is `IngameHud` (60 nodes), and almost
+everything in it is a `split` node, that is a reference to another group.
 
-### H1. Каркас
-- [x] Розкриття `split`-вузлів: `hud::buildTree` іде деревом
-      `IngameHud -> під-групи` з захистом від кільця.
-- [x] Малювання HUD в ігровій сесії — другим проходом поверх кадру
+### H1. The skeleton
+- [x] Expanding `split` nodes: `hud::buildTree` walks the tree
+      `IngameHud -> sub-groups` with cycle protection.
+- [x] Drawing the HUD in a game session — as a second pass over the frame
       (`renderOverlay(..., clear=false)`).
-- [x] Текстури інтерфейсу: шлях від `Menu/HUD/Texture/`, підтримка `.tga`
-      (у stb лишалися тільки PNG — саме тому HUD був порожній).
+- [x] Interface textures: the path from `Menu/HUD/Texture/`, `.tga` support
+      (stb was left with PNG only — which is exactly why the HUD was empty).
 
-### H2. Живі дані
-- [x] Квитки обох команд (`FriendlyTicketsString`, `EnemyTicketsString`):
-      підпис перебудовується лише коли змінився рядок.
-- [ ] Решта значень: здоров'я, набій, назва точки, час. Повний перелік
-      того, що подає рушій, — у `docs/functions/hud-variables.md`.
-- [ ] **Якорі кутових шарів.** `GeneralHudSettings.con` оголошує окремі
-      кореневі групи `BottomLeftStatic`, `BottomLeftAnimate`,
-      `BottomRightStatic`, `BottomRightAnimate`, `TopLayer`, але ніде не
-      задає їхніх координат: усередині них числа відлічуються від якоря,
-      який ставить сам рушій. Через це смуги здоров'я, витривалості й
-      набоїв поки не малюються. Якорі треба дістати з BF2.exe (група
-      `hudManager`/`hudBuilder`).
-- [x] Смуги (`Bar`) із заповненням за `setBarNodeValueVariable`. Заодно
-      виявилося, що смуга має **зайвий аргумент перед прямокутником**
-      (напрям росту), і всі смуги в нас читалися зі зсувом на одну позицію.
-      Дві текстури (`setBarNodeTexture 0|1`) теж тепер розрізняються.
-- [x] Смужки контрольних точок під мінімапою — з живого стану сервера.
-- [ ] Логічні змінні показу (`AND`/`EQUAL` у даних) — зараз вважаються
-      вимкненими, тож частина інтерфейсу не показується.
-- [ ] Смуги (`Bar`): здоров'я, набій, захоплення точки.
-- [ ] `ObjectMarker` і компас — потрібні позиції об'єктів від сервера.
-- [ ] Мінімапа: текстура рівня + значки точок і гравців.
+### H2. Live data
+- [x] Both teams' tickets (`FriendlyTicketsString`, `EnemyTicketsString`): the
+      label is rebuilt only when the string changed.
+- [ ] The remaining values: health, ammo, the point's name, the time. The full
+      list of what the engine supplies is in
+      `docs/functions/hud-variables.md`.
+- [ ] **The corner layers' anchors.** `GeneralHudSettings.con` declares
+      separate root groups `BottomLeftStatic`, `BottomLeftAnimate`,
+      `BottomRightStatic`, `BottomRightAnimate`, `TopLayer`, but nowhere gives
+      their coordinates: inside them the numbers are counted from an anchor
+      the engine sets itself. Because of that the health, stamina and ammo
+      bars are not drawn yet. The anchors have to be got out of BF2.exe (the
+      `hudManager`/`hudBuilder` group).
+- [x] Bars (`Bar`) with fill from `setBarNodeValueVariable`. Along the way it
+      turned out a bar has **an extra argument before the rectangle** (the
+      growth direction), and every bar we had was being read one position off.
+      The two textures (`setBarNodeTexture 0|1`) are now distinguished too.
+- [x] The control-point strips under the minimap — from the server's live
+      state.
+- [ ] Logical show variables (`AND`/`EQUAL` in the data) — currently treated
+      as off, so part of the interface is not shown.
+- [ ] Bars (`Bar`): health, ammo, point capture.
+- [ ] `ObjectMarker` and the compass — they need object positions from the
+      server.
+- [ ] The minimap: the level's texture plus point and player icons.
 
-### H3. Екрани
-- [ ] Екран появи (`SpawnMenu`, `SpawnInfo`) — вибір точки й набору.
-- [ ] Табло (`Scoreboard`).
-- [ ] Повідомлення (`gamelogic.messages.addMessage`, x288 у грі).
+### H3. Screens
+- [ ] The spawn screen (`SpawnMenu`, `SpawnInfo`) — picking a point and a kit.
+- [ ] The scoreboard (`Scoreboard`).
+- [ ] Messages (`gamelogic.messages.addMessage`, x288 in the game).
 
-## Графіка
+## Graphics
 
-- [x] Ближня площина: була пропорційна розміру рівня (2.85 м на Dalian),
-      через що стіни впритул зникали й крізь них було видно. Тепер 0.1 м,
-      а далекість береться з даних — за кінцем туману (610) видимості
-      однаково немає.
-- [x] `.ske` розібрано (`docs/formats/skeleton.md`), є `ske_info`.
-- [x] `.baf` розібрано (`docs/formats/animation.md`), є `baf_info`. Усі
-      3470 файлів гри читаються без залишку.
-- [x] Скінінг: поза зі скелета й кліпу, деформація меша
-      (`obf2::mesh::poseSkeleton` + `skinMesh`, прапорці `--anim/--frame`).
-- [x] Змішування кліпів по кістках за моделлю рушія (стек до 5 на кістку,
-      вага 1 очищає). Ноги з одного кліпу + зброя з іншого дають
-      правильний біг зі зброєю.
-- [x] Тригери й бандли з даних гри: дерево з 62 тригерів, вибір за позою
-      й швидкістю (`docs/functions/animation-system.md`, `anim_info`).
-- [ ] Решта умов тригерів: повідомлення, випадковість, простій, напрямок.
-- [ ] Час і переходи: fadeIn/fadeOut, довжина бандлів, BundlePlayer.
-- [ ] Скінінг на GPU: зараз вершини рахуються на процесорі.
-- [ ] Солдати інших гравців у світі.
+- [x] The near plane: it used to be proportional to the level's size (2.85 m
+      on Dalian), so walls right in front vanished and you could see through
+      them. Now it is 0.1 m, and the far distance comes from the data — past
+      the fog's end (610) there is no visibility anyway.
+- [x] `.ske` taken apart (`docs/formats/skeleton.md`), `ske_info` exists.
+- [x] `.baf` taken apart (`docs/formats/animation.md`), `baf_info` exists. All
+      3470 files in the game read with nothing left over.
+- [x] Skinning: a pose from the skeleton and a clip, mesh deformation
+      (`obf2::mesh::poseSkeleton` + `skinMesh`, the `--anim/--frame` flags).
+- [x] Blending clips per bone following the engine's model (a stack of up to
+      5 per bone, weight 1 clears it). Legs from one clip plus a weapon from
+      another give a correct run with a weapon.
+- [x] Triggers and bundles from the game's data: a tree of 62 triggers,
+      selection by pose and speed (`docs/functions/animation-system.md`,
+      `anim_info`).
+- [ ] The remaining trigger conditions: messages, randomness, idling,
+      direction.
+- [ ] Timing and transitions: fadeIn/fadeOut, bundle lengths, BundlePlayer.
+- [ ] Skinning on the GPU: the vertices are computed on the CPU right now.
+- [ ] Other players' soldiers in the world.
 
-## Виміри готовності
+## Readiness measures
 
-- `command_audit`: зараз **460 232 / 498 035 (92.4 %)**, 243 унікальні команди
-  без обробника. Кожен етап має підіймати це число.
-- Тести в `tests/` на кожен шматок логіки (квитки, захоплення, шкода).
+- `command_audit`: currently **460 232 / 498 035 (92.4 %)**, 243 unique
+  commands without a handler. Every stage has to raise that number.
+- Tests in `tests/` for every piece of logic (tickets, capture, damage).

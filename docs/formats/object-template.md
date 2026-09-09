@@ -1,82 +1,87 @@
-# Реєстр `ObjectTemplate`
+# The `ObjectTemplate` registry
 
-Статус: **реалізовано** — `src/game`. Зібрано **10 182 шаблони** з даних BF2 1.5:
-55 класів, 16 348 прикріплень, 381 220 присвоєнь властивостей.
+Status: **implemented** — `src/game`. **10 182 templates** built from BF2
+1.5's data: 55 classes, 16 348 attachments, 381 220 property assignments.
 
-`ObjectTemplate` — центральна абстракція Refractor 2. Ним описано геть усе:
-зброя, техніка, снаряди, ефекти, звуки, елементи HUD. На нього припадає
-**87% усіх команд** у файлах гри (433 778 з 497 195).
+`ObjectTemplate` is Refractor 2's central abstraction. Everything is
+described with it: weapons, vehicles, projectiles, effects, sounds, HUD
+elements. It accounts for **87 % of all commands** in the game's files
+(433 778 of 497 195).
 
-## Машина станів, а не дерево
+## A state machine, not a tree
 
-Мова `.con` — потік команд, тому реєстр працює як машина станів:
+The `.con` language is a stream of commands, so the registry works as a
+state machine:
 
 ```
-ObjectTemplate.create PlayerControlObject apc_btr90   ← шаблон стає активним
-ObjectTemplate.geometry apc_btr90                     ← пишеться в активний
-ObjectTemplate.addTemplate APC_BTR90__Turret          ← прикріплення
-ObjectTemplate.setPosition 0/1.6324/0.9962            ← до ОСТАННЬОГО нащадка
-ObjectTemplate.create RotationalBundle APC_BTR90__Turret  ← новий активний
+ObjectTemplate.create PlayerControlObject apc_btr90   ← the template becomes active
+ObjectTemplate.geometry apc_btr90                     ← written into the active one
+ObjectTemplate.addTemplate APC_BTR90__Turret          ← an attachment
+ObjectTemplate.setPosition 0/1.6324/0.9962            ← applies to the LAST child
+ObjectTemplate.create RotationalBundle APC_BTR90__Turret  ← a new active one
 ```
 
-| Команда | Викликів | Що робить |
+| Command | Calls | What it does |
 |---|---:|---|
-| `create <клас> <ім'я>` | 8 902 | створює шаблон і робить активним |
-| `activeSafe <клас> <ім'я>` | 14 392 | **відкриває наявний** шаблон наново |
-| `addTemplate <ім'я>` | 16 348 | прикріплює нащадка |
-| `setPosition` / `setRotation` | 6 197 | до останнього доданого нащадка |
-| `createComponent <ім'я>` | 5 337 | заводить підоб'єкт |
-| `<компонент>.<властивість>` | — | пише у підоб'єкт |
-| решта (855 різних імен) | — | властивість активного шаблону |
+| `create <class> <name>` | 8 902 | creates a template and makes it active |
+| `activeSafe <class> <name>` | 14 392 | **reopens an existing** template |
+| `addTemplate <name>` | 16 348 | attaches a child |
+| `setPosition` / `setRotation` | 6 197 | applies to the last added child |
+| `createComponent <name>` | 5 337 | starts a sub-object |
+| `<component>.<property>` | — | writes into the sub-object |
+| everything else (855 distinct names) | — | a property of the active template |
 
-## Три речі, які визначають дизайн
+## Three things that shape the design
 
-**1. `activeSafe` — це основний спосіб роботи, а не виняток.** Його 14 392
-виклики проти 8 902 `create`: `.con` створює шаблон, `.tweak` відкриває його
-наново й дописує деталі. Тому реєстр не має створювати другий шаблон із тим
-самим іменем — інакше половина властивостей загубиться.
+**1. `activeSafe` is the normal way of working, not an exception.** Its
+14 392 calls against 8 902 `create`s: the `.con` creates a template and the
+`.tweak` reopens it and fills in the details. So the registry must not
+create a second template with the same name — half the properties would be
+lost.
 
-**2. Властивостей 855 різних — типізованої структури тут бути не може.**
-Реєстр зберігає універсальну торбу значень; типізовані представлення
-(зброя, техніка) надбудовуються згори, коли доходить черга.
+**2. There are 855 distinct properties — there can be no typed structure
+here.** The registry keeps a generic bag of values; typed views (weapon,
+vehicle) are built on top when their turn comes.
 
-**3. Частина властивостей накопичувальна.** `mapMaterial` викликається по
-кілька разів на шаблон (10 561 виклик усього). Тому зберігаємо **всі**
-присвоєння по порядку, а не тільки останнє: `property()` віддає те, що діє,
-`propertyHistory()` — усю історію з файлами й рядками. Це відповідає на
-питання «звідки взялося це значення», яке інакше довелося б з'ясовувати
-грепом по архівах.
+**3. Some properties accumulate.** `mapMaterial` is called several times
+per template (10 561 calls in total). So we keep **every** assignment in
+order rather than the last one: `property()` returns the effective value,
+`propertyHistory()` the whole history with files and lines. That answers
+"where did this value come from", which otherwise means grepping the
+archives.
 
-## Ієрархія техніки
+## The vehicle hierarchy
 
-`addTemplate` + `setPosition` збирає дерево частин, а `geometryPart`
-прив'язує кожну до частини BundledMesh:
+`addTemplate` + `setPosition` assembles a tree of parts, and `geometryPart`
+binds each to a part of the BundledMesh:
 
 ```
 apc_btr90 (PlayerControlObject)
-  компонент Armor (22 властивості), VehicleHud, WarningHud, HelpHud, Radio
+  components Armor (22 properties), VehicleHud, WarningHud, HelpHud, Radio
   -> APC_BTR90_hudPass @ 0/0.0763/0
   -> APC_BTR90__Turret @ 0/1.6324/0.9962
        -> APC_BTR90__BarrelBase @ -0.0091/0.2448/0.9827
             -> APC_BTR90__Barrel @ 0.0628/0.0068/0.0186
 ```
 
-Саме тут стає зрозуміло, чому в `.bundledmesh` немає матриць вузлів: позиції
-частин живуть у `.con`, а не в меші.
+This is where it becomes clear why `.bundledmesh` carries no node
+matrices: the part positions live in the `.con`, not in the mesh.
 
-## Класи
+## Classes
 
-55 різних. Найчастіші — `Sound` (3984), `SpriteParticleSystem` (1283),
-`SimpleObject` (1136), `EffectBundle` (532), `Emitter` (508). Ігрові:
-`PlayerControlObject` (129, вся техніка), `GenericFireArm` (169, зброя),
-`GenericProjectile` (145), `RotationalBundle` (304, рухомі частини).
+55 distinct ones. The most frequent are `Sound` (3984),
+`SpriteParticleSystem` (1283), `SimpleObject` (1136), `EffectBundle`
+(532), `Emitter` (508). The gameplay ones: `PlayerControlObject` (129, all
+vehicles), `GenericFireArm` (169, weapons), `GenericProjectile` (145),
+`RotationalBundle` (304, moving parts).
 
-## Перевірка
+## Checking
 
 ```bash
 ./build/macos-arm64-debug/tools/object_info/object_info "Game Files/mods/bf2" --all
 ./build/macos-arm64-debug/tools/object_info/object_info "Game Files/mods/bf2" --tree apc_btr90
 ```
 
-З 497 195 команд гри лише **3** виявилися без активного шаблону — вони
-рахуються окремо, а не приписуються випадковому об'єкту.
+Out of the game's 497 195 commands only **3** turned out to have no active
+template — they are counted separately rather than attributed to a random
+object.

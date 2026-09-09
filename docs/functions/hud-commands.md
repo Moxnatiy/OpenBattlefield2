@@ -1,31 +1,31 @@
-# Що робить інтерфейс: перелік консольних команд
+# What the interface does: the list of console commands
 
-Кнопка в HUD не має власної логіки. Вона виконує **звичайну консольну
-команду**, задану в даних:
+A HUD button has no logic of its own. It runs **an ordinary console
+command** given in the data:
 
 ```
 hudBuilder.createButtonNode Kit0NotSelected SelectKit0 10 73 246 69
 hudBuilder.setButtonNodeConCmd "spawnManager.setPlayerKit 0"
 ```
 
-Тобто «бекенд» інтерфейсу — це не окрема система, а рівно той перелік
-команд, який гра вішає на кнопки. Його й треба реалізувати, а не
-вигадувати логіку заново.
+So the interface's "backend" is not a separate system but exactly the list
+of commands the game hangs on its buttons. That is what has to be
+implemented, rather than inventing the logic again.
 
-Три команди задають дію:
+Three commands set the action:
 
-| команда | скільки | що |
+| command | count | what |
 |---|---|---|
-| `setButtonNodeConCmd` | 381 | ліва кнопка |
-| `setButtonNodeAltConCmd` | 30 | права |
-| `setListNodeConCmd` | 15 | рядок списку (перед командою йде номер) |
+| `setButtonNodeConCmd` | 381 | left button |
+| `setButtonNodeAltConCmd` | 30 | right |
+| `setListNodeConCmd` | 15 | a list row (the index comes before the command) |
 
-Разом **426 викликів, 191 різна команда, 22 об'єкти**. Знімається
-`tools/hud_commands.py`.
+That is **426 calls, 191 distinct commands, 22 objects** in total. Dumped
+by `tools/hud_commands.py`.
 
-## Весь перелік, за об'єктами
+## The whole list, by object
 
-| об'єкт | викликів | методи |
+| object | calls | methods |
 |---|---|---|
 | `sound` | 181 | `playSound` |
 | `CommanderMenu` | 65 | `deselect`, `sendRadioMessage`, `singleClick`, `doubleClick`, `rightClick` |
@@ -50,25 +50,25 @@ hudBuilder.setButtonNodeConCmd "spawnManager.setPlayerKit 0"
 | `SpawnManager` | 2 | `toggleMembers` |
 | `Minimap` | 1 | `setZoom` |
 
-Регістр першої літери в даних неусталений (`Scoreboard` і `scoreboard`,
-`MiniMap` і `Minimap`, `SpawnManager` і `spawnManager`) — консоль гри
-його не розрізняє, тож і ми не маємо.
+The case of the first letter is inconsistent in the data (`Scoreboard` and
+`scoreboard`, `MiniMap` and `Minimap`, `SpawnManager` and `spawnManager`)
+— the game's console does not distinguish it, so neither do we.
 
-## Найближче: екран появи
+## Nearest target: the spawn screen
 
-Щоб він запрацював повністю, потрібно всього сім методів:
+To make it work fully, only seven methods are needed:
 
-| команда | що робить |
+| command | what it does |
 |---|---|
-| `spawnManager.setPlayerKit <0..6>` | вибрати клас |
-| `spawnManager.setPlayerTeam <1\|2>` | вибрати команду |
-| `spawnManager.selectNextUnlock <0..6>` | стрілка розблокування |
-| `spawnManager.commitSuicide` | самогубство |
-| `SpawnManager.toggleMembers <0\|1>` | вкладки KIT / SQUAD |
-| `hudManager.setDone 1` | кнопка DONE |
-| `sound.playSound <ім'я>` | звук натискання |
+| `spawnManager.setPlayerKit <0..6>` | pick a class |
+| `spawnManager.setPlayerTeam <1\|2>` | pick a team |
+| `spawnManager.selectNextUnlock <0..6>` | the unlock arrow |
+| `spawnManager.commitSuicide` | suicide |
+| `SpawnManager.toggleMembers <0\|1>` | the KIT / SQUAD tabs |
+| `hudManager.setDone 1` | the DONE button |
+| `sound.playSound <name>` | the click sound |
 
-Механізм натискання в нас уже є — `hud::buttonAt` шукає кнопку під
-курсором, а `engine.console().executeLine` виконує її команду; так
-працює головне меню. Лишається під'єднати його до екрана появи й
-написати ці сім обробників.
+The click mechanism is already in place — `hud::buttonAt` finds the button
+under the cursor and `engine.console().executeLine` runs its command; that
+is how the main menu worked. What is left is wiring it to the spawn screen
+and writing those seven handlers.

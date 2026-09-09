@@ -1,8 +1,8 @@
-// Рух солдата не має залежати від частоти кадрів.
+// A soldier's movement must not depend on the frame rate.
 //
-// Рушій рахує фізику тактами по `WorldPref::mTickTime` = 1/30 с
-// (лінукс-сервер, `.data` за 0xf68c50). Ми довго рахували крок завдовжки
-// з кадр — і той самий стрибок на 120 кадрах виходив інакшим, ніж на 60.
+// The engine computes physics in ticks of `WorldPref::mTickTime` = 1/30 s (the
+// Linux server's `.data` at 0xf68c50). For a long time we computed a step as long
+// as a frame — and the same jump came out different at 120 frames and at 60.
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -15,10 +15,10 @@ namespace {
 using namespace obf2;
 using namespace obf2::server;
 
-// Солдат, підкинутий угору й посланий уперед, за рівно секунду часу —
-// нарізану кадрами різної тривалості. Швидкість задаємо прямо, а не
-// кнопкою стрибка: тоді перевірка міряє саме інтегрування, не залежачи
-// від того, в який кадр припало натискання.
+// A soldier thrown upwards and sent forward over exactly a second of time — sliced
+// into frames of different lengths. The speed is set directly rather than with the
+// jump button: the check then measures the integration itself, without depending on
+// which frame the press fell into.
 Vec3f flyForOneSecond(float frameSeconds) {
   PhysicsConstants physics;
   BodyState body;
@@ -44,28 +44,28 @@ void testMovementDoesNotDependOnFrameRate() {
   const Vec3f at120 = flyForOneSecond(1.0f / 120.0f);
   const Vec3f at30 = flyForOneSecond(1.0f / 30.0f);
 
-  // Такт один і той самий, тож за секунду набігає та сама кількість
-  // тактів, і кінець має збігтися до похибки float.
+  // The tick is one and the same, so the same number of ticks accumulates over a
+  // second, and the end has to match to within float error.
   CHECK(std::abs(at60.z - at120.z) < 1e-3f);
   CHECK(std::abs(at60.z - at30.z) < 1e-3f);
   CHECK(std::abs(at60.y - at120.y) < 1e-3f);
   CHECK(std::abs(at60.y - at30.y) < 1e-3f);
 
-  // І рух справді був: інакше збіг нічого не значив би. У повітрі розгін
-  // притлумлений (`phy-soldier-air-movement-factor`), тож уперед за
-  // секунду набігає небагато — але не нуль.
+  // And there really was movement: otherwise the match would mean nothing. In the
+  // air the acceleration is damped (`phy-soldier-air-movement-factor`), so not much
+  // accumulates forward over a second — but not nothing.
   CHECK(at60.z > 0.1f);
 }
 
-// Накопичувач не має ні губити час, ні видавати зайвих тактів.
+// The accumulator must neither lose time nor issue extra ticks.
 void testAccumulatorKeepsTheRemainder() {
   TickAccumulator accumulator;
   int total = 0;
-  // Тридцять кадрів по 1/60 с — це рівно 15 тактів по 1/30 с.
+  // Thirty frames of 1/60 s are exactly 15 ticks of 1/30 s.
   for (int i = 0; i < 30; ++i) total += accumulator.take(1.0f / 60.0f);
   CHECK_EQ(total, 15);
 
-  // Кадр, коротший за такт, сам по собі такту не дає, але час не зникає.
+  // A frame shorter than a tick gives no tick by itself, but the time does not vanish.
   TickAccumulator slow;
   CHECK_EQ(slow.take(0.01f), 0);
   CHECK_EQ(slow.take(0.01f), 0);
@@ -74,8 +74,8 @@ void testAccumulatorKeepsTheRemainder() {
 
 }  // namespace
 
-// Стрибок має ті висоту й тривалість, що дають сталі рушія: початкова
-// швидкість 6.0 (0xb355c8) і тяжіння 14.73 (0x6d6ae4).
+// A jump has the height and duration the engine's constants give: an initial speed
+// of 6.0 (0xb355c8) and gravity of 14.73 (0x6d6ae4).
 void testJumpMatchesEngineConstants() {
   PhysicsConstants physics;
   BodyState body;
@@ -92,16 +92,16 @@ void testJumpMatchesEngineConstants() {
     else if (tick > 0 && airborne > 0.0f) break;
   }
 
-  // Неперервна формула дає 6^2/(2*14.73) = 1.222 м і 2*6/14.73 = 0.815 с.
-  // Рушій, як і ми, інтегрує тактами по 1/30, і від дискретності вершина
-  // виходить трохи вище — близько 1.31 м. Порівнюємо саме з тим, що дає
-  // такт, а не з ідеальною формулою.
+  // The continuous formula gives 6^2/(2*14.73) = 1.222 m and 2*6/14.73 = 0.815 s.
+  // The engine, like us, integrates in 1/30 ticks, and discreteness makes the apex
+  // come out slightly higher — about 1.31 m. We compare against what the tick gives
+  // rather than against the ideal formula.
   CHECK(highest > 1.25f && highest < 1.40f);
   CHECK(airborne > 0.75f && airborne < 0.92f);
 
-  // І окремо — те, заради чого це міряється: зі старими вигаданими
-  // числами (тяжіння 9.81, поштовх 5.0) солдат висів би в повітрі понад
-  // секунду. Саме це й було видно як «задовгий стрибок».
+  // And separately, the thing this is measured for: with the old invented numbers
+  // (gravity 9.81, impulse 5.0) the soldier would hang in the air for over a
+  // second. That is exactly what was visible as "the jump is too long".
   CHECK(airborne < 1.0f);
 }
 

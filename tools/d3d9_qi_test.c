@@ -1,5 +1,5 @@
-// Чи віддає текстура mtld3d інтерфейс IDirect3DBaseTexture9.
-// Саме цього просить BF2 і саме тут падає.
+// Does an mtld3d texture return an IDirect3DBaseTexture9 interface.
+// That is what BF2 asks for, and that is exactly where it crashes.
 #include <windows.h>
 #include <stdio.h>
 typedef void* (WINAPI *CREATE9)(UINT);

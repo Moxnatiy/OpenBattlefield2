@@ -11,9 +11,9 @@
 namespace obf2::level {
 namespace {
 
-// Розбирає список чисел через слеш. У .con так записані і вектори, і
-// довші набори на кшталт fogStartEndAndBase з чотирьох значень.
-// Повертає, скільки чисел прочитано.
+// Parses a slash-separated list of numbers. In a .con both vectors and longer
+// sets such as fogStartEndAndBase's four values are written that way.
+// Returns how many numbers were read.
 std::size_t parseSlashList(std::string_view text, float* out, std::size_t capacity) {
   std::size_t count = 0;
   std::size_t start = 0;
@@ -31,9 +31,9 @@ std::size_t parseSlashList(std::string_view text, float* out, std::size_t capaci
   return count;
 }
 
-// Збирач стану під час виконання .con рівня. Мова — потік команд, тому
-// heightmap.* застосовуються до останнього heightmapcluster.addHeightmap,
-// а Object.* — до останнього Object.create.
+// The state collector while a level's .con runs. The language is a stream of
+// commands, so heightmap.* apply to the last heightmapcluster.addHeightmap and
+// Object.* to the last Object.create.
 class LevelBuilder {
  public:
   explicit LevelBuilder(Level& level) : level_(level) {}
@@ -42,9 +42,9 @@ class LevelBuilder {
     const std::string& path = command.lowerPath;
 
     // --- Heightdata.con ---
-    // `heightmapcluster.addHeightmap Heightmap 0 0` — нульовий аргумент це
-    // ім'я, координати кластера йдуть за ним. Основна карта — (0,0), решта
-    // вісім навколо неї це низькодетальне оточення на горизонті.
+    // `heightmapcluster.addHeightmap Heightmap 0 0` — the zeroth argument is the
+    // name, the cluster's coordinates follow. The main map is (0,0), the other
+    // eight around it are the low-detail surroundings on the horizon.
     if (path == "heightmapcluster.addheightmap") {
       pendingCluster_ = true;
       clusterX_ = command.argInt(1).value_or(9999);
@@ -61,10 +61,10 @@ class LevelBuilder {
       if (team >= 0 && team <= 2) level_.teamNames[team] = std::string(command.argStr(1));
       return;
     }
-    // Камеру екрана появи задає сам рівень:
+    // The spawn screen's camera is set by the level itself:
     //   gameLogic.setBeforeSpawnCamera -50/185/-285 -16/-3/0
-    // Обидві трійки записані одним словом через скісну риску — місце і
-    // поворот у градусах.
+    // Both triples are written as one slash-separated word — the position and
+    // the rotation in degrees.
     if (path == "gamelogic.setbeforespawncamera") {
       const auto triple = [&](std::size_t i, Vec3f& out) {
         if (i >= command.args.size()) return false;
@@ -85,8 +85,8 @@ class LevelBuilder {
       }
       return;
     }
-    // Нас цікавить лише центральний фрагмент кластера (0,0) — це власне
-    // ігрова карта. Решта вісім — низькодетальне оточення на горизонті.
+    // We only care about the central fragment of cluster (0,0) — that is the
+    // actual playable map. The other eight are the low-detail horizon.
     if (path == "heightmap.setsize" && isPrimary()) {
       level_.primary.size = command.argInt(0).value_or(0);
       level_.primary.clusterX = clusterX_;
@@ -120,14 +120,14 @@ class LevelBuilder {
     // --- Sky.con ---
     if (path == "renderer.fogcolor") {
       if (const auto color = command.argVec3(0)) {
-        // У файлі 0..255, нам потрібно 0..1.
+        // 0..255 in the file, we need 0..1.
         level_.terrain.fogColor = Vec3f{color->x / 255.0f, color->y / 255.0f, color->z / 255.0f};
       }
       return;
     }
     if (path == "renderer.fogstartendandbase") {
-      // Тут ЧОТИРИ компоненти через слеш ("0.00/610.00/0.00/0.50"), тому
-      // argVec3 не годиться — розбираємо самі. Потрібні лише перші дві.
+      // Here there are FOUR slash-separated components ("0.00/610.00/0.00/0.50"),
+      // so argVec3 will not do — we parse it ourselves. Only the first two are needed.
       float values[4] = {0.0f, 0.0f, 0.0f, 0.0f};
       if (parseSlashList(command.argStr(0), values, 4) >= 2) {
         level_.terrain.fogStart = values[0];
@@ -177,14 +177,14 @@ class LevelBuilder {
       return;
     }
 
-    // --- RoadTemplate: текстури доріг ---
-    // Визначення лежать у Roads/Splines/*.con за редакторською гілкою.
+    // --- RoadTemplate: the roads' textures ---
+    // The definitions lie in Roads/Splines/*.con under the editor branch.
     if (path == "roadtemplate.setname") {
       roadTemplateName_ = std::string(command.argStr(0));
       return;
     }
     if (path == "roadtemplatetexture.settexturefile" && !roadTemplateName_.empty()) {
-      // Перша текстура шаблону — основна; наступні це шари змішування.
+      // A template's first texture is the main one; the rest are blend layers.
       if (level_.roadTextures.find(roadTemplateName_) == level_.roadTextures.end()) {
         level_.roadTextures.emplace(roadTemplateName_, std::string(command.argStr(0)) + ".dds");
       }
@@ -192,15 +192,15 @@ class LevelBuilder {
     }
 
     // --- CompiledRoads.con ---
-    // Дороги теж починаються з object.create, але далі йде loadMesh —
-    // саме він і відрізняє їх від звичайної розстановки.
+    // Roads also start with object.create, but loadMesh follows — and that is
+    // exactly what tells them apart from ordinary placement.
     if (path == "object.geometry.loadmesh") {
       if (!level_.objects.empty()) {
         Road road;
         road.templateName = level_.objects.back().templateName;
         road.meshPath = std::string(command.argStr(0));
         level_.roads.push_back(std::move(road));
-        // Прибираємо з розстановки: це дорога, а не статичний об'єкт.
+        // Remove it from the placement: this is a road, not a static object.
         level_.objects.pop_back();
         pendingRoad_ = true;
       }
@@ -215,8 +215,8 @@ class LevelBuilder {
       level_.objects.push_back(std::move(object));
       return;
     }
-    // Дорога вже забрала свій object.create, тому далі працюємо або з нею,
-    // або з останнім статичним об'єктом.
+    // The road has already taken its object.create, so from here we work either
+    // with it or with the last static object.
     if (level_.objects.empty() && !pendingRoad_) return;
     static StaticObject dummy;
     StaticObject& current = level_.objects.empty() ? dummy : level_.objects.back();
@@ -232,13 +232,13 @@ class LevelBuilder {
       return;
     }
     if (path == "object.absolutetransformation") {
-      // Чотири групи по чотири числа: три рядки повороту з масштабом і
-      // рядок переносу. Формат той самий, що в редакторі: [x/y/z/w].
+      // Four groups of four numbers: three rows of rotation with scale and a row
+      // of translation. The format is the editor's: [x/y/z/w].
       float values[16] = {};
       int count = 0;
       for (const std::string& argument : command.args) {
-        // Числа розділені скісними, а вся група взята в дужки — беремо
-        // просто всі числа підряд.
+        // The numbers are slash-separated and the whole group is bracketed — we
+        // simply take every number in a row.
         const char* cursor = argument.c_str();
         while (*cursor != '\0' && count < 16) {
           if (*cursor == '[' || *cursor == ']' || *cursor == '/') { ++cursor; continue; }
@@ -283,13 +283,13 @@ class LevelBuilder {
 bool loadHeights(FileSystem& files, Level& level, std::string* error) {
   const int size = level.primary.size;
   if (size <= 1) {
-    if (error) *error = "у Heightdata.con немає розміру карти висот";
+    if (error) *error = "Heightdata.con has no height map size";
     return false;
   }
 
   const auto bytes = files.read(level.primary.dataPath);
   if (!bytes) {
-    if (error) *error = "не знайдено карту висот: " + level.primary.dataPath;
+    if (error) *error = "height map not found: " + level.primary.dataPath;
     return false;
   }
 
@@ -297,8 +297,8 @@ bool loadHeights(FileSystem& files, Level& level, std::string* error) {
   const std::size_t bytesPerSample = level.primary.bitResolution == 16 ? 2 : 1;
   if (bytes->size() < samples * bytesPerSample) {
     if (error) {
-      *error = "карта висот менша за оголошений розмір: " + std::to_string(bytes->size()) +
-               " байт замість " + std::to_string(samples * bytesPerSample);
+      *error = "the height map is smaller than the declared size: " + std::to_string(bytes->size()) +
+               " bytes instead of " + std::to_string(samples * bytesPerSample);
     }
     return false;
   }
@@ -345,8 +345,8 @@ std::optional<Level> loadLevel(FileSystem& files, std::string_view levelName, st
   LevelBuilder builder(level);
   con::Interpreter interpreter(files, [&](const con::Command& command) { builder(command); });
 
-  // Порядок як в Init.con рівня. Аргумент BF2Editor вмикає редакторську
-  // гілку — саме ту, що читає вихідні .raw замість скомпільованого блоба.
+  // The order is as in the level's Init.con. The BF2Editor argument enables the
+  // editor branch — the one that reads the source .raw instead of the compiled blob.
   const std::vector<std::string> editorArgs{"BF2Editor"};
   interpreter.runFile(base + "/Init.con");
   interpreter.runFile(base + "/Heightdata.con");
@@ -355,23 +355,23 @@ std::optional<Level> loadLevel(FileSystem& files, std::string_view levelName, st
   interpreter.runFile(base + "/Water.con");
   interpreter.runFile(base + "/Sky.con", editorArgs);
   interpreter.runFile(base + "/CompiledRoads.con", editorArgs);
-  // Рослинність із зіткненнями: справжні примірники з точними матрицями.
-  // Оригінал малює її окремою системою, але моделі й місця — ті самі.
+  // Vegetation with collision: real instances with exact matrices.
+  // The original draws it with a separate system, but the models and places are the same.
   interpreter.runFile(base + "/Overgrowth/OvergrowthCollision.con", editorArgs);
 
-  // Шаблони доріг: у них лежать текстури, і вони живуть в об'єктах гри,
-  // а не в рівні.
+  // The road templates: they hold the textures, and they live in the game's
+  // objects rather than in the level.
   for (const std::string& path : files.list("objects/roads/splines")) {
     if (assetExtension(path) == "con") interpreter.runFile(path, editorArgs);
   }
 
-  // Геометрію доріг читаємо окремо: у .con лежать лише шляхи до файлів.
+  // The roads' geometry is read separately: the .con holds only file paths.
   for (Road& road : level.roads) {
     const auto bytes = files.read(road.meshPath);
     if (!bytes) continue;
     if (auto geometry = loadRoadMesh(*bytes)) {
       road.geometry = std::move(*geometry);
-      // Текстуру беремо за іменем шаблону з CompiledRoads.con.
+      // The texture is taken by the template's name from CompiledRoads.con.
       const auto texture = level.roadTextures.find(road.templateName);
       if (texture != level.roadTextures.end() && !road.geometry.ranges.empty()) {
         road.geometry.ranges[0].maps.push_back(texture->second);
@@ -392,7 +392,7 @@ std::optional<mesh::RenderMesh> loadRoadMesh(std::span<const std::byte> bytes,
 
   constexpr std::size_t kHeaderBytes = 52;
   constexpr std::size_t kVertexStride = 32;
-  if (bytes.size() < kHeaderBytes + 4) return fail("файл замалий для дороги");
+  if (bytes.size() < kHeaderBytes + 4) return fail("file too small for a road");
 
   auto readU32 = [&](std::size_t at) {
     std::uint32_t value = 0;
@@ -408,18 +408,18 @@ std::optional<mesh::RenderMesh> loadRoadMesh(std::span<const std::byte> bytes,
   const std::uint32_t vertexCount = readU32(48);
   const std::size_t vertexBytes = static_cast<std::size_t>(vertexCount) * kVertexStride;
   if (vertexCount == 0 || kHeaderBytes + vertexBytes + 4 > bytes.size()) {
-    return fail("вершини дороги обірвано");
+    return fail("the road's vertices are truncated");
   }
 
-  // Позиції у файлі відносні до start; зсув додає вже той, хто ставить
-  // дорогу у світ, разом із absolutePosition.
+  // The positions in the file are relative to start; the offset is added by
+  // whoever places the road into the world, together with absolutePosition.
   mesh::RenderMesh out;
   out.vertices.resize(vertexCount);
   for (std::uint32_t i = 0; i < vertexCount; ++i) {
     const std::size_t at = kHeaderBytes + static_cast<std::size_t>(i) * kVertexStride;
     mesh::Vertex& vertex = out.vertices[i];
     vertex.position = {readFloat(at), readFloat(at + 4), readFloat(at + 8)};
-    // Дорога лежить на землі, тож нормаль угору — окремої в файлі немає.
+    // A road lies on the ground, so the normal points up — there is none in the file.
     vertex.normal = {0.0f, 1.0f, 0.0f};
     vertex.uv[0] = readFloat(at + 12);
     vertex.uv[1] = readFloat(at + 16);
@@ -428,14 +428,14 @@ std::optional<mesh::RenderMesh> loadRoadMesh(std::span<const std::byte> bytes,
   const std::size_t indexOffset = kHeaderBytes + vertexBytes;
   const std::uint32_t indexCount = readU32(indexOffset);
   if (indexOffset + 4 + static_cast<std::size_t>(indexCount) * 2 > bytes.size()) {
-    return fail("індекси дороги обірвано");
+    return fail("the road's indices are truncated");
   }
 
   out.indices.resize(indexCount);
   for (std::uint32_t i = 0; i < indexCount; ++i) {
     std::uint16_t index = 0;
     std::memcpy(&index, bytes.data() + indexOffset + 4 + i * 2, sizeof(index));
-    if (index >= vertexCount) return fail("індекс дороги за межами буфера");
+    if (index >= vertexCount) return fail("a road index is outside the buffer");
     out.indices[i] = index;
   }
 
@@ -465,8 +465,8 @@ std::vector<TerrainPatch> buildTerrainPatches(const Level& level, const FileSyst
   const int patchSize = level.terrain.patchSize > 0 ? level.terrain.patchSize : 128;
   if (size <= 1) return patches;
 
-  // 1025 вузлів = 1024 квади = 8 патчів по 128. Останній вузол спільний
-  // із сусіднім патчем, інакше між ними лишалися б щілини.
+  // 1025 nodes = 1024 quads = 8 patches of 128. The last node is shared with the
+  // neighbouring patch, otherwise gaps would be left between them.
   const int patchCount = (size - 1) / patchSize;
 
   for (int row = 0; row < patchCount; ++row) {
@@ -479,8 +479,8 @@ std::vector<TerrainPatch> buildTerrainPatches(const Level& level, const FileSyst
       std::snprintf(name, sizeof(name), "%02dx%02d.dds", column, row);
       patch.colormap = level.terrain.colormapBase + name;
 
-      // Для патчів під водою колормапи в грі просто немає — вона їх і не
-      // малює. Пропускаємо, море закриє водна площина.
+      // For patches under water the game simply has no colour map — it does not
+      // draw them either. We skip them; the water plane covers the sea.
       if (!files.exists(patch.colormap)) continue;
 
       const int x0 = column * patchSize;
@@ -496,7 +496,7 @@ std::vector<TerrainPatch> buildTerrainPatches(const Level& level, const FileSyst
           mesh::Vertex vertex;
           vertex.position = {level.worldX(gx), level.heightAt(gx, gz), level.worldZ(gz)};
 
-          // Нормаль із сусідніх вузлів: центральна різниця по обох осях.
+          // The normal from the neighbouring nodes: a central difference on both axes.
           const float left = level.heightAt(gx - 1, gz);
           const float right = level.heightAt(gx + 1, gz);
           const float up = level.heightAt(gx, gz - 1);
@@ -505,7 +505,7 @@ std::vector<TerrainPatch> buildTerrainPatches(const Level& level, const FileSyst
                                                up - down});
           vertex.normal = {normal.x, normal.y, normal.z};
 
-          // Кольорова мапа натягується на патч цілком.
+          // The colour map is stretched over the whole patch.
           vertex.uv[0] = static_cast<float>(x) / static_cast<float>(patchSize);
           vertex.uv[1] = static_cast<float>(z) / static_cast<float>(patchSize);
 
@@ -521,7 +521,7 @@ std::vector<TerrainPatch> buildTerrainPatches(const Level& level, const FileSyst
           const std::uint32_t bottomLeft = topLeft + static_cast<std::uint32_t>(vertexCount);
           const std::uint32_t bottomRight = bottomLeft + 1;
 
-          // Обхід проти годинникової — той самий, що й у мешах гри.
+          // Counter-clockwise winding — the same as in the game's meshes.
           patch.geometry.indices.push_back(topLeft);
           patch.geometry.indices.push_back(bottomLeft);
           patch.geometry.indices.push_back(topRight);
@@ -532,14 +532,14 @@ std::vector<TerrainPatch> buildTerrainPatches(const Level& level, const FileSyst
         }
       }
 
-      // Запечене освітлення того ж патча — другий шар текстур.
+      // The same patch's baked lighting — the second texture layer.
       if (!level.terrain.lightmapBase.empty()) {
         const std::string candidate = level.terrain.lightmapBase + name;
         if (files.exists(candidate)) patch.lightmap = candidate;
       }
 
-      // Детейл-мапа: колормапа має лише ~2 тексели на метр, тому зблизька
-      // терен без неї виглядає розмитим.
+      // The detail map: the colour map has only ~2 texels per metre, so close up
+      // the terrain looks blurred without it.
       if (!level.terrain.detailmapBase.empty()) {
         char detailName[64];
         std::snprintf(detailName, sizeof(detailName), "%02dx%02d_1.dds", column, row);

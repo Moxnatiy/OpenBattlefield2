@@ -1,29 +1,29 @@
 #pragma once
-// Шрифти BF2: пара файлів `.dif` + `.dds`.
+// BF2 fonts: a pair of files, `.dif` + `.dds`.
 //
-// `.dif` — **текстовий** формат метрик (реверс не знадобився), `.dds` поруч
-// із ним — атлас гліфів. Обидва лежать у `Fonts_client.zip`, з окремими
-// теками під роздільність (`800/`) і мову (`Chinese/800/`).
+// The `.dif` is a **text** metrics format (no reversing was needed), and the
+// `.dds` next to it is the glyph atlas. Both live in `Fonts_client.zip`, with
+// separate directories per resolution (`800/`) and language (`Chinese/800/`).
 //
-// Розкладка `.dif`, знята з реальних файлів:
+// The `.dif` layout, taken from real files:
 //
 //   header
-//   2                          версія
-//   scoreboardFont_8           ім'я
-//   128                        ширина атласа
-//   128                        висота атласа
-//   8.000000                   кегль / висота рядка
+//   2                          version
+//   scoreboardFont_8           name
+//   128                        atlas width
+//   128                        atlas height
+//   8.000000                   point size / line height
 //   glyphs
-//   328                        скільки
+//   328                        how many
 //   65<TAB>0.066667<TAB>4.600000<TAB>1.266667<TAB>0<TAB>35<TAB>7<TAB>40<TAB>14
 //   ...
 //   kerning
 //   216
-//   65<TAB>84<TAB>-0.466667    пара символів і поправка
+//   65<TAB>84<TAB>-0.466667    a character pair and its adjustment
 //
-// Поля гліфа: код, лівий винос, ширина, правий винос, зсув по вертикалі,
-// далі прямокутник в атласі (left, top, right, bottom). Що це саме
-// прямокутник, видно з даних: `!` дає 1x7, `"` — 2x3, `A` — 5x7.
+// A glyph's fields: code, left bearing, width, right bearing, vertical offset,
+// then the rectangle in the atlas (left, top, right, bottom). That it really is
+// a rectangle is visible from the data: `!` gives 1x7, `"` gives 2x3, `A` 5x7.
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -37,16 +37,16 @@ namespace obf2::font {
 struct Glyph {
   std::uint32_t code = 0;
   float bearingLeft = 0.0f;
-  float width = 0.0f;   // ширина у пікселях, дробова
+  float width = 0.0f;   // width in pixels, fractional
   float bearingRight = 0.0f;
-  int offsetY = 0;      // зсув від верху рядка: кома й крапка сидять нижче
+  int offsetY = 0;      // offset from the line's top: comma and full stop sit lower
 
-  // Прямокутник в атласі, у пікселях.
+  // The rectangle in the atlas, in pixels.
   int left = 0, top = 0, right = 0, bottom = 0;
 
   int pixelWidth() const { return right - left; }
   int pixelHeight() const { return bottom - top; }
-  // Крок до наступного символу без урахування кернінгу.
+  // The step to the next character, kerning aside.
   float advance() const { return bearingLeft + width + bearingRight; }
 };
 
@@ -55,12 +55,12 @@ class Font {
   std::string name;
   int atlasWidth = 0;
   int atlasHeight = 0;
-  float size = 0.0f;  // кегль, він же висота рядка
+  float size = 0.0f;  // point size, also the line height
 
   const Glyph* glyph(std::uint32_t code) const;
   float kerning(std::uint32_t first, std::uint32_t second) const;
 
-  // Ширина рядка в пікселях з урахуванням кернінгу.
+  // The string's width in pixels, kerning included.
   float measure(std::string_view text) const;
 
   std::size_t glyphCount() const { return glyphs_.size(); }
@@ -77,10 +77,10 @@ class Font {
   std::unordered_map<std::uint64_t, float> kerning_;
 };
 
-// Читає один символ UTF-8 і посуває позицію. Рядки локалізації саме в UTF-8.
+// Reads one UTF-8 character and advances the position. Localisation strings are UTF-8.
 std::uint32_t nextCodepoint(std::string_view text, std::size_t& position);
 
-// nullopt + пояснення: зіпсований шрифт не має валити рушій.
+// nullopt plus an explanation: a corrupt font must not bring the engine down.
 std::optional<Font> parseDif(std::string_view text, std::string* error = nullptr);
 
 }  // namespace obf2::font

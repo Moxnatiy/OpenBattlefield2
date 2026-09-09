@@ -1,18 +1,18 @@
 #pragma once
-// Ігрові події BF2: таблиця розмірів і розбір того, що ми вміємо.
+// BF2's game events: the size table and the parsing of what we understand.
 //
-// Таблиця в `bf2_events.inc` згенерована з бінаря сервера
-// (`tools/linuxded/gen_events.py`): номер типу береться з `getType()`,
-// розміри полів — із `deSerialize`. Перезняти можна тією ж командою.
+// The table in `bf2_events.inc` is generated from the server's binary
+// (`tools/linuxded/gen_events.py`): the type number comes from `getType()` and
+// the field sizes from `deSerialize`. It can be re-taken with the same command.
 //
-// Головне, заради чого вона потрібна, — вміти **пропустити** будь-яку
-// подію рівно на стільки бітів, скільки вона займає. Пакет везе їх одну
-// за одною, і якщо на незнайомій спіткнутися, далі йде сміття: тип
-// події не буває більшим за 69, а зі зсуву вилазять 80 чи 106.
+// The main thing it exists for is being able to **skip** any event by exactly as
+// many bits as it occupies. A packet carries them one after another, and if we
+// stumble on an unfamiliar one everything after it is rubbish: an event's type is
+// never greater than 69, while a shift produces 80 or 106.
 //
-// Частину подій пропустити за таблицею не можна: у них поля лежать за
-// умовою, і довжина залежить від вмісту. Такі позначені окремо, і розбір
-// для них написано руками.
+// Some events cannot be skipped by the table: their fields sit behind conditions
+// and the length depends on the contents. Those are marked separately, and their
+// parsing is written by hand.
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -26,35 +26,35 @@
 
 namespace obf2::net::bf2 {
 
-// Назва події за номером; порожньо, якщо номера немає в реєстрі.
+// An event's name by number; empty when the number is not in the registry.
 std::string_view eventName(std::uint32_t type);
 
-// Чи залежить довжина події від вмісту.
+// Whether an event's length depends on its contents.
 bool eventIsBranchy(std::uint32_t type);
 
-// Об'єкт світу з `CreateObjectEvent` (тип 6).
+// A world object from `CreateObjectEvent` (type 6).
 //
-// Розкладка з `bitfields.py --blocks CreateObjectEvent::deSerialize`:
-// прапорець після перших трьох полів розводить дві **взаємно виключні**
-// гілки, а полярність видно в коді (`cmpl $0x1; jne`).
+// The layout from `bitfields.py --blocks CreateObjectEvent::deSerialize`: a flag
+// after the first three fields separates two **mutually exclusive** branches, and
+// the polarity is visible in the code (`cmpl $0x1; jne`).
 struct CreateObject {
-  // Номер шаблона — це порядок його створення, а не хеш назви:
-  // `ObjectTemplateManager::createTemplate` робить `setId(лічильник)` і
-  // одразу `лічильник++`. Отже щоб зіставити номер із назвою, треба
-  // читати ті самі файли в тому самому порядку, що й гра. Перевірено:
-  // між запусками номери збігаються повністю (27 з 27).
+  // The template's number is the order of its creation, not a hash of its name:
+  // `ObjectTemplateManager::createTemplate` does `setId(counter)` and then
+  // `counter++`. So to match a number to a name the same files have to be read in
+  // the same order as the game does. Verified: between runs the numbers match
+  // completely (27 of 27).
   std::uint32_t templateId = 0;
   std::uint16_t networkId = 0;
   std::uint32_t field2 = 0;
   std::optional<std::uint8_t> field8;
   std::optional<Vec3f> position;
-  // Кути Ейлера ZXY у градусах — той самий вигляд, що й у `.con`
-  // (`getRotationZXY` поруч у `clientSendDatabase`, і три числа там
-  // додатково міняють знак).
+  // ZXY Euler angles in degrees — the same form as in the `.con`
+  // (`getRotationZXY` is right beside it in `clientSendDatabase`, and the three
+  // numbers there also flip sign).
   std::optional<Vec3f> rotation;
 };
 
-// Гравець із `CreatePlayerEvent` (тип 5). Ім'я сервер шле в 32 байтах.
+// A player from `CreatePlayerEvent` (type 5). The server sends the name in 32 bytes.
 struct CreatePlayer {
   std::uint32_t team = 0;
   std::uint32_t squad = 0;
@@ -62,24 +62,24 @@ struct CreatePlayer {
   std::string name;
 };
 
-// Шматок блока даних із `DataBlockEvent` (тип 4). Блок їде двома видами
-// подій: спершу заголовок із типом і повним розміром, далі шматки.
+// A chunk of a data block from `DataBlockEvent` (type 4). A block travels as two
+// kinds of event: first a header with the type and the full size, then the chunks.
 struct DataBlockPiece {
   bool header = false;
-  std::uint32_t blockType = 0;  // лише в заголовку
-  std::uint32_t size = 0;       // лише в заголовку
+  std::uint32_t blockType = 0;  // in the header only
+  std::uint32_t size = 0;       // in the header only
   std::vector<std::byte> chunk;
 };
 
-// Відомості про рівень — блок типу 5, який сервер шле одразу після
-// реєстрації (`GameServer::sendClientMapInfo` віддає `MapInfo`).
+// The level's details — block type 5, which the server sends right after
+// registration (`GameServer::sendClientMapInfo` hands over the `MapInfo`).
 struct MapInfo {
   std::string levelName;
   std::string gameMode;
   int size = 0;
-  // Перше число блока. Схоже на «номер виклику» — той самий рядок у
-  // файлах відбитків, яким сервер перевіряє вміст. Перевіряється на
-  // живому сервері, а не взяте на віру.
+  // The block's first number. It looks like the "challenge number" — the same
+  // line in the fingerprint files the server checks the content with. It is
+  // verified against a live server rather than taken on trust.
   std::uint32_t first = 0;
 };
 
@@ -87,23 +87,23 @@ inline constexpr std::uint32_t kMapInfoBlock = 5;
 
 std::optional<MapInfo> parseMapInfo(std::span<const std::byte> block);
 
-// Блок типу 2 — це **справжній** `MapInfo`, той, що складає
-// `MapInfo::updateNetBuffer` (0x4168b0). Блок 5 поруч простіший і несе
-// лише назву рівня, режим і розмір.
+// Block type 2 is the **real** `MapInfo`, the one assembled by
+// `MapInfo::updateNetBuffer` (0x4168b0). Block 5 beside it is simpler and carries
+// only the level's name, the mode and the size.
 //
-// Порядок полів узято прямо з `updateNetBuffer`; числа там пишуться не
-// цілим словом, а знаком і 31 бітом:
+// The field order is taken straight from `updateNetBuffer`; the numbers there are
+// written not as a whole word but as a sign and 31 bits:
 //
-//   u16 довжина + рядок   режим гри
-//   u16 довжина + рядок   шлях до рівнів
-//   u16 довжина + рядок   назва рівня
-//   1 біт знак + 31 біт   скільки місць
-//   1 біт                 чи є командир
-//   1 біт знак + 31 біт   **номер виклику**
+//   u16 length + string   the game mode
+//   u16 length + string   the path to the levels
+//   u16 length + string   the level's name
+//   1 sign bit + 31 bits  how many slots
+//   1 bit                 whether there is a commander
+//   1 sign bit + 31 bits  **the challenge number**
 //
-// Номер виклику потрібен для перевірки вмісту: сервер обирає його
-// випадково при завантаженні рівня (`GameServer::loadPath`,
-// `rand() % 10`) і звіряє наші хеші саме з тим рядком файлів відбитків.
+// The challenge number is needed for the content check: the server picks it at
+// random when it loads the level (`GameServer::loadPath`, `rand() % 10`) and
+// compares our hashes against exactly that line of the fingerprint files.
 inline constexpr std::uint32_t kMapInfoNetBuffer = 2;
 
 struct ServerMapInfo {
@@ -117,102 +117,102 @@ struct ServerMapInfo {
 
 std::optional<ServerMapInfo> parseMapInfoNetBuffer(std::span<const std::byte> block);
 
-// Група появи з `CreateSpawnGroupEvent` (тип 57). Саме її номер чекає
-// подія `NESelectSpawnGroup`, коли гравець тисне DONE.
+// A spawn group from `CreateSpawnGroupEvent` (type 57). It is its number that
+// the `NESelectSpawnGroup` event expects when the player presses DONE.
 //
-// Розкладка знята з `CreateSpawnGroupEvent::deSerialize` (0x424520 у
-// Linux-сервері) і звірена з конструктором, чия сигнатура збереглася в
-// символах:
+// The layout is taken from `CreateSpawnGroupEvent::deSerialize` (0x424520 in the
+// Linux server) and cross-checked against the constructor, whose signature
+// survived in the symbols:
 //
 //   CreateSpawnGroupEvent(unsigned char, unsigned short, int,
 //                         bool, bool, bool, unsigned char, unsigned char)
 //
-// Дротовий порядок інший, ніж у конструктора, — він видно з послідовності
-// читань і зсувів, куди вони лягають:
+// The wire order differs from the constructor's — it is visible from the sequence
+// of reads and the offsets they land in:
 //
-//   8 біт  -> +0x10  u8   перший аргумент
-//   4 біти -> +0x14  int  третій, з `group->[0x38]()`
-//   1 біт  -> +0x18  bool з `group->[0x58](0)`
-//   1 біт  -> +0x19  bool поле 0x9a групи
-//   1 біт  -> +0x1a  bool поле 0xa0 групи
-//   8 біт  -> +0x1b  u8   \ разом це `SpawnGroup::getUnsignedWorldPosition`
-//   8 біт  -> +0x1c  u8   /  — місце групи, спаковане у два байти
-//   16 біт -> +0x1e  u16  другий аргумент, поле 0x10 групи
+//   8 bits  -> +0x10  u8   the first argument
+//   4 bits  -> +0x14  int  the third, from `group->[0x38]()`
+//   1 bit   -> +0x18  bool from `group->[0x58](0)`
+//   1 bit   -> +0x19  bool the group's field 0x9a
+//   1 bit   -> +0x1a  bool the group's field 0xa0
+//   8 bits  -> +0x1b  u8   \ together these are `SpawnGroup::getUnsignedWorldPosition`
+//   8 bits  -> +0x1c  u8   /  — the group's position packed into two bytes
+//   16 bits -> +0x1e  u16  the second argument, the group's field 0x10
 //
-// Хто зі створює, видно теж: `SpawnManager::createSpawnGroupOnClients`
+// Who creates it is visible too: `SpawnManager::createSpawnGroupOnClients`
 // (0x4b96e0).
 struct CreateSpawnGroup {
-  // Номер групи, яким її називає сервер. Саме його чекає
-  // `NESelectSpawnGroup` — перевірено знятим трафіком оригінального
-  // клієнта: він шле `NESelectSpawnGroup = 2` на другий прапор, а не
-  // 516 (мережевий номер) і не 402 (номер точки з рівня).
-  std::uint8_t id = 0;         // 8 біт
-  std::uint32_t team = 0;      // 4 біти
+  // The group's number as the server calls it. It is exactly what
+  // `NESelectSpawnGroup` expects — verified with captured traffic of the original
+  // client: it sends `NESelectSpawnGroup = 2` for the second flag, not 516 (the
+  // network id) and not 402 (the level's point number).
+  std::uint8_t id = 0;         // 8 bits
+  std::uint32_t team = 0;      // 4 bits
   bool flag1 = false;
   bool flag2 = false;
   bool flag3 = false;
-  std::uint8_t worldX = 0;     // спаковане місце, вісь 1
-  std::uint8_t worldZ = 0;     // спаковане місце, вісь 2
-  // Мережевий номер групи — ним її знає система об'єктів. Для вибору
-  // місця появи він **не** потрібен: оригінал шле не його.
-  std::uint16_t networkId = 0;  // 16 біт
+  std::uint8_t worldX = 0;     // the packed position, axis 1
+  std::uint8_t worldZ = 0;     // the packed position, axis 2
+  // The group's network id — the object system knows it by this. For choosing a
+  // spawn point it is **not** needed: the original does not send it.
+  std::uint16_t networkId = 0;  // 16 bits
 };
 
-// Розпакування місця групи. Пакує його `SpawnGroup::getUnsignedWorldPosition`
-// (0x4b94b0), і арифметика там така:
+// Unpacking a group's position. It is packed by `SpawnGroup::getUnsignedWorldPosition`
+// (0x4b94b0), and the arithmetic there is:
 //
-//   half = GLSWorldSizeX / 2                 (стала за замовчуванням 1024,
-//                                             рівень ставить свою)
+//   half = GLSWorldSizeX / 2                 (1024 by default, the level sets
+//                                             its own)
 //   pos >  half  -> 255
 //   pos < -half  -> 0
-//   інакше  байт = (int)((pos + half) / (2*half) * 255)
+//   otherwise  byte = (int)((pos + half) / (2*half) * 255)
 //
-// Множник 255 лежить сталою за 0xb355bc. Отже назад:
+// The multiplier 255 sits as a constant at 0xb355bc. So in reverse:
 inline float spawnGroupWorldPos(std::uint8_t packed, float worldSize) {
   return static_cast<float>(packed) / 255.0f * worldSize - worldSize * 0.5f;
 }
 
-// Номер групи появи, найближчої до заданого місця.
+// The id of the spawn group nearest to a given position.
 //
-// Це те, чим гравець тисне DONE: у нас на екрані стоїть кружечок біля
-// прапора, а серверу треба назвати **його** номер групи. Зіставляємо за
-// місцем, бо іншої спільної ознаки немає: номери контрольних точок із
-// даних рівня (401..404 на Dalian) і номери груп сервера (515..518) не
-// пов'язані ніяк.
+// This is what a player presses DONE with: on our screen there is a circle next
+// to a flag, and the server has to be told **its** group id. We match by
+// position, because there is no other common attribute: the control point ids
+// from the level's data (401..404 on Dalian) and the server's group ids
+// (515..518) are not related in any way.
 //
-// Точного збігу не буде й не має бути: місце групи — це середнє її точок
-// появи, тож від прапора воно за десятки метрів. `distance` (якщо
-// потрібна) віддає відстань у метрах — за нею видно, чи зіставлення
-// взагалі осмислене.
+// An exact match will not happen and should not: a group's position is the
+// average of its spawn points, so it is dozens of metres from the flag.
+// `distance` (when needed) gives the distance in metres — it shows whether the
+// match is meaningful at all.
 //
-// Нуль означає «не знайшли»: саме його сервер розуміє як «місце не
-// обране» (`Player::getSpawnGroup() > 0`).
-// team — наша команда. Групи іншої команди пропускаються: сервер спавнить
-// гравця лише у своїй, і запит на чужу просто нічого не робить — саме
-// через це поява інколи «не спрацьовувала».
+// Zero means "not found": it is exactly what the server understands as "no place
+// chosen" (`Player::getSpawnGroup() > 0`).
+// team is our team. Other teams' groups are skipped: the server spawns a player
+// only in their own, and a request for another team's simply does nothing — which
+// is exactly why spawning sometimes "did not work".
 std::uint8_t nearestSpawnGroup(const std::vector<CreateSpawnGroup>& groups, float worldX,
                                float worldZ, float worldSize, float* distance = nullptr,
                                int team = 0);
 
-// Одна подія з пакета: номер типу і те з неї, що ми вже розбираємо.
-// Хто чим керує (`EnterVehicleEvent`, тип 9) і хто вийшов
-// (`ExitVehicleEvent`, тип 10).
+// One event from a packet: the type number and what of it we already parse.
+// Who controls what (`EnterVehicleEvent`, type 9) and who left
+// (`ExitVehicleEvent`, type 10).
 //
-// Солдат у BF2 — теж керований об'єкт, і гравець «займає» його так само,
-// як техніку. Саме цією подією клієнт і дізнається, який об'єкт його:
-// у знятому трафіку сервер відповідає на появу одним пакетом —
-// `CreateObjectEvent` (номер 1794), одразу за ним
-// `EnterVehicleEvent: гравець 1 -> об'єкт 1794`, далі набір і
-// `NEPlayerSpawned = 1`. Свій номер гравця ми знаємо з
-// `CreatePlayerEvent`, тож зіставлення однозначне.
+// A soldier in BF2 is a controlled object too, and the player "occupies" it just
+// as they do a vehicle. It is by this event that the client learns which object
+// is its own: in the captured traffic the server answers a spawn with one packet
+// — `CreateObjectEvent` (id 1794), immediately followed by
+// `EnterVehicleEvent: player 1 -> object 1794`, then the kit and
+// `NEPlayerSpawned = 1`. Our own player number we know from
+// `CreatePlayerEvent`, so the match is unambiguous.
 struct EnterVehicle {
   std::uint32_t player = 0;
   std::uint16_t object = 0;
   bool flag = false;
 };
 
-// Мережева подія, яку сервер підняв у нас (`PostRemoteEvent`, тип 11).
-// Ті, що несуть значення, везуть його чотирма байтами.
+// A network event the server raised on our side (`PostRemoteEvent`, type 11).
+// Those that carry a value carry it in four bytes.
 struct RemoteEvent {
   std::uint32_t category = 0;
   std::uint32_t number = 0;
@@ -225,18 +225,18 @@ struct Event {
   std::optional<CreatePlayer> player;
   std::optional<DataBlockPiece> block;
   std::optional<CreateSpawnGroup> spawnGroup;
-  // `PostRemoteEvent` (тип 11): сервер шле їх нам так само, як ми йому.
-  // Найважливіша для нас — `NEPlayerSpawned`.
+  // `PostRemoteEvent` (type 11): the server sends them to us as we do to it.
+  // The most important one for us is `NEPlayerSpawned`.
   std::optional<RemoteEvent> remote;
   std::optional<EnterVehicle> enter;
-  // `ExitVehicleEvent` (тип 10): номер гравця, який вийшов.
+  // `ExitVehicleEvent` (type 10): the number of the player who left.
   std::optional<std::uint32_t> exitPlayer;
 };
 
-// Складає блоки з шматків, які приходять подіями.
+// Assembles blocks from the chunks that arrive as events.
 class DataBlockAssembler {
  public:
-  // Повертає зібраний блок, коли його дочитано до кінця.
+  // Returns the assembled block once it has been read to the end.
   std::optional<std::pair<std::uint32_t, std::vector<std::byte>>> feed(const DataBlockPiece& piece);
 
  private:
@@ -245,201 +245,201 @@ class DataBlockAssembler {
   std::vector<std::byte> data_;
 };
 
-// Пересуває читача рівно на довжину події вказаного типу.
-// false — тип невідомий або пакет обірвався.
+// Advances the reader by exactly the length of an event of the given type.
+// false means the type is unknown or the packet was truncated.
 bool skipEvent(BitReader& reader, std::uint32_t type);
 
-// Розбирає одну подію: що вміємо — заповнює, решту просто пропускає.
+// Parses one event: what we can, it fills in; the rest it simply skips.
 std::optional<Event> readEvent(BitReader& reader);
 
-// Читає файл зі спійманими пакетами (`tools/linuxded/capture.py --out`):
-// для кожного пакета u32 довжина, далі байти.
+// Reads a file of captured packets (`tools/linuxded/capture.py --out`):
+// a u32 length per packet, then the bytes.
 std::vector<std::vector<std::byte>> loadCapture(const std::string& path);
 
-// Діагностика: чи дочитали ми пакет до прапорця потоку привидів і що в
-// ньому. nullopt — розбір подій обірвався раніше (значить, ламаємось ми);
-// false — сервер сам каже, що привидів у пакеті немає.
+// Diagnostics: whether we read the packet as far as the ghost stream's flag and
+// what is in it. nullopt means the event parsing broke off earlier (so it is us
+// breaking); false means the server itself says the packet has no ghosts.
 std::optional<bool> ghostFlag(std::span<const std::byte> packet);
 
-// Стан керованого об'єкта — те, що сервер шле нам про **нашого** солдата.
+// The controlled-object state — what the server sends us about **our** soldier.
 //
-// Він лежить у потоці привидів одразу після заголовка, коли в тому
-// стоїть прапорець `controlObjectState`, і читає його окрема функція
-// `GhostManager::readControlObjectState` (0x445c30). Початок її розкладки:
+// It sits in the ghost stream right after the header, when the header's
+// `controlObjectState` flag is set, and it is read by a separate function
+// `GhostManager::readControlObjectState` (0x445c30). The start of its layout:
 //
-//   12 біт                 число на початку (призначення не з'ясоване)
-//   1 біт знак + 31 біт    лічильник; при знаку значення заперечується
-//   32, 32, 32             три числа — опорна точка стиснення
-//   16 біт                 мережевий номер керованого об'єкта
-//   1 біт ...              далі йде решта стану, яку ми ще не розбирали
+//   12 bits                a number at the start (purpose not established)
+//   1 sign bit + 31 bits   a counter; with the sign the value is negated
+//   32, 32, 32             three numbers — the compression reference point
+//   16 bits                the controlled object's network id
+//   1 bit ...             then the rest of the state, which we have not parsed
 //
-// Дві речі тут варто назвати точно, бо вони видно прямо в коді функції.
+// Two things here are worth naming precisely, because they are visible directly in the code.
 //
-// **Трійка чисел — це ТІЛЬКИ опорна точка стиснення, а не наше місце.**
-// Перед нею стоїть `BitStream::resetCompressionVector`, а одразу після —
-// `setCompressionVector` із нею ж (0x445cf7 і 0x445d4b). І більше з нею
-// функція не робить **нічого**: серед усіх її викликів немає жодного,
-// який клав би цю трійку в об'єкт. Місце солдата їде далі — у стані
-// самого об'єкта (`setNetUpdate` через дескриптор, віртуальний виклик
-// `*0x68(%rax)`), і пакується як різниця до цієї точки.
+// **The triple of numbers is ONLY the compression reference point, not our
+// position.** Before it stands `BitStream::resetCompressionVector`, and right
+// after it `setCompressionVector` with the same triple (0x445cf7 and 0x445d4b).
+// And the function does **nothing** else with it: among all its calls there is
+// not one that puts the triple into the object. The soldier's position travels
+// later — in the object's own state (`setNetUpdate` through the descriptor, the
+// virtual call `*0x68(%rax)`), packed as a difference from this point.
 //
-// Ми деякий час вважали трійку своїм місцем: вона ж точно збіглася з
-// `gameLogic.setBeforeSpawnCamera`. Збіглася тому, що до появи керований
-// об'єкт — саме та камера. Після появи точка виявилася округленою і
-// стояла на метр вище землі, скільки б ми не йшли, — і солдата смикало
-// вгору щоразу, як приходив пакет. Правдоподібне число виявилося гіршим
-// за жодне.
+// For a while we took the triple for our position: it did match
+// `gameLogic.setBeforeSpawnCamera` exactly. It matched because before spawning
+// the controlled object is that very camera. After spawning the point turned out
+// to be rounded and stood a metre above the ground however far we walked — and the
+// soldier was jerked upwards every time a packet arrived. A plausible number
+// turned out to be worse than none.
 //
-// **16 біт після неї — мережевий номер нашого об'єкта.** Рушій одразу
-// віддає його в `NetworkManager::getObject`, а результат — у `getSoldier`
-// (0x445dc3 і 0x445e01). Це пряма відповідь на питання, хто наш солдат:
-// здогадуватися за відстанню до прапора більше не треба.
+// **The 16 bits after it are our object's network id.** The engine hands it
+// straight to `NetworkManager::getObject`, and the result to `getSoldier`
+// (0x445dc3 and 0x445e01). That is a direct answer to which soldier is ours:
+// guessing by the distance to a flag is no longer needed.
 struct ControlObjectState {
   std::uint32_t first = 0;
   std::int32_t counter = 0;
-  // Назва навмисно не «position»: цим полем не можна рухати солдата.
+  // The name is deliberately not "position": a soldier must not be moved by this field.
   Vec3f compressionReference;
   std::uint16_t networkId = 0;
 };
 
 std::optional<ControlObjectState> readControlObjectState(std::span<const std::byte> packet);
 
-// Заголовок потоку привидів — те, що йде після подій у пакеті даних.
-// Час рахується тактами по 1/30 секунди.
+// The ghost stream's header — what comes after the events in a data packet.
+// The time is counted in ticks of 1/30 of a second.
 struct GhostHeader {
   std::uint32_t time = 0;
   std::uint8_t records = 0;
   bool controlObjectState = false;
 };
 
-// Один запис потоку привидів (`GhostManager::readData`):
-//   2 біти вид, 16 бітів мережевий номер;
-//   вид 1 — оновлення стану: 1 біт, 11 бітів довжини вмісту, сам вміст;
-//   вид 0 — більше нічого; вид 3 — об'єкт зникає;
-//   вид 2 рушій вважає помилкою потоку.
+// One ghost stream record (`GhostManager::readData`):
+//   2 bits kind, 16 bits network id;
+//   kind 1 — a state update: 1 bit, 11 bits of content length, the content;
+//   kind 0 — nothing more; kind 3 — the object disappears;
+//   kind 2 the engine treats as a stream error.
 //
-// Довжина в записі дає змогу пропустити його, не розбираючи вмісту, —
-// саме так і робить рушій, коли не знає об'єкта.
+// The length in a record makes it possible to skip it without parsing the
+// contents — which is exactly what the engine does when it does not know the object.
 struct GhostRecord {
   std::uint32_t kind = 0;
   std::uint16_t networkId = 0;
   std::uint32_t payloadBits = 0;
-  bool baseline = false;         // прапорець перед довжиною
-  std::uint32_t stateMask = 0;   // 19 біт: які поля їдуть у вмісті
-  // Місце, якщо в масці стоїть kObjectStatePosition.
+  bool baseline = false;         // the flag before the length
+  std::uint32_t stateMask = 0;   // 19 bits: which fields travel in the content
+  // The position, when the mask has kObjectStatePosition set.
   std::optional<Vec3f> position;
-  // Куди дивиться солдат, у градусах (маска 0x2).
+  // Where the soldier is looking, in degrees (mask 0x2).
   std::optional<float> yaw;
 };
 
-// Вміст запису читає мережевий клас об'єкта. Для всього, що має місце в
-// світі, це `SimpleObjectNetworkable::setNetUpdate` (лінукс-сервер,
-// 0x5d78a0), і починається він завжди однаково:
+// A record's contents are read by the object's networked class. For everything
+// with a position in the world that is `SimpleObjectNetworkable::setNetUpdate`
+// (Linux server, 0x5d78a0), and it always begins the same way:
 //
-//   19 біт   маска стану — які поля є в цьому оновленні
-//   якщо в масці стоїть біт 1:
-//       стиснений вектор — місце об'єкта
+//   19 bits  the state mask — which fields are in this update
+//   if bit 1 is set in the mask:
+//       a compressed vector — the object's position
 //
-// Маска читається за 0x5d7a17 (`readBits(..., 0x13)`), біт 1
-// перевіряється першим (`testb $0x2` за 0x5d7a35), і в його гілці стоїть
-// `BitStream::readCompressedVector` (0x5d845b). Точність — стала 0.0005
-// із `.rodata` за 0xb47194, а не наш підбір.
+// The mask is read at 0x5d7a17 (`readBits(..., 0x13)`), bit 1 is checked first
+// (`testb $0x2` at 0x5d7a35), and its branch holds
+// `BitStream::readCompressedVector` (0x5d845b). The precision is the constant
+// 0.0005 from `.rodata` at 0xb47194, not a guess of ours.
 //
-// Які взагалі поля має цей клас, каже `getGhostStateMask` (0x5d6990):
-// вона повертає 0x5849b. Решту полів ми ще не розбирали — і не мусимо:
-// довжина запису дає пропустити хвіст, як це робить сам рушій.
+// Which fields this class has at all is said by `getGhostStateMask` (0x5d6990):
+// it returns 0x5849b. The other fields we have not parsed — and need not: a
+// record's length lets the tail be skipped, as the engine itself does.
 inline constexpr unsigned kObjectStateMaskBits = 19;
 inline constexpr std::uint32_t kObjectStatePosition = 0x2;
 inline constexpr float kObjectPositionPrecision = 0.0005f;
 
-// **Солдат читається інакше, і це не дрібниця.** Мережевий клас у нього
-// свій — `SoldierNetworkable` (0x5dc640), і в нього:
+// **A soldier is read differently, and that is no detail.** Its networked class
+// is its own — `SoldierNetworkable` (0x5dc640), and in it:
 //
-//   * маска не 19 біт, а **21** (`readBits(..., 0x15)` за 0x5dc719).
-//     Ширина маски — це кількість бітів у `getGhostStateMask`, а вона в
-//     кожного класу своя: у простого об'єкта 0x5849b, у солдата
+//   * the mask is not 19 bits but **21** (`readBits(..., 0x15)` at 0x5dc719).
+//     The mask's width is the number of bits in `getGhostStateMask`, and that
+//     differs per class: 0x5849b for a simple object, for a soldier
 //     0x1950ff (0x5dabe0);
-//   * місце вмикає **біт 7**, а не біт 1 (`testb %dl, %dl; js` за
-//     0x5dc941 — перевірка знакового біта молодшого байта маски);
-//   * опорна точка — не потік і не попереднє місце, а
-//     `dice::hfe::nullVec`, тобто **нуль** (0x5dd367). Тож місце солдата
-//     приходить по суті абсолютним;
-//   * точність — 0.01 (стала за 0xb6d934), а не 0.0005.
+//   * the position is enabled by **bit 7**, not bit 1 (`testb %dl, %dl; js` at
+//     0x5dc941 — a check of the sign bit of the mask's low byte);
+//   * the reference point is neither the stream's nor the previous position but
+//     `dice::hfe::nullVec`, that is **zero** (0x5dd367). So a soldier's position
+//     arrives essentially absolute;
+//   * the precision is 0.01 (the constant at 0xb6d934), not 0.0005.
 //
-// Через це чужі солдати в нас і не рухалися: ми читали їх розкладкою
-// простого об'єкта. Хто з об'єктів солдат, ми знаємо напевно — сервер
-// сам каже це подіями `CreatePlayerEvent` і `EnterVehicleEvent`.
-// Розкладка початку стану солдата — з клієнта, з декомпіляції
+// That is why other players' soldiers did not move for us: we read them with a
+// simple object's layout. Which object is a soldier we know for certain — the
+// server says so itself with the `CreatePlayerEvent` and `EnterVehicleEvent` events.
+// The layout of the start of a soldier's state comes from the client, from the
 // `SoldierNetworkable::setNetUpdate` (`BF2.exe`, 0x62d4e0):
 //
-//   маска                     21 біт      (0x62d5xx, читання на 0x15)
-//   якщо маска & 0x40         8 біт, далі 1 біт
-//   якщо маска & 0x20         3 біти, далі 3 біти  (діапазон 0..4)
-//   якщо маска & 0x8000       інша гілка — стан ragdoll, ми її не читаємо
-//   якщо маска & 0x1          **місце**: стиснений вектор, точність 0.001
+//   mask                      21 bits     (0x62d5xx, a read of 0x15)
+//   if mask & 0x40            8 bits, then 1 bit
+//   if mask & 0x20            3 bits, then 3 bits   (range 0..4)
+//   if mask & 0x8000          another branch — the ragdoll state, which we do not read
+//   if mask & 0x1             **the position**: a compressed vector, precision 0.001
 //
-// Далі йдуть швидкість (0x80), кути (0x2 -> рискання, 0x4 -> тангаж,
-// 0x8, 0x10 — по 12 біт, розгорнуті в ±360/±90/±180/±90) і ще з десяток
-// полів; вони нам поки не потрібні, і читати їх не треба — за місцем
-// одразу можна спинитися.
+// Then come the velocity (0x80), the angles (0x2 -> yaw, 0x4 -> pitch, 0x8,
+// 0x10 — 12 bits each, expanded into ±360/±90/±180/±90) and a dozen more fields;
+// we do not need them yet, and they need not be read — after the position we can
+// stop straight away.
 //
-// Дві речі, на яких ми до цього спіткнулися:
+// Two things we stumbled on before this:
 //
-// * місце вмикає **біт 0**, а не 7. Раніше ми брали біт 7 (це швидкість)
-//   і читали не з того місця — виходили числа на кшталт -6.7e27;
-// * опора — **вектор стиснення потоку**, той самий, що ставить стан
-//   керованого об'єкта. Видно з `FUN_0062bd60`: він кличе читання
-//   вектора з полем `потік+0x54`, тобто з внутрішнім вектором стиснення,
-//   а не з переданим нулем (нуль передають сусідні поля, 0x62bdb0).
+// * the position is enabled by **bit 0**, not 7. We used to take bit 7 (that is
+//   the velocity) and read from the wrong place — numbers like -6.7e27 came out;
+// * the reference is the **stream's compression vector**, the same one the
+//   controlled-object state sets. Visible in `FUN_0062bd60`: it calls the vector
+//   read with the field `stream+0x54`, that is with the internal compression
+//   vector, rather than with the zero passed in (the zero is for the neighbouring fields, 0x62bdb0).
 inline constexpr unsigned kSoldierStateMaskBits = 21;
 inline constexpr std::uint32_t kSoldierStatePosition = 0x1;
-inline constexpr std::uint32_t kSoldierStateHasByte = 0x40;    // 8 біт + 1 біт
-inline constexpr std::uint32_t kSoldierStateHasPair = 0x20;    // 3 біти + 3 біти
-inline constexpr std::uint32_t kSoldierStateRagdoll = 0x8000;  // інша гілка
+inline constexpr std::uint32_t kSoldierStateHasByte = 0x40;    // 8 bits + 1 bit
+inline constexpr std::uint32_t kSoldierStateHasPair = 0x20;    // 3 bits + 3 bits
+inline constexpr std::uint32_t kSoldierStateRagdoll = 0x8000;  // another branch
 inline constexpr float kSoldierPositionPrecision = 0.001f;
-inline constexpr std::uint32_t kSoldierStateVelocity = 0x80;   // стиснений вектор
+inline constexpr std::uint32_t kSoldierStateVelocity = 0x80;   // a compressed vector
 inline constexpr float kSoldierVelocityPrecision = 0.01f;
-inline constexpr std::uint32_t kSoldierStateYaw = 0x2;         // 12 біт -> ±360°
+inline constexpr std::uint32_t kSoldierStateYaw = 0x2;         // 12 bits -> ±360°
 
-// Кути їдуть дванадцятьма бітами, розгорнутими в діапазон. Арифметика з
-// клієнта дослівно: `(v * 2/4095 - 1) * межа`, де межа для рискання 360.
+// The angles travel in twelve bits expanded into a range. The arithmetic is
+// verbatim from the client: `(v * 2/4095 - 1) * limit`, where the limit for yaw is 360.
 inline constexpr unsigned kSoldierAngleBits = 12;
 inline constexpr float kSoldierYawRange = 360.0f;
 inline float soldierAngle(std::uint32_t packed, float range) {
   const float unit = static_cast<float>(packed) * (2.0f / 4095.0f) - 1.0f;
   return unit * range;
 }
-// `dice::hfe::nullVec` — саме він стоїть опорою в розкладці солдата.
+// `dice::hfe::nullVec` — it is what stands as the reference in a soldier's layout.
 inline constexpr Vec3f kNullVec{};
 
-// Ширина поля довжини. У рушії вона обчислюється на льоту, а на дроті
-// це рівно одинадцять бітів: із нею весь спійманий зразок розбирається
-// до останнього байта, з будь-якою іншою — жоден пакет.
+// The width of the length field. In the engine it is computed on the fly, and on
+// the wire it is exactly eleven bits: with it the whole captured sample parses to
+// the last byte, with any other not a single packet does.
 inline constexpr unsigned kGhostLengthBits = 11;
 
-// Читає заголовок потоку привидів із пакета даних, пройшовши події.
-// nullopt — привидів у пакеті немає або якусь подію ще не вміємо
-// пропустити на потрібну довжину.
+// Reads the ghost stream's header from a data packet, having walked the events.
+// nullopt means the packet has no ghosts or some event cannot yet be skipped by
+// the right length.
 std::optional<GhostHeader> readGhostHeader(std::span<const std::byte> packet);
 
-// Записи потоку привидів. Порожньо, якщо привидів немає або в пакеті
-// стоїть прапорець стану керованого об'єкта — той стан іде перед
-// записами і поки не розібраний.
-// referenceFor — опорна точка для стисненого вектора **цього** об'єкта.
-// Вимірювання показало, що різниця дрібна (метри), а не через півкарти:
-// отже база — це попереднє відоме місце самого об'єкта, а не одна точка
-// на весь потік. Хто кличе, той і пам'ятає останнє місце; поки об'єкт
-// невідомий, за базу править місце з `CreateObjectEvent`.
+// The ghost stream's records. Empty when there are no ghosts or when the packet
+// has the controlled-object state flag set — that state comes before the records
+// and is not parsed yet.
+// referenceFor is the reference point for **this** object's compressed vector.
+// Measurement showed the difference is small (metres) rather than half a map
+// away: so the base is the object's own last known position, not one point for
+// the whole stream. Whoever calls remembers the last position; while the object
+// is unknown, the position from `CreateObjectEvent` serves as the base.
 //
-// isSoldier — чи цей номер належить солдатові гравця: у солдата інша
-// розкладка (див. вище), і без цього він читається як сміття.
+// isSoldier says whether this id belongs to a player's soldier: a soldier has a
+// different layout (see above), and without this it reads as rubbish.
 std::vector<GhostRecord> readGhostRecords(
     std::span<const std::byte> packet,
     const std::function<Vec3f(std::uint16_t)>& referenceFor = {},
     const std::function<bool(std::uint16_t)>& isSoldier = {});
 
-// Проходить пакет даних і повертає всі події з нього.
-// Порожньо — це не пакет даних або він обірвався на першій же події.
+// Walks a data packet and returns every event in it.
+// Empty means this is not a data packet or it broke off on the very first event.
 std::vector<Event> readEvents(std::span<const std::byte> packet);
 
 }  // namespace obf2::net::bf2

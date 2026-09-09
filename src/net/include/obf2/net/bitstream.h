@@ -1,16 +1,16 @@
 #pragma once
-// Побітовий потік мережевого протоколу Refractor 2.
+// The bit stream of Refractor 2's network protocol.
 //
-// Розкладка бітів: у кожному байті молодші біти йдуть **першими**, а значення
-// довші за байт продовжуються в наступний. Тобто запис 3 біт `0b101` у
-// порожній буфер дає байт `0x05`, а не `0xA0`.
+// The bit layout: within each byte the low bits come **first**, and values longer
+// than a byte continue into the next one. So writing the 3 bits `0b101` into an
+// empty buffer gives the byte `0x05`, not `0xA0`.
 //
-// Джерела: [Refractor-2-BitStream-Emulator](https://github.com/matthias-hoste/Refractor-2-BitStream-Emulator)
-// (робоча реалізація рукостискання) та символи лінукс-сервера BF2 1.5, де
-// клас зветься `dice::hfe::io::BitStream` і має саме такий набір методів.
+// Sources: [Refractor-2-BitStream-Emulator](https://github.com/matthias-hoste/Refractor-2-BitStream-Emulator)
+// (a working handshake implementation) and the BF2 1.5 Linux server's symbols,
+// where the class is called `dice::hfe::io::BitStream` and has exactly this method set.
 //
-// Реалізація власна. Головна відмінність від оригіналу — **перевірка меж**:
-// сюди приходять пакети з мережі, і вихід за буфер тут неприпустимий.
+// The implementation is our own. The main difference from the original is
+// **bounds checking**: packets arrive here off the network, and running past the buffer is unacceptable.
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -22,14 +22,14 @@
 
 namespace obf2::net {
 
-// Розмір службових полів у бітах — саме так їх читає й пише гра.
+// The size of the service fields in bits — exactly how the game reads and writes them.
 inline constexpr unsigned kBasicHeaderTypeBits = 4;
 inline constexpr unsigned kBasicHeaderSubtypeBits = 8;
 inline constexpr unsigned kExtendedHeaderTypeBits = 6;
 inline constexpr unsigned kExtendedHeaderIdBits = 6;
 inline constexpr unsigned kExtendedHeaderSequenceBits = 32;
 
-// Тип пакета в основному заголовку.
+// The packet type in the basic header.
 enum class PacketType : std::uint32_t {
   ConnectionRequest = 1,
   ConnectionAccept = 2,
@@ -44,50 +44,50 @@ enum class PacketType : std::uint32_t {
 std::string_view packetTypeName(PacketType type);
 
 struct BasicHeader {
-  std::uint32_t type = 0;     // 4 біти, див. PacketType
-  std::uint32_t subtype = 0;  // 8 біт
+  std::uint32_t type = 0;     // 4 bits, see PacketType
+  std::uint32_t subtype = 0;  // 8 bits
 };
 
 struct ExtendedHeader {
-  std::uint32_t type = 0;      // 6 біт
-  std::uint32_t dataId = 0;    // 6 біт
-  std::uint32_t sequence = 0;  // 32 біти
+  std::uint32_t type = 0;      // 6 bits
+  std::uint32_t dataId = 0;    // 6 bits
+  std::uint32_t sequence = 0;  // 32 bits
 };
 
-// Стиснений вектор: замість трьох float-ів пишеться різниця до опорної
-// точки з точністю, обраною за відстанню. Таблиці бітів узяті з даних
-// лінукс-сервера (`BitStream::m_compressionVectorBitTable`), а сам алгоритм —
-// з декомпіляції `writeCompressedVector`.
+// A compressed vector: instead of three floats, the difference from a reference
+// point is written at a precision chosen by the distance. The bit tables come
+// from the Linux server's data (`BitStream::m_compressionVectorBitTable`), and
+// the algorithm from the decompilation of `writeCompressedVector`.
 //
-// Рівень (2 біти) обирається за довжиною різниці:
+// The level (2 bits) is chosen by the difference's length:
 //
-//   < 2^11  -> рівень 3, 12 біт на компоненту
-//   < 2^15  -> рівень 2, 16 біт
-//   < 2^19  -> рівень 1, 20 біт
-//   інакше  -> рівень 0: три сирі float-и, і то вже АБСОЛЮТНА позиція
+//   < 2^11  -> level 3, 12 bits per component
+//   < 2^15  -> level 2, 16 bits
+//   < 2^19  -> level 1, 20 bits
+//   otherwise -> level 0: three raw floats, and that is an ABSOLUTE position
 //
-// У рівнях 1-3 компонента пишеться знаком і величиною: 1 біт знаку плюс
-// (біти - 1) біт модуля.
+// In levels 1-3 a component is written as sign and magnitude: 1 sign bit plus
+// (bits - 1) bits of magnitude.
 inline constexpr std::uint32_t kCompressionVectorBitTable[4] = {32, 20, 16, 12};
 inline constexpr std::uint32_t kHighCompressionVectorBitTable[4] = {32, 12, 10, 8};
 inline constexpr std::uint32_t kCompressionVectorBitTable2[8] = {28, 24, 20, 16, 12, 10, 8, 0};
 
-// Скільки біт іде на рівень стиснення.
+// How many bits go to the compression level.
 inline constexpr unsigned kCompressionLevelBits = 2;
 
 class BitReader {
  public:
   explicit BitReader(std::span<const std::byte> data) : data_(data) {}
 
-  // nullopt — вихід за межі буфера або запит більше ніж 32 біти.
+  // nullopt means running past the buffer or asking for more than 32 bits.
   std::optional<std::uint32_t> readBits(unsigned bits);
   std::optional<bool> readBool();
   std::optional<std::uint8_t> readByte();
-  // Рядок фіксованої довжини; нульові байти обрізаються.
+  // A fixed-length string; the zero bytes are trimmed.
   std::optional<std::string> readString(std::size_t length);
   bool readBytes(std::span<std::byte> destination);
 
-  // precision — той самий крок квантування, що й при записі.
+  // precision is the same quantisation step as on the write.
   std::optional<Vec3f> readCompressedVector(const Vec3f& reference, float precision,
                                             const std::uint32_t (&table)[4] =
                                                 kCompressionVectorBitTable);
@@ -110,11 +110,11 @@ class BitWriter {
  public:
   explicit BitWriter(std::span<std::byte> buffer) : buffer_(buffer) {}
 
-  // false — не влізло; потік після цього лишається у стані помилки.
+  // false means it did not fit; the stream stays in an error state afterwards.
   bool writeBits(std::uint32_t value, unsigned bits);
   bool writeBool(bool value);
   bool writeByte(std::uint8_t value);
-  // Рядок доповнюється нулями до length байтів або обрізається.
+  // The string is padded with zeroes to length bytes or truncated.
   bool writeString(std::string_view text, std::size_t length);
   bool writeBytes(std::span<const std::byte> bytes);
 
@@ -125,7 +125,7 @@ class BitWriter {
   bool writeExtendedHeader(const ExtendedHeader& header);
 
   std::size_t bitPosition() const { return position_; }
-  // Скільки цілих байтів займає записане (з добиванням до межі байта).
+  // How many whole bytes the written data takes (padded to a byte boundary).
   std::size_t byteSize() const { return (position_ + 7) / 8; }
   bool ok() const { return ok_; }
 
@@ -135,14 +135,14 @@ class BitWriter {
   bool ok_ = true;
 };
 
-// --- один опис розкладки на обидва напрями --------------------------
+// --- one layout description for both directions ---------------------
 //
-// Складач і розбирач протоколу неминуче описують ту саму розкладку, і
-// поки їх двоє, вони розходяться: досить забути поле в одному з них.
-// Тому пишемо розкладку **один раз** — функцією, яка бере курсор і
-// проходить по полях, — а напрям вибирає сам курсор.
+// A protocol's assembler and parser inevitably describe the same layout, and
+// while there are two of them they diverge: forgetting a field in one is enough.
+// So the layout is written **once** — as a function that takes a cursor and
+// walks the fields — and the direction is chosen by the cursor itself.
 //
-// Виглядає це так:
+// It looks like this:
 //
 //   template <typename Cursor>
 //   bool serialize(Cursor& cursor, PlayerActions& actions) {
@@ -150,9 +150,9 @@ class BitWriter {
 //     ...
 //   }
 //
-// і те саме тіло працює як `readPlayerActions`, і як `writePlayerActions`.
-// Так само чинить і сам рушій: у кожної його події є пара
-// `serialize`/`deSerialize`, і поля в них ідуть однаково.
+// and the same body works as `readPlayerActions` and as `writePlayerActions`.
+// The engine does the same: every one of its events has a
+// `serialize`/`deSerialize` pair, and the fields go the same way in both.
 class ReadCursor {
  public:
   explicit ReadCursor(BitReader& reader) : reader_(reader) {}
@@ -171,8 +171,8 @@ class ReadCursor {
     value = raw != 0;
     return true;
   }
-  // Число зі знаком: біт знака, далі значення. Саме так рушій пише всі
-  // цілі зі знаком — і в блоці MapInfo, і в потоці дій гравця.
+  // A signed number: the sign bit, then the value. That is exactly how the engine
+  // writes every signed integer — both in the MapInfo block and in the action stream.
   bool signedBits(std::int32_t& value, unsigned width) {
     std::uint32_t sign = 0;
     std::uint32_t magnitude = 0;

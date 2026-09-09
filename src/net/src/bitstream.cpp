@@ -42,7 +42,7 @@ std::optional<std::uint32_t> BitReader::readBits(unsigned bits) {
   unsigned remaining = bits;
   std::size_t at = position_;
 
-  // Читаємо шматками до кінця поточного байта: молодші біти першими.
+  // We read in chunks up to the end of the current byte: low bits first.
   while (remaining > 0) {
     const unsigned bitInByte = static_cast<unsigned>(at & 7u);
     const unsigned availableInByte = 8u - bitInByte;
@@ -95,8 +95,8 @@ bool BitReader::readBytes(std::span<std::byte> destination) {
 
 namespace {
 
-// Рівень стиснення за довжиною різниці. Пороги — це 2^(біти-1) тієї самої
-// таблиці, тобто найбільше число, яке ще влазить у поле модуля.
+// The compression level by the difference's length. The thresholds are 2^(bits-1)
+// of the same table, that is the largest number that still fits the magnitude field.
 std::uint32_t compressionLevelFor(float scaledDistance, const std::uint32_t (&table)[4]) {
   auto threshold = [&](std::size_t index) {
     return static_cast<float>(1u << ((table[index] - 1u) & 31u));
@@ -133,8 +133,8 @@ bool BitWriter::writeCompressedVector(const Vec3f& value, const Vec3f& reference
 
   if (!writeBits(level, kCompressionLevelBits)) return false;
 
-  // Рівень 0 — це відмова від стиснення: пишеться АБСОЛЮТНА позиція
-  // сирими float-ами, а не різниця.
+  // Level 0 is a refusal to compress: an ABSOLUTE position is written as raw
+  // floats, not a difference.
   if (level == 0) {
     return writeBits(floatToBits(value.x), 32) && writeBits(floatToBits(value.y), 32) &&
            writeBits(floatToBits(value.z), 32);
@@ -143,7 +143,7 @@ bool BitWriter::writeCompressedVector(const Vec3f& value, const Vec3f& reference
   const unsigned magnitudeBits = table[level] - 1u;
   const float components[3] = {delta.x * inverse, delta.y * inverse, delta.z * inverse};
   for (const float component : components) {
-    // Обрізання до нуля, як у оригіналі: (int)(-1.7f) це -1, а не -2.
+    // Truncation towards zero, as in the original: (int)(-1.7f) is -1, not -2.
     const int quantized = static_cast<int>(component);
     const bool negative = quantized < 0;
     if (!writeBool(negative)) return false;
@@ -222,8 +222,8 @@ bool BitWriter::writeBits(std::uint32_t value, unsigned bits) {
     const unsigned availableInByte = 8u - bitInByte;
     const unsigned put = std::min(remaining, availableInByte);
 
-    // Чистимо саме ті біти, які пишемо, і не чіпаємо сусідні: у той самий
-    // байт може потрапити хвіст попереднього значення.
+    // We clear exactly the bits we write and leave the neighbours alone: the tail
+    // of the previous value may land in the same byte.
     const std::uint32_t clearMask = ~(maskOf(put) << bitInByte);
     auto byte = static_cast<std::uint32_t>(buffer_[at >> 3]);
     byte &= clearMask;

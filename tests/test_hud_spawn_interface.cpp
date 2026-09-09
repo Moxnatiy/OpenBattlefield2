@@ -1,8 +1,8 @@
-// Екран появи як стан і команди — без вікна.
+// The spawn screen as state and commands — without a window.
 //
-// Саме заради цього він і виніс: кнопки екрана не мають власної логіки,
-// вони виконують консольні команди, а отже весь екран перевіряється
-// виконанням тих самих рядків, що й натискання.
+// That is exactly what it was pulled out for: the screen's buttons have no logic of
+// their own, they run console commands, and so the whole screen is checked by
+// running the same lines a click would.
 #include <string>
 #include <vector>
 
@@ -25,8 +25,8 @@ void testConsoleCommandsChangeChoice() {
   CHECK(spawn.choice().membersTab);
 }
 
-// Команду призначає сервер, і при зміні вибір місця скидається:
-// кружечки належать прапорам своєї команди.
+// The team is assigned by the server, and on a change the point choice is reset:
+// the circles belong to your own team's flags.
 void testServerTeamResetsMarker() {
   engine::Console console;
   hud::SpawnInterface spawn;
@@ -41,9 +41,9 @@ void testServerTeamResetsMarker() {
   CHECK_EQ(spawn.chosenPoint(), 401);
 }
 
-// Головне, заради чого це виносилося: DONE без обраного місця **не**
-// закриває екран. Раніше він закривався, і виходила застигла картинка
-// без гравця.
+// The main thing this was pulled out for: DONE with no point chosen does **not**
+// close the screen. It used to close, and the result was a frozen picture with no
+// player.
 void testDoneWithoutMarkerKeepsScreen() {
   engine::Console console;
   hud::SpawnInterface spawn;
@@ -63,8 +63,8 @@ void testDoneWithoutMarkerKeepsScreen() {
   CHECK(spawn.requested());
 }
 
-// І навпаки: якщо запит не пішов (сервер його не взяв), екран теж
-// лишається.
+// And the other way round: if the request did not go (the server did not take it),
+// the screen stays too.
 void testRefusedRequestKeepsScreen() {
   engine::Console console;
   hud::SpawnInterface spawn;

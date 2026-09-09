@@ -4,38 +4,38 @@ namespace obf2::net::bf2 {
 
 const char* joinStepName(JoinStep step) {
   switch (step) {
-    case JoinStep::Level: return "рівень завантажено";
-    case JoinStep::Content: return "перевірка вмісту";
-    case JoinStep::Database: return "база гравців отримана";
-    case JoinStep::Simulation: return "почати відлік";
-    case JoinStep::Ready: return "екран появи";
-    case JoinStep::Team: return "команда";
-    case JoinStep::Kit: return "набір";
-    case JoinStep::Group: return "місце появи";
-    case JoinStep::Done: return "готово";
+    case JoinStep::Level: return "the level is loaded";
+    case JoinStep::Content: return "the content check";
+    case JoinStep::Database: return "the player base was received";
+    case JoinStep::Simulation: return "start counting";
+    case JoinStep::Ready: return "the spawn screen";
+    case JoinStep::Team: return "team";
+    case JoinStep::Kit: return "kit";
+    case JoinStep::Group: return "spawn point";
+    case JoinStep::Done: return "done";
   }
   return "?";
 }
 
 std::optional<JoinStep> JoinSequence::next(Clock::time_point now) {
   if (step_ == JoinStep::Done) return std::nullopt;
-  // Доки сервер не сказав, який рівень він грає, слати нема чого.
+  // Until the server has said which level it is playing there is nothing to send.
   if (!levelReady_ || !clientLoaded_) return std::nullopt;
-  // Перший крок іде без чекання — паузу тримаємо лише між кроками. Після
-  // екрана появи паузи немає взагалі: три події вибору йдуть поспіль.
+  // The first step goes without waiting — the pause is kept only between steps.
+  // After the spawn screen there is no pause at all: the three choice events go in a row.
   const bool afterChoice = step_ == JoinStep::Team || step_ == JoinStep::Kit ||
                            step_ == JoinStep::Group;
-  // Перевірка вмісту йде разом із «рівень завантажено», без паузи: у
-  // дампі це один пакет. Пауза перед нею робила неможливе — перевірка
-  // приходила після появи гравця.
+  // The content check goes together with "the level is loaded", without a pause:
+  // in the dump it is one packet. A pause before it made the impossible happen —
+  // the check arrived after the player had spawned.
   const auto delay = step_ == JoinStep::Content ? kContentDelay
                      : afterChoice              ? kChoiceDelay
                                                 : kStepDelay;
   const auto wait = std::chrono::duration_cast<Clock::duration>(delay);
   if (started_ && now - last_ < wait) return std::nullopt;
 
-  // Кроки, які самі нічого не шлють, проходимо тут-таки — інакше на
-  // кожен із них марно згорала б ціла пауза.
+  // Steps that send nothing themselves are passed through right here — otherwise
+  // a whole pause would burn on each of them for nothing.
   for (int guard = 0; guard < 8; ++guard) {
     if (step_ == JoinStep::Content && skipContent_) {
       step_ = JoinStep::Database;
@@ -50,7 +50,7 @@ std::optional<JoinStep> JoinSequence::next(Clock::time_point now) {
       continue;
     }
     if (step_ == JoinStep::Ready) {
-      if (!asked_) return std::nullopt;  // чекаємо на DONE
+      if (!asked_) return std::nullopt;  // waiting for DONE
       step_ = JoinStep::Team;
       continue;
     }

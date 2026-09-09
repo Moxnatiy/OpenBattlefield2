@@ -40,8 +40,8 @@ void ControlMap::bind(Console& console) {
     mouseInvert_ = c.argBool(0).value_or(mouseInvert_);
   });
 
-  // Ці команди в стокових файлах трапляються, але на стан не впливають —
-  // приймаємо їх мовчки, щоб не засмічувати список нереалізованого.
+  // These commands occur in the stock files but do not affect the state — they
+  // are accepted silently so as not to clutter the unimplemented list.
   console.bind("ControlMap.setDefaultMap", [](const con::Command&) {});
   console.bind("ControlMap.activateMap", [](const con::Command&) {});
 }

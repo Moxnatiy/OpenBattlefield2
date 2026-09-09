@@ -1,13 +1,13 @@
 #pragma once
-// Значення, з яких HUD бере вміст: прапорці показу, підписи, заповнення
-// смуг і прозорість.
+// The values the HUD takes its contents from: show flags, captions, bar fills
+// and alpha.
 //
-// Назва не наша: в оригіналі це `Code/BF2/Menu/Hud/HudItems.cpp` (шлях
-// видно в `BF2_r.exe`), і команда, якою інтерфейс міняє свої прапорці,
-// зветься `hudItems.setBool`.
+// The name is not ours: in the original this is `Code/BF2/Menu/Hud/HudItems.cpp`
+// (the path is visible in `BF2_r.exe`), and the command the interface changes
+// its own flags with is called `hudItems.setBool`.
 //
-// Тут немає ні вікна, ні геометрії — самі лише значення за іменами. Саме
-// тому воно й винесене: така штука перевіряється тестом.
+// There is no window and no geometry here — only values by name. That is exactly
+// why it was pulled out: a thing like this can be checked by a test.
 #include <map>
 #include <optional>
 #include <string>
@@ -20,8 +20,8 @@ namespace obf2::hud {
 
 class HudItems {
  public:
-  // `hudItems.setBool <ім'я> <0|1>` — цим інтерфейс вмикає власні
-  // прапорці, зокрема `SetSpawnPoint`.
+  // `hudItems.setBool <name> <0|1>` — this is what the interface turns its own
+  // flags on with, `SetSpawnPoint` among them.
   void bind(engine::Console& console);
 
   VariableMap& flags() { return flags_; }
@@ -33,14 +33,14 @@ class HudItems {
 
   std::string_view text(std::string_view name) const;
   float value(std::string_view name) const;
-  // nullopt — про таку змінну ми нічого не знаємо. Вузол тоді лишається
-  // видимим: більшість цих змінних — плавні згасання, і типово вони
-  // ввімкнені. **Це наше рішення, а не поведінка рушія**: в оригіналі
-  // значення пише сам HUD (`BF2.exe`, 0x789480 реєструє їх полями свого
-  // об'єкта), і хто саме їх пише — ще не розібрано.
+  // nullopt means we know nothing about that variable. The node then stays
+  // visible: most of these variables are smooth fades, and by default they are
+  // on. **That is our decision, not the engine's behaviour**: in the original the
+  // HUD writes the values itself (`BF2.exe`, 0x789480 registers them as its
+  // object's fields), and who exactly writes them has not been worked out.
   std::optional<float> alpha(std::string_view name) const;
 
-  // Чи змінилося щось відтоді, як екран малювали востаннє.
+  // Whether anything has changed since the screen was last drawn.
   bool dirty() const { return dirty_; }
   void clearDirty() { dirty_ = false; }
   void markDirty() { dirty_ = true; }

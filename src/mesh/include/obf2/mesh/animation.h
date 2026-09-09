@@ -1,29 +1,29 @@
 #pragma once
-// Анімація кісток Refractor 2 — файли `.baf`.
+// Refractor 2 bone animation — the `.baf` files.
 //
-// Розкладку взято з коду рушія (`dice::anim::BoneAnimation::load` і
-// `dice::anim::CompressedAnim::GetValue` у Linux-сервері), а не вгадано:
+// The layout is taken from the engine's code (`dice::anim::BoneAnimation::load`
+// and `dice::anim::CompressedAnim::GetValue` in the Linux server), not guessed:
 //
-//   u32 версія (має бути 4)
-//   u16 кількість кісток
-//   u16 номери кісток[кількість]
-//   u32 кількість кадрів
-//   u8  точність
-//   для кожної кістки:
-//     u16 скільки всього 16-бітних слів у цієї кістки
-//     для кожного з 7 каналів (кватерніон x,y,z,w і зсув x,y,z):
-//       u16 скільки слів у цього каналу
-//       далі — потік «пробігів» (див. нижче)
+//   u32 version (must be 4)
+//   u16 bone count
+//   u16 bone ids[count]
+//   u32 frame count
+//   u8  precision
+//   for every bone:
+//     u16 how many 16-bit words this bone has in total
+//     for each of the 7 channels (quaternion x,y,z,w and translation x,y,z):
+//       u16 how many words this channel has
+//       then a stream of "runs" (see below)
 //
-// Потік каналу складається з пробігів. Кожен пробіг займає одне слово
-// заголовка й далі значення:
+// A channel's stream consists of runs. Every run takes one header word and then
+// the values:
 //
-//   байт 0: довжина пробігу в кадрах (біти 0..6); біт 7 — «стале значення»
-//   байт 1: скільки слів до наступного пробігу
-//   int16 значення[стале ? 1 : довжина]
+//   byte 0: the run's length in frames (bits 0..6); bit 7 means "constant value"
+//   byte 1: how many words to the next run
+//   int16 values[constant ? 1 : length]
 //
-// Значення переводяться в дійсні так: кватерніон — поділити на 32767,
-// зсув — на `(1 << точність) - 1`. Тривалість кліпу — кадри / 24.
+// The values are converted to reals like this: a quaternion is divided by 32767,
+// a translation by `(1 << precision) - 1`. A clip's length is frames / 24.
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -34,13 +34,13 @@
 
 namespace obf2::mesh {
 
-// Кількість каналів на кістку: чотири на поворот і три на зсув.
+// Channels per bone: four for rotation and three for translation.
 inline constexpr int kAnimationChannels = 7;
-// Кадрів на секунду. У рушії тривалість це `кадри / 24.0`.
+// Frames per second. In the engine the length is `frames / 24.0`.
 inline constexpr float kAnimationFramesPerSecond = 24.0f;
 
 struct BoneAnimationTrack {
-  // Сирі слова каналу — розпаковуються на льоту, як і в оригіналі.
+  // The channel's raw words — unpacked on the fly, as in the original.
   std::vector<std::int16_t> channels[kAnimationChannels];
 };
 
@@ -55,10 +55,10 @@ struct BoneAnimation {
     return static_cast<float>(frameCount) / kAnimationFramesPerSecond;
   }
 
-  // Одне значення каналу на заданому кадрі.
+  // One channel value at the given frame.
   float value(std::size_t bone, std::uint32_t frame, int channel) const;
 
-  // Поворот і зсув кістки на кадрі.
+  // A bone's rotation and translation at a frame.
   bool sample(std::size_t bone, std::uint32_t frame, float outRotation[4], Vec3* outPosition) const;
 };
 

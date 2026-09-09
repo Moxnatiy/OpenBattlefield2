@@ -5,11 +5,11 @@
 namespace obf2::hud {
 namespace {
 
-// Згладжування рушія: `FUN_00402ee0(dt * -6.0, -10, 10)` затискає
-// показник, далі йде e^x (ROUND/f2xm1/fscale), і виходить
-//   значення += (1 - e^(-6*dt)) * (ціль - значення)
-// (`BF2.exe`, 0x77d1a4..0x77d1c1 — той самий блок повторено для кожного
-// поля, що анімується).
+// The engine's smoothing: `FUN_00402ee0(dt * -6.0, -10, 10)` clamps the exponent,
+// then comes e^x (ROUND/f2xm1/fscale), and the result is
+//   value += (1 - e^(-6*dt)) * (target - value)
+// (`BF2.exe`, 0x77d1a4..0x77d1c1 — the same block repeated for every animated
+// field).
 void approach(float& value, float target, float dt, float snapDistance, bool snapNow) {
   if (snapNow || std::fabs(value - target) < snapDistance) {
     value = target;
@@ -21,16 +21,16 @@ void approach(float& value, float target, float dt, float snapDistance, bool sna
   value += (1.0f - std::exp(exponent)) * (target - value);
 }
 
-// Загорнути кут у (-pi, pi] — `FUN_007722d0`: `(a/2pi - floor(a/2pi +
+// Wrap an angle into (-pi, pi] — `FUN_007722d0`: `(a/2pi - floor(a/2pi +
 // 0.5)) * 2pi`.
 float wrapAngle(float radians) {
   const float turns = radians * 0.15915494f;
   return (turns - std::floor(turns + 0.5f)) * 6.2831855f;
 }
 
-// Куди крутитися від `from` до `to`: -1, 0 або +1. Дослівно
-// `FUN_00772310` (`BF2.exe`, 0x772310) — нуль повертається і тоді, коли
-// кути збігаються з точністю до повного оберту.
+// Which way to turn from `from` to `to`: -1, 0 or +1. Verbatim
+// `FUN_00772310` (`BF2.exe`, 0x772310) — zero is also returned when the angles
+// coincide up to a full turn.
 int angleDirection(float to, float from, float epsilon) {
   if (std::fabs(from - to) < epsilon || std::fabs(from - (to + 6.2831855f)) < epsilon ||
       std::fabs(from - (to - 6.2831855f)) < epsilon) {
@@ -44,15 +44,15 @@ int angleDirection(float to, float from, float epsilon) {
   return static_cast<int>(std::ceil((to - from) / span));
 }
 
-// Найкоротша відстань між кутами — `FUN_00772410` (0x772410).
+// The shortest distance between angles — `FUN_00772410` (0x772410).
 float angleDistance(float a, float b) {
   float difference = (a >= 0.0f || b <= 0.0f) ? a - b : b - a;
   if (std::fabs(difference) > 3.1415927f) difference = 6.2831855f - std::fabs(difference);
   return difference;
 }
 
-// Один крок доводки кута: 0x77c4f4..0x77c569 і 0x77c632..0x77c6b2 —
-// обидва однакові.
+// One step of an angle's approach: 0x77c4f4..0x77c569 and 0x77c632..0x77c6b2 —
+// both identical.
 void approachAngle(float& value, float target, float dt) {
   value = wrapAngle(value);
   const int direction = angleDirection(target, value, kMapAngleEpsilon);
@@ -91,7 +91,7 @@ void MapNode::applyState(int state) {
   state_ = state;
   switch (state) {
     case kMapStateIngame:
-      // 0x777e3d: ціль — мініатюра в кутку.
+      // 0x777e3d: the target is the thumbnail in the corner.
       targetPosition_ = mini_;
       targetSize_ = miniSize_;
       commanderMode_ = false;
@@ -99,11 +99,11 @@ void MapNode::applyState(int state) {
 
     case kMapStateSpawn:
     case kMapStateBigMap:
-      // 0x777f8a і 0x778089: обидва стани беруть один і той самий
-      // великий прямокутник. Різняться вони лише прозорістю: на екрані
-      // появи вона стала (1.0 і 0.5 для значків), а на великій карті
-      // береться з налаштувань `MenuMapAlpha`/`MenuMapIconAlpha`.
-      // Прозорість ми поки не ведемо — див. «не виміряно» нижче.
+      // 0x777f8a and 0x778089: both states take one and the same big rectangle.
+      // They differ only in alpha: on the spawn screen it is fixed (1.0 and 0.5
+      // for the icons), while on the big map it comes from the settings
+      // `MenuMapAlpha`/`MenuMapIconAlpha`.
+      // We do not drive the alpha yet — see "not measured" below.
       targetPosition_ = maxi_;
       targetSize_ = maxiSize_;
       commanderMode_ = false;
@@ -111,16 +111,16 @@ void MapNode::applyState(int state) {
 
     case kMapStateSquadLeaderMenu:
     case kMapStateCommanderMenu:
-      // 0x778299 і 0x778281. В оригіналі ці два стани ще й дивляться на
-      // попередній стан (0x1e4): якщо ми вже прийшли з відповідного
-      // меню, ціль не чіпають.
+      // 0x778299 and 0x778281. In the original these two states also look at the
+      // previous state (0x1e4): if we already came from the corresponding menu,
+      // the target is left alone.
       targetPosition_ = maxi_;
       targetSize_ = maxiSize_;
       commanderMode_ = false;
       break;
 
     case kMapStateCommander:
-      // 0x7781b0: лише якщо режим командира ще не ввімкнено.
+      // 0x7781b0: only if commander mode is not on yet.
       if (!commanderMode_) {
         commanderMode_ = true;
         targetPosition_ = commander_;
@@ -129,10 +129,10 @@ void MapNode::applyState(int state) {
       break;
 
     default:
-      // Решта станів ціль карти не змінює (0x777e11, гілка
-      // 9/0xc/0xd/0xe/0x10/0x13/0x14/0x15/0x1a/0x1b/0x1c) — зокрема й
-      // стан 19 `MapMenuShow`: швидке меню масштабу лягає **поверх**
-      // карти, а саму карту не рухає.
+      // The other states do not change the map's target (0x777e11, the branch
+      // 9/0xc/0xd/0xe/0x10/0x13/0x14/0x15/0x1a/0x1b/0x1c) — state 19
+      // `MapMenuShow` included: the quick zoom menu lands **on top of** the map
+      // and does not move the map itself.
       break;
   }
 }
@@ -155,26 +155,26 @@ void MapNode::update(float dt) {
   const bool snapNow = snapNext_;
   snapNext_ = false;
 
-  // Порядок і зсув пів екрана — з 0x77d13c..0x77d2b0: до цілі, яку
-  // задав стан, додається (400, 300), бо координати карти в даних
-  // відлічені від центра екрана.
+  // The order and the half-screen offset come from 0x77d13c..0x77d2b0: (400, 300)
+  // is added to the target the state set, because the map's coordinates in the
+  // data are counted from the screen's centre.
   approach(position_.y, targetPosition_.y + kReferenceHeight * 0.5f, dt, kMapSnapDistance,
            snapNow);
   approach(position_.x, targetPosition_.x + kReferenceWidth * 0.5f, dt, kMapSnapDistance, snapNow);
   approach(size_.y, targetSize_.y, dt, kMapSnapDistance, snapNow);
   approach(size_.x, targetSize_.x, dt, kMapSnapDistance, snapNow);
 
-  // Центр і масштаб — та сама швидкість 6.0 (0x77cd10 для +0x748/+0x74c
-  // і 0x77ce90 для +0x698). Поріг тут інший: центр міряється в частках
-  // світу, тож 0.1 було б півкартою.
+  // The centre and the zoom use the same speed of 6.0 (0x77cd10 for +0x748/+0x74c
+  // and 0x77ce90 for +0x698). The threshold here differs: the centre is measured
+  // in fractions of the world, so 0.1 would be half the map.
   approach(centre_.x, targetCentre_.x, dt, 0.0001f, snapNow);
   approach(centre_.y, targetCentre_.y, dt, 0.0001f, snapNow);
   approach(zoom_, static_cast<float>(zoomIndex_), dt, 0.001f, snapNow);
 
-  // 0x77d3a0: обидві змінні показу **виводяться з поточного розміру**, а
-  // не з номера стану. Доки розмір у дорозі, не ввімкнена жодна — і саме
-  // тому в оригіналі рамка мінікарти встигає згаснути, перш ніж
-  // проступить рамка великої.
+  // 0x77d3a0: both show variables are **derived from the current size**, not from
+  // the state number. While the size is in transit neither is on — and that is
+  // exactly why in the original the minimap's frame manages to fade before the
+  // big one's frame appears.
   if (state_ == kMapStateCommander) {
     if (size_.x <= commanderSize_.x - kMapSizeTolerance ||
         size_.y <= commanderSize_.y - kMapSizeTolerance) {

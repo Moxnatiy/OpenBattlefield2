@@ -1,7 +1,7 @@
-// Хто вмикає змінні показу HUD.
+// Who turns the HUD's show variables on.
 //
-// Перевіряємо саме те, що зреверсили: таблицю станів із BF2.exe і дві
-// функції, які рушій крутить щокадру (docs/functions/hud-states.md).
+// We check exactly what was reversed: the state table from BF2.exe and the two
+// functions the engine runs every frame (docs/functions/hud-states.md).
 #include "check.h"
 #include <cmath>
 #include <map>
@@ -19,8 +19,8 @@ bool on(const hud::VariableMap& variables, const char* name) {
 
 }  // namespace
 
-// Стан 0 — звичайний бій, стан 1 — екран появи. Обидва з таблиці
-// переходів 0x787008.
+// State 0 is ordinary combat, state 1 the spawn screen. Both from the jump table
+// 0x787008.
 static void testStateTurnsOnItsOwn() {
   hud::VariableMap variables;
 
@@ -36,26 +36,26 @@ static void testStateTurnsOnItsOwn() {
   CHECK(on(variables, "MapBorderAlternateShow"));
 }
 
-// Головне, чого ми раніше не робили: **стан 2 нічого не гасить**. Велика
-// карта лише вмикає `MapShow`, а `ShowIngameHud` лишається від стану 0 —
-// і решта HUD під великою картою й далі видно. Доти ми гасили все
-// підряд, і зникала навіть сама карта: вона живе під `IngameHud`, а той
-// під `ShowIngameHud`.
+// The main thing we used not to do: **state 2 turns nothing off**. The big
+// map only turns on `MapShow`, while `ShowIngameHud` stays on from state 0 — and
+// the rest of the HUD is still visible under the big map. Until now we turned
+// everything off wholesale, and even the map itself disappeared: it lives under
+// `IngameHud`, and that under `ShowIngameHud`.
 static void testBigMapKeepsTheHud() {
   hud::VariableMap variables;
   hud::applyState(variables, -1, 0);
 
-  // Жодна змінна показу при цьому не міняється: `MapShow` уже ввімкнена
-  // станом 0. Уся різниця великої карти — в цілі розміру самого вузла
-  // карти (0x777dc0, obf2/hud/map_node.h), а не в змінних.
+  // No show variable changes at that: `MapShow` is already on from state 0. The
+  // whole difference of the big map is in the map node's own size target
+  // (0x777dc0, obf2/hud/map_node.h), not in the variables.
   CHECK(!hud::applyState(variables, 0, 2));
   CHECK(on(variables, "MapShow"));
   CHECK(on(variables, "ShowIngameHud"));
   CHECK(on(variables, "MapBorderShow"));
 }
 
-// Так само й швидке меню карти (стан 19): воно лягає поверх бою, а не
-// замість нього.
+// The same with the quick map menu (state 19): it lands over combat rather than
+// instead of it.
 static void testMapMenuKeepsTheHud() {
   hud::VariableMap variables;
   hud::applyState(variables, -1, 0);
@@ -63,16 +63,16 @@ static void testMapMenuKeepsTheHud() {
   CHECK(on(variables, "MapMenuShow"));
   CHECK(on(variables, "ShowIngameHud"));
 
-  // А вихід із нього прибирає за собою — це вже перший switch.
+  // While leaving it cleans up after itself — that is already the first switch.
   hud::applyState(variables, 19, 0);
   CHECK(!on(variables, "MapMenuShow"));
 }
 
-// Перехід не лишає хвостів: старий стан прибирає за собою. У грі це
-// робить перший switch у HudObject::setState.
+// A transition leaves no tails: the old state cleans up after itself. In the game
+// that is done by the first switch in HudObject::setState.
 static void testStateLeavesNoTail() {
   hud::VariableMap variables;
-  hud::applyState(variables, -1, 9);  // табло
+  hud::applyState(variables, -1, 9);  // the scoreboard
   CHECK(on(variables, "ScoreboardShow"));
   CHECK(on(variables, "LevelsListShow"));
 
@@ -82,16 +82,16 @@ static void testStateLeavesNoTail() {
   CHECK(on(variables, "ShowIngameHud"));
 }
 
-// Повторний перехід у той самий стан нічого не міняє — і має про це
-// сказати, інакше ми перебудовували б геометрію щокадру.
+// A repeated transition into the same state changes nothing — and has to say so,
+// otherwise we would rebuild the geometry every frame.
 static void testRepeatedStateChangesNothing() {
   hud::VariableMap variables;
   CHECK(hud::applyState(variables, -1, 1));
   CHECK(!hud::applyState(variables, 1, 1));
 }
 
-// Без гравця бойовий набір гаситься — саме через це в оригіналі за
-// екраном появи не видно смуг здоров'я й набоїв.
+// Without a player the combat set is cleared — which is exactly why in the original
+// no health or ammo bars are visible behind the spawn screen.
 static void testCombatSetNeedsAPlayer() {
   hud::VariableMap variables;
 
@@ -106,8 +106,8 @@ static void testCombatSetNeedsAPlayer() {
   CHECK(on(variables, "PrimaryAmmoShow"));
 }
 
-// Розмір карти дає три змінні одразу, і MapBorderAlternateShow — це
-// заперечення MapMinSize (0x4669ae).
+// The map's size gives three variables at once, and MapBorderAlternateShow is the
+// negation of MapMinSize (0x4669ae).
 static void testMapSizeDrivesThree() {
   hud::VariableMap variables;
 
@@ -122,26 +122,26 @@ static void testMapSizeDrivesThree() {
   CHECK(!on(variables, "MapBorderAlternateShow"));
 }
 
-// Складені змінні — просто «і» двох інших (0x466935, 0x466950). Саме
-// MapFullSizeAndSpawnShow тримає кнопки DONE і SUICIDE.
+// The composite variables are simply an "and" of two others (0x466935, 0x466950).
+// It is MapFullSizeAndSpawnShow that holds the DONE and SUICIDE buttons.
 static void testCombinedVariablesAreAnAnd() {
   hud::VariableMap variables;
 
-  // Екран появи: карта на весь екран і SpawnShow від стану 1.
+  // The spawn screen: a full-screen map and SpawnShow from state 1.
   hud::applyState(variables, -1, 1);
   hud::applyDerived(variables, hud::WorldView{false, true});
   CHECK(on(variables, "MapFullSizeAndSpawnShow"));
   CHECK(!on(variables, "MapFullSizeAndNotSpawnShow"));
 
-  // Карта на весь екран у бою: появи немає, отже й кнопок немає.
+  // A full-screen map in combat: there is no spawning, so there are no buttons.
   hud::applyState(variables, 1, 0);
   hud::applyDerived(variables, hud::WorldView{true, true});
   CHECK(!on(variables, "MapFullSizeAndSpawnShow"));
   CHECK(on(variables, "MapFullSizeAndNotSpawnShow"));
 }
 
-// Таблиця — та сама, що в бінарі: 23 стани, а порожні позиції в ній не
-// значаться.
+// The table is the same as in the binary: 23 states, and the empty entries are not
+// listed in it.
 static void testTableMatchesTheBinary() {
   CHECK_EQ(hud::hudStates().size(), std::size_t(23));
   bool hasEmptySlot = false;
@@ -152,9 +152,9 @@ static void testTableMatchesTheBinary() {
   CHECK(!hasEmptySlot);
 }
 
-// Умова показу питає одним іменем і числові змінні, і булеві. Доти ми
-// шукали лише серед чисел, і `NOT MapMinSize 1` виходило істинним
-// **завжди** — смуга великої карти малювалася поверх мінікарти в кутку.
+// A show condition asks by one name for both numeric and boolean variables. Until
+// now we looked only among the numbers, and `NOT MapMinSize 1` came out true
+// **always** — the big map's bar was drawn over the minimap in the corner.
 static void testShowValueReadsBothDictionaries() {
   hud::VariableMap flags;
   std::map<std::string, float> values;
@@ -165,7 +165,7 @@ static void testShowValueReadsBothDictionaries() {
   CHECK(std::abs(hud::showValue(flags, values, "FriendlyCPs") - 0.25f) < 0.001f);
   CHECK(std::abs(hud::showValue(flags, values, "MapMinSize") - 1.0f) < 0.001f);
   CHECK(std::abs(hud::showValue(flags, values, "CommanderShow")) < 0.001f);
-  // Про яку не чули — нуль, як і в рушії.
+  // One we have not heard of is zero, as in the engine.
   CHECK(std::abs(hud::showValue(flags, values, "NoSuchThing")) < 0.001f);
 }
 

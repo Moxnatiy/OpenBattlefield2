@@ -16,9 +16,9 @@ std::vector<std::byte> buffer(std::size_t bytes) { return std::vector<std::byte>
 }  // namespace
 
 static void testBitOrderIsLowBitsFirst() {
-  // Ключова властивість формату: у байті молодші біти йдуть першими.
-  // Якщо переплутати порядок, протокол розсиплеться на першому ж пакеті,
-  // тому це найважливіша перевірка в усьому наборі.
+  // The format's key property: within a byte the low bits come first.
+  // Get the order wrong and the protocol falls apart on the very first packet, so
+  // this is the most important check in the whole set.
   auto data = buffer(4);
   BitWriter writer(data);
   CHECK(writer.writeBits(0b101, 3));
@@ -33,11 +33,11 @@ static void testBitOrderIsLowBitsFirst() {
 }
 
 static void testSpansByteBoundary() {
-  // Значення, яке не влазить у поточний байт, продовжується в наступний.
+  // A value that does not fit into the current byte continues into the next.
   auto data = buffer(4);
   BitWriter writer(data);
   CHECK(writer.writeBits(0b111, 3));
-  CHECK(writer.writeBits(0xFF, 8));  // 5 біт у перший байт, 3 у другий
+  CHECK(writer.writeBits(0xFF, 8));  // 5 bits into the first byte, 3 into the second
 
   CHECK_EQ(static_cast<int>(data[0]), 0xFF);
   CHECK_EQ(static_cast<int>(data[1]), 0b111);
@@ -64,7 +64,7 @@ static void testRoundTripOfManyWidths() {
   for (std::size_t i = 0; i < std::size(values); ++i) {
     const auto read = reader.readBits(widths[i]);
     CHECK(read.has_value());
-    // Значення обрізається до своєї ширини — так само, як в оригіналі.
+    // The value is truncated to its width — the same as in the original.
     const std::uint32_t expected =
         widths[i] >= 32 ? values[i] : (values[i] & ((1u << widths[i]) - 1u));
     if (read) CHECK_EQ(*read, expected);
@@ -78,7 +78,7 @@ static void testHeaders() {
   CHECK(writer.writeBasicHeader(BasicHeader{static_cast<std::uint32_t>(PacketType::Data), 42}));
   CHECK(writer.writeExtendedHeader(ExtendedHeader{3, 17, 0xDEADBEEF}));
 
-  // 4+8 біт основного плюс 6+6+32 розширеного = 56 біт = рівно 7 байтів.
+  // 4+8 bits of the basic header plus 6+6+32 of the extended = 56 bits = exactly 7 bytes.
   CHECK_EQ(writer.bitPosition(), std::size_t(56));
 
   BitReader reader(data);
@@ -101,14 +101,14 @@ static void testHeaders() {
 static void testStrings() {
   auto data = buffer(32);
   BitWriter writer(data);
-  CHECK(writer.writeString("ARNE", 8));  // доповнюється нулями
+  CHECK(writer.writeString("ARNE", 8));  // padded with zeroes
 
   BitReader reader(data);
   const auto text = reader.readString(8);
   CHECK(text.has_value());
   if (text) CHECK_EQ(*text, std::string("ARNE"));
 
-  // Задовгий рядок обрізається до заданої довжини.
+  // A too-long string is truncated to the given length.
   auto data2 = buffer(32);
   BitWriter writer2(data2);
   CHECK(writer2.writeString("ARNESON", 4));
@@ -119,21 +119,21 @@ static void testStrings() {
 }
 
 static void testReaderRefusesToRunPastBuffer() {
-  // Пакети приходять з мережі: вихід за буфер має давати помилку,
-  // а не читання чужої пам'яті.
+  // Packets arrive from the network: running past the buffer has to give an error
+  // rather than read somebody else's memory.
   const auto data = buffer(2);
   BitReader reader(data);
   CHECK(reader.readBits(16).has_value());
   CHECK(!reader.readBits(1).has_value());
   CHECK(!reader.ok());
 
-  // Після помилки потік лишається зіпсованим — часткові дані не повертаємо.
+  // After an error the stream stays broken — we do not return partial data.
   BitReader reader2(data);
   CHECK(!reader2.readBits(17).has_value());
   CHECK(!reader2.readBits(1).has_value());
 
   BitReader reader3(data);
-  CHECK(!reader3.readBits(33).has_value());  // більше за 32 біти не буває
+  CHECK(!reader3.readBits(33).has_value());  // more than 32 bits never happens
 }
 
 static void testWriterRefusesToOverflow() {
@@ -142,7 +142,7 @@ static void testWriterRefusesToOverflow() {
   CHECK(writer.writeBits(0xFF, 8));
   CHECK(!writer.writeBits(1, 1));
   CHECK(!writer.ok());
-  CHECK_EQ(writer.bitPosition(), std::size_t(8));  // позиція не зрушила
+  CHECK_EQ(writer.bitPosition(), std::size_t(8));  // the position did not move
 }
 
 static void testSkipBits() {
@@ -158,7 +158,7 @@ static void testSkipBits() {
 }
 
 static void testCompressedVectorRoundTrip() {
-  // Близька точка: різниця мала, отже найвищий рівень стиснення (12 біт).
+  // A close point: the difference is small, so the highest compression level (12 bits).
   auto data = buffer(64);
   const obf2::Vec3f reference{100.0f, 50.0f, -20.0f};
   const obf2::Vec3f value{100.5f, 50.25f, -20.75f};
@@ -171,13 +171,13 @@ static void testCompressedVectorRoundTrip() {
   const auto decoded = reader.readCompressedVector(reference, precision);
   CHECK(decoded.has_value());
   if (decoded) {
-    // Квантування дає похибку не більшу за крок.
+    // Quantisation gives an error no larger than the step.
     CHECK(std::abs(decoded->x - value.x) <= precision);
     CHECK(std::abs(decoded->y - value.y) <= precision);
     CHECK(std::abs(decoded->z - value.z) <= precision);
   }
 
-  // 2 біти рівня + 3 * (1 біт знаку + 11 біт модуля) = 38 біт.
+  // 2 bits of level + 3 * (1 sign bit + 11 bits of magnitude) = 38 bits.
   CHECK_EQ(writer.bitPosition(), std::size_t(38));
 }
 
@@ -187,13 +187,13 @@ static void testCompressionLevelGrowsWithDistance() {
 
   struct Case {
     float distance;
-    std::size_t expectedBits;  // 2 + 3 * біти таблиці
+    std::size_t expectedBits;  // 2 + 3 * the table's bits
   };
   const Case cases[] = {
-      {10.0f, 2 + 3 * 12},        // рівень 3
-      {5000.0f, 2 + 3 * 16},      // рівень 2
-      {100000.0f, 2 + 3 * 20},    // рівень 1
-      {1000000.0f, 2 + 3 * 32},   // рівень 0: сирі float-и
+      {10.0f, 2 + 3 * 12},        // level 3
+      {5000.0f, 2 + 3 * 16},      // level 2
+      {100000.0f, 2 + 3 * 20},    // level 1
+      {1000000.0f, 2 + 3 * 32},   // level 0: raw floats
   };
 
   for (const Case& c : cases) {
@@ -205,8 +205,8 @@ static void testCompressionLevelGrowsWithDistance() {
 }
 
 static void testFarVectorKeepsFullPrecision() {
-  // На рівні 0 пишеться абсолютна позиція сирими float-ами, тому
-  // значення має відновитися точно.
+  // At level 0 an absolute position is written as raw floats, so the value has to
+  // come back exactly.
   auto data = buffer(64);
   const obf2::Vec3f reference{0.0f, 0.0f, 0.0f};
   const obf2::Vec3f value{1234567.5f, -98765.25f, 555555.0f};

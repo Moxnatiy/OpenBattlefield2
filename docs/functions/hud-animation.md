@@ -1,40 +1,41 @@
-# Анімація HUD: поява і зникнення вузлів
+# HUD animation: nodes appearing and disappearing
 
-HUD у Refractor 2 не статичний. Кожен вузол з'являється і зникає **у
-часі**, і робить це не окремий код HUD, а той самий граф MemeFile, що й
-меню (`docs/formats/hud-meme.md`).
+The HUD in Refractor 2 is not static. Every node appears and disappears **in
+time**, and it is done not by separate HUD code but by the same MemeFile graph
+as the menu (`docs/formats/hud-meme.md`).
 
-## Що видно з бінара
+## What is visible in the binary
 
-Будівник (`C:\dice\...\Code\BF2\Menu\Bf2HudBuilder.cpp` — шлях у самому
-бінарі) створює для вузла ланцюжок вузлів графа з іменами за шаблоном:
+The builder (`C:\dice\...\Code\BF2\Menu\Bf2HudBuilder.cpp` — the path is in the
+binary itself) creates for a node a chain of graph nodes named by a template:
 
-| Шаблон | Де в BF2.exe | Коли створюється |
+| Template | Where in BF2.exe | When it is created |
 |---|---|---|
-| `%sCullNode` | 0x79b2c0, 0x79db80 | разом із вузлом; це його «показувати чи ні» |
-| `%sAlphaShowEffect` | 0x79db80 (рядок 0x933690) | `addNodeAlphaShowEffect` |
+| `%sCullNode` | 0x79b2c0, 0x79db80 | together with the node; it is its "show or not" |
+| `%sAlphaShowEffect` | 0x79db80 (string 0x933690) | `addNodeAlphaShowEffect` |
 | `%sMoveEffect` | 0x79b2c0 | `addNodeMoveShowEffect` |
 
-Обидві команди спершу перевіряють, що такого вузла ще нема (інакше в лог
-іде `already has an alphaShowEffect!` / `already has a MoveShowEffect!`,
-рядки 0x933670 і 0x93347c), потім шукають `%sCullNode` і чіпляють новий
-вузол до нього. Тобто **ефект — це дитина cull-вузла**: cull каже, куди
-йти, ефект — за скільки.
+Both commands first check that no such node exists yet (otherwise
+`already has an alphaShowEffect!` / `already has a MoveShowEffect!` go into the
+log, strings 0x933670 and 0x93347c), then look for `%sCullNode` and attach the
+new node to it. So **an effect is a child of the cull node**: cull says where to
+go, the effect says by how much.
 
-`addNodeMoveShowEffect <кут> <відстань>` збирає два вузли-дані
-(0x82dfc0 для float, 0x82d8c0 для int) і склеює їх у клас із RTTI-іменем
-**`dice::meme::Bf2MoveEffect`** (0x937a44, vtable 0x937ad8). Поряд у
-бінарі лежить окремий клас **`dice::meme::Bf2SinMoveEffect`** (0x937a60,
-vtable 0x937b38) — і саме тому звичайний рух ми вважаємо **рівномірним**:
-синусоїда в грі є, але це інший клас, який ця команда не створює.
+`addNodeMoveShowEffect <angle> <distance>` assembles two data nodes (0x82dfc0
+for float, 0x82d8c0 for int) and glues them into a class with the RTTI name
+**`dice::meme::Bf2MoveEffect`** (0x937a44, vtable 0x937ad8). Beside it in the
+binary lies a separate class **`dice::meme::Bf2SinMoveEffect`** (0x937a60,
+vtable 0x937b38) — and that is exactly why we treat ordinary movement as
+**linear**: the sine curve does exist in the game, but it is a different class,
+which this command does not create.
 
-Часи дає пара команд `setNodeInTime` / `setNodeOutTime` (по 231 виклику
-в даних), обидві з одним аргументом типу float.
+The times come from the pair `setNodeInTime` / `setNodeOutTime` (231 calls each
+in the data), both with a single float argument.
 
-## Напрям руху — перевірений даними, не вгаданий
+## The direction of movement — verified from data, not guessed
 
-`HUD/HudSetup/HudElementsLevelsList.con`: панель голосування за карту
-стоїть на y = 377..383 у базових 800x600 і має
+`HUD/HudSetup/HudElementsLevelsList.con`: the map-voting panel stands at
+y = 377..383 in the base 800x600 and has
 
 ```
 hudBuilder.setNodeInTime  0.3
@@ -42,51 +43,54 @@ hudBuilder.setNodeOutTime 0.3
 hudBuilder.addNodeMoveShowEffect -1.57 376
 ```
 
-Кут -1.57 — це -pi/2. Екранна вісь y дивиться вниз, тож формула
-`dy = sin(a) * distance` дала б старт на y ~ 1, тобто **над** екраном; а
-`dy = -sin(a) * distance` дає y ~ 753, тобто панель виїжджає **знизу**,
-з-за краю 600-піксельного екрана. Друге — те, що видно в грі.
+The angle -1.57 is -pi/2. The screen's y axis points down, so the formula
+`dy = sin(a) * distance` would give a start at y ~ 1, that is **above** the
+screen; while `dy = -sin(a) * distance` gives y ~ 753, so the panel drives in
+**from below**, from beyond the edge of the 600-pixel screen. The second is what
+is seen in the game.
 
-Перевірка на іншому місці: `HudElementsPlayer.con` — смуга здоров'я
-(ліворуч) має `3.14 53`, тобто dx = -53, приїжджає зліва; витривалість
-(праворуч) має `0 53`, dx = +53, приїжджає справа. Правило те саме.
+A check elsewhere: `HudElementsPlayer.con` — the health bar (on the left) has
+`3.14 53`, that is dx = -53, arriving from the left; the stamina bar (on the
+right) has `0 53`, dx = +53, arriving from the right. The same rule.
 
-Отже: `offset = (cos a, -sin a) * distance * (1 - progress)`.
+So: `offset = (cos a, -sin a) * distance * (1 - progress)`.
 
-Усі 94 виклики в 18 файлах мають рівно два аргументи; кути в даних —
+All 94 calls in 18 files have exactly two arguments; the angles in the data are
 `3.14`, `0`, `-0.7`, `-1.57`.
 
-## Що з цього зроблено
+## What has been done from this
 
-`src/hud/animation.h` + `animation.cpp`: `Animator` тримає хід 0..1 на
-вузол, веде його до 1 за `inTime` і до 0 за `outTime` рівномірно;
-`alpha`-ефект множить прозорість на хід, `move` — зсуває вузол за
-формулою вище. Вузол, про який аніматор чує вперше, ставиться відразу в
-кінцевий стан: інакше весь HUD в'їжджав би на старті рівня.
+`src/hud/animation.h` + `animation.cpp`: `Animator` keeps a progress of 0..1 per
+node, drives it to 1 over `inTime` and to 0 over `outTime` linearly; the
+`alpha` effect multiplies the alpha by the progress, `move` shifts the node by
+the formula above. A node the animator hears of for the first time is put
+straight into its final state: otherwise the whole HUD would drive in at level
+start.
 
-Вузол **без** жодного ефекту переходу не має: він просто з'являється і
-зникає, як і раніше.
+A node **without** any effect has no transition: it simply appears and
+disappears, as before.
 
-## Чого ще нема
+## What is still missing
 
-* `addNodeVariableMoveShowEffect` (рядок 0x92bd84) — рух, у якого
-  відстань бере зі змінної. У даних не трапляється.
-* `dice::meme::Bf2SinMoveEffect` — хто його створює, ще не знайдено.
-* `SetVariableSineAction` з **ненульовим** гальмуванням у даних поки не
-  трапився, тож синусоїдна гілка не перевірена на грі — лише тестом.
+* `addNodeVariableMoveShowEffect` (string 0x92bd84) — movement whose distance
+  comes from a variable. It does not occur in the data.
+* `dice::meme::Bf2SinMoveEffect` — who creates it has not been found yet.
+* `SetVariableSineAction` with a **non-zero** braking distance has not turned up
+  in the data yet, so the sine branch has not been checked on the game — only by
+  a test.
 
-## Сторона команди: звідки береться значок
+## The team's side: where the icon comes from
 
-Це не HUD-дані, а рівень. `Init.con` кожного рівня має
+That is not HUD data but the level's. Every level's `Init.con` has
 
 ```
 gameLogic.setTeamName 1 "CH"
 gameLogic.setTeamName 2 "US"
 ```
 
-і саме цей рядок гра підставляє в шаблони замість `%s`:
+and it is that string the game substitutes into the templates in place of `%s`:
 
-| Шаблон | Адреса рядка | Де заповнюється |
+| Template | String address | Where it is filled |
 |---|---|---|
 | `Ingame/Flags/Icons/Minimap/%s/miniMap_CP.tga` | 0x925af8 | 0x74fb70 |
 | `Ingame/Flags/Icons/Minimap/%s/miniMap_CPBase.tga` | 0x925ac4 | 0x74fb70 |
@@ -94,41 +98,40 @@ gameLogic.setTeamName 2 "US"
 | `Ingame/Flags/Icons/Hud/Score/%s/scoreBoard_Flag.tga` | 0x931030 | 0x787260 |
 | `Levels/%s/Hud/Minimap/ingameMap.tga` | — | 0x74fb70 |
 
-Підставляється результат `gameLogic->vtbl[0x48](номер команди)` — за
-0x74fc58 виклик із 1, за 0x74fca0 з 2. Для нульової (нічийної) сторони в
-0x74fb70 стоїть окремий рядок з готовим `Neutral` (0x925b28).
+What is substituted is the result of `gameLogic->vtbl[0x48](team number)` — at
+0x74fc58 the call with 1, at 0x74fca0 with 2. For the zeroth (neutral) side
+0x74fb70 has a separate string with a ready-made `Neutral` (0x925b28).
 
-Назви команд по всіх 22 рівнях гри — рівно **CH, EU, MEC, US**, а теки
-значків у `Menu_client.zip` — **Ch, Eu, Mec, US, Neutral**. Тобто тека і
-є назвою сторони; жодного власного відображення «команда -> сторона» в
-грі немає, і робити його не треба.
+The team names across all 22 levels of the game are exactly **CH, EU, MEC, US**,
+and the icon directories in `Menu_client.zip` are **Ch, Eu, Mec, US, Neutral**.
+So the directory is the side's name; the game has no mapping of its own from
+"team" to "side", and none needs making.
 
-Для Dalian_plant це означає, що **перша команда китайська, а друга
-американська** — у нас було навпаки, і прапорці на карті стояли не на
-своїх точках.
+For Dalian_plant that means **team one is Chinese and team two American** — we
+had it the other way round, and the flags on the map stood at the wrong points.
 
-### Підпис вкладки
+### The tab's caption
 
-`Team1NameString` / `Team2NameString` заповнює 0x787260 через 0x787110,
-і та функція — просто перелік:
+`Team1NameString` / `Team2NameString` are filled by 0x787260 through 0x787110,
+and that function is simply a list:
 
 ```
 name = gameLogic.teamName(team)
 "MEC" -> HUD_TEXT_MENU_SPAWN_ARMY_MEC
 "US"  -> HUD_TEXT_MENU_SPAWN_ARMY_USMC
 "CH"  -> HUD_TEXT_MENU_SPAWN_ARMY_CHINA
-інше, непорожнє -> "HUD_TEXT_MENU_SPAWN_ARMY_" + name
-порожнє -> порожній рядок
+anything else, non-empty -> "HUD_TEXT_MENU_SPAWN_ARMY_" + name
+empty -> an empty string
 ```
 
-Тобто EU потрапляє в загальну гілку і дає
-`HUD_TEXT_MENU_SPAWN_ARMY_EU`. Та сама функція ставить і пару
-`FriendlyFlagIconPathString` / `EnemyFlagIconPathString` — її перші два
-аргументи це команда гравця і протилежна.
+So EU falls into the general branch and gives
+`HUD_TEXT_MENU_SPAWN_ARMY_EU`. The same function also sets the pair
+`FriendlyFlagIconPathString` / `EnemyFlagIconPathString` — its first two
+arguments are the player's team and the opposite one.
 
-## Рухомі кутові ділянки
+## The moving corner regions
 
-Широка плашка під здоров'ям — це вузол
+The wide plate under the health is the node
 
 ```
 hudBuilder.createPictureNode BottomLeftAnimateHud BottomLeftBar -103 -2 400 39
@@ -136,210 +139,215 @@ hudBuilder.setPictureNodeTexture Ingame/Bars/healthBackGround.tga
 hudBuilder.setNodeAlphaVariable  MenuBackgroundAlpha
 ```
 
-Змінної показу в нього **немає взагалі**, а `MenuBackgroundAlpha` типово
-0.7 (стала 0x3f333333 за 0x46928a, і той самий 0.7 стоїть у повзунку в
-`HudElementsPlayer.con`). Тобто самим прапорцем його не сховати — і в
-оригіналі його ховає інше: **від'їзд усієї ділянки**.
+It has **no** show variable at all, and `MenuBackgroundAlpha` is 0.7 by default
+(the constant 0x3f333333 at 0x46928a, and the same 0.7 stands on the slider in
+`HudElementsPlayer.con`). So it cannot be hidden by a flag — and in the original
+something else hides it: **the whole region driving away**.
 
-У `Menu/Ingame` X цих ділянок — не стала, а змінна графа, і у файлі
-збережене саме сховане положення:
+In `Menu/Ingame` these regions' X is not a constant but a graph variable, and
+what the file holds is precisely the hidden position:
 
-| Змінна | У файлі | Що це |
+| Variable | In the file | What it is |
 |---|---|---|
-| `BottomLeft/BottomLeft_XPos` | -295 | сховано |
-| `BottomLeft/BottomLeft_nextXPos` | -295 | сховано |
-| `BottomRight/BottomRight_XPos` | 503 | сховано |
-| `BottomRight/BottomRight_newXPos` | 503 | сховано |
-| `BottomRight/BottomRight_oldXPos` | 201 | показано |
+| `BottomLeft/BottomLeft_XPos` | -295 | hidden |
+| `BottomLeft/BottomLeft_nextXPos` | -295 | hidden |
+| `BottomRight/BottomRight_XPos` | 503 | hidden |
+| `BottomRight/BottomRight_newXPos` | 503 | hidden |
+| `BottomRight/BottomRight_oldXPos` | 201 | shown |
 
-Веде їх `SetVariableSineAction` зі швидкістю 600, під умовою
+They are driven by `SetVariableSineAction` at speed 600, under the condition
 `AniPos && (BottomRight_alpha == BottomRight_oldAlpha || BottomRight_direction)`.
 
-Плашка 400x39 накриває і солдатську частину зліва, і транспортну справа
-(`BottomLeftSecondaryHealth` у `Vehicles/HudElementsVehicleBasic.con`
-починається з x = 149) — тому на екрані появи вона й виглядала як
-розтягнутий транспортний варіант. При X = -295 вона цілком за краєм
-екрана.
+The 400x39 plate covers both the soldier part on the left and the vehicle part
+on the right (`BottomLeftSecondaryHealth` in
+`Vehicles/HudElementsVehicleBasic.con` starts at x = 149) — which is why on the
+spawn screen it looked like a stretched vehicle variant. At X = -295 it is
+entirely beyond the screen's edge.
 
-**Джерело не знайдене:** хто саме пише `BottomLeft_nextXPos` і
-`BottomRight_direction`. Прив'язку видно (0x789480 зв'язує їх із полями
-об'єкта HUD за шаблоном «група + ім'я вузла»), але місце запису — ні.
-Поки ділянки їдуть за тією ж умовою, що й сам бойовий HUD.
+**The source has not been found:** who exactly writes `BottomLeft_nextXPos` and
+`BottomRight_direction`. The binding is visible (0x789480 links them to the HUD
+object's fields by the template "group + node name"), but the place of the write
+is not. For now the regions travel under the same condition as the combat HUD
+itself.
 
-### Висунуте положення лівої ділянки — не виміряне
+### The left region's extended position is not measured
 
-Праворуч воно є: знімок кадру оригіналу дає **336.5**, і три різні вузли
-на ньому сходяться. Зверніть увагу, що це **не** те саме, що
-`BottomRight_oldXPos = 201` у файлі, — отже 201 це якийсь інший стан
-(найпевніше, розширений під транспорт), а 336.5 — звичайний піший бій.
+On the right it exists: the original's frame dump gives **336.5**, and three
+different nodes agree on it. Note that this is **not** the same as
+`BottomRight_oldXPos = 201` in the file — so 201 is some other state (most
+likely the one widened for vehicles), while 336.5 is ordinary infantry combat.
 
-Ліворуч виміряного немає. У файлі для лівої ділянки збережене **тільки
-сховане** положення: і `BottomLeft_XPos`, і `BottomLeft_nextXPos` там
--295. Значення -1, яке стояло в коді, було взяте з нерухомого шару
-`BottomLeftStatic` — до рухомого воно стосунку не має, і при ньому
-плашка `healthBackGround` (400x39, у вузлі зсунута на -103) тягнеться до
-x = 296, накриваючи місце під транспортні смуги. На екрані це виглядає
-як HUD техніки на піхоті.
+On the left there is nothing measured. For the left region the file holds
+**only the hidden** position: both `BottomLeft_XPos` and `BottomLeft_nextXPos`
+are -295 there. The value -1 that stood in the code was taken from the static
+layer `BottomLeftStatic` — it has nothing to do with the moving one, and with
+it the `healthBackGround` plate (400x39, shifted by -103 in the node) stretches
+to x = 296, covering the space meant for the vehicle bars. On screen that looks
+like a vehicle HUD on infantry.
 
-Дзеркалити праву сторону не можна: ділянки різної ширини (600 проти 400)
-і з різним вмістом, тож будь-яке перенесення числа було б підгонкою.
+Mirroring the right side is not allowed: the regions are of different widths
+(600 against 400) and hold different contents, so carrying the number over
+would be fudging.
 
-**Що для цього треба:** один знімок кадру оригіналу (`Ctrl+Shift+D`) у
-звичайному піхотному бою. У ньому потрібен прямокутник з текстурою
-`healthBackGround` — його ліва межа і дає X ділянки:
-`X = ліва_межа + 400 + 103`, бо координати в дампі центровані
-(`екран = 400 + x`), а сам вузол зсунутий на -103.
+**What is needed for it:** one frame dump of the original (`Ctrl+Shift+D`) in
+ordinary infantry combat. In it we need the rectangle with the
+`healthBackGround` texture — its left edge gives the region's X:
+`X = left_edge + 400 + 103`, because the dump's coordinates are centred
+(`screen = 400 + x`) and the node itself is shifted by -103.
 
-## Кутові панелі рухає граф, а не наш хід за inTime
+## The corner panels are moved by the graph, not by our progress over inTime
 
-Це головна розбіжність із оригіналом, і вона не в кривій, а в **механізмі**.
+That is the main divergence from the original, and it is not in the curve but in
+the **mechanism**.
 
-`Menu/Ingame` (`tools/meme_dump.py Ingame`) містить не лише вузли, а й
-змінні з діями над ними:
-
-```
-класи:  SetVariableAction, SetVariableSoftAction, SetVariableSineAction,
-        ActionListAction, CullVariableActionNode, AlphaFadeEffect, ...
-
-змінні: BottomLeft/BottomLeft_XPos      BottomLeft/BottomLeft_nextXPos
-        BottomRight/BottomRight_XPos    BottomRight/BottomRight_NextPos
-        BottomRight/Alpha/BottomRight_alpha ... _nextAlpha, _newAlpha, _oldAlpha
-        AniPos, BottomLeftAnimate, BottomRightAnimate
-```
-
-Тобто кутові панелі HUD їдуть так: у файлі лежить **змінна** з поточним
-X, друга — з цільовим, і дія веде першу до другої. Ніякого
-`setNodeInTime` в цьому ланцюжку немає — той керує показом **елементів**
-(`addNodeMoveShowEffect`, `addNodeAlphaShowEffect`), а не кутовими
-шарами.
-
-Наш `Animator` веде хід рівномірно за `inTime`/`outTime` — і це не
-припущення: так рахує `CullNode::iterateUpdate`, див. нижче.
-
-### Що вже відомо про `SetVariableSoftAction`
-
-`BF2.exe`, фабрика класу за **0x833190**:
+`Menu/Ingame` (`tools/meme_dump.py Ingame`) holds not only nodes but variables
+with actions over them:
 
 ```
-об'єкт на 0x10 байтів
-  +0x0   вказівник на клас (0x94cf98)
-  +0x4   змінна, яку ведемо            (нуль при створенні)
-  +0x8   ціль                          (нуль при створенні)
-  +0xc   **Speed**, типове 100.0        (0x42c80000)
+classes:  SetVariableAction, SetVariableSoftAction, SetVariableSineAction,
+          ActionListAction, CullVariableActionNode, AlphaFadeEffect, ...
+
+variables: BottomLeft/BottomLeft_XPos      BottomLeft/BottomLeft_nextXPos
+           BottomRight/BottomRight_XPos    BottomRight/BottomRight_NextPos
+           BottomRight/Alpha/BottomRight_alpha ... _nextAlpha, _newAlpha, _oldAlpha
+           AniPos, BottomLeftAnimate, BottomRightAnimate
 ```
 
-Ім'я поля не здогад: серіалізація класу (0x8329f0) записує `+0xc` під
-іменем `"Speed"`. У даних `Menu/Ingame` поруч зі змінними стоять
-числа 10 — це і є швидкість для кутових панелей.
+So the HUD's corner panels travel like this: the file holds a **variable** with
+the current X, a second one with the target, and an action drives the first
+towards the second. There is no `setNodeInTime` anywhere in that chain — that
+one governs the showing of **elements** (`addNodeMoveShowEffect`,
+`addNodeAlphaShowEffect`), not the corner layers.
 
-Сусідній `SetVariableSineAction` — окремий клас (фабрика 0x8331c0,
-об'єкт на 0x14 байтів, теж зі `Speed` типово 100.0).
+Our `Animator` drives the progress linearly over `inTime`/`outTime` — and that
+is not an assumption: that is how `CullNode::iterateUpdate` computes it, see
+below.
 
-### Формули дій — прочитані з `MemeDll.dll`
+### What is already known about `SetVariableSoftAction`
 
-Обидві дії знайдено за повними символами C++ у самій бібліотеці мода.
+`BF2.exe`, the class's factory at **0x833190**:
+
+```
+a 0x10-byte object
+  +0x0   pointer to the class (0x94cf98)
+  +0x4   the variable being driven      (zero at creation)
+  +0x8   the target                     (zero at creation)
+  +0xc   **Speed**, default 100.0        (0x42c80000)
+```
+
+The field's name is not a guess: the class's serialisation (0x8329f0) writes
+`+0xc` under the name `"Speed"`. In `Menu/Ingame`'s data the number 10 stands
+next to the variables — that is the speed for the corner panels.
+
+The neighbouring `SetVariableSineAction` is a separate class (factory 0x8331c0,
+a 0x14-byte object, also with `Speed` defaulting to 100.0).
+
+### The actions' formulas — read from `MemeDll.dll`
+
+Both actions were found by their full C++ symbols in the mod's own library.
 
 `dice::meme::SetVariableSineAction::onEvent` — **0x10001050**:
 
 ```
-відстань = |ціль - значення|
-якщо відстань >= «Braking distance»:
-    крок = швидкість * dt
-інакше:
-    крок = cos(1.57075 - (відстань / гальмування) * 1.57075) * швидкість * dt
-значення йде до цілі на крок, але не далі за неї
+distance = |target - value|
+if distance >= "Braking distance":
+    step = speed * dt
+else:
+    step = cos(1.57075 - (distance / braking) * 1.57075) * speed * dt
+the value moves towards the target by step, but no further than it
 ```
 
-`cos(pi/2 - x)` — це `sin(x)`: біля цілі крок згасає синусоїдою, звідси й
-назва класу. Поля: +0xc «Speed», +0x10 «Braking distance»
+`cos(pi/2 - x)` is `sin(x)`: near the target the step decays as a sine, hence
+the class's name. The fields: +0xc "Speed", +0x10 "Braking distance"
 (`onStream`, 0x1000459d).
 
-`dice::meme::SetVariableSoftAction::onEvent` — **0x10004d2c**: те саме
-**без** гальмівної ділянки, тобто рівномірний рух зі сталою швидкістю.
+`dice::meme::SetVariableSoftAction::onEvent` — **0x10004d2c**: the same thing
+**without** the braking stretch, that is linear movement at a constant speed.
 
-**У `Menu/Ingame` гальмування нульове** в обох дій — `meme_read.py`
-нульових полів не друкує, і в обох записах видно лише `Speed`. Отже
-кутові ділянки їдуть рівномірно, і саме так ми їх і ведемо
-(`obf2::hud::approachVariable`).
+**In `Menu/Ingame` the braking distance is zero** for both actions —
+`meme_read.py` does not print zero fields, and only `Speed` is visible in both
+records. So the corner regions travel linearly, and that is exactly how we drive
+them (`obf2::hud::approachVariable`).
 
-### Хід показу — `CullNode`
+### The show progress — `CullNode`
 
-`dice::meme::CullNode::iterateUpdate` (**0x10004a57**) і `iteratePaint`
-(**0x1000141a**). Поля: +0xc «In time», +0x10 «Out time», +0x14 хід.
+`dice::meme::CullNode::iterateUpdate` (**0x10004a57**) and `iteratePaint`
+(**0x1000141a**). The fields: +0xc "In time", +0x10 "Out time", +0x14 the
+progress.
 
-Хід — не просто 0..1, а число зі станами-мітками:
-
-```
--4  щойно створено, ще не починали
- 0..1  показується: хід += dt / «In time»
- 2  показано повністю
- 1..0  ховається: хід -= dt / «Out time»
--1  сховано
-```
-
-`In time` нульовий — вузол з'являється миттєво (хід одразу 2); те саме
-для `Out time`.
-
-Малювання (`iteratePaint`):
+The progress is not simply 0..1 but a number with marker states:
 
 ```
-хід >= 1  -> діти малюються з батьківською трубою, **без жодних змін**
-хід <= 0  -> діти не малюються
-інакше    -> нова труба, у ній альфа = батьківська * хід,
-             а напрям (+0x10) = +1 при показі і -1 при сховуванні
+-4  just created, not started yet
+ 0..1  showing: progress += dt / "In time"
+ 2  fully shown
+ 1..0  hiding: progress -= dt / "Out time"
+-1  hidden
 ```
 
-Звідси важливе: **прозорість множить сам cull-вузол**, а не
-`addNodeAlphaShowEffect`. Вузол із `setNodeInTime`, але без alpha-ефекту
-однаково згасає — просто тому, що він під cull-вузлом. Доти ми множили
-на хід лише за наявності alpha-ефекту, і, наприклад, смуга часу
-(`TimeItems`, у неї лише move-ефект) у нас виїжджала, але не
-проявлялася.
+A zero `In time` makes the node appear instantly (the progress goes straight to
+2); the same for `Out time`.
 
-## Що саме анімується — прочитано з `Menu/Ingame`
+Drawing (`iteratePaint`):
 
-`tools/meme_read.py Ingame` розбирає файл цілком (3673 з 3673 байтів), і
-всі числа беруться звідти, а не зі знімків:
+```
+progress >= 1  -> the children draw with the parent's pipe, **unchanged**
+progress <= 0  -> the children do not draw
+otherwise      -> a new pipe, in it alpha = parent's * progress,
+                  and the direction (+0x10) = +1 while showing, -1 while hiding
+```
 
-**Кутові ділянки — рух.** Обидві веде `SetVariableSineAction` зі
-швидкістю **600**:
+From which something important follows: **the alpha is multiplied by the cull
+node itself**, not by `addNodeAlphaShowEffect`. A node with `setNodeInTime` but
+no alpha effect still fades — simply because it is under a cull node. Until now
+we multiplied by the progress only when an alpha effect was present, and, for
+example, the time bar (`TimeItems`, which has only a move effect) drove in for
+us but did not fade in.
+
+## What exactly is animated — read from `Menu/Ingame`
+
+`tools/meme_read.py Ingame` takes the file apart completely (3673 of 3673
+bytes), and every number comes from there, not from screenshots:
+
+**The corner regions — movement.** Both are driven by `SetVariableSineAction` at
+speed **600**:
 
 ```
 SetVariableSineAction {Speed: 600}
-  Variable: FloatData «BottomLeft/BottomLeft_XPos»     -295
-  Data:     FloatData «BottomLeft/BottomLeft_nextXPos» -295
+  Variable: FloatData "BottomLeft/BottomLeft_XPos"     -295
+  Data:     FloatData "BottomLeft/BottomLeft_nextXPos" -295
 
 SetVariableSineAction {Speed: 600}
-  Variable: FloatData «BottomRight/BottomRight_XPos»    503
-  Data:     ToggleData «BottomRight/BottomRight_NextPos»
-              Toggle: BoolData «BottomRight_direction»
-              Data 1: FloatData «BottomRight_newXPos»   503
-              Data 2: FloatData «BottomRight_oldXPos»   201
+  Variable: FloatData "BottomRight/BottomRight_XPos"    503
+  Data:     ToggleData "BottomRight/BottomRight_NextPos"
+              Toggle: BoolData "BottomRight_direction"
+              Data 1: FloatData "BottomRight_newXPos"   503
+              Data 2: FloatData "BottomRight_oldXPos"   201
 ```
 
-Сховане положення праворуч — 503, і воно справді з файлу.
+The hidden position on the right is 503, and it really does come from the file.
 
-**А от 201 — не висунуте положення.** Це початкове значення змінної, яку
-гра переписує під час роботи, так само як ліворуч переписує
-`BottomLeft_nextXPos`. Висунуте виміряне з дампу кадру оригіналу
-(`Ctrl+Shift+D`) і дорівнює **336.5**: на ньому сходяться три різні
-вузли (BottomRightBar 301 -> 637.5, ShotSelect 449 -> 785.5, безіменний
-16x10 431 -> 767.5), і воно стале в усіх трьох знятих кадрах.
+**But 201 is not the extended position.** It is the initial value of a variable
+the game rewrites while it runs, just as on the left it rewrites
+`BottomLeft_nextXPos`. The extended one was measured from the original's frame
+dump (`Ctrl+Shift+D`) and equals **336.5**: three different nodes agree on it
+(BottomRightBar 301 -> 637.5, ShotSelect 449 -> 785.5, an unnamed 16x10
+431 -> 767.5), and it is the same in all three captured frames.
 
-Я спробував замінити його на 201 «бо так у файлі» — і це була помилка,
-яку вже раз робили: з 201 плашка набоїв сидить на 135 пікселів лівіше,
-ніж в оригіналі. **Вимір оригіналу сильніший за початкове значення
-змінної у файлі**, бо змінну гра переписує.
+I tried replacing it with 201 "because that is what the file says" — and that
+was a mistake we had already made once: with 201 the ammo plate sits 135 pixels
+further left than in the original. **A measurement of the original outranks a
+variable's initial value in the file**, because the game rewrites the variable.
 
-Ліворуч у файлі обидва поля -295: висунуте положення туди не записане,
-його пише сама гра у `BottomLeft_nextXPos`. Ця змінна зареєстрована
-кодом HUD (`BF2.exe`, 0x789480 — там-таки `BottomLeft_XPos`,
-`BottomLeft_nextXPos`, `BottomLeft_alpha1/2`, `BottomLeft_nextAlpha1/2`),
-але **місце запису ще не знайдене**, тож ліве висунуте положення
-лишається невиміряним.
+On the left both fields in the file are -295: the extended position is not
+written there, the game writes it itself into `BottomLeft_nextXPos`. That
+variable is registered by the HUD's code (`BF2.exe`, 0x789480 — the same place
+has `BottomLeft_XPos`, `BottomLeft_nextXPos`, `BottomLeft_alpha1/2`,
+`BottomLeft_nextAlpha1/2`), but **the place of the write has not been found
+yet**, so the left extended position stays unmeasured.
 
-**Кутові ділянки — прозорість.** Її веде інша дія — `SetVariableSoftAction`
-зі швидкістю **10**, чотири штуки:
+**The corner regions — alpha.** It is driven by a different action,
+`SetVariableSoftAction` at speed **10**, four of them:
 
 ```
 SetVariableSoftAction {Speed: 10}  BottomLeft_alpha1  <- BottomLeft_nextAlpha1
@@ -347,114 +355,115 @@ SetVariableSoftAction {Speed: 10}  BottomLeft_alpha2  <- BottomLeft_nextAlpha2
 SetVariableSoftAction {Speed: 10}  BottomRight_alpha  <- ToggleData(newAlpha 1.0, oldAlpha)
 ```
 
-Тобто в оригіналі ділянка не просто їде — вона ще й **проступає**, і
-двома різними кривими: рух `Sine`, прозорість `Soft`. У нас прозорість
-кутових ділянок не анімується взагалі.
+So in the original a region does not merely travel — it also **fades in**, and
+along two different curves: `Sine` for the movement, `Soft` for the alpha. We do
+not animate the corner regions' alpha at all.
 
-## Формули — з `MemeDll.dll`, де є повні символи
+## The formulas — from `MemeDll.dll`, which has full symbols
 
-`MemeDll.dll` лежить у теці мода поруч із редактором і **експортує повні
-символи C++**. Тобто криві анімації не треба вгадувати — вони читаються
-прямо.
+`MemeDll.dll` sits in the mod's directory next to the editor and **exports full
+C++ symbols**. So the animation curves need not be guessed — they can be read
+directly.
 
-### Хід показу: `CullNode::iterateUpdate` (0x10004a57)
+### The show progress: `CullNode::iterateUpdate` (0x10004a57)
 
-Поля `CullNode`: `Data` (умова показу), **`In time`**, **`Out time`** —
-саме їх пишуть `setNodeInTime` / `setNodeOutTime`. Хід тримається в
-самому вузлі, і рухається він **рівномірно**:
-
-```
-показ:     хід += dt / «In time»    доки не 1, тоді ставиться 2.0
-сховування: хід -= dt / «Out time»  доки не 0, тоді ставиться -1.0
-хід <= 0 — вузол не малюється взагалі
-```
-
-Позначки 2.0 і -1.0 — це «уже показаний» і «уже схований»; на них вузол
-шле події (0x11/0x0d на початок показу, 0x0e на кінець, 0x12/0x0f на
-початок сховування, 0x10 на кінець).
-
-Отже наш рівномірний хід за `inTime`/`outTime` — **правильний**.
-
-### Рух: `MoveEffect::picturePaint` (0x10001b27)
+`CullNode`'s fields: `Data` (the show condition), **`In time`**, **`Out time`**
+— exactly what `setNodeInTime` / `setNodeOutTime` write. The progress is kept in
+the node itself, and it moves **linearly**:
 
 ```
-кут     = «Move direction»
-довжина = «Move length»
-хід     = EffectPipe+0x18
-зсув    = (1 - хід) * довжина
-dx = -cos(кут) * зсув
-dy = +sin(кут) * зсув
+showing: progress += dt / "In time"    until 1, then set to 2.0
+hiding:  progress -= dt / "Out time"   until 0, then set to -1.0
+progress <= 0 — the node is not drawn at all
 ```
 
-**У нас обидва знаки були протилежні** — стояло `(+cos, -sin)`, виведене
-з міркування «панель голосування має виїжджати знизу». Міркування не
-витримало перевірки: елементи прилітали з протилежного боку, ніж в
-оригіналі. Виправлено.
+The markers 2.0 and -1.0 mean "already shown" and "already hidden"; on them the
+node sends events (0x11/0x0d at the start of showing, 0x0e at the end,
+0x12/0x0f at the start of hiding, 0x10 at the end).
 
-### Ведення змінної: `SetVariableSoftAction::onEvent` (0x10004d2c)
+So our linear progress over `inTime`/`outTime` is **correct**.
+
+### Movement: `MoveEffect::picturePaint` (0x10001b27)
 
 ```
-поточне = Variable->getFloat()
-ціль    = Data->getFloat()
-крок    = dt * «Speed»
-рух до цілі на крок, із затискачем на цілі
+angle    = "Move direction"
+length   = "Move length"
+progress = EffectPipe+0x18
+offset   = (1 - progress) * length
+dx = -cos(angle) * offset
+dy = +sin(angle) * offset
 ```
 
-Тобто «Soft» — це **рівномірний підхід**, а не показникове згасання.
+**Both of our signs were the opposite** — it stood as `(+cos, -sin)`, derived
+from the reasoning "the voting panel has to drive in from below". The reasoning
+did not survive the check: the elements flew in from the opposite side to the
+original's. Fixed.
+
+### Driving a variable: `SetVariableSoftAction::onEvent` (0x10004d2c)
+
+```
+current = Variable->getFloat()
+target  = Data->getFloat()
+step    = dt * "Speed"
+move towards the target by step, clamped at the target
+```
+
+So "Soft" is a **linear approach**, not an exponential decay.
 
 ### `SetVariableSineAction::onEvent` (0x10001050)
 
-Успадковує `SetVariableSoftAction` і додає поле **«Braking distance»**:
+It inherits `SetVariableSoftAction` and adds the field **"Braking distance"**:
 
 ```
-лишилось = |ціль - поточне|
-якщо лишилось >= «Braking distance»:  крок = dt * «Speed»
-інакше:                               крок = sin(лишилось/«Braking distance» * pi/2) * «Speed» * dt
+remaining = |target - current|
+if remaining >= "Braking distance":  step = dt * "Speed"
+else:                                step = sin(remaining/"Braking distance" * pi/2) * "Speed" * dt
 ```
 
-Тобто рівномірно, доки далеко, і згасання синусом на підльоті.
+So linear while far away, and a sine decay on approach.
 
-**У `Menu/Ingame` «Braking distance» дорівнює нулю** (читач ховає нулі, а
-файл розбирається повністю — 3673 з 3673 байтів). Отже кутові ділянки
-їдуть рівно на 600 одиницях за секунду, без згасання — саме так, як у нас.
+**In `Menu/Ingame` "Braking distance" equals zero** (the reader hides zeroes,
+and the file parses completely — 3673 of 3673 bytes). So the corner regions
+travel at a flat 600 units per second, without decay — exactly as we do it.
 
-### Прозорість: `Bf2AlphaShowEffect` (`BF2.exe`, 0x834f70)
+### Alpha: `Bf2AlphaShowEffect` (`BF2.exe`, 0x834f70)
 
-Цей клас у DLL немає — він у самій грі, і його малювання зводиться до
-одного:
+This class is not in the DLL — it is in the game itself, and its drawing comes
+down to one thing:
 
 ```
-alpha *= EffectPipe+0x18     (тобто на хід показу)
+alpha *= EffectPipe+0x18     (that is, by the show progress)
 ```
 
-Чотири рази поспіль, по одному на кожну вершину чотирикутника (зсуви
-0x58, 0x78, 0x98, 0xb8 у `PaintData`). Поле `EffectPipe+0x18` — те саме,
-з якого бере хід і `MoveEffect`.
+Four times in a row, one per vertex of the quad (offsets 0x58, 0x78, 0x98, 0xb8
+in `PaintData`). The field `EffectPipe+0x18` is the same one `MoveEffect` takes
+its progress from.
 
-Наше `alpha *= progress` — правильне, і тепер це не припущення.
+Our `alpha *= progress` is correct, and now that is not an assumption.
 
-Створює ефект `hudBuilder.addNodeAlphaShowEffect` (0x79db80): об'єкт на
-4 байти з таблицею 0x933400, чіпляється до `%sCullNode`.
+The effect is created by `hudBuilder.addNodeAlphaShowEffect` (0x79db80): a
+4-byte object with the table 0x933400, attached to `%sCullNode`.
 
-## Підсумок: що з анімації тепер звірено з оригіналом
+## Summary: what of the animation is now cross-checked against the original
 
-| що | джерело | стан |
+| what | source | state |
 |---|---|---|
-| хід показу рівномірний за `In time`/`Out time` | `CullNode::iterateUpdate`, 0x10004a57 | збігається |
-| зсув `(-cos a, +sin a) * довжина * (1 - хід)` | `MoveEffect::picturePaint`, 0x10001b27 | **було з протилежними знаками, виправлено** |
-| `alpha *= хід` | `Bf2AlphaShowEffect`, 0x834f70 | збігається |
-| кутові ділянки: рівний рух 600 од/с | `SetVariableSineAction::onEvent`, 0x10001050, «Braking distance» = 0 | збігається |
-| прозорість кутових ділянок: підхід 10 од/с | `SetVariableSoftAction::onEvent`, 0x10004d2c | **не відтворено** |
+| the show progress is linear over `In time`/`Out time` | `CullNode::iterateUpdate`, 0x10004a57 | matches |
+| the offset `(-cos a, +sin a) * length * (1 - progress)` | `MoveEffect::picturePaint`, 0x10001b27 | **had the opposite signs, fixed** |
+| `alpha *= progress` | `Bf2AlphaShowEffect`, 0x834f70 | matches |
+| corner regions: flat movement at 600 u/s | `SetVariableSineAction::onEvent`, 0x10001050, "Braking distance" = 0 | matches |
+| corner regions' alpha: approach at 10 u/s | `SetVariableSoftAction::onEvent`, 0x10004d2c | **not reproduced** |
 
-Останній рядок — те, що лишилося: в оригіналі кутові ділянки не просто
-їдуть, а ще й проступають, і ведуть їх чотири окремі дії
-(`BottomLeft_alpha1`, `_alpha2`, `BottomRight_alpha`). Цілі для них пише
-сам HUD у `nextAlpha*`, і **звідки він бере значення — ще не знайдено**.
+The last row is what is left: in the original the corner regions do not merely
+travel, they also fade in, and four separate actions drive them
+(`BottomLeft_alpha1`, `_alpha2`, `BottomRight_alpha`). The HUD itself writes
+their targets into `nextAlpha*`, and **where it takes the values from has not
+been found yet**.
 
-## Прозорість плашок: механізм знайдено, значення — ні
+## The plates' alpha: the mechanism is found, the values are not
 
-Вузли беруть прозорість зі змінної — команда `setNodeAlphaVariable` у
-даних HUD. Скільки разів яка змінна вживається (`Menu_client.zip`,
+Nodes take their alpha from a variable — the `setNodeAlphaVariable` command in
+the HUD's data. How many times each variable is used (`Menu_client.zip`,
 `HUD/HudSetup/*.con`):
 
 ```
@@ -464,11 +473,11 @@ alpha *= EffectPipe+0x18     (тобто на хід показу)
 11  BottomLeftVehicleAlpha
  6  BottomLeftHealthAlpha        6  BottomRightFadedAlpha
  5  BottomLeftHealthFadedAlpha
-25  MenuBackgroundAlpha          (плашки, з профілю гравця)
+25  MenuBackgroundAlpha          (the plates, from the player's profile)
 ```
 
-Усі ці змінні реєструє код HUD (`BF2.exe`, 0x789480) як поля свого
-об'єкта:
+All these variables are registered by the HUD's code (`BF2.exe`, 0x789480) as
+fields of its object:
 
 ```
 BottomLeftHealthAlpha        -> +0x18c
@@ -477,68 +486,68 @@ BottomLeftHealthFadedAlpha   -> +0x194
 BottomLeftVehicleFadedAlpha  -> +0x198
 ```
 
-**У нас із них відомі лише дві** — `MenuBackgroundAlpha` і `MenuMapAlpha`
-(вони з профілю гравця). Решта повертає «не знаю», і вузол лишається
-цілком видимим. Наслідок видно на екрані: смуги здоров'я й смуги техніки
-малюються **одночасно**, бо жодна з них не пригашена.
+**Of these we know only two** — `MenuBackgroundAlpha` and `MenuMapAlpha` (they
+come from the player's profile). The rest return "I do not know", and the node
+stays fully visible. The consequence is visible on screen: the health bars and
+the vehicle bars are drawn **at the same time**, because neither is dimmed.
 
-Чого бракує: **хто і коли пише ці поля**. Це вже не граф і не дані, а
-логіка HUD у клієнті, і її ми ще не читали. Доти значень не вигадуємо:
-поставити «в техніці Health = 0» без джерела — це рівно та підгонка, від
-якої нас тут відучили.
+What is missing: **who writes those fields and when**. That is no longer the
+graph or the data but the HUD's logic in the client, and we have not read it
+yet. Until then we do not invent values: putting "in a vehicle Health = 0"
+without a source is exactly the fudging we were broken of here.
 
-Заразом це пояснює давню скаргу «фонова плашка під здоров'ям висунута,
-ніби я в техніці»: вона й має бути пригашена змінною, якої ми не
-рахуємо.
+Incidentally that explains the long-standing complaint "the background plate
+under the health is extended as if I were in a vehicle": it ought to be dimmed
+by a variable we do not compute.
 
-## Хто керує лівою ділянкою: `BF2.exe`, 0x78b600
+## Who drives the left region: `BF2.exe`, 0x78b600
 
-Це та сама логіка, якої нам бракувало. Ділянка має **три** положення, і
-всі три задає конструктор об'єкта HUD (0x78c560):
+That is the very logic we were missing. The region has **three** positions, and
+all three are set by the HUD object's constructor (0x78c560):
 
-| поле | значення | що це |
+| field | value | what it is |
 |---|---|---|
-| +0x178 | `0xc3938000` = **-295** | сховане |
-| +0x17c | `0xc3090000` = **-137** | пішки |
-| +0x180 | `0x42580000` = **54** | у техніці |
-| +0x184 | | `BottomLeft_XPos` — поточне |
-| +0x188 | | `BottomLeft_nextXPos` — цільове |
+| +0x178 | `0xc3938000` = **-295** | hidden |
+| +0x17c | `0xc3090000` = **-137** | on foot |
+| +0x180 | `0x42580000` = **54** | in a vehicle |
+| +0x184 | | `BottomLeft_XPos` — the current one |
+| +0x188 | | `BottomLeft_nextXPos` — the target |
 | +0x18c | | `BottomLeftHealthAlpha` |
 | +0x190 | | `BottomLeftVehicleAlpha` |
 | +0x194 | | `BottomLeftHealthFadedAlpha` |
 | +0x198 | | `BottomLeftVehicleFadedAlpha` |
 
-Прив'язку до змінних графа видно в 0x789480: `LEA EDX,[ESI+0x188]` перед
-реєстрацією `BottomLeft_nextXPos` (0x7895f5) і `LEA EDX,[ESI+0x184]`
-перед `BottomLeft_XPos` (0x78963f).
+The binding to the graph's variables is visible at 0x789480:
+`LEA EDX,[ESI+0x188]` before registering `BottomLeft_nextXPos` (0x7895f5) and
+`LEA EDX,[ESI+0x184]` before `BottomLeft_XPos` (0x78963f).
 
-Функція 0x78b600 щокадру вибирає цільове положення:
-
-```
-якщо XPos == сховане        стан = 0
-якщо HealthAlpha  == 1      стан = 1
-якщо VehicleAlpha == 1      стан = 2
-
-стан 0: якщо VehicleAlpha == 0 -> ціль = пішки;
-        не доїхали і HealthAlpha == 0 -> ціль = сховане
-стан 1: не доїхали до «пішки» -> ціль = пішки; інакше показати здоров'я
-стан 2: доїхали до «пішки» і HealthAlpha == 1 ->
-            не доїхали до «в техніці» -> ціль = в техніці
-```
-
-І там-таки — формула пригашених прозоростей:
+The function 0x78b600 picks the target position every frame:
 
 ```
-основа = (меню є і стан != 0) ? MenuBackgroundAlpha : 1.0
-HealthFadedAlpha  = clamp(HealthAlpha  - (1 - основа), 0, 1)
-VehicleFadedAlpha = clamp(VehicleAlpha - (1 - основа), 0, 1)
+if XPos == hidden            state = 0
+if HealthAlpha  == 1         state = 1
+if VehicleAlpha == 1         state = 2
+
+state 0: if VehicleAlpha == 0 -> target = on foot;
+         not arrived and HealthAlpha == 0 -> target = hidden
+state 1: not arrived at "on foot" -> target = on foot; otherwise show the health
+state 2: arrived at "on foot" and HealthAlpha == 1 ->
+             not arrived at "in a vehicle" -> target = in a vehicle
 ```
 
-**Що це виправило.** У нас ліве висунуте положення було заповнювачем -1,
-і плашка `BottomLeftBar` (400 завширшки, зсув -103) тягнулася до x = 296
-— на всю ширину, ніби гравець у техніці. Правильне положення пішки —
-**-137**, і плашка доходить до 160.
+And in the same place — the formula for the dimmed alphas:
 
-Лишається: самі прапорці `BottomLeftHealthAlpha` / `BottomLeftVehicleAlpha`
-— хто їх ставить у 0 і 1, ще не розібрано. Доти беремо положення
-«пішки», а техніку не перемикаємо.
+```
+base = (a menu is up and state != 0) ? MenuBackgroundAlpha : 1.0
+HealthFadedAlpha  = clamp(HealthAlpha  - (1 - base), 0, 1)
+VehicleFadedAlpha = clamp(VehicleAlpha - (1 - base), 0, 1)
+```
+
+**What this fixed.** Our left extended position was the placeholder -1, and the
+`BottomLeftBar` plate (400 wide, offset -103) stretched to x = 296 — its full
+width, as if the player were in a vehicle. The correct on-foot position is
+**-137**, and the plate reaches 160.
+
+What is left: the flags `BottomLeftHealthAlpha` / `BottomLeftVehicleAlpha`
+themselves — who sets them to 0 and 1 has not been worked out yet. Until then we
+take the "on foot" position and do not switch to the vehicle one.

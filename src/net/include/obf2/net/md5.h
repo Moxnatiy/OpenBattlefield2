@@ -1,9 +1,9 @@
 #pragma once
-// MD5 — потрібен рівно для перевірки вмісту в протоколі BF2.
+// MD5 — needed for exactly one thing, the content check in BF2's protocol.
 //
-// Рушій рахує ним три хеші (`ChecksumContext`), і сервер звіряє їх при
-// під'єднанні. Свій, а не з бібліотеки: алгоритм короткий, а зайва
-// залежність заради ста рядків не окупається.
+// The engine computes three hashes with it (`ChecksumContext`), and the server
+// compares them on connection. Our own rather than a library's: the algorithm is
+// short, and an extra dependency for a hundred lines does not pay for itself.
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -21,12 +21,12 @@ class Md5 {
   void transform(const std::byte* block);
 
   std::uint32_t state_[4];
-  std::uint64_t length_ = 0;  // у бітах
+  std::uint64_t length_ = 0;  // in bits
   std::byte buffer_[64]{};
   std::size_t pending_ = 0;
 };
 
-// Зручна обгортка для одного шматка даних.
+// A convenience wrapper for one piece of data.
 std::array<std::byte, 16> md5(std::span<const std::byte> data);
 
 }  // namespace obf2::net

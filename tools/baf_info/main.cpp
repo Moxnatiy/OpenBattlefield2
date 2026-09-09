@@ -1,6 +1,6 @@
-// baf_info — що всередині анімації `.baf`.
+// baf_info — what is inside a `.baf` animation.
 //
-//   baf_info <modDir> <шлях/до/файлу.baf> [кадр]
+//   baf_info <modDir> <path/to/file.baf> [frame]
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -10,7 +10,7 @@
 
 int main(int argc, char** argv) {
   if (argc < 3) {
-    std::fputs("usage: baf_info <modDir> <файл.baf> [кадр]\n", stderr);
+    std::fputs("usage: baf_info <modDir> <file.baf> [frame]\n", stderr);
     return 2;
   }
 
@@ -22,29 +22,29 @@ int main(int argc, char** argv) {
 
   const auto bytes = files.read(argv[2]);
   if (!bytes) {
-    std::fprintf(stderr, "не знайдено: %s\n", argv[2]);
+    std::fprintf(stderr, "not found: %s\n", argv[2]);
     return 1;
   }
 
   std::string error;
   const auto animation = obf2::mesh::loadBoneAnimation(*bytes, &error);
   if (!animation) {
-    std::fprintf(stderr, "не розібрано: %s\n", error.c_str());
+    std::fprintf(stderr, "not parsed: %s\n", error.c_str());
     return 1;
   }
 
-  std::printf("версія %u, кісток %zu, кадрів %u, точність %u, тривалість %.2f с\n",
+  std::printf("version %u, %zu bones, %u frames, precision %u, %.2f s long\n",
               animation->version, animation->boneIds.size(), animation->frameCount,
               animation->precision, animation->duration());
 
   const std::uint32_t frame =
       argc > 3 ? static_cast<std::uint32_t>(std::atoi(argv[3])) : 0;
-  std::printf("кадр %u:\n", frame);
+  std::printf("frame %u:\n", frame);
   for (std::size_t i = 0; i < animation->tracks.size() && i < 12; ++i) {
     float rotation[4];
     obf2::mesh::Vec3 position;
     animation->sample(i, frame, rotation, &position);
-    std::printf("  кістка %3u  поворот %6.3f %6.3f %6.3f %6.3f  зсув %7.3f %7.3f %7.3f\n",
+    std::printf("  bone %3u  rotation %6.3f %6.3f %6.3f %6.3f  offset %7.3f %7.3f %7.3f\n",
                 animation->boneIds[i], rotation[0], rotation[1], rotation[2], rotation[3],
                 position.x, position.y, position.z);
   }

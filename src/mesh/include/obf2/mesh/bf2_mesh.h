@@ -1,10 +1,10 @@
 #pragma once
-// Формати мешів Refractor 2: .staticmesh / .bundledmesh / .skinnedmesh.
-// Усі три — один і той самий контейнер, різниця лише в кількох гілках парсингу.
+// Refractor 2 mesh formats: .staticmesh / .bundledmesh / .skinnedmesh.
+// All three are one and the same container; the difference is a few parsing branches.
 //
-// Розкладка формату взята з Project Dalian (MIT, engine/formats/mesh) та
-// BfMeshView; реалізація тут своя, з обов'язковою перевіркою меж — файли
-// приходять з архівів користувача і довіри їм нема.
+// The format's layout comes from Project Dalian (MIT, engine/formats/mesh) and
+// BfMeshView; the implementation here is our own, with mandatory bounds checks —
+// the files come from the user's archives and are not to be trusted.
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -21,28 +21,28 @@ struct Vec3 { float x = 0.0f, y = 0.0f, z = 0.0f; };
 struct Aabb { Vec3 min, max; };
 struct Mat4 { float m[16]{}; };
 
-// Опис одного атрибута вершини. Значення usage збігаються з D3DDECLUSAGE
-// часів DirectX 9: 0 = POSITION, 3 = NORMAL, 5 = TEXCOORD, 6 = TANGENT.
-// flag != 0 означає, що атрибут вимкнений (у файлах трапляється 255).
+// The description of one vertex attribute. The usage values match D3DDECLUSAGE
+// from DirectX 9: 0 = POSITION, 3 = NORMAL, 5 = TEXCOORD, 6 = TANGENT.
+// flag != 0 means the attribute is disabled (255 occurs in the files).
 struct VertexAttribute {
   std::uint16_t flag = 0;
-  std::uint16_t offset = 0;   // байтовий зсув усередині вершини
+  std::uint16_t offset = 0;   // byte offset within the vertex
   std::uint16_t vartype = 0;  // 0=float1 1=float2 2=float3 3=float4 4=d3dcolor
   std::uint16_t usage = 0;
 };
 
 struct Material {
-  std::uint32_t alphaMode = 0;      // немає у skinned
-  std::string fxFile;               // напр. "StaticMesh.fx"
-  std::string technique;            // напр. "Base Detail"
-  std::vector<std::string> maps;    // шляхи текстур
+  std::uint32_t alphaMode = 0;      // absent in skinned
+  std::string fxFile;               // e.g. "StaticMesh.fx"
+  std::string technique;            // e.g. "Base Detail"
+  std::vector<std::string> maps;    // texture paths
   std::uint32_t vertexStart = 0;
   std::uint32_t indexStart = 0;
   std::uint32_t indexCount = 0;
   std::uint32_t vertexCount = 0;
-  std::uint32_t nodeIndex = 0;      // static: індекс у Lod::nodes
+  std::uint32_t nodeIndex = 0;      // static: an index into Lod::nodes
   Aabb bounds;
-  bool hasBounds = false;           // тільки version == 11 і не skinned
+  bool hasBounds = false;           // version == 11 only, and not skinned
 };
 
 struct Bone { std::uint32_t id = 0; Mat4 transform; };
@@ -50,8 +50,8 @@ struct Rig { std::vector<Bone> bones; };
 
 struct Lod {
   Vec3 min, max, pivot;
-  std::vector<Rig> rigs;        // тільки skinned
-  std::vector<Mat4> nodes;      // static; bundled має лише лічильник
+  std::vector<Rig> rigs;        // skinned only
+  std::vector<Mat4> nodes;      // static; bundled has only the counter
   std::vector<Material> materials;
 };
 
@@ -69,10 +69,10 @@ struct Mesh {
   bool isBfp4f = false;
   std::vector<Geometry> geometries;
   std::vector<VertexAttribute> attributes;
-  std::uint32_t vertexFormat = 0;  // розмір компонента, завжди 4 (float)
-  std::uint32_t vertexStride = 0;  // байтів на вершину
+  std::uint32_t vertexFormat = 0;  // the component's size, always 4 (float)
+  std::uint32_t vertexStride = 0;  // bytes per vertex
   std::uint32_t vertexCount = 0;
-  std::vector<float> vertexData;   // «сирий» буфер, stride/format float-ів на вершину
+  std::vector<float> vertexData;   // the raw buffer, stride/format floats per vertex
   std::vector<std::uint16_t> indices;
 
   std::size_t floatsPerVertex() const {
@@ -80,14 +80,14 @@ struct Mesh {
   }
 };
 
-// Розпакована геометрія, готова до завантаження в GPU.
+// Unpacked geometry, ready to upload to the GPU.
 struct Vertex {
   Vec3 position;
   Vec3 normal;
   float uv[2]{};
 };
 
-// Діапазон індексів з однаковим матеріалом — один виклик малювання.
+// A range of indices sharing one material — one draw call.
 struct DrawRange {
   std::uint32_t indexStart = 0;
   std::uint32_t indexCount = 0;
@@ -95,22 +95,22 @@ struct DrawRange {
   std::string technique;
   std::vector<std::string> maps;
 
-  // Номер риґу для скінінгу — збігається з номером матеріалу.
+  // The rig number for skinning — it matches the material's number.
   int rig = -1;
 
-  // Для терену другий слот — запечене освітлення, а для звичайних мешів
-  // там детейл-текстура, яку рендер поки не використовує. Прапорець
-  // розрізняє ці випадки замість здогадок за іменем файлу.
+  // For terrain the second slot is the baked lighting, while for ordinary meshes
+  // it holds a detail texture the renderer does not use yet. The flag
+  // distinguishes those cases instead of guessing from the file's name.
   bool lightmapInSecondSlot = false;
 };
 
-// Прив'язка вершини до скелета. BF2 бере рівно дві кістки: у вершині
-// лежить одна вага й пара номерів, спакована в D3DCOLOR (перші два байти).
-// Номери — індекси в **риґу** матеріалу, а не в скелеті.
+// A vertex's binding to the skeleton. BF2 takes exactly two bones: the vertex
+// holds one weight and a pair of ids packed into a D3DCOLOR (the first two bytes).
+// The ids are indices into the material's **rig**, not into the skeleton.
 struct SkinBinding {
   std::uint8_t boneA = 0;
   std::uint8_t boneB = 0;
-  float weight = 1.0f;  // частка для boneA; для boneB лишається 1 - weight
+  float weight = 1.0f;  // the share for boneA; boneB gets the remaining 1 - weight
 };
 
 struct RenderMesh {
@@ -119,24 +119,24 @@ struct RenderMesh {
   std::vector<DrawRange> ranges;
   Aabb bounds;
 
-  // BundledMesh: індекс частини для кожної вершини (башта, ствол, колеса —
-  // усе в одному буфері, кожна частина у власних локальних координатах).
-  // Порожній для static/skinned. Береться з атрибута BLENDINDICES, який
-  // зберігається як D3DCOLOR — чотири байти в одному слоті.
+  // BundledMesh: the part index for every vertex (turret, barrel, wheels —
+  // all in one buffer, each part in its own local coordinates).
+  // Empty for static/skinned. Taken from the BLENDINDICES attribute, which is
+  // stored as a D3DCOLOR — four bytes in one slot.
   std::vector<std::uint8_t> vertexPart;
 
-  // SkinnedMesh: прив'язка кожної вершини й риґи по одному на матеріал
-  // (їхня кількість завжди збігається з кількістю матеріалів).
+  // SkinnedMesh: every vertex's binding, plus one rig per material
+  // (their count always equals the number of materials).
   std::vector<SkinBinding> skin;
   std::vector<Rig> rigs;
 };
 
-// Тип визначається розширенням файлу — інакше його з вмісту не дізнатися.
+// The type is decided by the file's extension — it cannot be told from the contents.
 std::optional<Kind> kindFromExtension(std::string_view extension);
 std::string_view kindName(Kind kind);
 
-// nullopt + текст помилки замість винятку: пошкоджений меш — очікувана ситуація,
-// а не виняткова.
+// nullopt plus an error string instead of an exception: a damaged mesh is an
+// expected situation, not an exceptional one.
 std::optional<Mesh> load(std::span<const std::byte> bytes, Kind kind, std::string* error = nullptr);
 
 std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex = 0,

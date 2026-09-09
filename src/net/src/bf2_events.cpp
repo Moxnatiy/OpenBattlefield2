@@ -62,7 +62,7 @@ std::optional<Vec3f> readVector(BitReader& reader) {
   return Vec3f{*x, *y, *z};
 }
 
-// Розбір подій, довжина яких залежить від вмісту.
+// Parsing of events whose length depends on their contents.
 bool readCreateObject(BitReader& reader, CreateObject& out) {
   const auto templateId = reader.readBits(32);
   const auto networkId = reader.readBits(16);
@@ -74,7 +74,7 @@ bool readCreateObject(BitReader& reader, CreateObject& out) {
   out.networkId = static_cast<std::uint16_t>(*networkId);
   out.field2 = *field2;
 
-  // Одиниця — коротка гілка: одне восьмибітне поле, і на цьому все.
+  // One is the short branch: a single eight-bit field, and that is all.
   if (*branch == 1) {
     const auto value = reader.readBits(8);
     if (!value) return false;
@@ -97,7 +97,7 @@ bool readCreateObject(BitReader& reader, CreateObject& out) {
   return true;
 }
 
-// `DataBlockEvent`: заголовок блока або шматок даних.
+// `DataBlockEvent`: a block's header or a chunk of data.
 bool skipDataBlock(BitReader& reader) {
   const auto isHeader = reader.readBits(1);
   if (!isHeader) return false;
@@ -107,7 +107,7 @@ bool skipDataBlock(BitReader& reader) {
   return reader.skipBits(*length * 8);
 }
 
-// `StringManagerEvent`: у пакетах після реєстрації приходить порожньою.
+// `StringManagerEvent`: in the packets after registration it arrives empty.
 bool skipStringManager(BitReader& reader) {
   const auto flag = reader.readBits(1);
   if (!flag) return false;
@@ -115,7 +115,7 @@ bool skipStringManager(BitReader& reader) {
   return reader.skipBits(6);
 }
 
-// `PostRemoteEvent`: категорія, номер, затримка і скільки байтів даних.
+// `PostRemoteEvent`: the category, the number, the delay and how many data bytes.
 bool skipPostRemote(BitReader& reader) {
   if (!reader.skipBits(4 + 32 + 32)) return false;
   const auto length = reader.readBits(8);
@@ -154,7 +154,7 @@ bool skipEvent(BitReader& reader, std::uint32_t type) {
       return readCreateObject(reader, ignored);
     }
     case 11: return skipPostRemote(reader);
-    default: return false;  // цю ще не розібрали
+    default: return false;  // this one is not parsed yet
   }
 }
 
@@ -271,9 +271,9 @@ std::optional<Event> readEvent(BitReader& reader) {
     player.squad = *squad;
     player.id = *id;
 
-    // Ім'я — рівно 32 байти, і за нулем у полі лишається сміття, тож
-    // читаємо байтами й спиняємось на першому нулі. `readString` тут не
-    // годиться: він нулі викидає, а не обриває на них рядок.
+    // The name is exactly 32 bytes, and rubbish is left in the field after the
+    // zero, so we read bytes and stop at the first zero. `readString` will not do
+    // here: it throws the zeroes away rather than ending the string at them.
     bool ended = false;
     for (int i = 0; i < 32; ++i) {
       const auto byte = reader.readByte();
@@ -298,7 +298,7 @@ std::optional<std::pair<std::uint32_t, std::vector<std::byte>>> DataBlockAssembl
     data_.reserve(expected_);
     return std::nullopt;
   }
-  if (expected_ == 0) return std::nullopt;  // шматок без заголовка
+  if (expected_ == 0) return std::nullopt;  // a chunk with no header
   data_.insert(data_.end(), piece.chunk.begin(), piece.chunk.end());
   if (data_.size() < expected_) return std::nullopt;
 
@@ -309,8 +309,8 @@ std::optional<std::pair<std::uint32_t, std::vector<std::byte>>> DataBlockAssembl
 }
 
 std::optional<MapInfo> parseMapInfo(std::span<const std::byte> block) {
-  // Розкладка знята з живого блока: u32, далі три рядки з довжиною u16
-  // попереду — назва рівня, режим гри і розмір.
+  // The layout is taken from a live block: a u32, then three strings each
+  // preceded by a u16 length — the level's name, the game mode and the size.
   BitReader reader(block);
   const auto first = reader.readBits(32);
   if (!first) return std::nullopt;
@@ -345,9 +345,9 @@ std::uint8_t nearestSpawnGroup(const std::vector<CreateSpawnGroup>& groups, floa
   float bestSquared = 0.0f;
   bool found = false;
   for (const CreateSpawnGroup& group : groups) {
-    // Групи чужої команди не годяться: сервер спавнить гравця лише в
-    // своїй (`ServerGameLogic::uPlayingSpawning` бере групу гравця, а
-    // ту ставить `NESelectSpawnGroup`). Нуль у групі — нейтральна.
+    // Another team's groups will not do: the server spawns a player only in their
+    // own (`ServerGameLogic::uPlayingSpawning` takes the player's group, which is
+    // set by `NESelectSpawnGroup`). Zero in the group means neutral.
     if (team > 0 && group.team != 0 && static_cast<int>(group.team) != team) continue;
     const float gx = spawnGroupWorldPos(group.worldX, worldSize);
     const float gz = spawnGroupWorldPos(group.worldZ, worldSize);
@@ -377,7 +377,7 @@ std::optional<ServerMapInfo> parseMapInfoNetBuffer(std::span<const std::byte> bl
     }
     return out;
   };
-  // Число зі знаком: один біт знака, далі 31 біт значення.
+  // A signed number: one sign bit, then 31 bits of value.
   const auto number = [&reader]() -> std::optional<int> {
     const auto sign = reader.readBits(1);
     const auto value = reader.readBits(31);
@@ -417,8 +417,8 @@ std::vector<std::vector<std::byte>> loadCapture(const std::string& path) {
   while (true) {
     std::uint32_t length = 0;
     if (std::fread(&length, sizeof(length), 1, file) != 1) break;
-    // Пакет BF2 не буває більшим за кілька кілобайтів: більше число
-    // означає, що файл не той або обірваний.
+    // A BF2 packet is never larger than a few kilobytes: a bigger number means
+    // the file is the wrong one or truncated.
     if (length == 0 || length > 4096) break;
     std::vector<std::byte> packet(length);
     if (std::fread(packet.data(), 1, length, file) != length) break;
@@ -430,8 +430,8 @@ std::vector<std::vector<std::byte>> loadCapture(const std::string& path) {
 
 namespace {
 
-// Спільний початок: пройти заголовок пакета й потік дій гравця.
-// Повертає false, якщо це не пакет даних.
+// The shared beginning: walk the packet's header and the player action stream.
+// Returns false when this is not a data packet.
 bool enterPayload(BitReader& reader) {
   const auto kind = reader.readBits(4);
   if (!kind || *kind != static_cast<std::uint32_t>(PacketKind::Data)) return false;
@@ -443,36 +443,36 @@ bool enterPayload(BitReader& reader) {
 
 namespace {
 
-// Спільне для заголовка й записів: дійти до потоку привидів, пройшовши
-// потік дій гравця й усі події.
-// Пройти стан керованого об'єкта, не розбираючи його.
+// Shared by the header and the records: get to the ghost stream, having walked
+// the player action stream and every event.
+// Walk past the controlled-object state without parsing it.
 //
-// Прохід виписано з `GhostManager::readControlObjectState` (0x445c30)
-// знаряддям `tools/linuxded/bitfields.py --blocks`, гілка за гілкою:
+// The walk was written out from `GhostManager::readControlObjectState` (0x445c30)
+// with `tools/linuxded/bitfields.py --blocks`, branch by branch:
 //
-//   12                     число на початку
-//   1 + 31                 лічильник (знак і величина; при знаку 0x445cbf,
-//                          без знака 0x445ed0 — обидві гілки по 31 біт)
-//   32, 32, 32             опорна точка стиснення -> setCompressionVector
-//   16                     мережевий номер керованого об'єкта
-//   1                      прапорець A; якщо 1 -> ще 16 біт (0x445f93)
-//   1                      прапорець B (0x445db3, після getObject)
-//                          якщо 1 -> 1 біт (0x445f33), і якщо той 1 -> 16 (0x445f66)
-//   1                      прапорець C (0x445e52)
-//   3                      обидві гілки читають по 3 біти (0x445e80 / 0x445fde)
+//   12                     a number at the start
+//   1 + 31                 a counter (sign and magnitude; with the sign 0x445cbf,
+//                          without it 0x445ed0 — both branches 31 bits)
+//   32, 32, 32             the compression reference point -> setCompressionVector
+//   16                     the controlled object's network id
+//   1                      flag A; if 1 -> 16 more bits (0x445f93)
+//   1                      flag B (0x445db3, after getObject)
+//                          if 1 -> 1 bit (0x445f33), and if that is 1 -> 16 (0x445f66)
+//   1                      flag C (0x445e52)
+//   3                      both branches read 3 bits (0x445e80 / 0x445fde)
 //
-// Далі у функції є ще читання по 10 бітів у циклі (0x44633a), але воно
-// під умовою, якої ми ще не з'ясували. Тому прохід **перевіряється
-// даними**: після нього мають прочитатися рівно `records` записів, і
-// пакет має закінчитися. Не зійшлося — кажемо, що не вміємо, і не
-// вдаємо, ніби прочитали.
+// Further on the function also has a read of 10 bits in a loop (0x44633a), but it
+// is behind a condition we have not worked out. So the walk is **checked against
+// data**: after it exactly `records` records have to read and the packet has to
+// end. If it does not add up we say we cannot do it rather than pretending we
+// read something.
 bool skipControlObjectState(BitReader& reader) {
   if (!reader.skipBits(12)) return false;
 
   const auto sign = reader.readBits(1);
   if (!sign || !reader.skipBits(31)) return false;
-  if (!reader.skipBits(32 * 3)) return false;  // опорна точка
-  if (!reader.skipBits(16)) return false;      // мережевий номер
+  if (!reader.skipBits(32 * 3)) return false;  // the reference point
+  if (!reader.skipBits(16)) return false;      // the network id
 
   const auto flagA = reader.readBits(1);
   if (!flagA) return false;
@@ -530,9 +530,9 @@ std::vector<GhostRecord> readGhostRecords(
   BitReader reader(packet);
   const auto header = enterGhosts(reader);
   if (!header) return out;
-  // Стан керованого об'єкта лежить перед записами. Раніше ми такі пакети
-  // просто кидали — а після появи гравця він їде майже в кожному, і разом
-  // із ними ми викидали майже весь потік.
+  // The controlled-object state lies before the records. We used to drop such
+  // packets — and after a player spawns it travels in almost every one, so we
+  // were throwing away nearly the whole stream with them.
   if (header->controlObjectState && !skipControlObjectState(reader)) return out;
 
   for (std::uint8_t i = 0; i < header->records; ++i) {
@@ -543,7 +543,7 @@ std::vector<GhostRecord> readGhostRecords(
     GhostRecord record;
     record.kind = *kind;
     record.networkId = static_cast<std::uint16_t>(*networkId);
-    if (*kind == 2) break;  // рушій вважає це помилкою потоку
+    if (*kind == 2) break;  // the engine treats this as a stream error
     if (*kind == 1) {
       const auto flag = reader.readBits(1);
       const auto length = reader.readBits(kGhostLengthBits);
@@ -551,15 +551,15 @@ std::vector<GhostRecord> readGhostRecords(
       record.baseline = *flag != 0;
       record.payloadBits = *length;
 
-      // Головний прохід іде **тільки** за довжиною — так рушій проходить
-      // повз об'єкт, якого не знає. Вміст читаємо окремим читачем: якщо
-      // ми в ньому помилимося, потік від цього не зіб'ється.
+      // The main walk goes by the length **only** — that is how the engine passes
+      // an object it does not know. The content is read by a separate reader: if
+      // we get it wrong, the stream does not go astray because of it.
       const std::size_t payloadStart = reader.bitPosition();
       if (!reader.skipBits(*length)) break;
 
-      // Розкладка вмісту залежить від мережевого класу об'єкта, і для
-      // солдата вона інша: маска ширша, місце вмикає інший біт, опора
-      // нульова, точність груба.
+      // The content's layout depends on the object's networked class, and for a
+      // soldier it differs: the mask is wider, the position is under a different
+      // bit, the reference is zero, the precision coarse.
       const bool soldier = isSoldier && isSoldier(record.networkId);
       const unsigned maskBits = soldier ? kSoldierStateMaskBits : kObjectStateMaskBits;
       const std::uint32_t positionBit = soldier ? kSoldierStatePosition : kObjectStatePosition;
@@ -572,26 +572,26 @@ std::vector<GhostRecord> readGhostRecords(
         if (mask) {
           record.stateMask = *mask;
 
-          // Поля, що лежать **перед** місцем. Пропустити їх обов'язково:
-          // без цього читання зсувається, і замість місця виходить сміття.
+          // The fields that lie **before** the position. Skipping them is
+          // mandatory: without it the read shifts and rubbish comes out instead of the position.
           bool ok = true;
           if (soldier) {
-            if ((*mask & kSoldierStateRagdoll) != 0) ok = false;  // інша гілка
+            if ((*mask & kSoldierStateRagdoll) != 0) ok = false;  // another branch
             if (ok && (*mask & kSoldierStateHasByte) != 0) ok = payload.skipBits(8 + 1);
             if (ok && (*mask & kSoldierStateHasPair) != 0) ok = payload.skipBits(3 + 3);
           }
 
           if (ok && (*mask & positionBit) != 0) {
             const auto at = payload.readCompressedVector(origin, precision);
-            // Місце береться лише тоді, коли воно вмістилося у вміст:
-            // інакше ми прочитали не те й видали б за позицію сміття.
+            // The position is taken only when it fitted into the content:
+            // otherwise we read the wrong thing and would pass rubbish off as a position.
             if (at && payload.bitPosition() <= payloadStart + *length) record.position = *at;
             else ok = false;
           }
 
-          // Далі — швидкість і кути. Читаємо їх не заради самих полів, а
-          // тому що рискання йде **після** швидкості: без пропуску
-          // швидкості кут вийшов би не той.
+          // Then come the velocity and the angles. We read them not for the
+          // fields' own sake but because the yaw comes **after** the velocity:
+          // without skipping the velocity the angle would be the wrong one.
           if (ok && soldier) {
             if ((*mask & kSoldierStateVelocity) != 0) {
               ok = payload.readCompressedVector(Vec3f{}, kSoldierVelocityPrecision).has_value();
@@ -640,7 +640,7 @@ std::optional<ControlObjectState> readControlObjectState(std::span<const std::by
   if (!first) return std::nullopt;
   out.first = *first;
 
-  // Лічильник: знак і 31 біт, як і числа в блоці MapInfo.
+  // The counter: a sign and 31 bits, like the numbers in the MapInfo block.
   const auto sign = reader.readBits(1);
   const auto value = reader.readBits(31);
   if (!sign || !value) return std::nullopt;
@@ -668,9 +668,9 @@ std::vector<Event> readEvents(std::span<const std::byte> packet) {
 
   const auto kind = reader.readBits(4);
   if (!kind || *kind != static_cast<std::uint32_t>(PacketKind::Data)) return events;
-  // номер з'єднання, розширений заголовок і довжина корисної частини
+  // the connection id, the extended header and the payload's length
   if (!reader.skipBits(8 + 6 + 6 + 32 + kStreamFramingBits)) return events;
-  // потік дій гравця: свої дії ми поки не шлемо, тож там один нуль
+  // the player action stream: we do not send our own actions yet, so one zero there
   if (!reader.skipBits(1)) return events;
 
   const auto hasEvents = reader.readBits(1);

@@ -1,11 +1,11 @@
-// Читач `MemeFile 2.0` — графа, яким рушій анімує інтерфейс.
+// The `MemeFile 2.0` reader — the graph the engine animates the interface with.
 //
-// Перевіряємо на справжньому `Menu/Ingame` з інсталяції користувача:
-// синтетичний зразок тут нічого не вартий, бо саме на справжньому файлі
-// й видно, чи сходиться розкладка класів із бібліотеки.
+// We check against a real `Menu/Ingame` from the user's installation: a synthetic
+// sample is worth nothing here, because it is precisely on a real file that one
+// sees whether the classes' layout from the library adds up.
 //
-// Мірило те саме, що в `tools/meme_read.py --check`: файл має
-// прочитатися **цілком**, без залишку.
+// The measure is the same as in `tools/meme_read.py --check`: the file has to read
+// **completely**, with nothing left over.
 #include <filesystem>
 
 #include "obf2/meme/file.h"
@@ -22,7 +22,7 @@ std::filesystem::path menuArchive() {
   return std::filesystem::path(OBF2_GAME_FILES) / "mods" / "bf2" / "Menu_client.zip";
 }
 
-// Порахувати вузли заданого класу — так само, як це робить
+// Count the nodes of a given class — the same way
 // `meme_read.py Ingame | grep -c`.
 int count(const meme::File& file, std::string_view type) {
   int found = 0;
@@ -36,7 +36,7 @@ int count(const meme::File& file, std::string_view type) {
 
 static void testIngameParsesWhole() {
   if (!std::filesystem::exists(menuArchive())) {
-    std::printf("  немає %s — перевірку пропущено\n", menuArchive().string().c_str());
+    std::printf("  no %s — the check was skipped\n", menuArchive().string().c_str());
     return;
   }
   auto archive = ZipArchive::open(menuArchive());
@@ -53,12 +53,12 @@ static void testIngameParsesWhole() {
   CHECK(ok);
   CHECK_EQ(file.version(), std::string("MemeFile 2.0"));
   for (const std::string& name : file.unknownClasses()) {
-    std::printf("  класу немає в таблиці: %s\n", name.c_str());
+    std::printf("  the class is not in the table: %s\n", name.c_str());
   }
   CHECK(file.unknownClasses().empty());
 
-  // Ті самі числа, що друкує `tools/meme_read.py Ingame`. Якщо розкладка
-  // якогось класу поїде, поїдуть і вони.
+  // The same numbers `tools/meme_read.py Ingame` prints. If some class's layout
+  // slides, they will slide too.
   CHECK_EQ(count(file, "FloatData"), 58);
   CHECK_EQ(count(file, "BoolData"), 25);
   CHECK_EQ(count(file, "SplitNode"), 19);
@@ -70,9 +70,9 @@ static void testIngameParsesWhole() {
   CHECK_EQ(count(file, "BfTransformNode"), 2);
 }
 
-// Головне, заради чого це й читається: **шар і його положення лежать у
-// файлі**, а не в нашому коді. Ліва кутова ділянка — це `BfTransformNode`
-// 400x64, чий X прив'язаний до змінної `BottomLeft/BottomLeft_XPos`.
+// The main thing this is read for: **a layer and its position lie in the file**,
+// not in our code. The left corner region is a `BfTransformNode` 400x64 whose X is
+// bound to the variable `BottomLeft/BottomLeft_XPos`.
 static void testLayerPositionComesFromTheFile() {
   if (!std::filesystem::exists(menuArchive())) return;
   auto archive = ZipArchive::open(menuArchive());
@@ -96,8 +96,8 @@ static void testLayerPositionComesFromTheFile() {
   CHECK(width != nullptr);
   if (width != nullptr) CHECK(std::abs(width->number - 400.0f) < 0.01f);
 
-  // І початкове значення тієї змінної — теж звідти: -295, сховане
-  // положення лівої ділянки.
+  // And that variable's initial value comes from there too: -295, the left region's
+  // hidden position.
   const meme::Object* x = file.child(*layer, "X");
   CHECK(x != nullptr);
   if (x != nullptr) {
@@ -107,7 +107,7 @@ static void testLayerPositionComesFromTheFile() {
   }
 }
 
-// Решта файлів HUD теж має читатися цілком — їх дванадцять.
+// The other HUD files have to read completely too — there are twelve of them.
 static void testEveryHudMemeParses() {
   if (!std::filesystem::exists(menuArchive())) return;
   auto archive = ZipArchive::open(menuArchive());
@@ -130,9 +130,9 @@ static void testEveryHudMemeParses() {
   CHECK_EQ(whole, 12);
 }
 
-// Головне: граф **виконується**. Ставимо ціль лівої ділянки й дивимося,
-// чи він сам довозить її туди — рівно на 600 одиницях за секунду, як
-// каже `SetVariableSineAction {Speed 600}` у файлі.
+// The main thing: the graph **executes**. We set the left region's target and see
+// whether it drives it there itself — at exactly 600 units per second, as
+// `SetVariableSineAction {Speed 600}` in the file says.
 static void testGraphMovesTheCornerPanel() {
   if (!std::filesystem::exists(menuArchive())) return;
   auto archive = ZipArchive::open(menuArchive());
@@ -143,23 +143,23 @@ static void testGraphMovesTheCornerPanel() {
   meme::Graph graph;
   CHECK(graph.load(*data));
 
-  // Початкові значення — з файлу: ділянка схована на -295.
+  // The initial values come from the file: the region is hidden at -295.
   CHECK(std::abs(graph.variables().get("BottomLeft/BottomLeft_XPos") + 295.0f) < 0.01f);
-  // `AniPos` теж звідти, і саме він відмикає гілку з рухом.
+  // `AniPos` comes from there too, and it is what unlocks the branch with the movement.
   CHECK(std::abs(graph.variables().get("AniPos") - 1.0f) < 0.01f);
 
   graph.variables().set("BottomLeft/BottomLeft_nextXPos", -137.0f);
   graph.update(1.0f / 30.0f);
   CHECK(graph.lastActions() > 0);
-  // 600 за секунду -> 20 за такт.
+  // 600 per second -> 20 per tick.
   CHECK(std::abs(graph.variables().get("BottomLeft/BottomLeft_XPos") + 275.0f) < 0.01f);
 
   for (int i = 0; i < 60; ++i) graph.update(1.0f / 30.0f);
   CHECK(std::abs(graph.variables().get("BottomLeft/BottomLeft_XPos") + 137.0f) < 0.01f);
 }
 
-// Прозорості веде інша дія — `SetVariableSoftAction {Speed 10}`, і теж
-// сама, без нашої допомоги.
+// The alphas are driven by a different action — `SetVariableSoftAction {Speed 10}`,
+// and by itself too, without our help.
 static void testGraphMovesTheAlpha() {
   if (!std::filesystem::exists(menuArchive())) return;
   auto archive = ZipArchive::open(menuArchive());
@@ -175,8 +175,8 @@ static void testGraphMovesTheAlpha() {
   CHECK(std::abs(graph.variables().get("BottomLeft/Alpha/BottomLeft_alpha1") - 1.0f) < 0.01f);
 }
 
-// Чотири кутові ділянки HUD — теж із файлу, разом із прив'язкою X до
-// змінної. Доти ці числа стояли в main.cpp руками.
+// The HUD's four corner regions also come from the file, together with the binding
+// of X to a variable. Until now these numbers stood in main.cpp by hand.
 static void testLayersComeFromTheFile() {
   if (!std::filesystem::exists(menuArchive())) return;
   auto archive = ZipArchive::open(menuArchive());
@@ -207,8 +207,61 @@ static void testLayersComeFromTheFile() {
   CHECK(std::abs(layers[1].twinY - 563.0f) < 0.01f);
 }
 
+// The right region is driven not by one variable but by a machine of five
+// `CullVariableActionNode` in the file itself. It is taken apart in
+// (`docs/formats/hud-meme-graph.md`):
+//
+//   direction = 1  -> the target is `oldXPos`, and on arrival `setDirection` is
+//                     cleared and the alpha goes to `newAlpha` = 1;
+//   direction = 0  -> `setDirection` comes on, the alpha goes to `oldAlpha` = 0,
+//                     and **only once faded** does the region travel to
+//                     `newXPos`.
+//
+// The key to this is `ToggleData::value` (`MemeDll.dll`, 0x100032a6):
+// "Data 1" is taken when the switch is **zero**.
+static void testGraphRunsTheRightPanelMachine() {
+  if (!std::filesystem::exists(menuArchive())) return;
+  auto archive = ZipArchive::open(menuArchive());
+  if (archive == nullptr) return;
+  const auto data = archive->read(normalizeAssetPath("Ingame"));
+  if (!data) return;
+
+  meme::Graph graph;
+  if (!graph.load(*data)) return;
+  auto& v = graph.variables();
+
+  // The start comes from the file: hidden 503, shown 201, alpha 0.
+  CHECK(std::abs(v.get("BottomRight/BottomRight_XPos") - 503.0f) < 0.01f);
+  CHECK(std::abs(v.get("BottomRight/BottomRight_oldXPos") - 201.0f) < 0.01f);
+  CHECK(std::abs(v.get("BottomRight/BottomRight_newXPos") - 503.0f) < 0.01f);
+  CHECK(std::abs(v.get("BottomRight/Alpha/BottomRight_alpha")) < 0.01f);
+
+  // Show: the region travels to `oldXPos` and fades in there.
+  v.set("BottomRight/BottomRight_direction", 1.0f);
+  for (int i = 0; i < 120; ++i) graph.update(1.0f / 30.0f);
+  CHECK(std::abs(v.get("BottomRight/BottomRight_XPos") - 201.0f) < 0.01f);
+  CHECK(std::abs(v.get("BottomRight/Alpha/BottomRight_alpha") - 1.0f) < 0.01f);
+
+  // Hide: it fades first, and until it has faded it does not move.
+  //
+  // The one-tick delay here is real rather than an oversight of ours: the actions
+  // go from the outermost node to the innermost, while `setDirection` is set by the
+  // **innermost**. So on the first tick the alpha still travels towards `newAlpha`,
+  // and only from the second towards `oldAlpha`.
+  v.set("BottomRight/BottomRight_direction", 0.0f);
+  graph.update(1.0f / 30.0f);
+  graph.update(1.0f / 30.0f);
+  CHECK(v.get("BottomRight/Alpha/BottomRight_alpha") < 1.0f);
+  CHECK(std::abs(v.get("BottomRight/BottomRight_XPos") - 201.0f) < 0.01f);
+
+  for (int i = 0; i < 240; ++i) graph.update(1.0f / 30.0f);
+  CHECK(std::abs(v.get("BottomRight/Alpha/BottomRight_alpha")) < 0.01f);
+  CHECK(std::abs(v.get("BottomRight/BottomRight_XPos") - 503.0f) < 0.01f);
+}
+
 TEST_MAIN({
   testIngameParsesWhole();
+  testGraphRunsTheRightPanelMachine();
   testLayersComeFromTheFile();
   testGraphMovesTheCornerPanel();
   testGraphMovesTheAlpha();

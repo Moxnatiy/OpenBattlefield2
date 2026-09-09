@@ -1,10 +1,10 @@
-# Перевірки Debug у Linux-сервері: файл, рядок, функція.
-# Пара «файл + рядок» однакова в BF2.exe, тож за нею можна
-# називати тамтешні FUN_xxxxxx. Знято tools/transplant_symbols.py.
-# Перевірок у Linux-сервері: 376, у BF2.exe: 520, збіглося: 335
+# Debug checks in the Linux server: file, line, function.
+# The pair "file + line" is the same in BF2.exe, so the FUN_xxxxxx
+# there can be named by it. Taken by tools/transplant_symbols.py.
+# Checks in the Linux server: 376, in BF2.exe: 520, matched: 335
 
-# адреса перевірки в BF2.exe -> функція з Linux-сервера
-# (адреса вказує всередину функції, не на її початок)
+# the address of a check in BF2.exe -> the function from the Linux server
+# (the address points inside the function, not at its start)
 0x00408d59  dice::hfe::BF2Engine::shutdown()
 0x0040c471  dice::hfe::BF2Engine::init(std::string const&)
 0x004327dd  dice::hfe::Vars::getInt(char const*, int)

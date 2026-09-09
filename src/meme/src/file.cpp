@@ -12,14 +12,14 @@ struct FieldSpec {
 
 struct ClassSpec {
   const char* name;
-  const FieldSpec* fields;  // закінчується записом із name == nullptr
+  const FieldSpec* fields;  // terminated by an entry with name == nullptr
 };
 
-// Таблиця з `classes.inc` — згенерована з бібліотек мода. Розгортаємо її
-// двічі: спершу масиви полів, потім перелік класів.
-// Останній запис — вартовий: класів без власних полів теж вистачає
-// (FloatRefData успадковує все й не додає нічого), а порожній масив у
-// C++ оголосити не можна.
+// The table from `classes.inc` — generated from the mod's libraries. It is
+// expanded twice: first the field arrays, then the class list.
+// The last entry is a sentinel: there are plenty of classes with no fields of
+// their own (FloatRefData inherits everything and adds nothing), and an empty
+// array cannot be declared in C++.
 #define MEME_CLASS(name) static const FieldSpec kFields_##name[] = {
 #define MEME_FIELD(text, kind) {text, Kind::kind},
 #define MEME_CLASS_END()          \
@@ -48,7 +48,7 @@ const ClassSpec* findClass(std::string_view shortName) {
   return nullptr;
 }
 
-// Скільки байтів читає метод потоку. Нуль — не число.
+// How many bytes a stream method reads. Zero means it is not a number.
 int fixedWidth(Kind kind) {
   switch (kind) {
     case Kind::Ubyte:
@@ -91,8 +91,8 @@ const Object* File::child(const Object& object, std::string_view name) const {
 
 namespace {
 
-// Читач іде рівно так, як `dice::meme::IStream`: розмір об'єкта головніший
-// за таблицю полів, і зайти за нього не можна.
+// The reader goes exactly as `dice::meme::IStream` does: an object's size
+// outranks the field table, and it must not be run past.
 class Reader {
  public:
   Reader(const std::vector<std::byte>& data, std::vector<Object>& objects,
@@ -120,7 +120,7 @@ class Reader {
     return version;
   }
 
-  // Корінь читається інакше: лише номер класу, без розміру.
+  // The root is read differently: only the class number, no size.
   int root() {
     Object object;
     object.klass = word();
@@ -133,7 +133,7 @@ class Reader {
  private:
   bool need(std::size_t bytes) {
     if (at_ + bytes > data_.size()) {
-      fail("файл коротший, ніж каже розмір");
+      fail("the file is shorter than the size says");
       return false;
     }
     return true;
@@ -181,7 +181,7 @@ class Reader {
     return text;
   }
 
-  // Рядок у класовому потоці — це номер у словнику.
+  // A string in a class stream is an index into the dictionary.
   std::string word() {
     const std::uint16_t index = ushort();
     if (index == 0 || index >= words_.size()) return {};
@@ -213,8 +213,8 @@ class Reader {
       return out;
     }
     if (kind == Kind::List) {
-      // Лічильника в списку немає: об'єкти йдуть підряд, а край дає
-      // розмір самого власника.
+      // A list has no counter: the objects run back to back, and the end comes
+      // from the owner's own size.
       while (limit_ != 0 && at_ + 8 <= limit_ && !failed_) {
         const int child = object();
         if (child >= 0) out.list.push_back(child);
@@ -225,17 +225,17 @@ class Reader {
       out.object = object();
       return out;
     }
-    fail("поле невідомої ширини");
+    fail("a field of unknown width");
     return out;
   }
 
-  // Вкладений об'єкт: розмір, ім'я, клас, поля.
+  // A nested object: size, name, class, fields.
   int object() {
     const std::size_t start = at_;
     const std::uint32_t size = ulong();
     if (failed_) return -1;
     if (size < 8 || start + size > data_.size()) {
-      fail("розмір об'єкта виходить за файл");
+      fail("the object's size runs past the file");
       return -1;
     }
     Object object;
@@ -249,8 +249,8 @@ class Reader {
       limit_ = start + size;
       body(index, objects_[static_cast<std::size_t>(index)].klass);
       limit_ = outer;
-      // Розмір ховає неповну таблицю полів: він дозволяє пропустити
-      // хвіст. Тому звіряємо, скільки лишилося непрочитаним.
+      // The size hides an incomplete field table: it allows the tail to be
+      // skipped. So we check how much was left unread.
       const std::size_t end = start + size;
       if (at_ < end) {
         const std::string& klass = objects_[static_cast<std::size_t>(index)].klass;
@@ -309,7 +309,7 @@ bool File::load(const std::vector<std::byte>& data, std::string* error) {
   Reader reader(data, objects_, words_, unknown_, short_);
   version_ = reader.header();
   if (version_.rfind("MemeFile", 0) != 0) {
-    if (error != nullptr) *error = "не MemeFile: " + version_;
+    if (error != nullptr) *error = "not a MemeFile: " + version_;
     return false;
   }
   root_ = reader.root();
@@ -319,7 +319,7 @@ bool File::load(const std::vector<std::byte>& data, std::string* error) {
   }
   if (reader.position() != data.size()) {
     if (error != nullptr) {
-      *error = "лишилося " + std::to_string(data.size() - reader.position()) + " байтів";
+      *error = std::to_string(data.size() - reader.position()) + " bytes left over";
     }
     return false;
   }

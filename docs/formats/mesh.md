@@ -1,108 +1,114 @@
-# Меші: `.staticmesh` / `.bundledmesh` / `.skinnedmesh`
+# Meshes: `.staticmesh` / `.bundledmesh` / `.skinnedmesh`
 
-Статус: **реалізовано** — `src/mesh`. Розібрано **1635 з 1635** мешів BF2 1.5
-(1105 static, 506 bundled, 24 skinned), 8.94 млн вершин, 2.22 млн трикутників
-у lod0. Жодної помилки.
+Status: **implemented** — `src/mesh`. **1635 of BF2 1.5's 1635** meshes
+parse (1105 static, 506 bundled, 24 skinned), 8.94 M vertices, 2.22 M
+triangles in lod0. Not a single error.
 
-Джерело розкладки: [Project Dalian](https://github.com/chronic8000/ProjectDalian)
-(MIT, `engine/formats/mesh`) та [BfMeshView](http://www.bytehazard.com/bfstuff/bfmeshview/).
-Реалізація власна — з перевіркою меж на кожному читанні.
+Source of the layout: [Project Dalian](https://github.com/chronic8000/ProjectDalian)
+(MIT, `engine/formats/mesh`) and
+[BfMeshView](http://www.bytehazard.com/bfstuff/bfmeshview/). The
+implementation is our own — with bounds checks on every read.
 
-## Одне сімейство, три розширення
+## One family, three extensions
 
-Усі три формати — той самий контейнер; тип **неможливо визначити з вмісту**,
-лише з розширення файлу. Різниця зводиться до кількох гілок:
+All three formats are the same container; the type **cannot be determined
+from the contents**, only from the file extension. The difference comes
+down to a few branches:
 
 | | static | bundled | skinned |
 |---|---|---|---|
-| `alphaMode` у матеріалі | є | є | **нема** |
-| вузли (матриці) у lod | є | лічильник є, матриць **нема** | нема |
-| rig-и з кістками | нема | нема | є |
-| `u2` після індексів | є | є | **нема** |
-| `bounds` матеріалу (v11) | є | є | нема |
+| `alphaMode` in the material | yes | yes | **no** |
+| nodes (matrices) in a lod | yes | the counter is there, the matrices **are not** | no |
+| bone rigs | no | no | yes |
+| `u2` after the indices | yes | yes | **no** |
+| material `bounds` (v11) | yes | yes | no |
 
-У BundledMesh трансформи частин (башта, ствол, колеса) лежать не в меші, а в
-`.con` (`geometryPart`) — тому лічильник вузлів є, а матриць нема.
+In a BundledMesh the part transforms (turret, barrel, wheels) live not in
+the mesh but in the `.con` (`geometryPart`) — hence a node counter with no
+matrices.
 
-## Порядок читання (little-endian)
+## Read order (little-endian)
 
 ```
 Header      u32 u1, u32 version, u32 u3, u32 u4, u32 u5
-u8          маркер гри (1 = Battlefield Play4Free)
+u8          game marker (1 = Battlefield Play4Free)
 u32         geomCount
-  u32         lodCount           ← лише лічильники; самі lod-и в кінці файлу
+  u32         lodCount           ← counters only; the lods themselves are at the end of the file
 u32         attributeCount
   u16 flag, u16 offset, u16 vartype, u16 usage
-u32         vertexFormat         ← розмір компонента, завжди 4
-u32         vertexStride         ← байтів на вершину
+u32         vertexFormat         ← component size, always 4
+u32         vertexStride         ← bytes per vertex
 u32         vertexCount
 float[]     vertexCount * stride/format
 u32         indexCount
 u16[]       indexCount
-u32         u2                   ← крім skinned
-для кожного geom, для кожного lod:
+u32         u2                   ← except skinned
+for each geom, for each lod:
   float3 min, float3 max
-  float3 pivot                   ← лише version <= 6
-  skinned: u32 rigCount, для кожного: u32 boneCount, {u32 id, float[16]}[]
-  інакше: u32 nodeCount, float[16][nodeCount]   ← матриці лише в static
-для кожного geom, для кожного lod:
+  float3 pivot                   ← version <= 6 only
+  skinned: u32 rigCount, for each: u32 boneCount, {u32 id, float[16]}[]
+  otherwise: u32 nodeCount, float[16][nodeCount]   ← matrices only in static
+for each geom, for each lod:
   u32 materialCount
-    u32 alphaMode                ← крім skinned
-    string fxFile, string technique      (string = u32 довжина + байти)
+    u32 alphaMode                ← except skinned
+    string fxFile, string technique      (string = u32 length + bytes)
     u32 mapCount, string maps[]
     u32 vertexStart, indexStart, indexCount, vertexCount
     u32 nodeIndex, u16 u5, u16 u6
-    float3 boundsMin, float3 boundsMax   ← лише version == 11 і не skinned
+    float3 boundsMin, float3 boundsMax   ← version == 11 only, and not skinned
 ```
 
-Ключова несподіванка: **таблиці geom/lod розділені**. На початку файлу лежать
-самі лічильники, а вміст lod-ів — аж наприкінці, двома окремими проходами
-(спершу всі вузли, потім усі матеріали). Читати їх треба саме в такому порядку.
+The key surprise: **the geom/lod tables are split**. Only the counters sit
+at the start of the file, while the lods' contents come right at the end,
+in two separate passes (all the nodes first, then all the materials). They
+have to be read in exactly that order.
 
-## Атрибути вершин
+## Vertex attributes
 
-`usage` — це `D3DDECLUSAGE` з DirectX 9: `0` = POSITION, `3` = NORMAL,
-`5` = TEXCOORD, `6` = TANGENT. `flag != 0` (у файлах трапляється 255) означає
-вимкнений канал — такі атрибути треба пропускати, інакше зсуви поїдуть.
+`usage` is DirectX 9's `D3DDECLUSAGE`: `0` = POSITION, `3` = NORMAL,
+`5` = TEXCOORD, `6` = TANGENT. `flag != 0` (255 occurs in the files) means
+a disabled channel — such attributes must be skipped or the offsets slide.
 
-`usage` кодує ще й номер каналу: `0x105` — це TEXCOORD1, `0x205` — TEXCOORD2
-(запечена лайтмапа). TEXCOORD0 — просто `5`; для геометрії досить його.
+`usage` also encodes the channel number: `0x105` is TEXCOORD1, `0x205` is
+TEXCOORD2 (the baked light map). TEXCOORD0 is plain `5`; for geometry that
+is enough.
 
-**BLENDINDICES (`usage = 2`) має `vartype = 4`, тобто D3DCOLOR** — чотири
-байти в одному float-слоті, а не число. У BundledMesh молодший байт це номер
-частини (`geometryPart`), за яким техніка збирається докупи — див.
+**BLENDINDICES (`usage = 2`) has `vartype = 4`, that is D3DCOLOR** — four
+bytes in one float slot, not a number. In a BundledMesh the low byte is
+the part number (`geometryPart`) by which a vehicle is assembled — see
 [vehicle-assembly.md](vehicle-assembly.md).
 
-Індекси в матеріалі відлічуються **від `vertexStart` цього матеріалу**, а не від
-початку буфера — при розпакуванні їх треба зводити до абсолютних.
+A material's indices are counted **from that material's `vertexStart`**,
+not from the start of the buffer — they have to be made absolute when
+unpacking.
 
-## Обхід трикутників
+## Triangle winding
 
-Проти годинникової стрілки. Виміряно на всіх 2 218 586 трикутниках гри:
-геометрична нормаль збігається з нормалями вершин у 99.66% випадків. Тому
-відсікання задніх граней увімкнене.
+Counter-clockwise. Measured over all 2 218 586 triangles in the game: the
+geometric normal agrees with the vertex normals in 99.66 % of cases. So
+back-face culling is on.
 
-## Безпека
+## Safety
 
-Файли приходять з архівів користувача, тому парсер побудований навколо читача
-з перевіркою меж: будь-яке читання за межі переводить його в стан помилки
-назавжди, а кожен лічильник звіряється з тим, скільки байтів фізично лишилося
-у файлі. Тести перевіряють обидва випадки — обрізаний файл на кожному зсуві
-й підмінений лічильник `0xFFFFFFFF`.
+The files come from the user's archives, so the parser is built around a
+bounds-checked reader: any read past the end puts it into an error state
+for good, and every counter is checked against how many bytes are
+physically left in the file. The tests cover both cases — a file truncated
+at every offset, and a counter replaced with `0xFFFFFFFF`.
 
-## Перевірка
+## Checking
 
 ```bash
 ./build/macos-arm64-debug/tools/mesh_info/mesh_info "Game Files/mods/bf2" --all
 ```
 
-Один меш докладно:
+One mesh in detail:
 
 ```bash
 ./build/macos-arm64-debug/tools/mesh_info/mesh_info "Game Files/mods/bf2" \
   objects/water/meshes/waterplane_128.staticmesh
 ```
 
-Показує 4 вершини, 2 трикутники, bbox `-64/0/-64 .. 64/0/64` — саме
-128×128 площина води, як і має бути. Зручний спосіб переконатися, що парсер
-не бреше.
+It shows 4 vertices, 2 triangles, bbox `-64/0/-64 .. 64/0/64` — exactly a
+128×128 water plane, as it should be. A handy way to be sure the parser is
+not lying.

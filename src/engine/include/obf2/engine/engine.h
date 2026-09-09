@@ -1,18 +1,18 @@
 #pragma once
-// Стан рушія від запуску до меню.
+// The engine's state from startup to the menu.
 //
-// Порядок узятий з оригіналу: спершу читаються налаштування, потім
-// програються заставки, потім показується головне меню. Логіку повторюємо
-// 1:1, а от **технології — ні**:
+// The order is taken from the original: first the settings are read, then the
+// intro movies play, then the main menu is shown. We reproduce the logic 1:1,
+// but **not the technologies**:
 //
-//   * заставки BF2 — це Bink (`Movies/*.bik`, 138 МБ на саме інтро),
-//     програються через binkw32.dll;
-//   * меню — Macromedia Flash, який рушій крутить своїм FSMoviePlayer
-//     (`dice.hfe.geom.FSMoviePlayer` у таблиці рядків).
+//   * BF2's intros are Bink (`Movies/*.bik`, 138 MB for the intro alone),
+//     played through binkw32.dll;
+//   * the menu is Macromedia Flash, which the engine runs with its FSMoviePlayer
+//     (`dice.hfe.geom.FSMoviePlayer` in the string table).
 //
-// Відтворювати ні Bink, ні Flash ми не будемо: це велика робота заради
-// технологій 2005 року. Стани, переходи, налаштування й порядок читання
-// файлів лишаються ті самі, а показ — наш власний.
+// We are not going to reproduce Bink; the menu is played by Ruffle
+// (`src/flash`, docs/research/11-ruffle-menu.md). The states, the transitions,
+// the settings and the order files are read in stay the same.
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -26,48 +26,48 @@
 namespace obf2::engine {
 
 enum class State {
-  Boot,      // читання налаштувань
-  Intro,     // заставки EA / DICE / Intro
-  MainMenu,  // головне меню
-  Loading,   // завантаження рівня
+  Boot,      // reading the settings
+  Intro,     // the EA / DICE / Intro movies
+  MainMenu,  // the main menu
+  Loading,   // loading a level
   InGame,
 };
 
 std::string_view stateName(State state);
 
-// Одна заставка зі стартового ланцюжка.
+// One movie from the startup chain.
 struct Movie {
   std::string path;
   std::size_t sizeBytes = 0;
 };
 
-// Рівень у списку меню. Назву беремо з Info/<ім'я>.desc, як і гра.
+// A level in the menu's list. The name comes from Info/<name>.desc, as in the game.
 struct LevelEntry {
-  std::string directory;   // ім'я теки: Dalian_plant
-  std::string displayName; // <name> з .desc
-  std::string loadImage;   // Info/loadmap.png, якщо є
-  std::string briefingKey; // locid із <briefing> — опис на екрані завантаження
+  std::string directory;   // the directory's name: Dalian_plant
+  std::string displayName; // <name> from the .desc
+  std::string loadImage;   // Info/loadmap.png, if present
+  std::string briefingKey; // the locid from <briefing> — the loading screen's description
 };
 
 class Engine {
  public:
-  // Виконує стартовий ланцюжок .con у тому ж порядку, що й гра.
+  // Runs the startup chain of .con files in the same order as the game.
   bool boot(FileSystem& files, const std::filesystem::path& modDir);
 
-  // Тільки словник, без решти завантаження. Потрібен і в бою: підписи
-  // HUD — це ключі локалізації, і без словника на екрані видно самі
-  // ключі замість тексту.
+  // The dictionary only, without the rest of the loading. Needed in a battle
+  // too: the HUD's labels are localisation keys, and without the dictionary the
+  // keys themselves show on screen instead of text.
   void loadLexicon(FileSystem& files);
 
   void update(float deltaSeconds);
 
-  // Перехід до завантаження рівня — як вибір карти в меню.
+  // The transition to loading a level — like picking a map in the menu.
   bool startLoading(std::string_view levelDirectory);
   void finishLoading();
 
-  // Пропустити поточну заставку — як пробіл у грі.
+  // Skip the current movie — like the space bar in the game.
   void skipMovie();
-  // Пропустити всі заставки одразу (потрібно для детермінованих знімків).
+  // Skip every movie at once (needed for deterministic screenshots).
   void skipAllMovies();
 
   State state() const { return state_; }
@@ -96,7 +96,7 @@ class Engine {
   std::vector<LevelEntry> levels_;
   loc::Lexicon lexicon_;
   int loadingIndex_ = -1;
-  std::vector<std::string> bootFiles_;  // які .con реально прочиталися
+  std::vector<std::string> bootFiles_;  // which .con files actually were read
   int currentMovie_ = -1;
   float movieElapsed_ = 0.0f;
 };

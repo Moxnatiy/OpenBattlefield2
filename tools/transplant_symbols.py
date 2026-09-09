@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Переносить імена функцій із Linux-сервера в BF2.exe.
+"""Carries the function names over from the Linux server into BF2.exe.
 
     tools/transplant_symbols.py > docs/reference/bf2exe-symbols.txt
 
-У BF2.exe немає символів — усі функції звуться FUN_xxxxxx. Але в обох
-бінарях є ті самі перевірки `Debug`, і кожна несе **шлях до вихідного
-файлу й номер рядка**. У Linux-сервері поруч із такою перевіркою відомо
-й ім'я функції, бо там символи повні. Отже пара «файл + рядок» — це
-місток: та сама пара в BF2.exe вказує на ту саму функцію.
+BF2.exe has no symbols — every function is called FUN_xxxxxx. But both
+binaries carry the same `Debug` checks, and each one holds **the path to the
+source file and a line number**. In the Linux server the function's name is
+known next to such a check too, because the symbols there are full. So the
+pair "file + line" is a bridge: the same pair in BF2.exe is the same function.
 
-Це прибирає найдорожче в роботі з клієнтом: замість шукати функцію по
-рядках і здогадах, ми одразу знаємо, як вона зветься в коді.
+This removes the most expensive part of working with the client: instead of
+hunting for a function by strings and guesses, we know what it is called.
 
-Обидва боки читаються локально через objdump: він бере і ELF, і PE.
-У Linux-сервері адреса рядка вантажиться абсолютним числом у `%esi`, а
-номер — у `%ecx`; у BF2.exe і те, і те кладеться на стек через `pushl`.
+Both sides are read locally through objdump: it takes both ELF and PE. In the
+Linux server the string's address is loaded as an absolute number into `%esi`
+and the number into `%ecx`; in BF2.exe both are pushed onto the stack.
 """
 import os
 import re
@@ -27,7 +27,7 @@ LINUX = os.environ.get(
     os.path.join(ROOT, "Game Files/OtherFiles/linuxded-full/bin/amd-64/bf2"))
 
 DEBUG_CTOR = "DebugC1"          # dice::hfe::Debug::Debug(DebugType, string&, int, string&)
-# Бінар не PIE, тож адреса рядка вантажиться абсолютним числом.
+# The binary is not PIE, so the string's address is loaded as an absolute number.
 STRING_ARG = re.compile(r"movl\s+\$0x([0-9a-f]+),\s*%esi")
 LINE_IMM = re.compile(r"movl\s+\$0x([0-9a-f]+),\s*%ecx")
 FUNC = re.compile(r"^0*([0-9a-f]+) <(.+)>:")
@@ -35,7 +35,7 @@ INSTR = re.compile(r"^\s*([0-9a-f]+):\s+(.*)$")
 
 
 def source_strings(path):
-    """Адреса -> шлях до вихідного файлу для всіх таких рядків у бінарі."""
+    """An address -> the source file path, for every such string in the binary."""
     import struct
 
     data = open(path, "rb").read()
@@ -59,7 +59,7 @@ def source_strings(path):
 
 
 def linux_asserts():
-    """(файл, рядок) -> ім'я функції, зібране з коду Linux-сервера."""
+    """(file, line) -> the function name, gathered from the Linux server's code."""
     strings = source_strings(LINUX)
     text = subprocess.run(["objdump", "-d", "--no-show-raw-insn", LINUX],
                           capture_output=True, text=True).stdout
@@ -96,14 +96,14 @@ def linux_asserts():
     return found
 
 
-# BF2_r.exe — складання з налагодженням: те саме, але перевірок утричі
-# більше, тож і збігів виходить більше. Перемикається через BF2_PE.
+# BF2_r.exe is a checked build: the same thing, but with three times as many
+# checks, so there are more matches too. Switched on with BF2_PE.
 WINDOWS = os.environ.get("BF2_PE", os.path.join(ROOT, "Game Files/BF2.exe"))
 PUSH_IMM = re.compile(r"pushl\s+\$0x([0-9a-f]+)")
 
 
 def pe_source_strings(path):
-    """Адреса -> шлях до вихідного файлу для PE-образу."""
+    """An address -> the source file path, for a PE image."""
     import struct
 
     data = open(path, "rb").read()
@@ -130,13 +130,13 @@ def pe_source_strings(path):
 
 
 def windows_asserts():
-    """(файл, рядок) -> адреса перевірки в BF2.exe."""
+    """(file, line) -> the address of the check in BF2.exe."""
     strings = pe_source_strings(WINDOWS)
     text = subprocess.run(["objdump", "-d", "--no-show-raw-insn", WINDOWS],
                           capture_output=True, text=True).stdout
 
     out = {}
-    pending = None       # (файл, скільки інструкцій тому побачили)
+    pending = None       # (file, how many instructions ago it was seen)
     for raw in text.splitlines():
         m = INSTR.match(raw)
         if not m:
@@ -154,7 +154,7 @@ def windows_asserts():
         if name:
             pending = (basename(name), 0)
             continue
-        # Номер рядка: невелике число невдовзі після адреси файлу.
+        # The line number: a small number shortly after the file's address.
         if pending and 0 < value < 100000:
             out.setdefault((pending[0], value), at)
             pending = None
@@ -162,32 +162,32 @@ def windows_asserts():
 
 
 def basename(path):
-    """Останній складник шляху. Windows-шляхи йдуть із зворотними скісними,
-    і `os.path.basename` на macOS їх не розрізає."""
+    """The last part of a path. Windows paths come with backslashes, and
+    `os.path.basename` does not cut them on macOS."""
     return re.split(r"[\\/]", path)[-1]
 
 
 def as_identifier(name):
-    """Ім'я, придатне для Ghidra: без дужок, двокрапок і пробілів."""
+    """A name fit for Ghidra: no brackets, colons or spaces."""
     head = name.split("(")[0]
     head = head.replace("dice::hfe::", "").replace("::", "_")
     return re.sub(r"[^A-Za-z0-9_]", "_", head)
 
 
 def print_source_map():
-    """Адреса перевірки -> вихідний файл і рядок, без Linux-сервера.
+    """The address of a check -> the source file and line, with no Linux server.
 
-    Має сенс саме для `BF2_r.exe`: це збірка з відлагоджувальними
-    перевірками, і їх там 3111 проти 335 у звичайному клієнті, з 448
-    різних вихідних файлів. Імені функції вона не дає, але дає, з якого
-    файлу код, — а цього часто досить, щоб знайти потрібну функцію:
-    «читання стану простого об'єкта» лежить у `SimpleObjectNetworkable.cpp`
-    і більше ніде.
+    It makes sense for `BF2_r.exe` in particular: that is a build with the
+    debug checks in it, and there are 3111 of them there against 335 in the
+    ordinary client, out of 448 distinct source files. It does not give the
+    function's name, but it does give which file the code is from — and that
+    is often enough to find the function wanted: "reading a simple object's
+    state" lies in `SimpleObjectNetworkable.cpp` and nowhere else.
     """
     windows = windows_asserts()
-    print("# Перевірки Debug у %s: адреса -> вихідний файл і рядок." % WINDOWS)
-    print("# Знято tools/transplant_symbols.py --source-map.")
-    print("# Усього перевірок: %d, різних файлів: %d"
+    print("# Debug checks in %s: address -> source file and line." % WINDOWS)
+    print("# Taken by tools/transplant_symbols.py --source-map.")
+    print("# Checks in total: %d, distinct files: %d"
           % (len(windows), len({name for name, _ in windows})))
     print()
     for (name, line), address in sorted(windows.items(), key=lambda kv: kv[1]):
@@ -199,29 +199,29 @@ def main():
         print_source_map()
         return
     table = linux_asserts()
-    print("# Перевірки Debug у Linux-сервері: файл, рядок, функція.")
-    print("# Пара «файл + рядок» однакова в BF2.exe, тож за нею можна")
-    print("# називати тамтешні FUN_xxxxxx. Знято tools/transplant_symbols.py.")
+    print("# Debug checks in the Linux server: file, line, function.")
+    print("# The pair \"file + line\" is the same in BF2.exe, so the FUN_xxxxxx")
+    print("# there can be named by it. Taken by tools/transplant_symbols.py.")
     windows = windows_asserts()
     matched = {key: (windows[key], table[key]) for key in table if key in windows}
 
-    print("# Перевірок у Linux-сервері: %d, у BF2.exe: %d, збіглося: %d"
+    print("# Checks in the Linux server: %d, in BF2.exe: %d, matched: %d"
           % (len(table), len(windows), len(matched)))
     print()
     seen = {}
     for (name, line), (address, func) in sorted(matched.items(), key=lambda kv: kv[1][0]):
         seen.setdefault(func, address)
-    # Демангл через c++filt: читати `_ZN4dice3hfe...` руками немає потреби.
+    # Demangling through c++filt: no need to read `_ZN4dice3hfe...` by hand.
     names = list(seen)
     pretty = subprocess.run(["c++filt"], input="\n".join(names), capture_output=True,
                             text=True).stdout.splitlines()
     readable = dict(zip(names, pretty)) if len(pretty) == len(names) else {}
 
     if "--script" in sys.argv:
-        # Скрипт для Ghidra: перейменувати все за раз, а не сотнями викликів.
-        print("# Згенеровано tools/transplant_symbols.py --script")
-        print("# Запуск: у Ghidra через Script Manager, або headless:")
-        print("#   analyzeHeadless <проєкт> OpenBF2 -process BF2.exe \\")
+        # A script for Ghidra: rename everything at once, not in hundreds of calls.
+        print("# Generated by tools/transplant_symbols.py --script")
+        print("# To run: in Ghidra through the Script Manager, or headless:")
+        print("#   analyzeHeadless <project> OpenBF2 -process BF2.exe \\")
         print("#     -postScript apply_symbols.py")
         print("from ghidra.program.model.symbol import SourceType")
         print("fm = currentProgram.getFunctionManager()")
@@ -236,11 +236,11 @@ def main():
         print("    if fn is not None:")
         print("        fn.setName(name, SourceType.USER_DEFINED)")
         print("        done += 1")
-        print("print('перейменовано %d із %d' % (done, len(names)))")
+        print("print('renamed %d of %d' % (done, len(names)))")
         return
 
-    print("# адреса перевірки в BF2.exe -> функція з Linux-сервера")
-    print("# (адреса вказує всередину функції, не на її початок)")
+    print("# the address of a check in BF2.exe -> the function from the Linux server")
+    print("# (the address points inside the function, not at its start)")
     for func, address in sorted(seen.items(), key=lambda kv: kv[1]):
         print("0x%08x  %s" % (address, readable.get(func, func)))
 

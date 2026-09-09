@@ -1,8 +1,8 @@
-# Система координат: рушій лівосторонній
+# The coordinate system: the engine is left-handed
 
-## Як з'ясували
+## How we found out
 
-`RendDX9.dll` (рендер BF2) імпортує рівно ці функції D3DX:
+`RendDX9.dll` (BF2's renderer) imports exactly these D3DX functions:
 
 ```
 D3DXMatrixLookAtLH
@@ -12,39 +12,41 @@ D3DXMatrixOrthoOffCenterLH
 D3DXMatrixRotationYawPitchRoll
 ```
 
-Жодної `*RH` там немає. Refractor 2 — рушій під DirectX 9, і система
-координат у нього **ліва**: X праворуч, Y вгору, **Z у глибину екрана**.
+Not a single `*RH` among them. Refractor 2 is a DirectX 9 engine and its
+coordinate system is **left-handed**: X right, Y up, **Z into the
+screen**.
 
-## Чому це давало дзеркальний світ
+## Why that gave us a mirrored world
 
-Наш конвеєр був правостороннім і сам по собі несуперечливим, тож глибина,
-відсікання й туман працювали. Але напрям «вправо» будується по-різному:
+Our pipeline was right-handed and self-consistent, so depth, culling and
+fog all worked. But "right" is built differently:
 
-| | вісь екрана вправо |
+| | the screen's right axis |
 |---|---|
 | `D3DXMatrixLookAtLH` | `cross(up, forward)` |
-| правостороння `lookAt` | `cross(forward, up)` |
+| right-handed `lookAt` | `cross(forward, up)` |
 
-Це рівно протилежні вектори. За тих самих даних і тієї самої камери
-правосторонній конвеєр дає **горизонтально віддзеркалений кадр**. Ліве й
-праве міняються місцями в усьому світі одразу — і саме так це й виглядало.
+Those are exactly opposite vectors. With the same data and the same
+camera, a right-handed pipeline produces a **horizontally mirrored
+frame**. Left and right swap across the whole world at once — and that is
+exactly how it looked.
 
-## Що змінили
+## What we changed
 
-- `perspective` — за формулою `PerspectiveFovLH` (`m[11] = +1`, глибина
-  лишається в діапазоні [0,1], як і треба Metal/D3D);
-- `lookAt` — за `LookAtLH`: `s = cross(up, f)`, третій рядок `+f`;
-- лицьовий обхід трикутників у пайплайні — **за годинниковою стрілкою**:
-  дані мешів не змінилися, змінився бік, з якого ми на них дивимось;
-- нульовий кут повороту тепер дивиться вздовж **+Z** — і в камері, і в
-  русі на сервері.
+- `perspective` — by the `PerspectiveFovLH` formula (`m[11] = +1`, depth
+  stays in the [0,1] range, as Metal/D3D want);
+- `lookAt` — by `LookAtLH`: `s = cross(up, f)`, third row `+f`;
+- the pipeline's front-face winding — **clockwise**: the mesh data did not
+  change, the side we look at them from did;
+- a zero rotation now looks along **+Z**, both in the camera and in
+  movement on the server.
 
-Останнє теж не здогадка: у даних рівня авіаносець стоїть із нульовим
-поворотом, і його носова частина (`us_carrier_wasp_front`) має **більший**
-Z, ніж кормова (`us_carrier_wasp_back`). Отже перед моделі — це +Z.
+The last one is not a guess either: in the level's data the carrier stands
+at zero rotation, and its bow (`us_carrier_wasp_front`) has a **larger** Z
+than the stern (`us_carrier_wasp_back`). So the model's front is +Z.
 
-## Що лишилось перевірити окремо
+## What was checked separately
 
-Повороти об'єктів (`rotationYawPitchRoll`) уже збігалися з
-`D3DXMatrixRotationYawPitchRoll`: наша матриця — це та сама матриця,
-транспонована під множення на вектор-стовпець.
+Object rotations (`rotationYawPitchRoll`) already matched
+`D3DXMatrixRotationYawPitchRoll`: our matrix is the same one, transposed
+for multiplication by a column vector.

@@ -1,38 +1,38 @@
-# Стани HUD
+# HUD states
 
-`hudBuilder` тільки будує дерево, а вирішує, що з нього видно, окрема
-машина станів у коді. Це відповідь на питання «чому екран появи в грі
-не тримають клавішею»: він не прив'язаний до клавіші взагалі — це
-**стан**.
+`hudBuilder` only builds the tree; what of it is visible is decided by a
+separate state machine in code. That is the answer to "why isn't the spawn
+screen in the game held down with a key": it is not bound to a key at all —
+it is a **state**.
 
-## Де вона
+## Where it is
 
-Дві функції в BF2.exe працюють через таблиці переходів на 32 позиції:
+Two functions in BF2.exe work through 32-entry jump tables:
 
-* `0x7862ce` — бере стан віртуальним викликом `*0x1e4(%edx)`, таблиця
+* `0x7862ce` — takes the state through the virtual call `*0x1e4(%edx)`, table
   `0x786f88`;
-* `0x786751` — бере стан аргументом, таблиця `0x787008`.
+* `0x786751` — takes the state as an argument, table `0x787008`.
 
-Кожен обробник — довгий ланцюжок однакових трійок:
+Every handler is a long chain of identical triples:
 
 ```
-push  $0 або $1          значення
-sub   $0x1c, %esp        будує рядок
-push  $0x89f194          ім'я змінної
-call  *0x87f46c          конструктор рядка
-call  *0xc(%ebx)         setVariable(ім'я, значення)
+push  $0 or $1           the value
+sub   $0x1c, %esp        builds the string
+push  $0x89f194          the variable's name
+call  *0x87f46c          the string constructor
+call  *0xc(%ebx)         setVariable(name, value)
 ```
 
-Обробники стоять один за одним і **провалюються** далі: кожен вхід
-вимикає все, що нижче за ним, а потім вмикає своє. Тому 32 позиції
-таблиці дають лише 24 різні входи.
+The handlers stand one after another and **fall through**: every entry turns
+off everything below it and then turns on its own. That is why the table's 32
+entries give only 24 distinct entry points.
 
-## Таблиця
+## The table
 
-Знята з бінара скриптом `tools/hud_states.py` (він читає таблицю переходів
-і розбирає ланцюжки блоків), а не переписана з рук:
+Taken from the binary by the script `tools/hud_states.py` (it reads the jump
+table and takes the block chains apart), not retyped by hand:
 
-| стан | обробник | вмикає | гасить |
+| state | handler | turns on | turns off |
 |---|---|---|---|
 | 0 | 0x786761 | `ShowIngameHud`, `MapShow`, `MapBorderShow` | 4: `ScoreboardShow`, `SpawnShow`, `CommanderInterfaceShow`, `CommanderShow` |
 | 1 | 0x78683e | `ShowIngameHud`, `MapBorderAlternateShow`, `SpawnShow`, `KitsShow`, `MapMenuShow` | 2: `ScoreboardShow`, `MembersShow` |
@@ -44,11 +44,11 @@ call  *0xc(%ebx)         setVariable(ім'я, значення)
 | 7 | 0x786a1c | `SquadLeaderInterfaceShow` | 0: — |
 | 8 | 0x786a3e | `CommanderInterfaceShow` | 0: — |
 | 9 | 0x786adf | `ScoreboardShow`, `LevelsListShow` | 0: — |
-| 10 | 0x786f59 | *(порожній)* | |
+| 10 | 0x786f59 | *(empty)* | |
 | 11 | 0x786b09 | `SetupShow` | 21: `ShowIngameHud`, `SpawnShow`, `RadioInterfaceShow`, `SpottedInterfaceShow`, `RadioVehicleInterfaceShow`, `SquadInterfaceShow`, `SquadLeaderInterfaceShow`, `CommanderInterfaceShow`, `MapMenuShow`, `SquadLeaderMenuShow`, `CommanderMenuShow`, `ChoiceMenuShow`, `CommanderRadioShow`, `ScoreboardShow`, `LevelsListShow`, `RenameSquadShow`, `VictoryShow`, `VictoryRankShow`, `VoipListShow`, `InviteListShow`, `CommanderShow` |
-| 12 | 0x786f59 | *(порожній)* | |
-| 13 | 0x786f59 | *(порожній)* | |
-| 14 | 0x786f59 | *(порожній)* | |
+| 12 | 0x786f59 | *(empty)* | |
+| 13 | 0x786f59 | *(empty)* | |
+| 14 | 0x786f59 | *(empty)* | |
 | 15 | 0x786aa4 | `CommanderShow` | 1: `SpawnShow` |
 | 16 | 0x786988 | `CommanderRadioShow` | 0: — |
 | 17 | 0x7869c0 | `MapShow`, `SpawnShow`, `MembersShow` | 1: `KitsShow` |
@@ -56,63 +56,63 @@ call  *0xc(%ebx)         setVariable(ім'я, значення)
 | 19 | 0x786944 | `MapMenuShow` | 0: — |
 | 20 | 0x786955 | `SquadLeaderMenuShow` | 0: — |
 | 21 | 0x786966 | `CommanderMenuShow` | 0: — |
-| 22 | 0x786f59 | *(порожній)* | |
-| 23 | 0x786f59 | *(порожній)* | |
-| 24 | 0x786f59 | *(порожній)* | |
-| 25 | 0x786f59 | *(порожній)* | |
+| 22 | 0x786f59 | *(empty)* | |
+| 23 | 0x786f59 | *(empty)* | |
+| 24 | 0x786f59 | *(empty)* | |
+| 25 | 0x786f59 | *(empty)* | |
 | 26 | 0x786ace | `InviteListShow` | 0: — |
 | 27 | 0x786977 | `ChoiceMenuShow` | 0: — |
-| 28 | 0x786f59 | *(порожній)* | |
+| 28 | 0x786f59 | *(empty)* | |
 | 29 | 0x786d22 | `SetupShow` | 0: — |
 | 30 | 0x786a82 | `DemoCameraInterfaceShow` | 0: — |
 | 31 | 0x786a93 | `DemoRecInterfaceShow` | 0: — |
 
-Позиції 10, 12–14, 22–25 і 28 ведуть до спільного порожнього обробника
-0x786f59.
+Entries 10, 12–14, 22–25 and 28 lead to the shared empty handler 0x786f59.
 
-## Як перехід влаштований насправді
+## How the transition actually works
 
-`HudObject::setState(новий)` — це **0x786260**, і в ній два switch підряд:
+`HudObject::setState(new)` is **0x786260**, and it holds two switches in a
+row:
 
-1. перший — за **поточним** станом (`[0xa10890]->vtbl[0x1e4]()`): гасить
-   те, що показував старий стан;
-2. другий — за **новим** (таблиця 0x787008): вмикає своє.
+1. the first is on the **current** state (`[0xa10890]->vtbl[0x1e4]()`): it
+   turns off what the old state showed;
+2. the second is on the **new** one (table 0x787008): it turns on its own.
 
-Тобто перехід не лишає хвостів не тому, що обробники провалюються, а
-тому, що старий стан спершу прибирає за собою.
+So a transition leaves no tails behind not because the handlers fall through
+but because the old state first cleans up after itself.
 
-**І це не те саме, що «згасити все й увімкнути потрібне».** Більшість
-станів не гасить нічого: стан 2 (велика карта) лише вмикає `MapShow`, а
-`ShowIngameHud` від стану 0 лишається — тому в оригіналі під великою
-картою й далі видно решту HUD. Доти ми гасили все підряд, і на великій
-карті не лишалося навіть самої карти: вона живе під `IngameHud`, а той
-під `ShowIngameHud`.
+**And that is not the same as "turn everything off and turn on what is
+needed".** Most states turn nothing off: state 2 (the big map) only turns on
+`MapShow`, and `ShowIngameHud` from state 0 stays — which is why in the
+original the rest of the HUD is still visible under the big map. Until now we
+turned everything off wholesale, and under the big map not even the map
+itself was left: it lives under `IngameHud`, and that under `ShowIngameHud`.
 
-Стан 11 — окремий: він гасить одразу 21 екран і не вмикає нічого. Це
-«прибрати все».
+State 11 is a case apart: it turns off 21 screens at once and turns on
+nothing. It is "clear everything away".
 
-### Перший switch: що гасить старий стан
+### The first switch: what the old state turns off
 
-Таблиці переходів у нього немає, тож `hud_states.py` його не бачить —
-виписано з розбору самої функції. Перед switch, за будь-якого переходу,
-гасяться `SetupShow` (0x786289), `DemoRecInterfaceShow` (0x7862a2) і
-`DemoCameraInterfaceShow` (0x7862bb).
+It has no jump table, so `hud_states.py` does not see it — this was written
+out from taking the function itself apart. Before the switch, on any
+transition, `SetupShow` (0x786289), `DemoRecInterfaceShow` (0x7862a2) and
+`DemoCameraInterfaceShow` (0x7862bb) are turned off.
 
-| старий стан | гасить |
+| old state | turns off |
 |---|---|
 | 0 | `VoipListShow` |
-| 1 | `SpawnShow`, якщо новий не 9 і не 12 (0x7862ea) |
+| 1 | `SpawnShow`, if the new one is neither 9 nor 12 (0x7862ea) |
 | 2, 10, 13, 14, 22–25, 28 | — |
 | 3 | `SquadInterfaceShow` |
 | 4, 5 | `RadioInterfaceShow`, `RadioVehicleInterfaceShow` (0x786456) |
-| 6 | те саме плюс `SpottedInterfaceShow` (0x78643d) |
+| 6 | the same plus `SpottedInterfaceShow` (0x78643d) |
 | 7 | `SquadLeaderInterfaceShow` |
 | 8 | `CommanderInterfaceShow` |
 | 9, 12 | `ScoreboardShow`, `LevelsListShow`, `ServerInfoSelected` (0x7864be) |
 | 11 | `VictoryShow`, `VictoryRankShow` (0x786501) |
-| 15 | `CommanderShow` — за умовою `[0xa10890]->vtbl[0x1f4]()` (0x78649d), **що це за перевірка, не з'ясовано** |
+| 15 | `CommanderShow` — under the condition `[0xa10890]->vtbl[0x1f4]()` (0x78649d), **what that check is has not been established** |
 | 16 | `CommanderRadioShow` |
-| 17, 18 | `SpawnShow`, якщо новий не 9, 12, 20, 26, 13, 19 (0x78631a) |
+| 17, 18 | `SpawnShow`, if the new one is not 9, 12, 20, 26, 13, 19 (0x78631a) |
 | 19 | `MapMenuShow` |
 | 20 | `SquadLeaderMenuShow`, `InviteListShow` (0x786350) |
 | 21 | `CommanderMenuShow` |
@@ -121,69 +121,86 @@ call  *0xc(%ebx)         setVariable(ім'я, значення)
 | 29 | `SetupShow` |
 | 30 | `DemoCameraInterfaceShow` |
 | 31 | `DemoRecInterfaceShow` |
-| поза 0..31 | `default` (0x78653c…0x786735): прибрати геть усе — 22 змінні |
+| outside 0..31 | `default` (0x78653c…0x786735): clear absolutely everything — 22 variables |
 
-У коді це `hudLeaveStates()` і `applyState(змінні, старий, новий)`.
+In the code that is `hudLeaveStates()` and
+`applyState(variables, old, new)`.
 
-## Похідні змінні: що рушій рахує щокадру
+## Derived variables: what the engine computes every frame
 
-Крім станів, змінні HUD пишуть ще дві функції, і **вони працюють
-щокадру**, а не раз при старті рівня. Саме через них у грі за екраном
-появи не видно ні смуг здоров'я, ні набоїв.
+Besides the states, two more functions write HUD variables, and **they run
+every frame**, not once at level start. It is precisely because of them that
+in the game, behind the spawn screen, neither the health nor the ammo bars
+are visible.
 
-### 0x466930 — розмір карти
+### 0x466930 — the map's size
 
-| Змінна | Звідки |
+| Variable | From |
 |---|---|
-| `MapFullSize` (поле 0x1d7) | `[0xa10890]->vtbl[0x250]()->+0x68c` |
-| `MapMinSize` (0x1d8) | те саме, `+0x68d` |
-| `MapBorderAlternateShow` (0x1d0) | заперечення `MapMinSize` (0x4669ae, `SETZ`) |
+| `MapFullSize` (field 0x1d7) | `[0xa10890]->vtbl[0x250]()->+0x68c` |
+| `MapMinSize` (0x1d8) | the same, `+0x68d` |
+| `MapBorderAlternateShow` (0x1d0) | the negation of `MapMinSize` (0x4669ae, `SETZ`) |
 | `MapFullSizeAndSpawnShow` (0x1da) | `MapFullSize && SpawnShow` (0x466935, 0x466950) |
-| `MapFullSizeAndNotSpawnShow` (0x1d9) | `MapFullSize && !SpawnShow` |
+| `MapFullSizeAndNotSpawnShow` (0x1d9) | `MapFullSize && !SpawnShow && !player->+0x24f` |
 
-Тобто `MapFullSizeAndSpawnShow`, яку ми раніше вмикали «щоб було видно
-DONE», — це не окрема змінна, а просто «і» двох інших.
+So `MapFullSizeAndSpawnShow`, which we used to turn on "so DONE would be
+visible", is not a separate variable but simply an "and" of two others. Since
+it has been computed nobody sets it by hand: checked on the spawn screen —
+the DONE button is in place.
 
-### 0x78d0f0 — бойовий набір за поточним гравцем
+The block at 0x466930 is the beginning of **0x4668d0**, the update function
+of `HudInformationLayer`, and in the whole function one more term is visible:
+`MapFullSizeAndNotSpawnShow` has a third factor, the player's flag
+**+0x24f**, whose purpose is not established. We do not have it.
+
+The field names from here on come from the registry in
+docs/functions/hud-variables.md: it says which variable lives in which field
+(`SpawnShow` — +0x1d2, `MapFullSize` — +0x1d7).
+
+### 0x78d0f0 — the combat set by the current player
 
 ```
-гравець = [0xa08f60]->vtbl[0x30]()
-якщо гравця немає                       -> нічого не чіпати
-якщо !гравець->vtbl[0x68]()             -> 0x78d2d9
-або [0xa10890]->vtbl[0x34c](гравець)    -> 0x78d2d9
-інакше                                  -> 0x78d154: PlayerHealthShow = 1
+player = [0xa08f60]->vtbl[0x30]()
+if there is no player                    -> touch nothing
+if !player->vtbl[0x68]()                 -> 0x78d2d9
+or [0xa10890]->vtbl[0x34c](player)       -> 0x78d2d9
+otherwise                                -> 0x78d154: PlayerHealthShow = 1
 ```
 
-`0x78d2d9` гасить одразу `SquadInfoBarShow` (0x295), `ShowCommanderIcon`
-(0x296), `ShowSquadIcon` (0x297), поле 0xb8, `PlayerHealthShow` (0x24b) і
+`0x78d2d9` turns off at once `SquadInfoBarShow` (0x295), `ShowCommanderIcon`
+(0x296), `ShowSquadIcon` (0x297), field 0xb8, `PlayerHealthShow` (0x24b) and
 `PlayerStaminaShow` (0x245).
 
-`PlayerStaminaShow` до того ж рахується окремо в 0x78acf1 — з порівняння
-самої витривалості (поле 0x1ac) зі сталою: смуга з'являється, коли
-витривалість не повна.
+`PlayerStaminaShow` is on top of that computed separately at 0x78acf1 — from
+comparing the stamina itself (field 0x1ac) against a constant: the bar
+appears when the stamina is not full.
 
-Набої вмикає оновлення зброї: `PrimaryAmmoBarShow` за 0x7a5bae,
-`PrimaryClipsShow` за 0x7a5bb5, `PrimaryAmmoShow` за 0x7a8a18.
+Ammo is turned on by the weapon update: `PrimaryAmmoBarShow` at 0x7a5bae,
+`PrimaryClipsShow` at 0x7a5bb5, `PrimaryAmmoShow` at 0x7a8a18.
 
-## Змінна HUD — це поле об'єкта
+## A HUD variable is a field of an object
 
-Жодного словника змінних у грі немає. Під час запуску `registerVariable`
-прив'язує ім'я до **поля** об'єкта HUD, і рушій далі пише саме в поле.
-Перевантажень чотири: через таблицю віртуальних методів (`[edx+0x10]`) і
-три прямі виклики — 0x466240, 0x4664e0, 0x466630.
+There is no dictionary of variables in the game at all. During startup
+`registerVariable` binds a name to a **field** of the HUD object, and from
+then on the engine writes to the field. There are four overloads: one through
+the virtual method table (`[edx+0x10]`) and three direct calls — 0x466240,
+0x4664e0, 0x466630.
 
-`tools/hud_fields.py` дістає весь перелік із бінара (252 змінні з їхніми
-зсувами), а `--writers` показує ще й місця, де в поле пишуть — сталу чи
-обчислене значення. Саме так знайдено все, що вище.
+`tools/hud_fields.py` pulls the whole list out of the binary (252 variables
+with their offsets), and `--writers` additionally shows the places that write
+into a field — a constant or a computed value. That is exactly how everything
+above was found.
 
-## Що з цього випливає
+## What follows from this
 
-* **Екран появи — це стан 1**, а не утримання Enter. Разом зі `SpawnShow`
-  він вмикає й `KitsShow`: саме тому в грі одразу видно стовпчик класів,
-  і саме тому ми мусили вмикати обидві змінні вручну.
-* **Табло — стан 9**, і воно вмикає ще й `LevelsListShow`.
-* Кожен стан **гасить** усі змінні нижче себе у ланцюжку, тож переходи
-  не лишають хвостів від попереднього екрана.
-* `HudState` із `.con` (`setNodeLogicShowVariable EQUAL HudState 0`) —
-  це та сама величина; у даних вона трапляється лише двічі, бо решту
-  роботи робить не умова у вузлі, а сам перехід стану.
+* **The spawn screen is state 1**, not holding Enter. Together with
+  `SpawnShow` it turns on `KitsShow` too: which is why in the game the kit
+  column is visible right away, and why we had to turn both variables on by
+  hand.
+* **The scoreboard is state 9**, and it also turns on `LevelsListShow`.
+* Every state **turns off** all the variables below it in the chain, so
+  transitions leave no tails from the previous screen.
+* `HudState` from `.con` (`setNodeLogicShowVariable EQUAL HudState 0`) is that
+  same quantity; in the data it occurs only twice, because the rest of the
+  work is done not by a condition in a node but by the state transition
+  itself.

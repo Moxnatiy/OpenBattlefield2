@@ -1,13 +1,13 @@
 #pragma once
-// Світ зіткнень сервера.
+// The server's collision world.
 //
-// Трикутники всіх статичних об'єктів переводяться у світові координати один
-// раз при завантаженні й розкладаються по рівномірній сітці. Перевіряти
-// 2.5 млн трикутників щокадру неможливо, а комірка розміром із кілька
-// метрів лишає на перевірку одиниці.
+// The triangles of every static object are converted into world coordinates once
+// at load time and spread over a uniform grid. Testing 2.5 M triangles every
+// frame is impossible, while a cell a few metres across leaves only a handful
+// to test.
 //
-// Зіткнення саме серверні: у BF2 світом володіє сервер, і саме він вирішує,
-// куди гравець дійшов насправді.
+// Collision is a server matter: in BF2 the server owns the world, and it is the
+// server that decides where the player actually got to.
 #include <cstdint>
 #include <functional>
 #include <unordered_map>
@@ -25,34 +25,34 @@ struct CollisionTriangle {
 
 class CollisionWorld {
  public:
-  // Розмір комірки сітки. 8 метрів — компроміс: дрібніша сітка це більше
-  // пам'яті під індекс, більша — більше зайвих перевірок.
+  // The grid cell's size. 8 metres is a compromise: a finer grid means more
+  // memory for the index, a coarser one more wasted tests.
   explicit CollisionWorld(float cellSize = 8.0f) : cellSize_(cellSize) {}
 
-  // Додає шар зіткнень, перетворений у світові координати.
+  // Adds a collision layer transformed into world coordinates.
   void addLayer(const mesh::CollisionLayer& layer, const Mat4& transform);
 
-  // Виштовхує сферу з геометрії. Повертає, скільки разів довелося
-  // виштовхувати — нуль означає, що шлях вільний.
+  // Pushes a sphere out of the geometry. Returns how many times it had to push —
+  // zero means the way is clear.
   int resolveSphere(Vec3f& position, float radius) const;
 
-  // Найвища поверхня під точкою, на яку солдат може стати. Потрібна, щоб
-  // стояти **на об'єктах**, а не завжди на терені: рушій рахує землю не
-  // тільки з карти висот.
+  // The highest surface under a point that a soldier can stand on. Needed to
+  // stand **on objects** rather than always on the terrain: the engine computes
+  // the ground from more than the height map.
   //
-  // minNormalY — наскільки полога має бути поверхня (`phy-soldier-
-  // feet-contact-normal` = 0.5, тобто нахил до 60°). Повертає false, якщо
-  // під ногами в межах maxDrop нічого немає.
+  // minNormalY is how gentle the surface has to be (`phy-soldier-
+  // feet-contact-normal` = 0.5, that is a slope of up to 60°). Returns false when
+  // there is nothing under the feet within maxDrop.
   bool groundHeight(const Vec3f& from, float maxDrop, float minNormalY, float* outHeight) const;
 
   std::size_t triangleCount() const { return triangles_.size(); }
-  // Скільки трикутників дивиться нормаллю вгору й скільки вниз — щоб
-  // перевірити орієнтацію даних, а не вгадувати її.
+  // How many triangles face up with their normal and how many down — to check
+  // the data's orientation rather than guess it.
   void normalStats(std::size_t* up, std::size_t* down) const;
   std::size_t cellCount() const { return cells_.size(); }
 
  private:
-  // Ключ комірки: три цілі координати, згорнуті в одне число.
+  // A cell's key: three integer coordinates folded into one number.
   static std::uint64_t cellKey(int x, int y, int z);
   void forEachNearby(const Vec3f& position, float radius,
                      const std::function<void(const CollisionTriangle&)>& visit) const;

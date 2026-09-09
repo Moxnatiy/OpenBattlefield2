@@ -1,17 +1,17 @@
 #pragma once
-// Керування: `Settings/Controls.con`.
+// Controls: `Settings/Controls.con`.
 //
-// Це найбільший блок стартових команд — 232 виклики з 314, тому без нього
-// «повноцінний запуск» неможливий. Формат такий:
+// This is the largest block of startup commands — 232 calls of 314 — so without
+// it a "full startup" is impossible. The format is this:
 //
 //   ControlMap.create PlayerInputControlMap
 //   ControlMap.addKeyToTriggerMapping c_PIFire IDFMouse IDMouseButton0
 //   ControlMap.addAxisToAxisMapping   c_PIMouseLookX IDFMouse IDAxis0
 //   ControlMap.mouseSensitivity 0.15
 //
-// Перший аргумент — дія рушія (`c_PI*`), далі пристрій (`IDFMouse`,
-// `IDFKeyboard`) і його елемент. Імена лишаємо як в оригіналі: користувач
-// редагує ці файли сам, і вони мають лишатися сумісними.
+// The first argument is an engine action (`c_PI*`), then the device (`IDFMouse`,
+// `IDFKeyboard`) and its element. The names are kept as in the original: the
+// user edits these files, and they have to stay compatible.
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -20,13 +20,13 @@
 
 namespace obf2::engine {
 
-// Чим саме керує прив'язка. Назви відповідають командам гри.
+// What exactly a binding drives. The names match the game's commands.
 enum class MappingKind {
-  KeyToTrigger,      // клавіша -> дія (стріляти, присісти)
-  ButtonToTrigger,   // кнопка пристрою -> дія
-  AxisToTrigger,     // вісь -> дія
-  AxisToAxis,        // вісь -> вісь (миша на огляд)
-  KeysToAxis,        // пара клавіш -> вісь (W/S на рух уперед-назад)
+  KeyToTrigger,      // key -> action (fire, crouch)
+  ButtonToTrigger,   // a device button -> action
+  AxisToTrigger,     // axis -> action
+  AxisToAxis,        // axis -> axis (the mouse to looking)
+  KeysToAxis,        // a pair of keys -> axis (W/S to forward-back movement)
 };
 
 struct Mapping {
@@ -38,7 +38,7 @@ struct Mapping {
 
 class ControlMap {
  public:
-  // Реєструє обробники ControlMap.* у консолі.
+  // Registers the ControlMap.* handlers in the console.
   void bind(Console& console);
 
   const std::vector<std::string>& maps() const { return maps_; }
@@ -46,7 +46,7 @@ class ControlMap {
   float mouseSensitivity() const { return mouseSensitivity_; }
   bool mouseInvert() const { return mouseInvert_; }
 
-  // Усі прив'язки заданої дії — їх може бути кілька (клавіша плюс кнопка).
+  // Every binding of the given action — there may be several (a key plus a button).
   std::vector<const Mapping*> forAction(std::string_view action) const;
 
   std::size_t size() const { return mappings_.size(); }

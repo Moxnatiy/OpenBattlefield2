@@ -1,16 +1,16 @@
 #!/bin/sh
-# Піднімає оригінальний BF2.exe — для динамічного аналізу.
+# Brings the original BF2.exe up — for dynamic analysis.
 #
-#   tools/bf2_run.sh                       меню
-#   BF2_LEVEL=dalian_plant tools/bf2_run.sh   одразу рівень (свій раунд)
-#   BF2_SERVER=192.168.100.100 tools/bf2_run.sh   до нашого сервера
-#   BF2_RES=1024x768 tools/bf2_run.sh         інша роздільність
-#   BF2_PLAIN=1 tools/bf2_run.sh              через CrossOver, без sidecar
+#   tools/bf2_run.sh                       the menu
+#   BF2_LEVEL=dalian_plant tools/bf2_run.sh   straight into a level (own round)
+#   BF2_SERVER=192.168.100.100 tools/bf2_run.sh   to our server
+#   BF2_RES=1024x768 tools/bf2_run.sh         another resolution
+#   BF2_PLAIN=1 tools/bf2_run.sh              through CrossOver, no sidecar
 #
-# Прапорці взяті не з форумів, а з таблиці в самому BF2.exe — вона там
-# лежить разом із поясненнями:
+# The flags are taken not from forums but from a table in BF2.exe itself — it
+# lies there together with the explanations:
 #
-#   restart      Used when restarting executable.   (пропускає заставки)
+#   restart      Used when restarting executable.   (skips the intro movies)
 #   playerName   Set the player name
 #   loadLevel    Set the level to load
 #   gameMode     Sets the game mode.
@@ -22,25 +22,25 @@
 #   joinServer   Join a server by ip address or hostname
 #   help         Displays this help
 #
-# Чому саме так:
+# Why exactly this way:
 #
-# * ігри тих років рахують у x87, а Rosetta 2 транслює його дуже повільно.
-#   `x87sidecar` замінює цей шматок Rosetta власним JIT-ом, що працює
-#   окремим arm64-процесом. Йому потрібен Wine з рукостисканням —
-#   збірка athei/wine-build (та сама CrossOver 26.3, лише з патчем);
-# * графіка — mtld3d (D3D9 прямо в Metal), зібраний із гілки:
-#   у релізі v0.7.0 текстура не віддає жодного інтерфейсу
-#   (tools/d3d9_qi_test.c), і гра падає. Збірка — tools/mtld3d_build.sh;
-# * стіл має бути **більшим за вікно гри**. Рівно такий, як вікно, не
-#   годиться: заголовок з'їдає 22 пікселі, і гра дістає 800x578 замість
-#   800x600 (або 1024x746 замість 1024x768). HUD від цього пливе — він
-#   розкладений під повну висоту, а малюється в обрізану. Тому скрипт
-#   ставить стіл сам, із запасом: BF2_RES=1024x768 -> стіл 1280x960;
-# * стіл заданий у реєстрі пляшки, а не через `explorer /desktop=`:
-#   той ковтає stderr дитини, і журнал драйвера зникає. Без столу гра
-#   бачить масштабовані режими Mac (960x600, 1024x640) і не знаходить
-#   свого вбудованого 800x600;
-# * робоча тека — тека гри: BF2 шукає mods/bf2/... відносно неї.
+# * games of those years count in x87, and Rosetta 2 translates it very slowly.
+#   `x87sidecar` replaces that piece of Rosetta with a JIT of its own, running
+#   as a separate arm64 process. It needs a Wine that shakes hands with it —
+#   the athei/wine-build build (the same CrossOver 26.3, only patched);
+# * graphics is mtld3d (D3D9 straight into Metal), built from the branch:
+#   in release v0.7.0 a texture returns no interface at all
+#   (tools/d3d9_qi_test.c) and the game crashes. Building: tools/mtld3d_build.sh;
+# * the desktop must be **larger than the game's window**. Exactly the size
+#   of the window will not do: the title bar eats 22 pixels and the game gets
+#   800x578 instead of 800x600 (or 1024x746 instead of 1024x768). The HUD
+#   swims — it is laid out for the full height and drawn into a cropped one.
+#   So the script sets the desktop itself, with room: 1024x768 -> 1280x960;
+# * the desktop is set in the bottle's registry, not through `explorer
+#   /desktop=`: that one swallows the child's stderr and the driver's log
+#   disappears. With no desktop the game sees the scaled Mac modes (960x600,
+#   1024x640) and does not find its own built-in 800x600;
+# * the working directory is the game's: BF2 looks for mods/bf2/... under it.
 set -e
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 BOTTLE=${BF2_BOTTLE:-bf2bottle}
@@ -55,11 +55,11 @@ SIDECAR="$HERE/reference/x87sidecar/x87sidecar"
 pkill -f "BF2.exe" 2>/dev/null || true
 pkill -f x87sidecar 2>/dev/null || true
 
-# Роздільність гра бере зі свого профілю, тож звідти її й читаємо, а не
-# вгадуємо. Стіл ставимо на крок більший — інакше заголовок вікна з'їдає
-# 22 пікселі висоти й HUD пливе.
-# Профіль гра при старті не застосовує — роздільність береться з
-# командного рядка (+szx/+szy). Стіл рахуємо від неї.
+# The game takes the resolution from its own profile, so that is where we read
+# it from rather than guessing. The desktop is set one step larger — otherwise
+# the window title eats 22 pixels of height and the HUD swims.
+# The game does not apply the profile at start-up — the resolution is taken
+# from the command line (+szx/+szy). The desktop is computed from it.
 RES=${BF2_RES:-800x600}
 SZX=${RES%x*}
 SZY=${RES#*x}
@@ -76,20 +76,20 @@ WINEPREFIX="$B" "$WINE" reg add 'HKCU\Software\Wine\Explorer\Desktops' \
 
 cd "$GAME_UNIX" || exit 1
 
-# +restart 1 пропускає заставки; ім'я гравця задаємо самі, щоб гра не
-# питала профіль. Рівень — коли попросили.
-# `+menu` серед прапорців гри немає — у таблиці BF2.exe такого імені
-# нема взагалі, тож ми передавали сміття. Живий набір:
+# +restart 1 skips the intro movies; we set the player name ourselves so the
+# game does not ask for a profile. A level — when one was asked for.
+# `+menu` is not among the game's flags — that name is not in the BF2.exe
+# table at all, so we were passing rubbish. The live set:
 ARGS="+fullscreen 0 +restart 1 +szx $SZX +szy $SZY"
 ARGS="$ARGS +playerName ${BF2_NAME:-defaultPlayer}"
-# Меню гра пропускає, коли непорожній GSLoadLevel (те, що кладе
-# +loadLevel), GSJoinAddress, playNow 1 або GSDedicated — перевірка
-# стоїть одним `if` перед запуском Flash-меню. Режим і кількість місць
-# рівню потрібні: без них раунд не за чим будувати.
-# Приєднання до справжнього сервера має перевагу над завантаженням рівня:
-# з непорожнім GSJoinAddress гра так само пропускає меню, але замість
-# власного раунду йде до чужого. Це те, що нам і потрібно — обидва
-# клієнти, оригінал і наш, на одному сервері.
+# The game skips the menu when GSLoadLevel is non-empty (which is what
+# +loadLevel sets), or GSJoinAddress, or playNow 1, or GSDedicated — the
+# check is a single `if` before the Flash menu starts. The level needs a mode
+# and a player count: without them there is nothing to build a round on.
+# Joining a real server takes precedence over loading a level: with a
+# non-empty GSJoinAddress the game skips the menu just the same, but instead
+# of its own round it goes to someone else's. That is what we want — both
+# clients, the original and ours, on the same server.
 if [ -n "$BF2_SERVER" ]; then
     ARGS="$ARGS +joinServer $BF2_SERVER +port ${BF2_PORT:-16567}"
     [ -n "$BF2_PASSWORD" ] && ARGS="$ARGS +password $BF2_PASSWORD"
@@ -101,13 +101,13 @@ fi
 if [ -n "$BF2_PLAIN" ] || [ ! -x "$WINE" ] || [ ! -x "$SIDECAR" ]; then
     CX="$HOME/Applications/CrossOver.app/Contents/SharedSupport/CrossOver"
     "$CX/bin/wine" --bottle "$BOTTLE" "$GAME\\BF2.exe" $ARGS >"$LOG" 2>&1 &
-    echo "запущено (CrossOver, без sidecar); журнал: $LOG"
+    echo "started (CrossOver, no sidecar); log: $LOG"
 else
-    # Sidecar не обгортає Wine — навпаки: Wine сам його запускає, коли
-    # бачить ROSETTA_X87_PATH. Це видно в його ntdll.so:
-    # «ROSETTA_X87_PATH: attaching rosettax87 --cooperative». Обгорнутий
-    # вручну sidecar просто стоїть на нулі відсотків і нічого не робить.
+    # The sidecar does not wrap Wine — the other way round: Wine starts it
+    # itself when it sees ROSETTA_X87_PATH. It is visible in its ntdll.so:
+    # "ROSETTA_X87_PATH: attaching rosettax87 --cooperative". A sidecar
+    # wrapped by hand just sits at zero per cent and does nothing.
     WINEPREFIX="$B" WINEDLLOVERRIDES="d3d9=n" ROSETTA_X87_PATH="$SIDECAR" \
       "$WINE" "$GAME\\BF2.exe" $ARGS >"$LOG" 2>&1 &
-    echo "запущено (x87sidecar) $RES у столі $DESKTOP; журнал: $LOG"
+    echo "started (x87sidecar) $RES on a $DESKTOP desktop; log: $LOG"
 fi

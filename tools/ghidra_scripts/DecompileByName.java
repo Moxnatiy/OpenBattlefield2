@@ -1,8 +1,8 @@
-// Декомпілює функції за підрядком імені й пише результат у файл.
+// Decompiles the functions matching a name substring and writes the result out.
 //
-// Сенс: не тягнути декомпіляцію в чат цілими модулями, а вивантажити рівно
-// потрібні функції на диск і законспектувати. Правило проєкту — одна функція
-// за раз (див. CLAUDE.md).
+// The point: not to pull whole modules of decompilation into the chat but to
+// dump exactly the functions wanted onto disk and take notes. The project's
+// rule is one function at a time (see CLAUDE.md).
 //
 //   analyzeHeadless ghidra_projects OpenBF2 -process bf2 -noanalysis \
 //     -scriptPath tools/ghidra_scripts -postScript DecompileByName.java \
@@ -26,7 +26,7 @@ public class DecompileByName extends GhidraScript {
     public void run() throws Exception {
         String[] args = getScriptArgs();
         if (args.length < 2) {
-            println("потрібні: <файл виводу> <підрядок імені> [ще підрядки...]");
+            println("needed: <output file> <name substring> [more substrings...]");
             return;
         }
         String outputPath = args[0];
@@ -38,7 +38,7 @@ public class DecompileByName extends GhidraScript {
 
         DecompInterface decompiler = new DecompInterface();
         decompiler.openProgram(currentProgram);
-        // 60 секунд на функцію: у великих цього вистачає, а зависнути не дає.
+        // 60 seconds per function: enough for the large ones, and it cannot hang.
         decompiler.setSimplificationStyle("decompile");
 
         int written = 0;
@@ -64,13 +64,13 @@ public class DecompileByName extends GhidraScript {
                 if (results.decompileCompleted() && results.getDecompiledFunction() != null) {
                     out.println(results.getDecompiledFunction().getC());
                 } else {
-                    out.println("// декомпіляція не вдалася: " + results.getErrorMessage());
+                    out.println("// decompilation failed: " + results.getErrorMessage());
                 }
                 out.println();
                 ++written;
             }
         }
         decompiler.dispose();
-        println("функцій вивантажено: " + written + " -> " + outputPath);
+        println("functions dumped: " + written + " -> " + outputPath);
     }
 }

@@ -1,6 +1,6 @@
-# Структура вихідників рушія, відновлена зі шляхів у BF2_r.exe
-# (D:\DiceCanada\BoosterPack2\Code\ — гілка Booster Pack 2, не 1.5)
-# 413 файлів. Це не код, лише імена — але вони показують архітектуру.
+# The engine's source tree, recovered from the paths in BF2_r.exe
+# (D:\DiceCanada\BoosterPack2\Code\ — the Booster Pack 2 branch, not 1.5)
+# 413 files. This is not code, only names — but they show the architecture.
 BF2/AI/AIDLL/AI/AIUtils/boxTools.cpp
 BF2/AI/AIInterface/BFKnowledge/AIObject.cpp
 BF2/AI/AIInterface/BFKnowledge/AIObjectArmament.cpp

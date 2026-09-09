@@ -1,9 +1,10 @@
-# Еталон: екран появи оригіналу, 800x600 (знято агентом)
+# Reference: the original's spawn screen, 800x600 (captured by the agent)
 
-Знято `tools/bf2_app.sh` + `touch /tmp/mtld3d_dump` — без жодного
-натискання клавіш. Координати переведено в екранні: `(400 + x, 300 + y)`.
+Captured with `tools/bf2_app.sh` + `touch /tmp/mtld3d_dump` — without a
+single key press. Coordinates converted to screen space:
+`(400 + x, 300 + y)`.
 
-| виклик | x | y | ширина | висота |
+| call | x | y | width | height |
 |---|---|---|---|---|
 | 235 | 350.0 | 250.0 | 100.0 | 100.0 |
 | 236 | -0.5 | 4.5 | 505.0 | 600.0 |

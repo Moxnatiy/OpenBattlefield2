@@ -9,8 +9,8 @@
 namespace obf2::level {
 namespace {
 
-// Опис шаблону, зібраний із ObjectTemplate.*. Розстановка приходить
-// окремо, тому спершу збираємо шаблони, а потім прив'язуємо до них позиції.
+// A template description assembled from ObjectTemplate.*. The placement arrives
+// separately, so the templates are collected first and positions bound to them after.
 struct TemplateInfo {
   std::string className;
   std::string nameKey;
@@ -39,7 +39,7 @@ class Builder {
   void operator()(const con::Command& command) {
     const std::string& path = command.lowerPath;
 
-    // --- шаблони ---
+    // --- the templates ---
     if (path == "objecttemplate.create" || path == "objecttemplate.activesafe") {
       if (command.args.size() < 2) return;
       activeTemplate_ = command.args[1];
@@ -90,17 +90,17 @@ class Builder {
       } else if (method == "teamonvehicle") {
         info.teamOnVehicle = command.argInt(0).value_or(info.teamOnVehicle);
       } else if (method == "setobjecttemplate") {
-        // setObjectTemplate <команда> <шаблон машини>
+        // setObjectTemplate <team> <vehicle template>
         const auto team = command.argInt(0);
         if (team) info.templateByTeam[*team] = std::string(command.argStr(1));
       }
       return;
     }
 
-    // --- розстановка ---
-    // Бойова зона: `CombatArea.addAreaPoint -49.101/-466.631` — пара
-    // світових координат x/z одним словом через скісну риску. Саме нею
-    // гра обрізає карту на екрані появи.
+    // --- the placement ---
+    // The combat area: `CombatArea.addAreaPoint -49.101/-466.631` — a pair of
+    // world x/z coordinates in one word separated by a slash. It is what the
+    // game clips the map with on the spawn screen.
     if (path == "combatarea.addareapoint") {
       const std::string_view text = command.argStr(0);
       const std::size_t slash = text.find('/');
@@ -144,7 +144,7 @@ class Builder {
         ControlPoint point;
         point.templateName = placement.templateName;
         point.nameKey = info.nameKey;
-        // Номер може бути і в шаблоні, і в розстановці.
+        // The id may be in the template as well as in the placement.
         point.id = info.controlPointId != 0 ? info.controlPointId : placement.controlPointId;
         point.radius = info.radius;
         point.position = placement.position;
@@ -215,16 +215,16 @@ std::optional<GameplayObjects> loadGameplayObjects(FileSystem& files, std::strin
                            std::string(gameMode) + "/" + std::to_string(size) +
                            "/GamePlayObjects.con";
   if (!files.exists(path)) {
-    if (error) *error = "немає " + path;
+    if (error) *error = "no " + path;
     return std::nullopt;
   }
 
   Builder builder;
   con::Interpreter interpreter(files, [&](const con::Command& command) { builder(command); });
-  // Розстановка тут за гілкою "host", а не "BF2Editor": саме так її
-  // запускає Init.con рівня (`run Editor/GamePlayObjects.con host`).
-  // З аргументом BF2Editor файл читається, але жодного Object.create
-  // не виконується — і логіка виходить порожньою.
+  // The placement here goes under the "host" branch, not "BF2Editor": that is
+  // exactly how the level's Init.con runs it (`run Editor/GamePlayObjects.con host`).
+  // With the BF2Editor argument the file is read, but not a single Object.create
+  // is executed — and the logic comes out empty.
   interpreter.runFile(path, {"host"});
 
   GameplayObjects objects = builder.build();

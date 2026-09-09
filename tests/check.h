@@ -1,6 +1,6 @@
 #pragma once
-// Мінімальний тест-раннер без зовнішніх залежностей: одна й та сама збірка має
-// йти і під AppleClang, і під MSVC, тому чим менше третьосторонього — тим краще.
+// A minimal test runner with no external dependencies: the same build has to work
+// under both AppleClang and MSVC, so the less third-party code the better.
 #include <cstdio>
 #include <ostream>
 #include <sstream>
@@ -22,7 +22,7 @@ std::string show(const T& v) {
   } else if constexpr (std::is_enum_v<T>) {
     return std::to_string(static_cast<long long>(v));
   } else {
-    return "<значення не виводиться>";
+    return "<value not printable>";
   }
 }
 
@@ -41,7 +41,7 @@ std::string show(const T& v) {
     const auto _a = (a);                                                         \
     const auto _b = (b);                                                         \
     if (!(_a == _b)) {                                                           \
-      std::fprintf(stderr, "FAIL %s:%d: %s == %s\n  було:  %s\n  треба: %s\n",   \
+      std::fprintf(stderr, "FAIL %s:%d: %s == %s\n  got:      %s\n  expected: %s\n", \
                    __FILE__, __LINE__, #a, #b, obf2test::show(_a).c_str(),       \
                    obf2test::show(_b).c_str());                                  \
       ++obf2test::g_failures;                                                    \
@@ -52,7 +52,7 @@ std::string show(const T& v) {
   int main() {                                                                   \
     body;                                                                        \
     if (obf2test::g_failures != 0) {                                             \
-      std::fprintf(stderr, "\n%d перевірок не пройшло\n", obf2test::g_failures); \
+      std::fprintf(stderr, "\n%d checks failed\n", obf2test::g_failures);        \
       return 1;                                                                  \
     }                                                                            \
     std::puts("OK");                                                             \

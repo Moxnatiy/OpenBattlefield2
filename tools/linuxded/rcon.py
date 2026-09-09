@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Віддалена консоль оригінального сервера BF2.
+"""The remote console of an original BF2 server.
 
-Протокол простий: сервер надсилає `### Digest seed: <зерно>`, у відповідь
-йде `login <md5(зерно + пароль)>`, далі команди через `exec`.
+The protocol is simple: the server sends `### Digest seed: <seed>`, the answer is
+`login <md5(seed + password)>`, then commands through `exec`.
 
     python tools/linuxded/rcon.py "game.listPlayers"
 """
@@ -15,7 +15,7 @@ def rcon(commands, host="127.0.0.1", port=4711, password="openbf2", timeout=10.0
     sock = socket.create_connection((host, port), timeout)
     sock.settimeout(timeout)
 
-    # Вітання й зерно можуть прийти двома окремими повідомленнями.
+    # The greeting and the seed may arrive as two separate messages.
     marker = "### Digest seed: "
     greeting = ""
     for _ in range(4):
@@ -30,11 +30,11 @@ def rcon(commands, host="127.0.0.1", port=4711, password="openbf2", timeout=10.0
             break
 
     if marker in greeting:
-        # Стандартний спосіб: сервер дає зерно, ми відповідаємо хешем.
+        # The standard way: the server gives a seed, we answer with a hash.
         seed = greeting.split(marker, 1)[1].split("\n", 1)[0].strip()
         secret = hashlib.md5((seed + password).encode("latin-1")).hexdigest()
     else:
-        # Скрипт "default" простіший: пароль іде як є.
+        # The "default" script is simpler: the password goes as it is.
         secret = password
     sock.sendall(("login " + secret + "\n").encode("latin-1"))
     answer = ""
@@ -49,7 +49,7 @@ def rcon(commands, host="127.0.0.1", port=4711, password="openbf2", timeout=10.0
         if "successful" in answer.lower() or "failed" in answer.lower():
             break
     if "successful" not in answer.lower():
-        return "вхід не вдався: " + answer.strip()
+        return "login failed: " + answer.strip()
 
     out = []
     for command in commands:
@@ -57,8 +57,8 @@ def rcon(commands, host="127.0.0.1", port=4711, password="openbf2", timeout=10.0
         try:
             reply = sock.recv(65536).decode("latin-1", "replace").strip()
         except socket.timeout:
-            reply = "(без відповіді)"
-        # Рушій сам каже, коли команди немає — те саме, що робимо ми.
+            reply = "(no answer)"
+        # The engine itself says when a command does not exist — the same as we do.
         out.append("%-30s -> %s" % (command, reply))
     sock.close()
     return "\n".join(out)

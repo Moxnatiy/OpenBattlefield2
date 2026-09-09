@@ -20,7 +20,7 @@ std::vector<std::string> tokenizeLine(std::string_view line) {
     if (line[i] == '"') {
       ++i;
       while (i < n && line[i] != '"') token.push_back(line[i++]);
-      if (i < n) ++i;  // закривальні лапки; незакритий рядок терпимо приймаємо
+      if (i < n) ++i;  // the closing quote; an unterminated string is accepted leniently
     } else {
       while (i < n && !isSpace(line[i])) token.push_back(line[i++]);
     }

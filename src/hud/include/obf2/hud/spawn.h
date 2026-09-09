@@ -1,49 +1,49 @@
 #pragma once
-// Екран появи: те, що гра складає з назви сторони.
+// The spawn screen: what the game assembles from a side's name.
 //
-// Назву дає сам рівень — `gameLogic.setTeamName 1 "CH"` в `Init.con`. Це
-// не просто підпис: рушій підставляє її в шаблони шляхів і перекладає на
-// ключ локалізації. По всіх 22 рівнях гри набір назв рівно **CH, EU,
-// MEC, US**, а теки значків у `Menu_client.zip` звуться так само.
+// The name comes from the level itself — `gameLogic.setTeamName 1 "CH"` in
+// `Init.con`. It is not merely a caption: the engine substitutes it into path
+// templates and translates it into a localisation key. Across all 22 levels the
+// set of names is exactly **CH, EU, MEC, US**, and the icon directories in `Menu_client.zip` match.
 //
-// Тут зібрано саме ці перетворення, бо на них ми вже двічі помилялися:
-// зашитий здогад «1 це US, 2 це Ch» перевертав прапорці на карті, і
-// одного разу — окремо на великій карті, а вдруге на мінікарті, бо та
-// сама логіка лежала у двох місцях.
+// It is precisely these conversions that are gathered here, because we have got
+// them wrong twice already: a baked-in guess "1 is US, 2 is Ch" flipped the flags
+// on the map — once on the big map and a second time on the minimap, because the
+// same logic lived in two places.
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace obf2::hud {
 
-// Ключ локалізації для підпису вкладки команди.
+// The localisation key for a team tab's caption.
 //
-// Реверс BF2.exe 0x787110: три випадки записані окремо, решта
-// складається з префікса. Порожня назва дає порожній ключ — так само, як
-// у грі (там це гілка з порожнім рядком).
+// Reversed from BF2.exe 0x787110: three cases are written out separately, the
+// rest are assembled from a prefix. An empty name gives an empty key — the same
+// as in the game (there it is the branch with an empty string).
 std::string armyLabelKey(std::string_view teamName);
 
-// Прапорець сторони — на вкладці екрана появи і на табло.
-// Шаблон `Ingame/Flags/Icons/Hud/Score/%s/scoreBoard_Flag.tga` лежить у
-// бінарі за 0x931030, заповнює його 0x787260.
+// A side's flag — on the spawn screen's tab and on the scoreboard.
+// The template `Ingame/Flags/Icons/Hud/Score/%s/scoreBoard_Flag.tga` lies in the
+// binary at 0x931030, and 0x787260 fills it in.
 std::string teamFlagIcon(std::string_view teamName);
 
-// Значок точки захоплення на карті.
-// Шаблон `Ingame/Flags/Icons/Minimap/%s/miniMap_CP.tga` за 0x925af8,
-// заповнює 0x74fb70. Для нічийної сторони там окремий готовий рядок із
-// `Neutral` (0x925b28) — тому порожня назва дає саме його.
+// A capture point's icon on the map.
+// The template `Ingame/Flags/Icons/Minimap/%s/miniMap_CP.tga` at 0x925af8, filled
+// in by 0x74fb70. For the neutral side there is a separate ready-made string with
+// `Neutral` (0x925b28) — so an empty name gives exactly that.
 std::string controlPointIcon(std::string_view teamName);
 
-// Один набір у стовпчику екрана появи.
+// One kit in the spawn screen's column.
 struct KitSlot {
-  const char* nameKey;  // ключ локалізації підпису
-  const char* icon;     // піктограма набору
-  const char* weapon;   // піктограма зброї в панелі
+  const char* nameKey;  // the caption's localisation key
+  const char* icon;     // the kit's icon
+  const char* weapon;   // the weapon's icon in the panel
 };
 
-// Сім наборів у тому порядку, у якому їх показує екран появи.
-// Підписи — ключі з `HudElementsSpawn.con`; зброя — з `Kits/*/*.con`,
-// звідки в кожного набору рівно один шаблон має піктограму в
+// The seven kits in the order the spawn screen shows them.
+// The captions are keys from `HudElementsSpawn.con`; the weapons come from
+// `Kits/*/*.con`, where exactly one template per kit has an icon in
 // `Weapons/Icons/Hud/Selection`.
 const std::vector<KitSlot>& spawnKits();
 

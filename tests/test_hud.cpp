@@ -33,7 +33,7 @@ hud::Builder build(const std::string& source) {
 }  // namespace
 
 static void testPictureNode() {
-  // Форма взята з реального HudElementsActionIcons.con.
+  // The shape is taken from a real HudElementsActionIcons.con.
   const hud::Builder builder = build(
       "hudBuilder.createPictureNode\tIngameHud WarningIcon 701 292 32 32\n"
       "hudBuilder.setPictureNodeTexture\tIngame/GeneralIcons/icon.tga\n"
@@ -71,8 +71,8 @@ static void testPropertiesGoToLastCreatedNode() {
 }
 
 static void testSetActiveObjectSwitchesTarget() {
-  // Без setActiveObject друга текстура осіла б на другому вузлі —
-  // і частина інтерфейсу зібралася б неправильно.
+  // Without setActiveObject the second texture would settle on the second node —
+  // and part of the interface would be assembled wrongly.
   const hud::Builder builder = build(
       "hudBuilder.createPictureNode A First 0 0 10 10\n"
       "hudBuilder.createPictureNode A Second 0 0 10 10\n"
@@ -86,8 +86,8 @@ static void testSetActiveObjectSwitchesTarget() {
 }
 
 static void testButtonRunsConsoleCommand() {
-  // Кнопки інтерфейсу керують грою консольними командами — так це
-  // влаштовано в оригіналі.
+  // The interface's buttons drive the game with console commands — that is how it is
+  // arranged in the original.
   const hud::Builder builder = build(
       "hudBuilder.createButtonNode Menu Quit 10 20 100 30\n"
       "hudBuilder.setButtonNodeConCmd game.quit\n"
@@ -106,7 +106,7 @@ static void testButtonRunsConsoleCommand() {
 }
 
 static void testColorAcceptsBothRanges() {
-  // У файлах гри колір трапляється і як 0..1, і як 0..255.
+  // In the game's files a colour occurs both as 0..1 and as 0..255.
   const hud::Builder normalized = build(
       "hudBuilder.createTextNode A T 0 0 10 10\n"
       "hudBuilder.setNodeColor 1.0 0.5 0.25 1.0\n");
@@ -139,7 +139,7 @@ static void testCommandsBeforeAnyNodeAreCounted() {
 }
 
 static void testNodeRectScalesFromReference() {
-  // Вузли задані в базових 800x600; на 1600x1200 усе рівно вдвічі більше.
+  // The nodes are given in the base 800x600; at 1600x1200 everything is exactly twice as large.
   const hud::Builder builder = build("hudBuilder.createPictureNode Menu A 40 30 200 15\n");
   const hud::Screen screen{1600, 1200};
   const hud::ScreenRect rect = hud::nodeRect(builder.nodes()[0], screen);
@@ -150,10 +150,10 @@ static void testNodeRectScalesFromReference() {
 }
 
 static void testChildCoordinatesAreRelativeToParent() {
-  // Головне правило HUD, записане в Readme.txt самих розробників:
-  // перший аргумент — батьківський вузол, а x/y відлічуються від його
-  // лівого верхнього кута. Доти ми брали їх як екранні, і все, що
-  // глибше за один рівень, розповзалося по екрану.
+  // The HUD's main rule, written down in the developers' own Readme.txt: the first
+  // argument is the parent node, and x/y are counted from its top left corner.
+  // Until now we took them as screen coordinates, and everything deeper than one
+  // level scattered over the screen.
   const hud::Builder builder = build(
       "hudBuilder.createSplitNode Global Panel 300 200 100 100\n"
       "hudBuilder.createPictureNode Panel Icon 10 5 16 16\n"
@@ -173,7 +173,7 @@ static void testChildCoordinatesAreRelativeToParent() {
     CHECK(std::abs(icon->absY - 205.0f) < 0.01f);
     CHECK_EQ(icon->area, std::string("Global"));
   }
-  // Три рівні: 300+40+1 і 200+20+2.
+  // Three levels: 300+40+1 and 200+20+2.
   if (deep != nullptr) {
     CHECK(std::abs(deep->absX - 341.0f) < 0.01f);
     CHECK(std::abs(deep->absY - 222.0f) < 0.01f);
@@ -198,13 +198,13 @@ static void testButtonAtFindsButtonUnderCursor() {
   CHECK(quit != nullptr);
   if (quit != nullptr) CHECK_EQ(quit->command, std::string("openbf2.quit"));
 
-  // Поза кнопками — нічого, хоча під курсором є картинка-тло.
+  // Outside the buttons — nothing, even though there is a background picture under the cursor.
   CHECK(hud::buttonAt(builder, "Menu", screen, 500.0f, 400.0f) == nullptr);
 }
 
 static void testBarNodeHasDirectionBeforeRect() {
-  // У смуги перед прямокутником стоїть напрям росту: без цього зсуву
-  // координати з'їжджають на одну позицію.
+  // A bar has the growth direction before the rectangle: without that shift the
+  // coordinates slide by one position.
   const hud::Builder builder = build(
       "hudBuilder.createBarNode Map FriendlyCPs 2 643 180 108 31\n"
       "hudbuilder.setBarNodeTexture 1 Ingame/Minimap/flags_Captured_Left.tga\n"
@@ -235,17 +235,17 @@ static void testBarIsClippedByValue() {
   CHECK_EQ(pieces.size(), std::size_t(1));
   if (pieces.empty()) return;
 
-  // Чверть значення — чверть ширини: у NDC це від -1 до -0.95 при 800px.
+  // A quarter of the value is a quarter of the width: in NDC that is -1 to -0.95 at 800px.
   const auto& vertices = pieces[0].geometry.vertices;
   CHECK_EQ(vertices.size(), std::size_t(4));
   if (vertices.size() < 4) return;
   CHECK(std::abs(vertices[1].position.x - (-0.9375f)) < 0.01f);
-  // Обрізана й текстура, інакше картинка стиснулася б.
+  // The texture is clipped too, otherwise the picture would be squeezed.
   CHECK(std::abs(vertices[1].uv[0] - 0.25f) < 0.01f);
 }
 
-// Поява й зникнення в часі. Кут -pi/2 з відстанню 376 має відсунути
-// вузол **униз** — саме так у грі виїжджає панель голосування за карту.
+// Appearing and disappearing over time. An angle of -pi/2 with a distance of 376
+// has to move the node **down** — that is exactly how the map-voting panel drives in.
 static void testShowEffectsAnimate() {
   hud::Builder builder = build(
       "hudBuilder.createPictureNode Root Panel 332 377 188 18\n"
@@ -259,31 +259,30 @@ static void testShowEffectsAnimate() {
   const hud::Node& node = builder.nodes()[0];
 
   hud::Animator animator;
-  // Перша поява теж іде переходом: щойно створений `CullNode` має хід
-  // -4, і 0x10004a57 ставить його в 0, а не в кінець.
+  // The first show is a transition too: a freshly created `CullNode` has progress
+  // -4, and 0x10004a57 sets it to 0 rather than to the end.
   animator.setVisible(node, true);
   animator.advance(0.2f);
   CHECK(std::abs(animator.state(node).progress - 0.5f) < 0.001f);
   CHECK(animator.animating());
   animator.advance(0.2f);
   CHECK(std::abs(animator.state(node).progress - 1.0f) < 0.001f);
-  // Кадр, у якому вузол став на місце, ще треба перемалювати — а вже
-  // наступний ні.
+  // The frame in which a node settles still has to be redrawn — the next one no longer.
   CHECK(animator.animating());
   animator.advance(0.0f);
   CHECK(!animator.animating());
 
-  // Ховаємо: за outTime = 0.2 половина шляху проходить за 0.1 с.
+  // Hiding: with outTime = 0.2 half the way takes 0.1 s.
   animator.setVisible(node, false);
   animator.advance(0.1f);
   const hud::ShowState half = animator.state(node);
   CHECK(std::abs(half.progress - 0.5f) < 0.001f);
   CHECK(std::abs(half.alpha - 0.5f) < 0.001f);
-  CHECK(std::abs(half.offsetX) < 0.5f);  // -1.57 це майже рівно -pi/2
-  // dy = +sin(a) * довжина * (1 - хід) = sin(-pi/2) * 376 * 0.5 = -188.
-  // Знак саме такий: `MoveEffect::picturePaint` (`MemeDll.dll`,
-  // 0x10001b27) рахує зсув як (-cos a, +sin a). Раніше тут стояло +188,
-  // бо ми брали знаки з міркування, а не з коду.
+  CHECK(std::abs(half.offsetX) < 0.5f);  // -1.57 is almost exactly -pi/2
+  // dy = +sin(a) * length * (1 - progress) = sin(-pi/2) * 376 * 0.5 = -188.
+  // The sign is exactly this: `MoveEffect::picturePaint` (`MemeDll.dll`,
+  // 0x10001b27) computes the offset as (-cos a, +sin a). It used to be +188 here,
+  // because we took the signs from reasoning rather than from the code.
   CHECK(std::abs(half.offsetY + 188.0f) < 0.5f);
   CHECK(animator.animating());
 
@@ -293,9 +292,9 @@ static void testShowEffectsAnimate() {
   CHECK(!animator.animating());
 }
 
-// `setNodePosVariable <вісь> <змінна>`: перший аргумент — вісь, а не
-// назва. Доти ми клали в поле саме його, і жодна така змінна ніколи не
-// знаходилася — приціл через це стояв би нерухомо.
+// `setNodePosVariable <axis> <variable>`: the first argument is the axis, not a
+// name. Until now we put exactly it into the field, and no such variable was ever
+// found — because of which the sight would stand still.
 static void testPosVariableTakesAxisFirst() {
   hud::Builder builder = build(
       "hudBuilder.createPictureNode Root Arm 398 285 8 8\n"

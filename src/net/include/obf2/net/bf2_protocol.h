@@ -1,16 +1,16 @@
 #pragma once
-// Протокол оригінального сервера BF2.
+// The protocol of the original BF2 server.
 //
-// Розкладку взято з рушія (Linux-сервер, `dice::hfe::io::NetServer`):
-// `_update` розбирає заголовок і роздає пакети за типом, а
-// `handleConnectRequest`, `sendConnectAccept` і `sendConnectDenied`
-// задають тіла.
+// The layout is taken from the engine (Linux server, `dice::hfe::io::NetServer`):
+// `_update` parses the header and dispatches packets by type, while
+// `handleConnectRequest`, `sendConnectAccept` and `sendConnectDenied` define the
+// bodies.
 //
-// Заголовок кожного пакета — рівно 12 бітів:
-//   4 біти  тип
-//   8 бітів номер з'єднання (у клієнта до під'єднання це 0)
+// Every packet's header is exactly 12 bits:
+//   4 bits  type
+//   8 bits  connection id (0 in the client before connecting)
 //
-// Біти пакуються молодшими вперед — так само, як у нашому BitStream.
+// Bits are packed low first — the same as in our BitStream.
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -20,7 +20,7 @@
 
 namespace obf2::net::bf2 {
 
-// Типи пакетів із диспетчера `NetServer::_update`.
+// The packet types from `NetServer::_update`'s dispatcher.
 enum class PacketKind : std::uint8_t {
   ConnectRequest = 1,
   ConnectAccept = 2,
@@ -33,17 +33,17 @@ enum class PacketKind : std::uint8_t {
   Data = 15,
 };
 
-// Стала, яку рушій звіряє першою (`checkVersion`: перше число має бути
-// рівно 0x1002, інакше відмова).
+// The constant the engine checks first (`checkVersion`: the first number has to
+// be exactly 0x1002, otherwise it refuses).
 inline constexpr std::uint32_t kProtocolMagic = 0x1002;
 
-// Версія гри. Байти 15 0C 51 00 читаються як 1.5 і збірка 0x0C51 = 3153,
-// тобто рівно `bf2-linuxded-1.5.3153.0`. Знайдено двійковим пошуком по
-// живому серверу: він відповідає «застарий» (0x17) або «занадто новий»
-// (0x18), і за 32 кроки дає точне число.
+// The game's version. The bytes 15 0C 51 00 read as 1.5 and build 0x0C51 = 3153,
+// that is exactly `bf2-linuxded-1.5.3153.0`. Found by a binary search against a
+// live server: it answers "too old" (0x17) or "too new" (0x18), and 32 steps
+// give the exact number.
 inline constexpr std::uint32_t kGameVersion = 0x150C5100;
 
-// Причини відмови з `handleConnectRequest`.
+// The refusal reasons from `handleConnectRequest`.
 enum class DenyReason : std::uint32_t {
   ServerFull = 0x02,
   VersionMismatch = 0x09,
@@ -75,45 +75,45 @@ struct ConnectAccept {
 
 struct ConnectDenied {
   DenyReason reason = DenyReason::VersionMismatch;
-  std::string modDirectory;  // сервер додає її лише до відмови WrongMod
+  std::string modDirectory;  // the server adds it only to the WrongMod refusal
 };
 
-// Розширений заголовок надійного рівня. Стоїть одразу після базового в
-// пакетах пінгу й даних (`writeExtendedHeader`):
-//   6 бітів  номер пакета (по колу до 64)
-//   6 бітів  номер останнього прийнятого
-//   32 біти  бітова маска, які з попередніх дійшли
+// The reliability layer's extended header. It stands right after the basic one in
+// ping and data packets (`writeExtendedHeader`):
+//   6 bits   the packet number (wrapping at 64)
+//   6 bits   the number of the last one received
+//   32 bits  a bit mask of which of the previous ones arrived
 struct ExtendedHeader {
   std::uint8_t sequence = 0;
   std::uint8_t ack = 0;
   std::uint32_t ackBits = 0;
 };
 
-// Каркас потоку подій усередині пакета даних.
+// The framing of the event stream inside a data packet.
 //
-// `GameEventManager::processReceivedPacket` читає: 1 біт «є події»,
-// 8 бітів кількість, 5 бітів і ще 1 біт службових. Далі `readGameEvent`
-// бере тип події у N бітах, де N — найменше, при якому (1<<N)-1 вміщує
-// розмір реєстру подій; на живому сервері це 7.
+// `GameEventManager::processReceivedPacket` reads: 1 bit "there are events",
+// 8 bits of count, 5 bits and one more service bit. Then `readGameEvent` takes
+// the event's type in N bits, where N is the smallest for which (1<<N)-1 covers
+// the event registry's size; against a live server that is 7.
 //
-// Перед потоками в заголовку пакета даних є ще 16 бітів — довжина
-// корисної частини в байтах. Разом заголовок займає рівно 72 біти (9 байтів).
+// Before the streams, the data packet's header holds another 16 bits — the
+// payload's length in bytes. In all the header takes exactly 72 bits (9 bytes).
 inline constexpr unsigned kStreamFramingBits = 16;
 inline constexpr unsigned kEventTypeBits = 7;
 
-// Тип події, якою передаються блоки даних (`DataBlockEvent::getType`).
+// The type of the event data blocks travel in (`DataBlockEvent::getType`).
 inline constexpr std::uint32_t kDataBlockEvent = 4;
 
-// Тип блока з відомостями про клієнта (`GameServer::handleDataBlock`).
+// The type of the block with the client's details (`GameServer::handleDataBlock`).
 inline constexpr std::uint32_t kClientInfoBlock = 1;
 
-// Блок, який рушій читає в `ClientInfo::setFromDataBlock`:
-//   u16 довжина + ім'я, u32 хеш імені, 1 біт знак + 31 біт номер профілю,
-//   u16 довжина + тег клану, u16 довжина + рядок автентифікації, 1 біт.
+// The block the engine reads in `ClientInfo::setFromDataBlock`:
+//   u16 length + name, u32 name hash, 1 sign bit + 31 bits of profile number,
+//   u16 length + clan tag, u16 length + authentication string, 1 bit.
 //
-// На сервері без рейтингу (`sv.ranked 0`) хеш і рядок автентифікації не
-// перевіряються, а підсумкове ім'я гравця рушій складає як «тег + пробіл +
-// ім'я» (`GameServer::handleClientInfo`).
+// On a server without ranking (`sv.ranked 0`) the hash and the authentication
+// string are not checked, and the engine assembles the player's final name as
+// "tag + space + name" (`GameServer::handleClientInfo`).
 struct ClientInfo {
   std::string name;
   std::uint32_t nameHash = 0;
@@ -123,59 +123,59 @@ struct ClientInfo {
   bool flag = false;
 };
 
-// Подія-виклик: сервер шле її одразу після під'єднання
-// (`GameServer::onNewConnection`), і клієнт має відповісти.
+// The challenge event: the server sends it right after connecting
+// (`GameServer::onNewConnection`), and the client has to answer.
 struct ChallengeEvent {
   std::string challenge;
   std::string modDirectory;
 };
 
-// Пакет, розібраний із мережі.
+// A packet parsed off the network.
 struct Incoming {
   PacketKind kind = PacketKind::Data;
   std::uint8_t connectionId = 0;
   std::optional<ConnectAccept> accept;
   std::optional<ConnectDenied> denied;
 
-  // Є в пінгах і даних.
+  // Present in pings and data.
   std::optional<ExtendedHeader> extended;
-  // Час сервера з пінг-запиту: його треба повернути незміненим.
+  // The server's time from a ping request: it has to be returned unchanged.
   std::optional<std::uint32_t> pingTime;
 
-  // Для пакетів даних: скільки подій усередині й перша розібрана.
+  // For data packets: how many events are inside and the first one parsed.
   int eventCount = 0;
   std::optional<ChallengeEvent> challenge;
 };
 
-// Збирає запит на під'єднання (тип 1).
+// Assembles a connection request (type 1).
 std::vector<std::byte> writeConnectRequest(const ConnectRequest& request);
 
-// Відповідь на виклик (подія типу 2). Сервер без автентифікатора
-// (`sv.internet 0`) перевіряє лише мережеву версію — решту блоку не читає.
+// The challenge reply (event type 2). A server without an authenticator
+// (`sv.internet 0`) checks only the network version — it does not read the rest of the block.
 //
-// Мережева версія — та сама, що й у запиті на під'єднання: у рушії це
-// `BuildNrUtil::getNetVersionNumber()`, і вона повертає рівно kGameVersion.
+// The network version is the same as in the connection request: in the engine it
+// is `BuildNrUtil::getNetVersionNumber()`, and it returns exactly kGameVersion.
 std::vector<std::byte> writeChallengeResponse(std::uint8_t connectionId,
                                               const ExtendedHeader& header, std::uint8_t batch);
 
-// Подія з блоком даних: спершу заголовок (тип блока й повний розмір),
-// далі шматки не більші за 255 байтів. Коли зібрано весь блок, рушій
-// віддає його в `GameServer::handleDataBlock`.
+// The data block event: first the header (the block's type and full size), then
+// chunks of no more than 255 bytes. Once the whole block is assembled, the engine
+// hands it to `GameServer::handleDataBlock`.
 std::vector<std::byte> writeDataBlockHeader(std::uint8_t connectionId,
                                             const ExtendedHeader& header, std::uint8_t batch,
                                             std::uint32_t blockType, std::uint32_t size);
 std::vector<std::byte> writeDataBlockChunk(std::uint8_t connectionId, const ExtendedHeader& header,
                                            std::uint8_t batch, std::span<const std::byte> chunk);
 
-// Подія «підніми в себе оцю подію» (`PostRemoteEvent`, тип 11):
-//   4 біти категорія, 32 біти номер події, 32 біти затримка (float),
-//   8 бітів довжина даних, далі байти.
+// The "raise this event on your side" event (`PostRemoteEvent`, type 11):
+//   4 bits category, 32 bits event number, 32 bits delay (float),
+//   8 bits data length, then the bytes.
 //
-// Категорію 6 сервер віддає в `GameServer::handleNetworkEvent`
-// (`GameServer::handleEvent` порівнює саме з шісткою; двійка там — HUD).
-// Номер 2 у таблиці переходів веде в `clientLoadComplete`: поки клієнт її
-// не надішле, стан з'єднання лишається нижчим за поріг `isClientReady`,
-// і сервер не шле ні об'єктів світу, ні потоку привидів.
+// Category 6 the server hands to `GameServer::handleNetworkEvent`
+// (`GameServer::handleEvent` compares against exactly six; two there is the HUD).
+// Number 2 in the jump table leads to `clientLoadComplete`: until the client
+// sends it, the connection's state stays below `isClientReady`'s threshold, and
+// the server sends neither world objects nor a ghost stream.
 inline constexpr std::uint32_t kPostRemoteEvent = 11;
 inline constexpr std::uint32_t kNetworkCategory = 6;
 inline constexpr std::uint32_t kNetDataBlockReady = 1;
@@ -185,104 +185,104 @@ inline constexpr std::uint32_t kNetDatabaseComplete = 4;
 inline constexpr std::uint32_t kNetSelectSpawnGroup = 6;
 inline constexpr std::uint32_t kNetSelectTeam = 7;
 inline constexpr std::uint32_t kNetSelectKit = 8;
-// Підтвердження від сервера: гравець з'явився. У знятому трафіку
-// оригіналу вона приходить за 100 мс після `NESelectSpawnGroup`, і це
-// найпряміша ознака, що поява вдалася.
+// The server's confirmation that the player spawned. In the original's captured
+// traffic it arrives 100 ms after `NESelectSpawnGroup`, and it is the most direct
+// sign that the spawn succeeded.
 inline constexpr std::uint32_t kNetPlayerSpawned = 9;
 
-// Один набір дій гравця — те, що клієнт шле серверу тридцять разів на
-// секунду. Розкладка з `PlayerActionManager::processReceivedPacket`
-// (0x44d670) і звірена зі знятим трафіком оригіналу:
+// One set of a player's actions — what the client sends the server thirty times a
+// second. The layout comes from `PlayerActionManager::processReceivedPacket`
+// (0x44d670) and is cross-checked against the original's captured traffic:
 //
-//   1 біт                 чи є дії
-//   4 біти                скільки наборів у пакеті (оригінал шле три)
-//   9 бітів               номер (у дампі змінюється; призначення не
-//                         з'ясоване)
-//   1 біт знак + 31 біт   лічильник вводу, росте на одиницю за пакет
-//   далі на кожен набір:
-//      6 разів: 1 біт знака + 15 бітів значення
-//      32 біти  маска кнопок
-//      9 бітів  (у дампі завжди нуль)
-//      1 біт    прапорець (у дампі одиниця)
+//   1 bit                  are there actions
+//   4 bits                 how many sets in the packet (the original sends three)
+//   9 bits                 a number (it varies in the dump; purpose not
+//                          established)
+//   1 sign bit + 31 bits   the input counter, growing by one per packet
+//   then, per set:
+//      6 times: 1 sign bit + 15 bits of value
+//      32 bits  the button mask
+//      9 bits   (always zero in the dump)
+//      1 bit    a flag (one in the dump)
 //
-// Що означають осі, видно з дампу: коли гравець біг уперед, третя ось
-// стояла на 99, а решта на нулі; п'ята й шоста весь час дрібно
-// смикалися — це миша. Маска кнопок у ті самі секунди дорівнювала 32,
-// коли гравець тримав спринт, і нулю, коли відпускав.
+// What the axes mean is visible from the dump: while the player ran forward the
+// third axis stood at 99 and the rest at zero; the fifth and sixth twitched
+// slightly all the time — that is the mouse. The button mask in those same
+// seconds equalled 32 while the player held sprint, and zero when they released it.
 struct PlayerAction {
   std::int16_t axes[6] = {0, 0, 0, 0, 0, 0};
   std::uint32_t buttons = 0;
   bool flag = true;
 };
 
-// Осі й кнопки названі не з дампу, а з таблиці, якою рушій реєструє
-// сталі керування (BF2.exe, 0x6904c0 і далі: рядок імені, потім його
-// номер у EDX). Порядок звідти:
+// The axes and buttons are named not from the dump but from the table the engine
+// registers its control constants with (BF2.exe, 0x6904c0 onwards: the name
+// string, then its number in EDX). The order from there:
 //
 //   0  c_PIYaw          4  c_PIMouseLookX     8  c_PIFire
 //   1  c_PIPitch        5  c_PIMouseLookY     9  c_PIAction
 //   2  c_PIRoll         6  c_PICameraX       10  c_PIUse
 //   3  c_PIThrottle     7  c_PICameraY       13  c_PISprint
 //
-// У пакет ідуть перші шість — рівно осі 0..5.
+// The first six go into the packet — exactly axes 0..5.
 //
-// Для піхоти розкладку задає `Settings/Controls.con`:
+// For infantry the layout is set by `Settings/Controls.con`:
 //
 //   ControlMap.addKeysToAxisMapping c_PIYaw      IDKey_D IDKey_A
 //   ControlMap.addKeysToAxisMapping c_PIThrottle IDKey_W IDKey_S
 //   ControlMap.addKeyToTriggerMapping c_PIAction IDKey_Space
 //   ControlMap.addKeyToTriggerMapping c_PISprint IDKey_LeftShift
 //
-// Тобто вбік солдат ходить **віссю рискання**: окремої осі для кроку
-// вбік у рушія немає. Доки ми цього не знали, вбік було не піти взагалі.
-inline constexpr int kAxisYaw = 0;       // D/A — крок вбік у піхоти
+// So a soldier strafes with the **yaw axis**: the engine has no separate strafe
+// axis. Until we knew that, strafing was impossible altogether.
+inline constexpr int kAxisYaw = 0;       // D/A — strafing for infantry
 inline constexpr int kAxisPitch = 1;
 inline constexpr int kAxisRoll = 2;
-inline constexpr int kAxisThrottle = 3;  // W/S — хід уперед-назад
+inline constexpr int kAxisThrottle = 3;  // W/S — forward and back
 inline constexpr int kAxisMouseX = 4;    // c_PIMouseLookX
 inline constexpr int kAxisMouseY = 5;    // c_PIMouseLookY
-// Стара назва третьої осі — лишаємо, щоб не переписувати виклики.
+// The third axis's old name — kept so the calls need not be rewritten.
 inline constexpr int kAxisForward = kAxisThrottle;
-// Повний хід у дампі — рівно 99.
+// Full movement in the dump is exactly 99.
 inline constexpr std::int16_t kAxisFull = 99;
 
-// На дроті вісь їде цілим числом, а в рушії вона float. Множник — **100**:
-// `PlayerAction::set` кладе осі як int16 (`BF2.exe`, 0x5bc890), а зворотне
-// перетворення поруч (0x5bc5f0) робить рівно `(float)value * 0.01`.
+// On the wire an axis travels as an integer, while in the engine it is a float.
+// `PlayerAction::set` stores the axes as int16 (`BF2.exe`, 0x5bc890), and the
+// reverse conversion beside it (0x5bc5f0) does exactly `(float)value * 0.01`.
 //
-// Звідси й «повний хід = 99»: вісь газу дійшла до 0.99.
+// Hence "full movement = 99": the throttle axis reached 0.99.
 inline constexpr float kAxisWireScale = 100.0f;
 
-// Маска кнопок: біт = номер сталої мінус номер `c_PIFire`. Перевірка
-// сходиться з трафіком: спринт це 13 - 8 = 5, а саме біт 5 (значення 32)
-// стояв у дампі, поки гравець тримав Shift.
+// The button mask: the bit is the constant's number minus `c_PIFire`'s number.
+// The check agrees with the traffic: sprint is 13 - 8 = 5, and bit 5 (value 32)
+// is exactly what stood in the dump while the player held Shift.
 inline constexpr std::uint32_t kButtonFire = 1u << 0;    // c_PIFire   (8)
-inline constexpr std::uint32_t kButtonAction = 1u << 1;  // c_PIAction (9) — стрибок
+inline constexpr std::uint32_t kButtonAction = 1u << 1;  // c_PIAction (9) — jump
 inline constexpr std::uint32_t kButtonUse = 1u << 2;     // c_PIUse    (10)
 inline constexpr std::uint32_t kButtonSprint = 1u << 5;  // c_PISprint (13)
 
-// Увесь потік дій із пакета.
+// The whole action stream from a packet.
 struct PlayerActions {
-  std::uint32_t number = 0;  // 9 бітів на початку
-  std::int32_t tick = 0;     // лічильник вводу
+  std::uint32_t number = 0;  // the 9 bits at the start
+  std::int32_t tick = 0;     // the input counter
   std::vector<PlayerAction> actions;
 };
 
-// Розкладка потоку дій — **один опис на обидва напрями**.
+// The action stream's layout — **one description for both directions**.
 //
-// Те саме тіло і читає, і пише: різницю робить курсор (`ReadCursor` чи
-// `WriteCursor` із `bitstream.h`). Доки опис один, складач і розбирач не
-// можуть розійтися — а поки їх було двоє, кожне поле доводилося
-// вписувати двічі.
+// The same body both reads and writes: the difference is the cursor (`ReadCursor`
+// or `WriteCursor` from `bitstream.h`). While the description is one, the
+// assembler and the parser cannot diverge — and while there were two of them,
+// every field had to be written twice.
 //
-// Поля — з `PlayerActionManager::processReceivedPacket` (0x44d670).
+// The fields come from `PlayerActionManager::processReceivedPacket` (0x44d670).
 template <typename Cursor>
 bool serializePlayerActions(Cursor& cursor, PlayerActions& stream) {
   std::uint32_t count = static_cast<std::uint32_t>(stream.actions.size());
   if (!cursor.bits(count, 4)) return false;
   if (!cursor.bits(stream.number, 9)) return false;
-  // На читанні це створює потрібну кількість наборів, на записі не
-  // змінює нічого: там count уже дорівнює розміру.
+  // On a read this creates the required number of sets; on a write it changes
+  // nothing: there count already equals the size.
   if (count > 15) return false;
   stream.actions.resize(count);
 
@@ -295,72 +295,72 @@ bool serializePlayerActions(Cursor& cursor, PlayerActions& stream) {
       axis = static_cast<std::int16_t>(value);
     }
     if (!cursor.bits(action.buttons, 32)) return false;
-    std::uint32_t spare = 0;  // у знятому трафіку завжди нуль
+    std::uint32_t spare = 0;  // always zero in the captured traffic
     if (!cursor.bits(spare, 9)) return false;
     if (!cursor.flag(action.flag)) return false;
   }
   return true;
 }
 
-// Пакет із самими діями: подій у ньому немає.
+// A packet of actions alone: it holds no events.
 std::vector<std::byte> writePlayerActions(std::uint8_t connectionId, const ExtendedHeader& header,
                                           const PlayerActions& stream);
 
-// Прочитати потік дій із пакета даних. nullopt — це не пакет даних або
-// дій у ньому немає.
+// Read the action stream from a data packet. nullopt means this is not a data
+// packet or it holds no actions.
 //
-// Тим самим розбирачем ми читаємо і власні пакети, і зняті з
-// оригінального клієнта.
+// We read both our own packets and ones captured from the original client with
+// the same parser.
 std::optional<PlayerActions> readPlayerActions(std::span<const std::byte> packet);
 
-// `value` передається у корисних даних 32-бітним числом — так його
-// читають ті події, що несуть вибір (команда, набір, місце появи).
+// `value` travels in the payload as a 32-bit number — that is how the events
+// carrying a choice (team, kit, spawn point) read it.
 std::vector<std::byte> writePostRemoteEvent(std::uint8_t connectionId,
                                             const ExtendedHeader& header, std::uint8_t batch,
                                             std::uint32_t category, std::uint32_t event,
                                             std::optional<std::int32_t> value = std::nullopt);
 
-// Перевірка вмісту (`ContentCheckEvent`, тип 46): три хеші по 128 бітів.
-// Сервер звіряє їх у `GameServer::onContentCheckEvent` і лише після
-// збігу виставляє клієнтові `contentValid`. Без цього
-// `clientSendDatabaseComplete` ставить його в чергу на від'єднання, і
-// стан з'єднання не доростає до потрібного для потоку привидів.
+// The content check (`ContentCheckEvent`, type 46): three 128-bit hashes.
+// The server compares them in `GameServer::onContentCheckEvent` and only on a
+// match sets `contentValid` for the client. Without it
+// `clientSendDatabaseComplete` queues the client for disconnection, and the
+// connection's state never grows to what the ghost stream requires.
 //
-// Порядок хешів:
-//   1. те, що сервер рахує сам при старті (`runMiscChecksum`);
-//   2. рядок із `mods/<мод>/std_archive.md5`;
-//   3. рядок із `mods/<мод>/levels/<рівень>/archive.md5`.
+// The order of the hashes:
+//   1. what the server computes itself at startup (`runMiscChecksum`);
+//   2. a line from `mods/<mod>/std_archive.md5`;
+//   3. a line from `mods/<mod>/levels/<level>/archive.md5`.
 //
-// Номер рядка в обох файлах дає `MapInfo::getChallengeOrdinal()`.
+// The line number in both files comes from `MapInfo::getChallengeOrdinal()`.
 inline constexpr std::uint32_t kContentCheckEvent = 46;
 
-// Перевірку сервер розглядає лише коли стан з'єднання вже більший за
-// одиницю, тобто після NELoadComplete. Інакше він її мовчки ігнорує.
+// The server considers the check only when the connection's state is already
+// greater than one, that is after NELoadComplete. Otherwise it silently ignores it.
 std::vector<std::byte> writeContentCheckEvent(std::uint8_t connectionId,
                                               const ExtendedHeader& header, std::uint8_t batch,
                                               const std::array<std::byte, 16>& misc,
                                               const std::array<std::byte, 16>& archives,
                                               const std::array<std::byte, 16>& level);
 
-// Читає файл відбитків: «номер md5» для архівів, «назва номер md5» для
-// рівня. nullopt — рядка з таким номером немає.
+// Reads a fingerprint file: "number md5" for the archives, "name number md5" for
+// the level. nullopt means there is no line with that number.
 std::optional<std::array<std::byte, 16>> readFingerprint(std::string_view text, int ordinal);
 
-// Хеш імені, який рейтинговий сервер звіряє з переданим: h = 0x1505, далі
-// для кожного символу в нижньому регістрі h = h * 0x21 ^ c.
+// The name hash a ranked server compares against the one sent: h = 0x1505, then
+// for every lower-cased character h = h * 0x21 ^ c.
 std::uint32_t clientInfoNameHash(const std::string& name);
 
 std::vector<std::byte> buildClientInfo(const ClientInfo& info);
 
-// Відповідь на пінг. `time` — те саме число, що надіслав сервер: за
-// різницею він рахує затримку.
+// The ping reply. `time` is the same number the server sent: it computes the
+// latency from the difference.
 std::vector<std::byte> writePingResponse(std::uint8_t connectionId, const ExtendedHeader& header,
                                          std::uint32_t time);
 
-// Короткий пакет із самого заголовка: підтвердження, від'єднання, пінг.
+// A short packet of nothing but the header: acknowledgement, disconnect, ping.
 std::vector<std::byte> writeShortPacket(PacketKind kind, std::uint8_t connectionId);
 
-// Розбирає те, що прийшло від сервера. nullopt — пакет коротший за заголовок.
+// Parses what arrived from the server. nullopt means the packet is shorter than the header.
 std::optional<Incoming> readPacket(std::span<const std::byte> data);
 
 }  // namespace obf2::net::bf2

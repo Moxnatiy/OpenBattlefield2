@@ -21,8 +21,8 @@ obf2_add_test(test_frustum obf2_core)
 obf2_add_test(test_server obf2_server)
 obf2_add_test(test_soldier_move obf2_server)
 obf2_add_test(test_meme obf2_meme obf2_vfs)
-# Тест читає справжній `Menu/Ingame` з інсталяції користувача; без неї
-# він каже про це і проходить.
+# The test reads a real `Menu/Ingame` from the user's installation; without one
+# it says so and passes.
 target_compile_definitions(test_meme PRIVATE
   OBF2_GAME_FILES="${CMAKE_SOURCE_DIR}/Game Files")
 obf2_add_test(test_hud obf2_hud)
@@ -39,11 +39,11 @@ obf2_add_test(test_bf2_protocol obf2_net)
 obf2_add_test(test_bf2_join obf2_net)
 obf2_add_test(test_bf2_spawn_groups obf2_net)
 obf2_add_test(test_bf2_actions obf2_net)
-# Тест читає справжні пакети оригінального клієнта з tests/data.
+# The test reads real packets of the original client from tests/data.
 target_compile_definitions(test_bf2_actions PRIVATE
   OBF2_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
 obf2_add_test(test_bf2_events obf2_net)
-# Тест читає спіймані з живого сервера пакети з tests/data.
+# The test reads packets captured from a live server, from tests/data.
 target_compile_definitions(test_bf2_events PRIVATE
   OBF2_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
 

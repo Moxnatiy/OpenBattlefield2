@@ -18,8 +18,8 @@ class MemoryFiles : public con::FileProvider {
   }
 };
 
-// Проганяє текст .con через інтерпретатор у консоль — рівно так, як це
-// робить рушій на старті.
+// Runs .con text through the interpreter into the console — exactly as the engine
+// does at startup.
 void feed(engine::Console& console, const std::string& source) {
   MemoryFiles files;
   files.files["a.con"] = source;
@@ -48,7 +48,7 @@ static void testDispatch() {
 }
 
 static void testDispatchIsCaseInsensitive() {
-  // У файлах гри той самий виклик трапляється в різному регістрі.
+  // In the game's files the same call occurs in different cases.
   engine::Console console;
   int calls = 0;
   console.bind("GeneralSettings.setViewIntroMovie", [&](const con::Command&) { ++calls; });
@@ -61,8 +61,8 @@ static void testDispatchIsCaseInsensitive() {
 }
 
 static void testUnknownCommandsAreCounted() {
-  // Головна метрика готовності порту: рушій знає 1735 команд, і треба
-  // бачити, які з тих, що трапилися, ще без обробника.
+  // The port's main readiness metric: the engine knows 1735 commands, and we need
+  // to see which of the ones that occurred are still without a handler.
   engine::Console console;
   console.bind("game.setPlayerName", [](const con::Command&) {});
 
@@ -81,7 +81,7 @@ static void testUnknownCommandsAreCounted() {
 }
 
 static void testSettingsFromRealFileShape() {
-  // Текст узятий із Settings/VideoDefault.con і профілю стокової гри.
+  // The text is taken from Settings/VideoDefault.con and a stock game's profile.
   engine::Console console;
   engine::Settings settings;
   settings.bind(console);
@@ -120,17 +120,17 @@ static void testSettingsFromRealFileShape() {
 }
 
 static void testMissingArgumentKeepsPreviousValue() {
-  // Зіпсований рядок у налаштуваннях не має обнуляти значення.
+  // A corrupt line in the settings must not zero a value.
   engine::Console console;
   engine::Settings settings;
   settings.bind(console);
   settings.video.fieldOfView = 1.5f;
 
-  feed(console, "renderer.fieldOfView\nrenderer.fieldOfView немаєЧисла\n");
+  feed(console, "renderer.fieldOfView\nrenderer.fieldOfView notANumber\n");
   CHECK(settings.video.fieldOfView > 1.49f && settings.video.fieldOfView < 1.51f);
 }
 
-// Псевдоніми: команда рушія, у грі їх 79 у Settings/AliasedCommands.con.
+// Aliases: an engine command; the game has 79 of them in Settings/AliasedCommands.con.
 void testAliases() {
   engine::Console console;
   console.registerAliases();
@@ -138,7 +138,7 @@ void testAliases() {
   int calls = 0;
   console.bind("console.showfps", [&](const con::Command&) { ++calls; });
 
-  // Доки псевдоніма немає, коротке ім'я невідоме.
+  // While there is no alias, the short name is unknown.
   CHECK(!console.executeLine("fps"));
 
   console.executeLine("alias fps console.showfps");
@@ -146,7 +146,7 @@ void testAliases() {
   CHECK(console.executeLine("fps"));
   CHECK_EQ(calls, 1);
 
-  // Аргументи доїжджають до справжньої команди.
+  // The arguments reach the real command.
   std::string got;
   console.bind("game.setteam", [&](const con::Command& command) {
     got = std::string(command.argStr(0));
@@ -155,12 +155,12 @@ void testAliases() {
   console.executeLine("team 2");
   CHECK_EQ(got, std::string("2"));
 
-  // Ланцюжок псевдонімів розгортається.
+  // A chain of aliases is expanded.
   console.executeLine("alias f fps");
   CHECK(console.executeLine("f"));
   CHECK_EQ(calls, 2);
 
-  // Замкнене коло не вішає консоль.
+  // A closed loop does not hang the console.
   console.executeLine("alias a b");
   console.executeLine("alias b a");
   CHECK(!console.executeLine("a"));

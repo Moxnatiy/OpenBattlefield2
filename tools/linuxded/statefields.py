@@ -1,33 +1,32 @@
 #!/usr/bin/env python3
-"""Розкладка стану об'єкта: який біт маски вмикає яке поле.
+"""An object state's layout: which mask bit enables which field.
 
     tools/linuxded/statefields.py SoldierNetworkable::setNetUpdate
 
-Мережеві класи читають стан однаково: спершу маска, потім поля, кожне під
-своїм бітом. `bitfields.py` показує, **скільки** бітів читається і де, але
-не каже, **під яким бітом** — а без цього розкладку не відтворити: поле,
-пропущене через незнання біта, зсуває все, що йде далі.
+The networked classes read state the same way: the mask first, then the fields,
+each under its own bit. `bitfields.py` shows **how many** bits are read and where,
+but does not say **under which bit** — and without that the layout cannot be
+reproduced: a field skipped through not knowing its bit shifts everything after it.
 
-Скрипт іде інструкціями за адресами й тримає дві речі:
+The script walks the instructions by address and keeps two things:
 
-* останню перевірку маски (`andl $imm, %reg` над змінною маски або
-  `testb $imm, зсув(%rsp)`) — це і є біт;
-* виклики `BitStream::readBits` із шириною в `%edx`, а також
-  `readCompressedVector` (там ширини немає, зате видно точність).
+* the last mask check (`andl $imm, %reg` over the mask variable or
+  `testb $imm, offset(%rsp)`) — that is the bit;
+* the `BitStream::readBits` calls with the width in `%edx`, and also
+  `readCompressedVector` (there is no width there, but the precision is visible).
 
-**УВАГА: цьому виводу поки не можна вірити.** Скрипт іде інструкціями
-за **адресами**, а не за потоком керування, і на цьому спотикається:
-блоки в бінарі лежать не в тому порядку, в якому виконуються, тож
-«остання побачена перевірка» часто з іншого блока. Перевірка на відомому
-місці показує це прямо: позицію простого об'єкта (0x5d845b) скрипт
-приписує біту 0x8, тоді як насправді її вмикає біт 0x2 (`testb $0x2` за
-0x5d7a35). Трапляється й безглузда ширина на кшталт 17367456 — це `%edx`,
-що лишився від сусідньої інструкції.
+**WARNING: this output cannot be trusted yet.** The script walks the instructions
+by **address** rather than by control flow, and stumbles on that: the blocks in
+the binary do not lie in the order they execute, so "the last check seen" is often
+from a different block. A check against a known place shows it directly: the script
+attributes a simple object's position (0x5d845b) to bit 0x8, while in fact bit 0x2
+enables it (`testb $0x2` at 0x5d7a35). A nonsensical width such as 17367456 occurs
+too — that is an `%edx` left over from a neighbouring instruction.
 
-Щоб вивід став правильним, треба йти **графом блоків** (його вже будує
-`bitfields.py --blocks`) і для кожного блока з читанням брати ту умову,
-яка до нього веде. Доти скрипт годиться лише як чернетка: він показує,
-де шукати, але не каже, під яким бітом що лежить.
+To make the output right, one has to walk the **block graph** (which
+`bitfields.py --blocks` already builds) and for every block with a read take the
+condition that leads to it. Until then the script serves only as a draft: it shows
+where to look but does not say what lies under which bit.
 """
 import argparse
 import os
@@ -77,7 +76,7 @@ def main():
 
     header, body = disassemble(args.name)
     if header is None:
-        print("функції не знайдено:", args.name, file=sys.stderr)
+        print("function not found:", args.name, file=sys.stderr)
         return 1
     print(header.strip())
 
@@ -94,8 +93,8 @@ def main():
         hit = AND_IMM.match(text) or TEST_IMM.match(text)
         if hit:
             value = int(hit.group(1), 0)
-            # Маска стану — це біти, а не довільні числа: беремо лише
-            # степені двійки, решта (0x3, 0xf) це не «біт поля».
+            # A state mask is bits rather than arbitrary numbers: we take only
+            # powers of two, the rest (0x3, 0xf) is not "a field's bit".
             if value and (value & (value - 1)) == 0:
                 bit = value
             continue
@@ -111,16 +110,16 @@ def main():
         callee = hit.group(1)
         if "readBits" in callee:
             order += 1
-            print("  %2d  біт %-8s %3s бітів   (0x%s)"
+            print("  %2d  bit %-8s %3s bits   (0x%s)"
                   % (order, hex(bit) if bit else "?", width if width else "?", at))
             width = None
         elif "readCompressedVector" in callee:
             order += 1
-            print("  %2d  біт %-8s стиснений вектор (0x%s)"
+            print("  %2d  bit %-8s compressed vector (0x%s)"
                   % (order, hex(bit) if bit else "?", at))
         elif "readString" in callee or "readSmallString" in callee:
             order += 1
-            print("  %2d  біт %-8s рядок (0x%s)" % (order, hex(bit) if bit else "?", at))
+            print("  %2d  bit %-8s string (0x%s)" % (order, hex(bit) if bit else "?", at))
     return 0
 
 

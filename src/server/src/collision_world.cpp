@@ -6,8 +6,8 @@
 namespace obf2::server {
 namespace {
 
-// Найближча точка трикутника до заданої — класичний розбір за областями
-// Вороного. Потрібен, щоб знати, наскільки й куди виштовхувати сферу.
+// The triangle's closest point to a given one — the classic Voronoi-region
+// case analysis. Needed to know how far and where to push a sphere out.
 Vec3f closestPointOnTriangle(const Vec3f& point, const CollisionTriangle& triangle) {
   const Vec3f ab = triangle.b - triangle.a;
   const Vec3f ac = triangle.c - triangle.a;
@@ -54,8 +54,8 @@ Vec3f closestPointOnTriangle(const Vec3f& point, const CollisionTriangle& triang
 }  // namespace
 
 std::uint64_t CollisionWorld::cellKey(int x, int y, int z) {
-  // Зсуваємо в додатні числа й пакуємо по 21 біту на вісь: цього вистачає
-  // на карту в мільйони комірок.
+  // Shift into positive numbers and pack 21 bits per axis: that is enough for a
+  // map of millions of cells.
   const std::uint64_t ux = static_cast<std::uint64_t>(x + 0x100000) & 0x1FFFFF;
   const std::uint64_t uy = static_cast<std::uint64_t>(y + 0x100000) & 0x1FFFFF;
   const std::uint64_t uz = static_cast<std::uint64_t>(z + 0x100000) & 0x1FFFFF;
@@ -66,7 +66,7 @@ void CollisionWorld::addLayer(const mesh::CollisionLayer& layer, const Mat4& tra
   for (const mesh::CollisionFace& face : layer.faces) {
     if (face.a >= layer.vertices.size() || face.b >= layer.vertices.size() ||
         face.c >= layer.vertices.size()) {
-      continue;  // зіпсована грань — пропускаємо, а не падаємо
+      continue;  // a corrupt face — skipped rather than fatal
     }
 
     CollisionTriangle triangle;
@@ -79,19 +79,19 @@ void CollisionWorld::addLayer(const mesh::CollisionLayer& layer, const Mat4& tra
 
     const Vec3f edge1 = triangle.b - triangle.a;
     const Vec3f edge2 = triangle.c - triangle.a;
-    // Нормаль — за лівосторонньою домовленістю рушія, тобто протилежна до
-    // звичного правостороннього векторного добутку. Це видно й на самих
-    // даних Dalian Plant: із таким знаком угору дивиться 12081 трикутник
-    // проти 5999 донизу, що й очікуєш від світу з доріг, дахів і сходів.
+    // The normal follows the engine's left-handed convention, that is the
+    // opposite of the usual right-handed cross product. That is visible in
+    // Dalian Plant's own data: with this sign 12081 triangles face up against
+    // 5999 down, which is what one expects of a world of roads, roofs and stairs.
     const Vec3f normal = cross(edge2, edge1);
     const float area = length(normal);
-    if (area < 1e-6f) continue;  // вироджений трикутник
+    if (area < 1e-6f) continue;  // a degenerate triangle
     triangle.normal = normal * (1.0f / area);
 
     const auto index = static_cast<std::uint32_t>(triangles_.size());
     triangles_.push_back(triangle);
 
-    // Трикутник потрапляє в усі комірки, які перетинає його габарит.
+    // A triangle goes into every cell its bounding box crosses.
     const Vec3f minimum{std::min({triangle.a.x, triangle.b.x, triangle.c.x}),
                         std::min({triangle.a.y, triangle.b.y, triangle.c.y}),
                         std::min({triangle.a.z, triangle.b.z, triangle.c.z})};
@@ -122,8 +122,7 @@ void CollisionWorld::forEachNearby(
   const int z0 = static_cast<int>(std::floor((position.z - radius) / cellSize_));
   const int z1 = static_cast<int>(std::floor((position.z + radius) / cellSize_));
 
-  // Один трикутник може лежати в кількох комірках, тому стежимо, щоб не
-  // обробити його двічі.
+  // One triangle may lie in several cells, so we make sure not to process it twice.
   std::vector<std::uint32_t> seen;
   for (int x = x0; x <= x1; ++x) {
     for (int y = y0; y <= y1; ++y) {
@@ -143,8 +142,8 @@ void CollisionWorld::forEachNearby(
 int CollisionWorld::resolveSphere(Vec3f& position, float radius) const {
   int pushes = 0;
 
-  // Кілька проходів: виштовхування з однієї стіни може загнати в іншу,
-  // а в кутку потрібні щонайменше два.
+  // Several passes: being pushed out of one wall can drive you into another,
+  // and in a corner at least two are needed.
   constexpr int kIterations = 4;
   for (int iteration = 0; iteration < kIterations; ++iteration) {
     bool moved = false;
@@ -155,7 +154,7 @@ int CollisionWorld::resolveSphere(Vec3f& position, float radius) const {
       const float distance = length(away);
       if (distance >= radius || distance < 1e-6f) return;
 
-      // Виштовхуємо рівно настільки, щоб торкатися поверхні.
+      // Push out exactly far enough to touch the surface.
       position = position + away * ((radius - distance) / distance);
       moved = true;
       ++pushes;
@@ -178,17 +177,17 @@ void CollisionWorld::normalStats(std::size_t* up, std::size_t* down) const {
 
 bool CollisionWorld::groundHeight(const Vec3f& from, float maxDrop, float minNormalY,
                                   float* outHeight) const {
-  // Промінь суворо вниз. Комірки обходимо тим самим індексом, що й для
-  // сфери: беремо все, що поруч по горизонталі на всю глибину пошуку.
+  // A strictly downward ray. The cells are walked with the same index as for a
+  // sphere: we take everything nearby horizontally over the whole search depth.
   const float bottom = from.y - maxDrop;
   bool found = false;
   float best = bottom;
 
   const Vec3f middle{from.x, (from.y + bottom) * 0.5f, from.z};
   forEachNearby(middle, maxDrop * 0.5f + 0.5f, [&](const CollisionTriangle& triangle) {
-    if (triangle.normal.y < minNormalY) return;  // стіна, а не підлога
+    if (triangle.normal.y < minNormalY) return;  // a wall, not a floor
 
-    // Перетин вертикального променя з площиною трикутника.
+    // The intersection of the vertical ray with the triangle's plane.
     if (std::abs(triangle.normal.y) < 1e-6f) return;
     const float distance = dot(triangle.normal, triangle.a - from);
     const float t = distance / (-triangle.normal.y);
@@ -196,9 +195,9 @@ bool CollisionWorld::groundHeight(const Vec3f& from, float maxDrop, float minNor
 
     const Vec3f hit{from.x, from.y - t, from.z};
 
-    // Чи всередині трикутника: рахуємо в площині XZ через знаки векторних
-    // добутків. Для похилої поверхні цього достатньо, бо нормаль не
-    // горизонтальна.
+    // Whether it is inside the triangle: computed in the XZ plane through the
+    // signs of the cross products. For a sloped surface that is enough, because
+    // the normal is not horizontal.
     const auto side = [](const Vec3f& p, const Vec3f& a, const Vec3f& b) {
       return (b.x - a.x) * (p.z - a.z) - (b.z - a.z) * (p.x - a.x);
     };

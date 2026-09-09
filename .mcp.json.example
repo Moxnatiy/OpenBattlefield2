@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "ghidra": {
+      "command": "/path/to/OpenBattlefield2/.venv/bin/pyghidra-mcp",
+      "args": [
+        "--project-path", "/path/to/OpenBattlefield2/ghidra_projects",
+        "--project-name", "OpenBF2",
+        "-t", "stdio"
+      ],
+      "env": {
+        "GHIDRA_INSTALL_DIR": "/path/to/ghidra",
+        "JAVA_HOME": "/path/to/jdk-21"
+      }
+    }
+  }
+}

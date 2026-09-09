@@ -10,8 +10,8 @@ using namespace obf2;
 
 namespace {
 
-// Збирач бінарного .collisionmesh — тест не залежить від наявності гри
-// і заодно фіксує розкладку формату в коді.
+// A binary .collisionmesh builder — the test does not depend on the game being
+// present and also fixes the format's layout in code.
 class CollisionBuilder {
  public:
   explicit CollisionBuilder(std::uint32_t versionMinor) : versionMinor_(versionMinor) {
@@ -22,7 +22,7 @@ class CollisionBuilder {
     u32(1);              // colCount
   }
 
-  // Один шар з одного трикутника.
+  // One layer of one triangle.
   void addLayer(mesh::ColType type, const mesh::Vec3& a, const mesh::Vec3& b,
                 const mesh::Vec3& c) {
     if (versionMinor_ >= 9) u32(static_cast<std::uint32_t>(type));
@@ -32,11 +32,11 @@ class CollisionBuilder {
 
     u32(3);  // vertexCount
     vec3(a); vec3(b); vec3(c);
-    u16(0); u16(0); u16(0);  // матеріали вершин
+    u16(0); u16(0); u16(0);  // the vertices' materials
 
-    vec3(a);  // bounds min (грубо)
+    vec3(a);  // bounds min (roughly)
     vec3(c);  // bounds max
-    byte('0');  // BSP немає
+    byte('0');  // no BSP
 
     if (versionMinor_ >= 10) u32(0);  // adjacencyCount
   }
@@ -58,10 +58,10 @@ class CollisionBuilder {
   std::vector<std::byte> bytes_;
 };
 
-// Велика горизонтальна площина на висоті y.
+// A large horizontal plane at height y.
 mesh::CollisionLayer makeWall(float x) {
   mesh::CollisionLayer layer;
-  // Вертикальна стіна в площині X = x.
+  // A vertical wall in the plane X = x.
   layer.vertices = {mesh::Vec3{x, -10.0f, -10.0f}, mesh::Vec3{x, 10.0f, -10.0f},
                     mesh::Vec3{x, 10.0f, 10.0f}, mesh::Vec3{x, -10.0f, 10.0f}};
   layer.faces = {mesh::CollisionFace{0, 1, 2, 0}, mesh::CollisionFace{0, 2, 3, 0}};
@@ -79,7 +79,7 @@ static void testParseVersion10() {
   const auto mesh = mesh::loadCollisionMesh(builder.bytes(), &error);
   CHECK(mesh.has_value());
   if (!mesh) {
-    std::fprintf(stderr, "  причина: %s\n", error.c_str());
+    std::fprintf(stderr, "  reason: %s\n", error.c_str());
     return;
   }
   CHECK_EQ(mesh->versionMinor, 10u);
@@ -94,8 +94,8 @@ static void testParseVersion10() {
 }
 
 static void testVersion8HasNoLayerType() {
-  // У версії 0.8 поля типу немає, і шар визначається порядком. Через це
-  // 241 файл гри раніше розбирався зі зсувом.
+  // Version 0.8 has no type field, and the layer is decided by order. Because of
+  // that 241 of the game's files used to parse shifted.
   CollisionBuilder builder(8);
   builder.addLayer(mesh::ColType::Projectile, mesh::Vec3{0, 0, 0}, mesh::Vec3{1, 0, 0},
                    mesh::Vec3{0, 1, 0});
@@ -104,7 +104,7 @@ static void testVersion8HasNoLayerType() {
   CHECK(mesh.has_value());
   if (!mesh) return;
   CHECK_EQ(mesh->layers.size(), std::size_t(1));
-  // Перший шар отримує тип за індексом.
+  // The first layer gets its type by index.
   if (!mesh->layers.empty()) CHECK(mesh->layers[0].type == mesh::ColType::Projectile);
 }
 
@@ -118,8 +118,8 @@ static void testTruncatedFileIsRejected() {
     std::vector<std::byte> truncated(full.begin(), full.begin() + static_cast<long>(size));
     std::string error;
     if (mesh::loadCollisionMesh(truncated, &error).has_value()) {
-      // Дуже короткий обрізок може випадково дати «порожній» валідний меш;
-      // головне, щоб не було читання за межами.
+      // A very short truncation may accidentally give an "empty" valid mesh;
+      // what matters is that there is no read past the end.
       continue;
     }
     CHECK(!error.empty());
@@ -131,11 +131,11 @@ static void testSphereIsPushedOutOfWall() {
   world.addLayer(makeWall(0.0f), Mat4::identity());
   CHECK_EQ(world.triangleCount(), std::size_t(2));
 
-  // Сфера радіусом 0.5 з центром за 0.2 від стіни — має бути виштовхнута.
+  // A sphere of radius 0.5 centred 0.2 from the wall — it has to be pushed out.
   Vec3f position{-0.2f, 0.0f, 0.0f};
   const int pushes = world.resolveSphere(position, 0.5f);
   CHECK(pushes > 0);
-  // Виштовхує в той бік, з якого підійшли, і рівно на радіус.
+  // It pushes out towards the side it came from, and by exactly the radius.
   CHECK(position.x < -0.49f);
   CHECK(position.x > -0.52f);
 }
@@ -151,7 +151,7 @@ static void testSphereFarFromWallIsUntouched() {
 }
 
 static void testTransformIsApplied() {
-  // Стіна, посунута на 10 по X, має зупиняти саме там.
+  // A wall shifted by 10 along X has to stop exactly there.
   server::CollisionWorld world;
   world.addLayer(makeWall(0.0f), translation(Vec3f{10.0f, 0.0f, 0.0f}));
 
@@ -174,7 +174,7 @@ static void testDegenerateTrianglesAreSkipped() {
 }
 
 static void testFacesWithBadIndicesAreSkipped() {
-  // Індекс за межами масиву вершин не має валити сервер.
+  // An index past the end of the vertex array must not bring the server down.
   mesh::CollisionLayer layer;
   layer.vertices = {mesh::Vec3{0, 0, 0}, mesh::Vec3{1, 0, 0}, mesh::Vec3{0, 1, 0}};
   layer.faces = {mesh::CollisionFace{0, 1, 99, 0}, mesh::CollisionFace{0, 1, 2, 0}};

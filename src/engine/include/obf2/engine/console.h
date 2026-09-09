@@ -1,14 +1,14 @@
 #pragma once
-// Консоль — диспетчер команд рушія.
+// The console — the engine's command dispatcher.
 //
-// У Refractor 2 це окрема підсистема (`IO/Console/Console.cpp` за шляхами
-// з бінаря), і вона є єдиною точкою, куди сходяться всі `.con`: налаштування,
-// шаблони об'єктів, рівні, консольний ввід гравця. Тому й у нас команда з
-// файлу і команда, набрана в консолі, проходять однаковим шляхом.
+// In Refractor 2 it is a subsystem of its own (`IO/Console/Console.cpp` by the
+// paths in the binary), and it is the single point every `.con` converges on:
+// settings, object templates, levels, the player's console input. So here too a
+// command from a file and a command typed in the console take the same path.
 //
-// З таблиці рядків BF2.exe відомо, що рушій знає 1735 команд
-// (docs/reference/con-commands-from-exe.txt). Реалізовувати їх усі не треба —
-// але треба **бачити**, які з них зустрілися й лишилися без обробника.
+// From BF2.exe's string table we know the engine knows 1735 commands
+// (docs/reference/con-commands-from-exe.txt). They need not all be implemented —
+// but we do need to **see** which of them occurred and were left without a handler.
 #include <functional>
 #include <map>
 #include <string>
@@ -23,34 +23,34 @@ class Console {
  public:
   using Handler = std::function<void(const con::Command&)>;
 
-  // Ім'я у форматі "ціль.метод"; регістр не має значення, як і в грі.
+  // The name in the form "target.method"; case does not matter, as in the game.
   void bind(std::string_view name, Handler handler);
 
-  // true — обробник знайшовся. Невідомі команди рахуються, а не мовчки
-  // ігноруються: цей лічильник і є мірою готовності порту.
+  // true means a handler was found. Unknown commands are counted rather than
+  // silently ignored: that counter is the port's measure of readiness.
   bool execute(const con::Command& command);
 
-  // Той самий виклик, але з текстового рядка: "ціль.метод арг арг".
-  // Саме так команду тримає кнопка інтерфейсу (setButtonNodeConCmd).
+  // The same call but from a text line: "target.method arg arg".
+  // That is exactly how an interface button holds a command (setButtonNodeConCmd).
   bool executeLine(std::string_view line);
 
   std::size_t handlerCount() const { return handlers_.size(); }
   long long executedCount() const { return executed_; }
   long long unknownCount() const { return unknown_; }
 
-  // Невідомі команди за спаданням частоти — план робіт у чистому вигляді.
+  // Unknown commands by descending frequency — a work plan in its purest form.
   const std::map<std::string, int>& unknownCommands() const { return unknownByName_; }
 
-  // Псевдоніми: `alias <коротко> <ціль>`.
+  // Aliases: `alias <short> <target>`.
   //
-  // Це команда самого рушія, а не наша вигадка: у грі є цілий файл
-  // `Settings/AliasedCommands.con` із 79 такими рядками, і саме ними в
-  // консолі працюють `fps`, `hud`, `lp`, `suicide` та решта коротких
-  // імен. Псевдонім не має крапки, тож у наш розбір «ціль.метод» він не
-  // вкладається — його шукаємо окремо, коли обробника не знайшлося.
+  // This is the engine's own command, not our invention: the game has a whole
+  // file `Settings/AliasedCommands.con` with 79 such lines, and they are what
+  // make `fps`, `hud`, `lp`, `suicide` and the other short names work in the
+  // console. An alias has no dot, so it does not fit our "target.method" split —
+  // it is looked up separately, when no handler was found.
   //
-  // Ланцюжок псевдонімів (`alias a b`, `alias b c.d`) розгортається до
-  // справжньої команди; замкнене коло обривається за кількістю кроків.
+  // A chain of aliases (`alias a b`, `alias b c.d`) is expanded down to the real
+  // command; a closed loop is broken off by a step count.
   void registerAliases();
   std::size_t aliasCount() const { return aliases_.size(); }
 

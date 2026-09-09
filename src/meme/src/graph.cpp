@@ -9,7 +9,7 @@ void approachVariable(float& value, float target, float speed, float brakingDist
   const float distance = std::fabs(target - value);
   float step = speed * dt;
   if (brakingDistance > 0.0f && distance < brakingDistance) {
-    // Стала в бінарі саме 1.57075, а не повне pi/2 (0x100010c8).
+    // The constant in the binary is exactly 1.57075, not a full pi/2 (0x100010c8).
     constexpr float kQuarterTurn = 1.57075f;
     step *= std::cos(kQuarterTurn - distance / brakingDistance * kQuarterTurn);
   }
@@ -39,10 +39,10 @@ bool Graph::load(const std::vector<std::byte>& data, std::string* error) {
 }
 
 void Graph::seed() {
-  // Початкові значення змінних лежать у самому файлі: іменований
-  // `FloatData`/`BoolData` — це і є змінна, а його «Value <do not edit>»
-  // — те, з чого вона починає. Саме тому в даних видно -295 (сховане
-  // положення лівої ділянки) і 503 (сховане правої).
+  // The variables' initial values lie in the file itself: a named
+  // `FloatData`/`BoolData` is the variable, and its "Value <do not edit>" is
+  // what it starts from. That is why the data shows -295 (the left region's
+  // hidden position) and 503 (the right one's).
   for (const Object& object : file_.objects()) {
     if (object.name.empty()) continue;
     const Value* value = File::field(object, "Value <do not edit>");
@@ -64,14 +64,14 @@ float Graph::evaluate(int index) const {
 
   const std::string_view type = object->type();
 
-  // Ім'я робить змінною **лише листок**: `FloatData`, `BoolData` і
-  // `FloatRefData`. Саме їх рушій прив'язує до полів об'єкта HUD
-  // (`BF2.exe`, 0x789480 реєструє поля під такими іменами), і саме їхнє
-  // значення береться зі сховища, а не з файлу.
+  // **Only a leaf** turns a name into a variable: `FloatData`, `BoolData` and
+  // `FloatRefData`. It is those the engine binds to the HUD object's fields
+  // (`BF2.exe`, 0x789480 registers fields under such names), and it is their
+  // value that comes from the store rather than from the file.
   //
-  // У складених даних ім'я — просто підпис: `ToggleData
-  // «BottomRight/BottomRight_NextPos»` однаково має рахуватися, а не
-  // читатися зі сховища. Доти ми читали — і права ділянка їхала в нуль.
+  // On a composite node the name is just a label: `ToggleData
+  // "BottomRight/BottomRight_NextPos"` still has to be computed rather than
+  // read from the store. Until now we read it — and the right region went to zero.
   const bool isLeaf = type == "FloatData" || type == "BoolData" || type == "FloatRefData";
   if (isLeaf && !object->name.empty()) return variables_.get(object->name);
   const auto sub = [&](const char* field) {
@@ -94,12 +94,20 @@ float Graph::evaluate(int index) const {
     return evaluate(sub("Data 1")) == evaluate(sub("Data 2")) ? 1.0f : 0.0f;
   }
   if (type == "ToggleData") {
-    // Перемикач між двома значеннями — саме ним права ділянка вибирає
-    // між висунутим і схованим положенням.
-    return evaluate(sub("Toggle data")) != 0.0f ? evaluate(sub("Data 1")) : evaluate(sub("Data 2"));
+    // The switch between two values — the right region picks between its
+    // extended and hidden position with exactly this.
+    //
+    // The order is exactly this, and it is the reverse of what one expects:
+    // `ToggleData::value` (`MemeDll.dll`, 0x100032a6) returns **"Data 1" when
+    // the switch is zero**, and "Data 2" when it is non-zero or when there is
+    // no switch at all. We had it the other way round, and the right region
+    // picked the wrong position and the wrong alpha.
+    const int toggle = sub("Toggle data");
+    const bool takeFirst = file_.at(toggle) != nullptr && evaluate(toggle) == 0.0f;
+    return takeFirst ? evaluate(sub("Data 1")) : evaluate(sub("Data 2"));
   }
   if (type == "FloatRefData") {
-    // Посилання на змінну без власного значення. Безіменне — нуль.
+    // A reference to a variable with no value of its own. Unnamed means zero.
     return 0.0f;
   }
   return 0.0f;
@@ -153,19 +161,19 @@ void Graph::walk(int index, float dt) {
     return value == nullptr ? -1 : value->object;
   };
 
-  // `Next node` — це не сусід, а **продовження ланцюжка**: кожен вузол
-  // загортає наступний. Гілку дає окреме поле (`Split node`,
+  // `Next node` is not a sibling but the **continuation of the chain**: every
+  // node wraps the next one. A branch comes from a separate field (`Split node`,
   // `Transformed node`).
   if (type == "CullNode") {
-    // 0x10004a57: нульові дані — далі не йдемо зовсім.
+    // 0x10004a57: zero data — we do not go on at all.
     const Value* data = File::field(*object, "Data");
     if (data != nullptr && data->object >= 0 && evaluate(data->object) == 0.0f) return;
     walk(sub("Next node"), dt);
     return;
   }
   if (type == "CullVariableActionNode") {
-    // 0x10004e99: є умова і вона нуль — дію не виконуємо. Ланцюжок при
-    // цьому йде далі: подію розносить обхід, а не сам вузол.
+    // 0x10004e99: there is a condition and it is zero — the action is not run.
+    // The chain still continues: the walk carries the event, not the node itself.
     const int condition = sub("Variable");
     if (condition < 0 || evaluate(condition) != 0.0f) run(sub("Action"), dt);
     walk(sub("Next node"), dt);

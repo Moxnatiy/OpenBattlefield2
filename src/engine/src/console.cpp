@@ -25,9 +25,9 @@ void Console::bind(std::string_view name, Handler handler) {
 void Console::registerAliases() {
   bind("alias", [this](const con::Command& command) {
     if (command.args.size() < 2) return;
-    // Ціль може складатися з кількох слів (`alias r3 game.setTeam 3`),
-    // але в наших даних усі 79 рядків — рівно два слова. Зайве
-    // склеюємо назад, щоб не загубити.
+    // The target may consist of several words (`alias r3 game.setTeam 3`), but
+    // in our data all 79 lines are exactly two words. The extra is glued back
+    // together so nothing is lost.
     std::string target(command.argStr(1));
     for (std::size_t i = 2; i < command.args.size(); ++i) {
       target += ' ';
@@ -40,8 +40,8 @@ void Console::registerAliases() {
 bool Console::execute(const con::Command& command) {
   const auto found = handlers_.find(command.lowerPath);
   if (found == handlers_.end()) {
-    // Може, це псевдонім. Розгортаємо ланцюжок, але не нескінченно:
-    // `alias a b` + `alias b a` не має вішати консоль.
+    // It may be an alias. The chain is expanded, but not endlessly:
+    // `alias a b` + `alias b a` must not hang the console.
     std::string name = command.lowerPath;
     for (int step = 0; step < 8; ++step) {
       const auto alias = aliases_.find(name);
@@ -55,7 +55,7 @@ bool Console::execute(const con::Command& command) {
       if (tokens.empty()) break;
       name = toLower(tokens[0]);
       const auto handler = handlers_.find(name);
-      if (handler == handlers_.end()) continue;  // псевдонім на псевдонім
+      if (handler == handlers_.end()) continue;  // an alias onto an alias
       con::Command expanded;
       expanded.path = con::splitCommandPath(tokens[0]);
       expanded.lowerPath = name;

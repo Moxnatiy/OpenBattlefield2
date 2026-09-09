@@ -1,14 +1,15 @@
-# Офіційний редактор і тули DICE
+# DICE's official editor and tools
 
-`Game Files/OtherFiles/bf2editor_and_tools` (145 МБ) виявився найкориснішим
-джерелом документації з усього, що ми маємо.
+`Game Files/OtherFiles/bf2editor_and_tools` (145 MB) turned out to be the
+most useful source of documentation we have.
 
-## 1. Офіційні описи команд `.con`
+## 1. Official `.con` command descriptions
 
-`bf2editor/Help/CommandDescriptions.dat` — UTF-16LE, рядки через NUL,
-парами «команда, опис». Це документація від самої DICE.
+`bf2editor/Help/CommandDescriptions.dat` — UTF-16LE, NUL-separated
+strings, in "command, description" pairs. This is documentation from DICE
+themselves.
 
-Витягнуто **546 команд** (з них 439 — `ObjectTemplate`) у
+**546 commands** were extracted (439 of them `ObjectTemplate`) into
 [../reference/con-command-descriptions.txt](../reference/con-command-descriptions.txt):
 
 ```
@@ -17,9 +18,9 @@ ObjectTemplate.HasMobilePhysics  Check for objects and parts that can move.
 ObjectTemplate.PhysicsType       "None" if no collision.
 ```
 
-Приємне підтвердження: `GeometryPart` — «ID номер частини об'єкта» — це
-рівно той висновок, до якого ми дійшли реверсом BLENDINDICES. Тепер він
-підтверджений незалежно.
+A pleasant confirmation: `GeometryPart` — "the ID number of the object
+part" — is exactly the conclusion we reached by reversing BLENDINDICES. It
+is now confirmed independently.
 
 ```bash
 python3 tools/extract_command_descriptions.py \
@@ -27,16 +28,16 @@ python3 tools/extract_command_descriptions.py \
   docs/reference/con-command-descriptions.txt
 ```
 
-Поруч лежать `ObjectEditor_Help.xls`, `UserGuide.doc` і теки
-`Help/Workshop`, `Help/Tutorial` — ще не розібрані.
+Next to it sit `ObjectEditor_Help.xls`, `UserGuide.doc` and the
+`Help/Workshop`, `Help/Tutorial` directories — not looked at yet.
 
-## 2. Вихідний код генератора навмешу
+## 2. The navmesh generator's source code
 
-`NavMesh/Navmesh_SDK/` — **121 файл вихідного коду під LGPL**, який DICE
-випустила разом із редактором. Це генератор AI-навмешу на базі GTS
-(GNU Triangulated Surface).
+`NavMesh/Navmesh_SDK/` — **121 source files under LGPL**, released by DICE
+together with the editor. It is an AI navmesh generator built on GTS (GNU
+Triangulated Surface).
 
-`export.h` показує, що саме він пише:
+`export.h` shows exactly what it writes:
 
 ```cpp
 void export_qti (GtsSurface* s, const char* filename, ...);
@@ -44,49 +45,52 @@ void export_all_clusters (GtsSurface* s, bool binary, ...);
 void export_surface_binary (GtsSurface* surface, const char* filename);
 ```
 
-Формати `.qti`, `.cls`, `.vbf` — рівно ті, що лежать у `GTSData/output/`
-кожного рівня. Тобто **формат AI-навігації документований офіційним
-вихідним кодом**, і реверсити його не доведеться.
+The `.qti`, `.cls` and `.vbf` formats are exactly the ones in every level's
+`GTSData/output/`. So **the AI navigation format is documented by official
+source code** and will not have to be reversed.
 
-**Ліцензійне зауваження.** Код під LGPL, наш проєкт під MIT. Копіювати їхні
-файли до себе не можна — але й не потрібно: ми читаємо їх як специфікацію
-формату й пишемо власну реалізацію. Те саме правило, що й для мешів із
-Project Dalian.
+**A licensing note.** That code is LGPL, our project is MIT. Copying their
+files into our tree is not allowed — and not needed: we read them as a
+specification of the format and write our own implementation. The same
+rule as for meshes from Project Dalian.
 
-## 3. Меню — це gameswf
+## 3. The menu is gameswf
 
-`SwiffPlayer_r.dll` містить шляхи до вихідників:
+`SwiffPlayer_r.dll` contains source paths:
 
 ```
 D:\DiceCanada\BoosterPack2\Code\BF2\External\gameswf\SwiffPlayer\SwiffPlayer.cpp
 ```
 
-Тобто програвач Flash у BF2 — це **[gameswf](https://tulrich.com/geekstuff/gameswf.html)**,
-відкрита C++ бібліотека Thatcher Ulrich, **у суспільному надбанні**
-(public domain). Вона від початку робилася саме для інтерфейсів ігор.
+So BF2's Flash player is
+**[gameswf](https://tulrich.com/geekstuff/gameswf.html)**, Thatcher
+Ulrich's open C++ library, **in the public domain**. It was built for game
+interfaces in the first place.
 
-Це змінює розклад щодо меню. У `Menu_client.zip` всього **5 `.swf`**
-(`mainMenu.swf` — 2 МБ, решта дрібні) плюс 1072 PNG і 777 TGA, які до них
-прив'язані. Оскільки гра крутила ці файли саме через gameswf, сумісність
-гарантована конструктивно — на відміну від будь-якого стороннього плеєра.
+That changes the outlook for the menu. `Menu_client.zip` holds only **5
+`.swf` files** (`mainMenu.swf` is 2 MB, the rest are small) plus 1072 PNGs
+and 777 TGAs bound to them. Since the game played those files through
+gameswf, compatibility is guaranteed by construction — unlike with any
+third-party player.
 
-Ціна: gameswf давно не розвивається, а її рендер написаний під OpenGL —
-його довелося б перекласти на `obf2::gfx`. Альтернатива —
-[Ruffle](https://ruffle.rs) (Rust, MIT/Apache-2.0, активно розвивається,
-добре тримає ActionScript 2), але це FFI між Rust і C++ і жодних гарантій
-щодо саме цих файлів.
+The price: gameswf has not been developed for a long time and its renderer
+is written for OpenGL, which would have to be ported to `obf2::gfx`. The
+alternative is [Ruffle](https://ruffle.rs) (Rust, MIT/Apache-2.0, actively
+developed, good at ActionScript 2), but that means FFI between Rust and
+C++ and no guarantees about these particular files.
 
-## 4. Debug-збірки
+## 4. Debug builds
 
-У теці лежать `_r` і `_d` варіанти DLL (`dice_py_d.dll`, `msvcr71d.dll` —
-відладковий CRT). Шляхи до PDB показують гілку `D:\bf2editor\`, тобто це
-збірки редактора, а не гри. Символів у них немає, але рядків більше, ніж
-у релізі.
+The directory holds `_r` and `_d` variants of the DLLs (`dice_py_d.dll`,
+`msvcr71d.dll` — the debug CRT). The PDB paths point at the
+`D:\bf2editor\` branch, so these are builds of the editor, not of the
+game. They carry no symbols, but more strings than the release.
 
-## 5. Експортери для Maya
+## 5. Maya exporters
 
-`maya/` (49 МБ) — офіційні плагіни експорту (`MayaParser.mll`) і MEL-скрипти
-(`ModelTool.mel`, `LodTool.mel`, `ShaderTool.mel`, `ProgressiveMeshUI.mel`).
-Це той конвеєр, яким робилися меші гри. Не розібрано; найімовірніше містить
-опис того, як `.staticmesh` збирається з боку художника — корисно для
-перевірки нашого парсера, але не критично, бо формат уже читається повністю.
+`maya/` (49 MB) — the official export plugins (`MayaParser.mll`) and MEL
+scripts (`ModelTool.mel`, `LodTool.mel`, `ShaderTool.mel`,
+`ProgressiveMeshUI.mel`). This is the pipeline the game's meshes were made
+with. Not examined; most likely it describes how a `.staticmesh` is
+assembled from the artist's side — useful for checking our parser, but not
+critical, since the format already reads in full.

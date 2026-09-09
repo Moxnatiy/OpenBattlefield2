@@ -1,7 +1,7 @@
-// hud_dump — розбір інтерфейсу гри з файлів HUD/.
+// hud_dump — taking the game's interface apart from the HUD/ files.
 //
-//   hud_dump <modDir>            — які групи є і скільки в них вузлів
-//   hud_dump <modDir> <група>    — вузли однієї групи
+//   hud_dump <modDir>            — which groups there are and how many nodes in them
+//   hud_dump <modDir> <group>    — the nodes of one group
 
 #include <cstdio>
 #include <algorithm>
@@ -14,7 +14,7 @@
 
 int main(int argc, char** argv) {
   if (argc < 2) {
-    std::fputs("usage: hud_dump <modDir> [група]\n", stderr);
+    std::fputs("usage: hud_dump <modDir> [group]\n", stderr);
     return 2;
   }
 
@@ -30,10 +30,10 @@ int main(int argc, char** argv) {
   interpreter.runFile("Menu/HUD/HudSetup/HudSetupMain.con");
   builder.finish();
 
-  std::printf("вузлів: %zu, невідомих команд: %lld\n", builder.nodes().size(),
+  std::printf("nodes: %zu, unknown commands: %lld\n", builder.nodes().size(),
               builder.unknownCommands());
   if (argc > 2 && std::string(argv[2]) == "--unknown") {
-    std::puts("\nбез обробника (топ-30):");
+    std::puts("\nwith no handler (top 30):");
     std::vector<std::pair<std::string, int>> sorted(builder.unknownByName().begin(),
                                                     builder.unknownByName().end());
     std::sort(sorted.begin(), sorted.end(), [](auto& a, auto& b) { return a.second > b.second; });
@@ -44,7 +44,7 @@ int main(int argc, char** argv) {
   }
 
   if (argc < 3) {
-    std::puts("\nгрупи:");
+    std::puts("\ngroups:");
     std::map<std::string, int> counts;
     for (const auto& node : builder.nodes()) ++counts[node.group];
     for (const auto& [name, count] : counts) std::printf("  %-28s %d\n", name.c_str(), count);
@@ -52,9 +52,9 @@ int main(int argc, char** argv) {
   }
 
   for (const auto* node : builder.group(argv[2])) {
-    // Показуємо і власні координати (відносні до батька), і зведені —
-    // саме за розбіжністю видно, як глибоко вузол сидить у дереві.
-    std::printf("  %-10s %-30s віднос %6.0f %6.0f  абс %6.0f %6.0f  %5.0fx%-5.0f %s",
+    // We show both the node's own coordinates (relative to the parent) and the
+    // combined ones — the difference is what shows how deep the node sits.
+    std::printf("  %-10s %-30s rel %6.0f %6.0f  abs %6.0f %6.0f  %5.0fx%-5.0f %s",
                 std::string(obf2::hud::nodeTypeName(node->type)).c_str(), node->name.c_str(),
                 node->x, node->y, node->absX, node->absY, node->width, node->height,
                 node->area.c_str());

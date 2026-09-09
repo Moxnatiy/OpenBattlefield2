@@ -5,8 +5,8 @@
 namespace obf2::mesh {
 namespace {
 
-// Читач із перевіркою меж — той самий підхід, що й у решті парсерів:
-// файли приходять з архівів користувача, довіри їм нема.
+// A bounds-checked reader — the same approach as in the other parsers:
+// the files come from the user's archives and are not to be trusted.
 class Reader {
  public:
   explicit Reader(std::span<const std::byte> data) : data_(data) {}
@@ -17,7 +17,7 @@ class Reader {
   void fail(std::string why) {
     if (ok_) {
       ok_ = false;
-      error_ = std::move(why) + " (зсув " + std::to_string(position_) + ")";
+      error_ = std::move(why) + " (offset " + std::to_string(position_) + ")";
     }
   }
 
@@ -36,13 +36,13 @@ class Reader {
   void skip(std::size_t bytes, const char* what) {
     if (!ok_) return;
     if (data_.size() - position_ < bytes) {
-      fail(std::string("файл обірвано: ") + what);
+      fail(std::string("file truncated: ") + what);
       return;
     }
     position_ += bytes;
   }
 
-  // Скільки елементів розміру T ще фізично лишилося.
+  // How many elements of size T are physically left.
   template <typename T>
   std::size_t capacity() const {
     return ok_ ? (data_.size() - position_) / sizeof(T) : 0;
@@ -54,7 +54,7 @@ class Reader {
     T value{};
     if (!ok_) return value;
     if (data_.size() - position_ < sizeof(T)) {
-      fail(std::string("файл обірвано: ") + what);
+      fail(std::string("file truncated: ") + what);
       return value;
     }
     std::memcpy(&value, data_.data() + position_, sizeof(T));
@@ -68,23 +68,23 @@ class Reader {
   std::string error_;
 };
 
-// BSP потрібне для швидкого пошуку всередині одного меша; ми будуємо
-// власний індекс по рівню, тому дерево лише пропускаємо.
+// The BSP is meant for fast lookup inside one mesh; we build our own index over
+// the level, so the tree is merely skipped.
 void skipBsp(Reader& reader) {
   reader.skip(12, "bsp.min");
   reader.skip(12, "bsp.max");
 
   const std::uint32_t nodeCount = reader.dword("bsp.nodeCount");
   if (nodeCount > reader.capacity<std::uint32_t>()) {
-    reader.fail("нереальна кількість вузлів bsp");
+    reader.fail("implausible bsp node count");
     return;
   }
-  // Вузол: площина (float) плюс три подвійні слова.
+  // A node: a plane (float) plus three double words.
   reader.skip(static_cast<std::size_t>(nodeCount) * 16, "bsp.nodes");
 
   const std::uint32_t faceRefCount = reader.dword("bsp.faceRefCount");
   if (faceRefCount > reader.capacity<std::uint16_t>()) {
-    reader.fail("нереальна кількість посилань bsp");
+    reader.fail("implausible bsp reference count");
     return;
   }
   reader.skip(static_cast<std::size_t>(faceRefCount) * 2, "bsp.faceRefs");
@@ -93,9 +93,9 @@ void skipBsp(Reader& reader) {
 CollisionLayer readLayer(Reader& reader, std::uint32_t versionMinor, std::uint32_t index) {
   CollisionLayer layer;
 
-  // Поле типу шару з'явилося у версії 0.9. У ранішій 0.8 його немає взагалі,
-  // і шар визначається порядком: 0 — снаряди, 1 — техніка, 2 — солдат.
-  // Без цієї гілки 241 файл гри розбирався зі зсувом і давав сміття.
+  // The layer type field appeared in version 0.9. The earlier 0.8 has none at
+  // all, and the layer is decided by order: 0 projectiles, 1 vehicles, 2 soldier.
+  // Without this branch 241 of the game's files parsed shifted and gave rubbish.
   if (versionMinor >= 9) {
     layer.type = static_cast<ColType>(reader.dword("col.type"));
   } else {
@@ -104,7 +104,7 @@ CollisionLayer readLayer(Reader& reader, std::uint32_t versionMinor, std::uint32
 
   const std::uint32_t faceCount = reader.dword("col.faceCount");
   if (faceCount > reader.capacity<std::uint16_t>() / 4) {
-    reader.fail("нереальна кількість граней");
+    reader.fail("implausible face count");
     return layer;
   }
   layer.faces.resize(faceCount);
@@ -117,27 +117,27 @@ CollisionLayer readLayer(Reader& reader, std::uint32_t versionMinor, std::uint32
 
   const std::uint32_t vertexCount = reader.dword("col.vertexCount");
   if (vertexCount > reader.capacity<Vec3>()) {
-    reader.fail("нереальна кількість вершин");
+    reader.fail("implausible vertex count");
     return layer;
   }
   layer.vertices.resize(vertexCount);
   for (Vec3& vertex : layer.vertices) vertex = reader.vec3("vertex");
 
-  // Матеріали вершин нам поки не потрібні, але пропустити їх треба.
+  // We do not need the vertex materials yet, but they have to be skipped.
   reader.skip(static_cast<std::size_t>(vertexCount) * 2, "col.vertexMaterials");
 
   layer.bounds.min = reader.vec3("col.min");
   layer.bounds.max = reader.vec3("col.max");
 
-  // Маркер — ASCII '1', якщо далі йде дерево.
+  // The marker is ASCII '1' when a tree follows.
   const std::uint8_t marker = reader.byte("col.bspMarker");
   if (marker == '1') skipBsp(reader);
 
-  // Дані суміжності граней з'явилися у версії 0.10.
+  // Face adjacency data appeared in version 0.10.
   if (versionMinor >= 10) {
     const std::uint32_t adjacencyCount = reader.dword("col.adjacencyCount");
     if (adjacencyCount > reader.capacity<std::uint32_t>()) {
-      reader.fail("нереальна кількість суміжностей");
+      reader.fail("implausible adjacency count");
       return layer;
     }
     reader.skip(static_cast<std::size_t>(adjacencyCount) * 4, "col.adjacency");
@@ -164,19 +164,19 @@ std::optional<CollisionMesh> loadCollisionMesh(std::span<const std::byte> bytes,
 
   const std::uint32_t geometryPartCount = reader.dword("geometryPartCount");
   if (geometryPartCount > 4096) {
-    reader.fail("нереальна кількість частин");
+    reader.fail("implausible part count");
   }
 
   for (std::uint32_t part = 0; part < geometryPartCount && reader.ok(); ++part) {
     const std::uint32_t geometryCount = reader.dword("geometryCount");
     if (geometryCount > 4096) {
-      reader.fail("нереальна кількість geom");
+      reader.fail("implausible geom count");
       break;
     }
     for (std::uint32_t geometry = 0; geometry < geometryCount && reader.ok(); ++geometry) {
       const std::uint32_t layerCount = reader.dword("colCount");
       if (layerCount > 64) {
-        reader.fail("нереальна кількість шарів");
+        reader.fail("implausible layer count");
         break;
       }
       for (std::uint32_t index = 0; index < layerCount && reader.ok(); ++index) {

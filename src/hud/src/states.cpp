@@ -3,7 +3,7 @@
 namespace obf2::hud {
 namespace {
 
-// Змінити значення й сказати, чи воно справді змінилося.
+// Change a value and say whether it really changed.
 bool set(VariableMap& variables, const char* name, bool value) {
   bool& slot = variables[name];
   if (slot == value) return false;
@@ -14,9 +14,9 @@ bool set(VariableMap& variables, const char* name, bool value) {
 }  // namespace
 
 const std::vector<StateEntry>& hudStates() {
-  // Створено за виводом `tools/hud_states.py`, який читає таблицю
-  // переходів 0x787008 просто з BF2.exe. Позиції 10, 12-14, 22-25 і 28
-  // ведуть до спільного порожнього обробника, тож їх тут немає.
+  // Made from the output of `tools/hud_states.py`, which reads the jump table
+  // 0x787008 straight out of BF2.exe. Entries 10, 12-14, 22-25 and 28 lead to a
+  // shared empty handler, so they are not here.
   static const std::vector<StateEntry> table = {
       {0,
        {"ShowIngameHud", "MapShow", "MapBorderShow"},
@@ -57,16 +57,16 @@ const std::vector<StateEntry>& hudStates() {
 }
 
 const std::vector<StateEntry>& hudLeaveStates() {
-  // Перший switch у 0x786260 — за старим станом. Виписано з розбору
-  // самої функції (адреси гілок у дужках); таблиці переходів у нього
-  // немає, тож `hud_states.py` його не бачить.
+  // The first switch in 0x786260 — on the old state. Written out from taking the
+  // function itself apart (the branches' addresses in brackets); it has no jump
+  // table, so `hud_states.py` does not see it.
   //
-  // Три рядки перед switch (0x786289, 0x7862a2, 0x7862bb) гасять
-  // `SetupShow`, `DemoRecInterfaceShow` і `DemoCameraInterfaceShow` за
-  // будь-якого переходу — вони в `kAlwaysOff` нижче.
+  // The three lines before the switch (0x786289, 0x7862a2, 0x7862bb) turn off
+  // `SetupShow`, `DemoRecInterfaceShow` and `DemoCameraInterfaceShow` on any
+  // transition — they are in `kAlwaysOff` below.
   static const std::vector<StateEntry> table = {
       {0, {}, {"VoipListShow"}},
-      // 1: `SpawnShow`, але з умовою на **новий** стан — див. applyState.
+      // 1: `SpawnShow`, but conditioned on the **new** state — see applyState.
       {1, {}, {}},
       {3, {}, {"SquadInterfaceShow"}},
       {4, {}, {"RadioInterfaceShow", "RadioVehicleInterfaceShow"}},                        // 0x786456
@@ -77,12 +77,12 @@ const std::vector<StateEntry>& hudLeaveStates() {
       {9, {}, {"ScoreboardShow", "LevelsListShow", "ServerInfoSelected"}},  // 0x7864be
       {11, {}, {"VictoryShow", "VictoryRankShow"}},                        // 0x786501
       {12, {}, {"ScoreboardShow", "LevelsListShow", "ServerInfoSelected"}},
-      // 15: `CommanderShow`, але лише коли `[0xa10890]->vtbl[0x1f4]()`
-      // хибний (0x78649d). Що це за перевірка — **не з'ясовано**, тож
-      // гасимо завжди: інакше командирський екран не закривався б.
+      // 15: `CommanderShow`, but only when `[0xa10890]->vtbl[0x1f4]()` is false
+      // (0x78649d). What that check is has **not been established**, so we always
+      // turn it off: otherwise the commander screen would never close.
       {15, {}, {"CommanderShow"}},
       {16, {}, {"CommanderRadioShow"}},
-      // 17, 18: `SpawnShow` з умовою на новий стан — див. applyState.
+      // 17, 18: `SpawnShow` conditioned on the new state — see applyState.
       {17, {}, {}},
       {18, {}, {}},
       {19, {}, {"MapMenuShow"}},
@@ -99,8 +99,8 @@ const std::vector<StateEntry>& hudLeaveStates() {
 
 namespace {
 
-// Гілка `default` першого switch (0x78653c..0x786735): стану ще не було
-// або він поза таблицею — прибрати геть усе.
+// The first switch's `default` branch (0x78653c..0x786735): there was no state yet
+// or it is outside the table — clear absolutely everything.
 const std::vector<const char*> kLeaveEverything = {
     "MapShow",           "MapBorderShow",      "SpawnShow",
     "RadioInterfaceShow", "SpottedInterfaceShow", "RadioVehicleInterfaceShow",
@@ -111,7 +111,7 @@ const std::vector<const char*> kLeaveEverything = {
     "VictoryRankShow",   "VoipListShow",       "InviteListShow",
     "CommanderShow"};
 
-// Три виклики перед switch (0x786289, 0x7862a2, 0x7862bb).
+// The three calls before the switch (0x786289, 0x7862a2, 0x7862bb).
 const std::vector<const char*> kAlwaysOff = {"SetupShow", "DemoRecInterfaceShow",
                                              "DemoCameraInterfaceShow"};
 
@@ -125,21 +125,21 @@ const StateEntry* find(const std::vector<StateEntry>& table, int id) {
 }  // namespace
 
 bool applyState(VariableMap& variables, int previous, int state) {
-  // Спершу складаємо, чого хочемо, і лише потім пишемо: інакше змінна,
-  // яку старий стан гасить, а новий одразу вмикає, виглядала б як дві
-  // зміни, і геометрія перебудовувалася б двічі на кадр.
+  // We first assemble what we want and only then write: otherwise a variable the
+  // old state turns off and the new one turns straight back on would look like two
+  // changes, and the geometry would be rebuilt twice per frame.
   std::map<std::string, bool> target;
   const auto off = [&](const char* name) { target[name] = false; };
   const auto on = [&](const char* name) { target[name] = true; };
 
   for (const char* name : kAlwaysOff) off(name);
 
-  // --- перший switch: за старим станом -------------------------------
+  // --- the first switch: on the old state ----------------------------
   const StateEntry* leaving = find(hudLeaveStates(), previous);
   if (leaving == nullptr) {
-    // Порожні гілки (2, 10, 13, 14, 22-25, 28) у таблиці є з порожнім
-    // `off`; сюди потрапляє лише стан поза 0..31 — тобто «стану ще не
-    // було».
+    // The empty branches (2, 10, 13, 14, 22-25, 28) are in the table with an empty
+    // `off`; only a state outside 0..31 lands here — that is, "there was no state
+    // yet".
     if (previous < 0 || previous > 31) {
       for (const char* name : kLeaveEverything) off(name);
     }
@@ -147,15 +147,15 @@ bool applyState(VariableMap& variables, int previous, int state) {
     for (const char* name : leaving->off) off(name);
   }
 
-  // Дві умовні гілки першого switch. Обидві гасять `SpawnShow`, але не
-  // тоді, коли новий стан і сам його показує чи ним керує.
+  // The first switch's two conditional branches. Both turn off `SpawnShow`, but
+  // not when the new state itself shows it or governs it.
   if (previous == 1 && state != 9 && state != 12) off("SpawnShow");       // 0x7862ea
   if ((previous == 17 || previous == 18) && state != 9 && state != 12 &&  // 0x78631a
       state != 20 && state != 26 && state != 13 && state != 19) {
     off("SpawnShow");
   }
 
-  // --- другий switch: за новим станом --------------------------------
+  // --- the second switch: on the new state ---------------------------
   if (const StateEntry* entering = find(hudStates(), state); entering != nullptr) {
     for (const char* name : entering->off) off(name);
     for (const char* name : entering->on) on(name);
@@ -178,31 +178,41 @@ float showValue(const VariableMap& flags, const std::map<std::string, float>& va
 bool applyDerived(VariableMap& variables, const WorldView& view) {
   bool changed = false;
 
-  // 0x466986: MapFullSize і MapMinSize — це два прапорці самого об'єкта
-  // карти (поля 0x68c і 0x68d), а 0x4669ae робить із другого
-  // MapBorderAlternateShow запереченням.
+  // 0x466986: MapFullSize and MapMinSize are two flags of the map object itself
+  // (fields 0x68c and 0x68d), and 0x4669ae makes MapBorderAlternateShow out of the
+  // second by negation.
   changed |= set(variables, "MapFullSize", view.mapFullSize);
   changed |= set(variables, "MapMinSize", !view.mapFullSize);
   changed |= set(variables, "MapBorderAlternateShow", view.mapFullSize);
 
-  // 0x466935 і 0x466950: складені змінні — просто «і» двох інших.
+  // The composite variables. Both are written by 0x4668d0 — the same per-frame
+  // function, at its start, and verbatim like this:
+  //
+  //   +0x1da (MapFullSizeAndSpawnShow)    = MapFullSize AND SpawnShow
+  //   +0x1d9 (MapFullSizeAndNotSpawnShow) = MapFullSize AND NOT SpawnShow
+  //                                         AND NOT player->+0x24f
+  //
+  // The fields are named after the registry: +0x1d7 `MapFullSize`, +0x1d2
+  // `SpawnShow` (docs/functions/hud-variables.md). The third term in the second is
+  // the player's flag +0x24f, **purpose not established**; so it is absent below,
+  // and that is a difference from the original.
   const bool spawn = variables["SpawnShow"];
   changed |= set(variables, "MapFullSizeAndSpawnShow", view.mapFullSize && spawn);
   changed |= set(variables, "MapFullSizeAndNotSpawnShow", view.mapFullSize && !spawn);
 
-  // 0x78d154 вмикає, 0x78d2f1 гасить — за наявністю керованого гравця.
+  // 0x78d154 turns it on, 0x78d2f1 off — by whether there is a controlled player.
   changed |= set(variables, "PlayerHealthShow", view.hasPlayer);
-  // 0x78acf1: у грі це ще й порівняння самої витривалості зі сталою
-  // (поле 0x1ac), тобто смуга з'являється, коли витривалість не повна.
-  // Самої витривалості в нас поки немає — лишається гравець.
+  // 0x78acf1: in the game this is also a comparison of the stamina itself against
+  // a constant (field 0x1ac), so the bar appears when the stamina is not full.
+  // We have no stamina yet — the player is what is left.
   changed |= set(variables, "PlayerStaminaShow", view.hasPlayer);
-  // 0x7a5bae, 0x7a5bb5, 0x7a8a18: набої вмикає оновлення зброї. Зброї ми
-  // поки не моделюємо, тож теж за гравцем. Борг.
+  // 0x7a5bae, 0x7a5bb5, 0x7a8a18: the ammo is turned on by the weapon's update. We
+  // do not model weapons yet, so this goes by the player too. Debt.
   changed |= set(variables, "PrimaryAmmoShow", view.hasPlayer);
   changed |= set(variables, "PrimaryAmmoBarShow", view.hasPlayer);
   changed |= set(variables, "PrimaryClipsShow", view.hasPlayer);
 
-  // 0x78adc5, 0x78ae8c проти 0x78af97: загін. Ми в загоні не буваємо.
+  // 0x78adc5, 0x78ae8c against 0x78af97: the squad. We are never in a squad.
   changed |= set(variables, "SquadInfoBarShow", false);
   changed |= set(variables, "ShowCommanderIcon", false);
   changed |= set(variables, "ShowSquadIcon", false);

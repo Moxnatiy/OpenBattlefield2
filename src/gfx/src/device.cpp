@@ -28,9 +28,9 @@ std::unique_ptr<Device> Device::create(const WindowDesc& desc, std::string* erro
   SDL_WindowFlags flags = 0;
   if (desc.resizable) flags |= SDL_WINDOW_RESIZABLE;
 
-  // Просимо стільки, скільки сказали, але не більше, ніж лишає екран, —
-  // і **зі збереженням сторін**. Це важливо: гра зроблена під 4:3, і якщо
-  // вікно тихо обрізати до розміру екрана, HUD поїде разом із ним.
+  // We ask for what was requested, but no more than the screen leaves — and
+  // **keeping the aspect**. That matters: the game is made for 4:3, and if the
+  // window is quietly clipped to the screen's size the HUD slides with it.
   int width = desc.width;
   int height = desc.height;
   SDL_Rect usable{};
@@ -46,9 +46,9 @@ std::unique_ptr<Device> Device::create(const WindowDesc& desc, std::string* erro
   device->window_ = SDL_CreateWindow(desc.title.c_str(), width, height, flags);
   if (device->window_ == nullptr) return fail("SDL_CreateWindow");
 
-  // Система може врізати вікно ще раз — під смугу меню чи панель. Тоді
-  // сторони пливуть, а нам вони потрібні цілі, тож підганяємо вручну:
-  // беремо найбільший прямокутник потрібних сторін, який туди влазить.
+  // The system may trim the window once more — for a menu bar or a panel. The
+  // aspect then drifts, and we need it intact, so we adjust it by hand: take the
+  // largest rectangle of the required aspect that fits.
   int actualWidth = 0;
   int actualHeight = 0;
   SDL_GetWindowSize(device->window_, &actualWidth, &actualHeight);
@@ -65,8 +65,8 @@ std::unique_ptr<Device> Device::create(const WindowDesc& desc, std::string* erro
     }
   }
 
-  // Перелічуємо всі формати шейдерів, які вміємо постачати; SDL сам вибере
-  // бекенд, доступний на цій платформі.
+  // We list every shader format we can supply; SDL picks the backend available
+  // on this platform itself.
   const SDL_GPUShaderFormat formats =
       SDL_GPU_SHADERFORMAT_MSL | SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL;
   device->gpu_ = SDL_CreateGPUDevice(formats, desc.debugDevice, nullptr);
@@ -104,9 +104,9 @@ bool Device::pumpEvents() {
 }
 
 bool Device::isKeyDown(std::string_view name) const {
-  // Імена клавіш беремо такі, як у `Settings/Controls.con`. Перекладаємо
-  // лише ті, що відрізняються від назви скан-коду SDL; решта збігається
-  // після зняття префікса.
+  // The key names are taken as they are in `Settings/Controls.con`. Only the
+  // ones that differ from an SDL scancode's name are translated; the rest match
+  // once the prefix is removed.
   if (name.rfind("IDKey_", 0) != 0) return false;
   const std::string_view key = name.substr(6);
 
@@ -122,7 +122,7 @@ bool Device::isKeyDown(std::string_view name) const {
       {"End", SDL_SCANCODE_END},
       {"PageUp", SDL_SCANCODE_PAGEUP},
       {"PageDown", SDL_SCANCODE_PAGEDOWN},
-      // Гра зве CapsLock старим ім'ям із Windows.
+      // The game calls CapsLock by its old Windows name.
       {"Capital", SDL_SCANCODE_CAPSLOCK},
       {"Grave", SDL_SCANCODE_GRAVE},
       {"Add", SDL_SCANCODE_KP_PLUS},
@@ -147,7 +147,7 @@ bool Device::isKeyDown(std::string_view name) const {
     }
   }
   if (code == SDL_SCANCODE_UNKNOWN) {
-    // Літери, цифри й F-клавіші звуться однаково — SDL їх знає за іменем.
+    // Letters, digits and the F keys are named the same — SDL knows them by name.
     code = SDL_GetScancodeFromName(std::string(key).c_str());
   }
   if (code == SDL_SCANCODE_UNKNOWN) return false;
@@ -160,7 +160,7 @@ Device::InputState Device::readInput() {
   InputState state;
   const bool* keys = SDL_GetKeyboardState(nullptr);
   if (keys != nullptr) {
-    // Розкладка як у грі: W/S — вперед-назад, A/D — вбік, Shift — біг.
+    // The layout as in the game: W/S forward and back, A/D sideways, Shift to run.
     if (keys[SDL_SCANCODE_W]) state.moveForward += 1.0f;
     if (keys[SDL_SCANCODE_S]) state.moveForward -= 1.0f;
     if (keys[SDL_SCANCODE_D]) state.moveRight += 1.0f;
@@ -176,12 +176,12 @@ Device::InputState Device::readInput() {
   state.mouseX = mouseX;
   state.mouseY = mouseY;
 
-  // Клік — саме перехід із відпущеного в натиснуте, інакше одне натискання
-  // спрацьовувало б щокадру.
+  // A click is precisely the transition from released to pressed, otherwise one
+  // press would fire every frame.
   state.clicked = state.fire && !mouseWasDown_;
   mouseWasDown_ = state.fire;
 
-  // Накопичене за кадр зміщення віддаємо один раз і обнуляємо.
+  // The movement accumulated over the frame is handed out once and cleared.
   state.mouseDeltaX = mouseDeltaX_;
   state.mouseDeltaY = mouseDeltaY_;
   mouseDeltaX_ = 0.0f;
@@ -210,7 +210,7 @@ std::optional<Frame> Device::beginFrame() {
     return std::nullopt;
   }
   if (frame.swapchain == nullptr) {
-    // Вікно згорнуте: буфер треба все одно віддати, інакше він протече.
+    // The window is minimised: the buffer still has to be handed back, or it leaks.
     SDL_SubmitGPUCommandBuffer(frame.commands);
     return std::nullopt;
   }
@@ -243,7 +243,7 @@ bool Device::submitAndSave(const Frame& frame, const char* path, std::string* er
   SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(gpu_, &transferInfo);
   if (transfer == nullptr) {
     SDL_SubmitGPUCommandBuffer(frame.commands);
-    return fail("буфер завантаження");
+    return fail("transfer buffer");
   }
 
   SDL_GPUTextureRegion region{};
@@ -261,7 +261,7 @@ bool Device::submitAndSave(const Frame& frame, const char* path, std::string* er
   SDL_DownloadFromGPUTexture(copy, &region, &destination);
   SDL_EndGPUCopyPass(copy);
 
-  // Читати результат можна лише після того, як GPU реально відпрацював.
+  // The result can only be read once the GPU has actually finished.
   SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(frame.commands);
   if (fence == nullptr) {
     SDL_ReleaseGPUTransferBuffer(gpu_, transfer);
@@ -273,11 +273,11 @@ bool Device::submitAndSave(const Frame& frame, const char* path, std::string* er
   void* pixels = SDL_MapGPUTransferBuffer(gpu_, transfer, false);
   if (pixels == nullptr) {
     SDL_ReleaseGPUTransferBuffer(gpu_, transfer);
-    return fail("мапування знімка");
+    return fail("mapping the screenshot");
   }
 
-  // Порядок байтів у swapchain залежить від бекенда, тож перекладаємо його
-  // у формат SDL, а не припускаємо BGRA.
+  // The swapchain's byte order depends on the backend, so we translate it into
+  // an SDL format rather than assuming BGRA.
   SDL_PixelFormat pixelFormat = SDL_PIXELFORMAT_ARGB8888;
   switch (colorFormat()) {
     case SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM:
@@ -285,7 +285,7 @@ bool Device::submitAndSave(const Frame& frame, const char* path, std::string* er
       pixelFormat = SDL_PIXELFORMAT_ABGR8888;
       break;
     default:
-      break;  // B8G8R8A8 та решта — ARGB8888 у little-endian порядку
+      break;  // B8G8R8A8 and the rest — ARGB8888 in little-endian order
   }
 
   SDL_Surface* surface =
@@ -298,7 +298,7 @@ bool Device::submitAndSave(const Frame& frame, const char* path, std::string* er
   SDL_UnmapGPUTransferBuffer(gpu_, transfer);
   SDL_ReleaseGPUTransferBuffer(gpu_, transfer);
 
-  if (!ok && error) *error = "збереження знімка: " + saveError;
+  if (!ok && error) *error = "saving the screenshot: " + saveError;
   return ok;
 }
 
@@ -314,7 +314,7 @@ SDL_GPUTexture* Device::acquireDepthTarget(Uint32 width, Uint32 height) {
     depth_ = nullptr;
   }
   if (depthFormat_ == SDL_GPU_TEXTUREFORMAT_INVALID) {
-    // D32 є не скрізь; D24 як запасний варіант покриває решту.
+    // D32 is not everywhere; D24 as a fallback covers the rest.
     for (const SDL_GPUTextureFormat candidate :
          {SDL_GPU_TEXTUREFORMAT_D32_FLOAT, SDL_GPU_TEXTUREFORMAT_D24_UNORM}) {
       if (SDL_GPUTextureSupportsFormat(gpu_, candidate, SDL_GPU_TEXTURETYPE_2D,

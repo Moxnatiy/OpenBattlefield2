@@ -1,7 +1,7 @@
-// texture_info — регресія парсера DDS на справжніх даних.
+// texture_info — a regression of the DDS parser on the real data.
 //
 //   texture_info <modDir> --all
-//   texture_info <modDir> <шлях/у/vfs.dds>
+//   texture_info <modDir> <path/in/vfs.dds>
 
 #include <algorithm>
 #include <cstdio>
@@ -36,18 +36,18 @@ int main(int argc, char** argv) {
   if (what != "--all") {
     const std::string path = obf2::normalizeAssetPath(what);
     const auto bytes = files.read(path);
-    if (!bytes) { std::fprintf(stderr, "не знайдено: %s\n", path.c_str()); return 1; }
+    if (!bytes) { std::fprintf(stderr, "not found: %s\n", path.c_str()); return 1; }
 
     std::string error;
     const auto texture = obf2::texture::loadDds(*bytes, &error);
     if (!texture) { std::fprintf(stderr, "%s: %s\n", path.c_str(), error.c_str()); return 1; }
 
-    std::printf("%s\n  %ux%u, %s, рівнів %zu, %zu байт даних\n", path.c_str(), texture->width,
+    std::printf("%s\n  %ux%u, %s, %zu levels, %zu bytes of data\n", path.c_str(), texture->width,
                 texture->height, std::string(obf2::texture::formatName(texture->format)).c_str(),
                 texture->mips.size(), texture->data.size());
     for (std::size_t i = 0; i < texture->mips.size() && i < 4; ++i) {
       const auto& mip = texture->mips[i];
-      std::printf("    mip %zu: %ux%u, %zu байт\n", i, mip.width, mip.height, mip.size);
+      std::printf("    mip %zu: %ux%u, %zu bytes\n", i, mip.width, mip.height, mip.size);
     }
     return 0;
   }
@@ -79,17 +79,17 @@ int main(int argc, char** argv) {
     if (texture->mips.size() > 1) ++withMips;
   }
 
-  std::puts("розібрано:");
+  std::puts("parsed:");
   int parsed = 0;
   for (const auto& [format, count] : byFormat) {
     std::printf("  %-14s %d\n", format.c_str(), count);
     parsed += count;
   }
-  std::printf("  разом %d, з мапами %d, %lld МБ пікселів\n", parsed, withMips,
+  std::printf("  %d in all, %d with mipmaps, %lld MB of pixels\n", parsed, withMips,
               totalBytes / (1024 * 1024));
 
   if (!failures.empty()) {
-    std::puts("не розібрано:");
+    std::puts("not parsed:");
     for (const auto& [reason, count] : failures) std::printf("  %-44s %d\n", reason.c_str(), count);
     for (const auto& example : examples) std::printf("  %s\n", example.c_str());
   }

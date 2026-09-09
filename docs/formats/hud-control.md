@@ -1,38 +1,39 @@
-# Хто керує HUD
+# What drives the HUD
 
-`hudBuilder` лише **будує** дерево вузлів: створює їх, дає координати,
-текстури й умови показу. Він нічого не рухає. Те, що в грі нижня смуга
-розсувається під час посадки в техніку, а плашки плавно згасають, робить
-інший шар — **граф дій у файлі `MemeFile 2.0`** (`Menu/Ingame`).
+`hudBuilder` only **builds** the node tree: it creates nodes, gives them
+coordinates, textures and show conditions. It moves nothing. What makes
+the bottom bar slide out while entering a vehicle, and the panels fade
+smoothly, is another layer — **the action graph in the `MemeFile 2.0`
+file** (`Menu/Ingame`).
 
-Це видно з переліку класів у самому файлі:
+That is visible from the class list in the file itself:
 
-| клас | скільки | що робить |
+| class | count | what it does |
 |---|---|---|
-| `SetVariableSineAction` | 2 | веде змінну до цілі по синусоїді |
-| `SetVariableSoftAction` | 3 | веде змінну до цілі плавно |
-| `SetVariableAction` | 2 | ставить значення відразу |
-| `ActionListAction` | 3 | список дій, що виконуються разом |
-| `CullVariableActionNode` | 5 | запускає дії, коли змінна змінилась |
-| `ToggleData` | 2 | перемикає між двома значеннями |
-| `EqualData`, `AndData`, `OrData`, `NotData` | 6 | логіка |
-| `AlphaFadeEffect`, `VariableColorEffect` | 12 | згасання і колір |
+| `SetVariableSineAction` | 2 | drives a variable to a target along a sine |
+| `SetVariableSoftAction` | 3 | drives a variable to a target smoothly |
+| `SetVariableAction` | 2 | sets the value at once |
+| `ActionListAction` | 3 | a list of actions run together |
+| `CullVariableActionNode` | 5 | runs actions when a variable changes |
+| `ToggleData` | 2 | switches between two values |
+| `EqualData`, `AndData`, `OrData`, `NotData` | 6 | logic |
+| `AlphaFadeEffect`, `VariableColorEffect` | 12 | fading and colour |
 
-Ті самі чотири дії — `EQUAL`, `AND`, `OR`, `NOT` — стоять і в
-`setNodeLogicShowVariable` у `.con`. Тобто мова умов спільна для обох
-шарів.
+The same four operations — `EQUAL`, `AND`, `OR`, `NOT` — also appear in
+`setNodeLogicShowVariable` in the `.con` files. So the condition language
+is shared by both layers.
 
-## Рух нижніх ділянок
+## The bottom regions' movement
 
-Дві ділянки з `Readme.txt` розробників, `BottomLeftAnimate` і
-`BottomRightAnimate`, — це `BfTransformNode` (400×64 і 600×100). Їхнє
-положення по X не записане числом: воно береться зі змінної, а змінну
-веде дія.
+The two regions from the developers' `Readme.txt`, `BottomLeftAnimate` and
+`BottomRightAnimate`, are `BfTransformNode`s (400×64 and 600×100). Their X
+position is not written down as a number: it comes from a variable, and an
+action drives that variable.
 
-Значення, збережені у файлі:
+The values stored in the file:
 
 ```
-BottomRight/BottomRight_XPos      503     поточне
+BottomRight/BottomRight_XPos      503     current
 BottomRight/BottomRight_oldXPos   201
 BottomRight/BottomRight_newXPos   503
 BottomLeft/BottomLeft_XPos       -295
@@ -41,24 +42,25 @@ SetVariableSineAction  Speed 600
 SetVariableSoftAction  Speed 10
 ```
 
-Отже права ділянка ходить між **201** і **503**. Ширина її — 600, а
-201 + 600 = 801, тобто 201 це висунуте положення врівень із правим краєм
-екрана 800, а 503 — сховане за краєм. Ліва при −295 (ширина 400) схована
-за лівим краєм, бо −295 + 400 = 105.
+So the right-hand region travels between **201** and **503**. It is 600
+wide, and 201 + 600 = 801, meaning 201 is the shown position flush with
+the screen's right edge at 800, and 503 is hidden past that edge. The left
+one at −295 (400 wide) is hidden past the left edge, since −295 + 400 =
+105.
 
-Швидкість руху — 600 (синусоїда), швидкість згасання — 10.
+Movement speed is 600 (sine), fade speed is 10.
 
-## Чого бракує
+## What is missing
 
-`BfTransformNode` має поля `X` і `Y` типу «дані», але у файлі вони
-порожні: змінні прив'язуються за іменем уже під час роботи. Через це з
-файлу **не видно Y** цих ділянок — його доводиться брати з вигляду гри,
-а не з даних. Для нерухомих сусідів Y записаний прямо:
-`BottomLeftStatic` X=−1 Y=563, `BottomRightStatic` X=401 Y=563, обидва
-400×64.
+`BfTransformNode` has `X` and `Y` fields of type "data", but they are
+empty in the file: variables are bound by name at run time. Because of
+that the file **does not show the Y** of these regions — it has to be
+taken from the game's appearance rather than from the data. For their
+static neighbours Y is written down directly: `BottomLeftStatic` X=−1
+Y=563, `BottomRightStatic` X=401 Y=563, both 400×64.
 
-Двом класам — `FloatRefData` і `AlphaFadeEffect` — ми не маємо таблиці
-полів: власного `onStream` вони не експортують, тож читаються за
-батьківським. Файл при цьому розбирається цілком, без залишку, але саме
-в них лежить зв'язок «посилання на змінну за іменем». Це наступний крок,
-якщо знадобиться повністю відтворити анімацію.
+For two classes — `FloatRefData` and `AlphaFadeEffect` — we have no field
+table: they export no `onStream` of their own, so they are read through
+the parent's. The file still parses whole, with nothing left over, but it
+is exactly those two that hold the "reference a variable by name" link.
+That is the next step should the animation ever need reproducing in full.

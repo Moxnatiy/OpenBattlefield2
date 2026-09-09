@@ -8,13 +8,13 @@
 namespace obf2::hud {
 namespace {
 
-// Нормаль уздовж джерела світла: накладний пайплайн її не використовує,
-// але вершина спільна для всіх мешів, тож поле має бути заповнене.
+// The normal points along the light source: the overlay pipeline does not use it,
+// but the vertex is shared by every mesh, so the field has to be filled in.
 mesh::Vec3 flatNormal() { return mesh::Vec3{0.0f, 1.0f, 0.0f}; }
 
-// Прямокутник у NDC із кольором, який іде через альфу текстури.
-// `uMin`/`uMax` дають змогу показати лише частину картинки — так малюється
-// заповнення смуги.
+// A rectangle in NDC with a colour that goes through the texture's alpha.
+// `uMin`/`uMax` make it possible to show only part of the picture — that is how a
+// bar's fill is drawn.
 mesh::RenderMesh quad(const ScreenRect& rect, const Screen& screen, const std::string& texture,
                       float uMin = 0.0f, float uMax = 1.0f, float vMin = 0.0f, float vMax = 1.0f,
                       float angle = 0.0f) {
@@ -39,14 +39,14 @@ mesh::RenderMesh quad(const ScreenRect& rect, const Screen& screen, const std::s
       mesh::Vertex{{x1, y1, 0.0f}, normal, {uMax, vMax}},
   };
 
-  // Обертання навколо середини вузла — `setPictureNodeRotateVariable`.
-  // Крутиться сама картинка, тож повертаємо кути в пікселях, а не в NDC:
-  // інакше на неквадратному екрані круг став би овалом.
+  // Rotation around the node's middle — `setPictureNodeRotateVariable`.
+  // The picture itself rotates, so we rotate the corners in pixels rather than in
+  // NDC: otherwise on a non-square screen a circle would become an oval.
   //
-  // Знак: на екрані Y росте вниз, тож додатний кут має крутити **проти**
-  // годинникової стрілки. Інакше компас показував би сторону світу з
-  // протилежного боку: при погляді на схід «E» опинялося б унизу, а не
-  // вгорі.
+  // The sign: on screen Y grows downwards, so a positive angle has to turn
+  // **counter-clockwise**. Otherwise the compass would show a cardinal point from
+  // the opposite side: looking east, "E" would end up at the bottom rather than
+  // the top.
   if (angle != 0.0f) {
     const float cx = rect.x + rect.width * 0.5f;
     const float cy = rect.y + rect.height * 0.5f;
@@ -71,9 +71,9 @@ mesh::RenderMesh quad(const ScreenRect& rect, const Screen& screen, const std::s
   return out;
 }
 
-// Круг замість прямокутника — цим малюється мініатюра карти. Рамка
-// map_Frame.tga кутів не закриває (там прозорість), тож обрізати
-// картинку має сам вузол.
+// A circle instead of a rectangle — the map's thumbnail is drawn with this. The
+// frame map_Frame.tga does not cover the corners (it is transparent there), so
+// the node itself has to clip the picture.
 mesh::RenderMesh disc(const ScreenRect& rect, const Screen& screen, const std::string& texture,
                       float u0 = 0.0f, float v0 = 0.0f, float u1 = 1.0f, float v1 = 1.0f,
                       int segments = 48) {
@@ -120,17 +120,17 @@ mesh::RenderMesh disc(const ScreenRect& rect, const Screen& screen, const std::s
 
 }  // namespace
 
-// Чи показувати вузол. Крім простої змінної (setNodeShowVariable) вузол
-// може нести ланцюжок умов із setNodeLogicShowVariable — кожна порівнює
-// змінну зі значенням, а дія каже, як приєднати результат:
+// Whether to show a node. Besides a plain variable (setNodeShowVariable) a node
+// may carry a chain of conditions from setNodeLogicShowVariable — each compares a
+// variable against a value, and the action says how to join the result:
 //
-//   EQUAL HudState 0        показувати, коли HudState дорівнює 0
-//   NOT   DisconnectMessageActive 1   ... коли НЕ дорівнює
-//   AND   ServerIsFavourite 1         ... і додатково
-//   OR    PauseMessageActive 1        ... або
+//   EQUAL HudState 0        show when HudState equals 0
+//   NOT   DisconnectMessageActive 1   ... when it does NOT equal
+//   AND   ServerIsFavourite 1         ... and additionally
+//   OR    PauseMessageActive 1        ... or
 //
-// Невідома змінна дає 0 — саме тому `EQUAL HudState 0` типово істинне,
-// а `AND ServerIsFavourite 1` — ні.
+// An unknown variable gives 0 — which is exactly why `EQUAL HudState 0` is true
+// by default while `AND ServerIsFavourite 1` is not.
 bool nodeVisible(const Node& node, const Context& context) {
   bool result = true;
   bool have = false;
@@ -143,8 +143,8 @@ bool nodeVisible(const Node& node, const Context& context) {
     bool term = std::abs(value - test.value) < 0.0001f;
     if (test.op == "NOT" || test.op == "not") term = !term;
     if (!have) {
-      // Без setNodeShowVariable перша умова і задає відповідь: приєднувати
-      // її нема до чого.
+      // Without setNodeShowVariable the first condition gives the answer: there is
+      // nothing to join it to.
       result = term;
       have = true;
       continue;
@@ -169,9 +169,9 @@ ShowState nodeShowState(const Node& node, const Context& context) {
   return context.showState(node);
 }
 
-// Чи вузол на екрані. Умова показу задає **ціль**, аніматор — лише хід
-// до неї: поки вузол їде або згасає, він ще видимий. Про вузол, якого
-// аніматор не знає, відповідає сама умова.
+// Whether a node is on screen. The show condition sets the **target**, the
+// animator only the progress towards it: while a node is travelling or fading it
+// is still visible. For a node the animator does not know, the condition answers.
 bool nodeShown(const Node& node, const Context& context) {
   const ShowState show = nodeShowState(node, context);
   if (!show.known) return nodeVisible(node, context);
@@ -179,27 +179,27 @@ bool nodeShown(const Node& node, const Context& context) {
 }
 
 ScreenRect nodeRect(const Node& node, const Screen& screen, const Context* context) {
-  // Масштаб однаковий по обох осях — по висоті. Розтягування по ширині
-  // робило б з круглого овальне.
+  // The scale is the same on both axes — by the height. Stretching by the width
+  // would turn round things oval.
   const float scale = static_cast<float>(screen.height) / kReferenceHeight;
   const float spare = static_cast<float>(screen.width) - kReferenceWidth * scale;
   const float padX = screen.anchor == Anchor::Center  ? spare * 0.5f
                      : screen.anchor == Anchor::Right ? spare
                                                       : 0.0f;
-  // Беремо absX/absY, а не x/y: у грі координати вузла відлічуються від
-  // батька, і без суми по предках усе розсипається по екрану. Зсув
-  // setNodeOffset уже входить у цю суму (Builder::finish).
-  // Зсув ефекту руху — теж у базових 800x600, тож масштабується так само.
+  // We take absX/absY rather than x/y: in the game a node's coordinates are
+  // counted from its parent, and without the sum over the ancestors everything
+  // scatters over the screen. The setNodeOffset shift is already in that sum
+  // (Builder::finish). The move effect's offset is in the base 800x600 too, so it scales the same.
   float shiftX = 0.0f, shiftY = 0.0f;
   if (context != nullptr && context->showState) {
     const ShowState show = context->showState(node);
     shiftX = show.offsetX;
     shiftY = show.offsetY;
   }
-  // `setNodePosVariable <вісь> <змінна>` — зсув вузла зі змінної. У даних
-  // цим роз'їжджаються чотири промені прицілу на розкид зброї
-  // (`HudElementsGenericWeapon.con`). Невідома змінна дає нуль — вузол
-  // лишається там, де стоїть у даних.
+  // `setNodePosVariable <axis> <variable>` — a node's offset from a variable. In
+  // the data this spreads the sight's four rays by the weapon's dispersion
+  // (`HudElementsGenericWeapon.con`). An unknown variable gives zero — the node
+  // stays where the data puts it.
   if (context != nullptr && context->variableValue) {
     if (!node.positionVariableX.empty()) shiftX += context->variableValue(node.positionVariableX);
     if (!node.positionVariableY.empty()) shiftY += context->variableValue(node.positionVariableY);
@@ -220,7 +220,7 @@ std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& fon
   const float scaleY = static_cast<float>(screen.height) / kReferenceHeight;
   const ScreenRect rect = nodeRect(node, screen, &context);
 
-  // Смуга: показуємо не всю картинку, а її частину за значенням змінної.
+  // A bar: we show not the whole picture but a part of it by the variable's value.
   if (node.type == NodeType::Bar) {
     float value = 1.0f;
     if (!node.valueVariable.empty() && context.variableValue) {
@@ -230,8 +230,8 @@ std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& fon
 
     const std::string& texture = node.barTextureFull.empty() ? node.texture : node.barTextureFull;
     if (!texture.empty() && value > 0.0f) {
-      // Напрям 3 у даних означає смугу, що росте справа наліво (права
-      // половина екрана — команда противника).
+      // Direction 3 in the data means a bar that grows right to left (the right
+      // half of the screen is the enemy team).
       ScreenRect part = rect;
       float uMin = 0.0f, uMax = value;
       if (node.barDirection == 3) {
@@ -245,12 +245,12 @@ std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& fon
     return pieces;
   }
 
-  // Карта: власної текстури вузол не має — її дає рівень.
+  // The map: the node has no texture of its own — the level provides it.
   if (node.type == NodeType::Map || node.type == NodeType::MiniMap) {
     if (!context.mapTexture.empty()) {
-      // Мініатюра в бою кругла, а велика на екрані появи — квадратна.
-      // Гра показує не всю картинку рівня, а квадрат навколо бойової
-      // зони — межі приходять у контексті.
+      // The thumbnail in combat is round, while the big one on the spawn screen is
+      // square. The game shows not the whole level picture but a square around the
+      // combat area — the bounds arrive in the context.
       auto geometry = node.mapView == MapView::Mini
                           ? disc(rect, screen, context.mapTexture, context.mapU0, context.mapV0,
                                  context.mapU1, context.mapV1)
@@ -259,8 +259,8 @@ std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& fon
       pieces.push_back(DrawPiece{std::move(geometry), context.mapTexture, &node, node.color});
     }
 
-    // Позначки точок захоплення. Окремих вузлів для них у даних немає —
-    // карта малює їх сама, а шрифт і колір підпису бере зі свого вузла
+    // The capture points' markers. The data has no separate nodes for them — the
+    // map draws them itself, taking the caption's font and colour from its own node
     // (`setCPFont`, `setCPFontColor`).
     const float uSpan = context.mapU1 - context.mapU0;
     const float vSpan = context.mapV1 - context.mapV0;
@@ -295,10 +295,10 @@ std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& fon
         layout.screenWidth = screen.width;
         layout.screenHeight = screen.height;
         layout.scale = scaleY;
-        // Підпис стоїть під значком і по центру нього.
+        // The caption stands below the icon and centred on it.
         layout.x = cx - font::textWidth(*face, text, layout.scale) * 0.5f;
-        // Зсув підпису — виміряний окремо від значка: у грі це просто
-        // відступ від центра точки, і від розміру значка він не залежить.
+        // The caption's offset was measured separately from the icon: in the game
+        // it is simply a distance from the point's centre and does not depend on the icon's size.
         layout.y = cy + context.mapLabelOffset * scaleY;
         auto geometry = font::buildText(*face, text, layout, atlas);
         if (!geometry.indices.empty()) {
@@ -306,7 +306,7 @@ std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& fon
         }
       }
 
-      // Кружечки вибору місця появи — окремими текстурами.
+      // The spawn point selection circles — as separate textures.
       for (const Context::SpawnMarker& spawn : context.spawnMarkers) {
         const float u = (spawn.worldX + half) / context.mapWorldSize;
         const float v = (half - spawn.worldZ) / context.mapWorldSize;
@@ -316,9 +316,9 @@ std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& fon
         const float cy = rect.y + (v - context.mapV0) / vSpan * rect.height;
         const float size = context.spawnMarkerSize * scaleY;
         const std::string texture =
-            // Шляхи — рядки з бінара (0x930724 і 0x93065c). Розширення
-            // там .tga, хоча в архіві лежить .dds; підміну робить наш
-            // пошук текстури, як і для решти HUD.
+            // The paths are strings from the binary (0x930724 and 0x93065c). The
+            // extension there is .tga even though the archive holds .dds; the
+            // substitution is done by our texture lookup, as for the rest of the HUD.
             spawn.selected ? "Ingame/Minimap/Icons/spawn_Selected.tga"
                            : "Ingame/Minimap/Icons/spawn_UnSelected.tga";
         const ScreenRect box{cx - size * 0.5f, cy - size * 0.5f, size, size};
@@ -328,10 +328,10 @@ std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& fon
     return pieces;
   }
 
-  // Список: тло і рамка — суцільні кольори, а не текстури. Малюємо
-  // рамку на весь вузол, а тло — всередині її відступів. Рядки з'являться
-  // тоді, коли буде звідки взяти гравців; сама плашка потрібна вже зараз,
-  // бо без неї на табло замість списку діра.
+  // A list: the background and the border are solid colours, not textures. We draw
+  // the border over the whole node and the background inside its insets. The rows
+  // will appear once there is somewhere to take the players from; the plate itself
+  // is needed already, because without it the scoreboard has a hole instead of a list.
   if (node.type == NodeType::List) {
     static const std::string kFill = "#ffffff";
     if (node.hasListBorder) {
@@ -350,20 +350,20 @@ std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& fon
     return pieces;
   }
 
-  // Картинки й кнопки — прямокутник із текстурою.
+  // Pictures and buttons — a rectangle with a texture.
   if (node.type == NodeType::Picture || node.type == NodeType::Button) {
     std::string texture = node.texture;
     if (texture.empty() && !node.textureVariable.empty() && context.variableText) {
       texture = std::string(context.variableText(node.textureVariable));
     }
     if (!texture.empty()) {
-      // `setPictureNodeRotateVariable` — кут у радіанах. У даних його має
-      // лише компас мінікарти (`MapCompass` -> `MinimapDelayedMapAngle`,
-      // HudElementsMap.con), і веде його сама карта: поле +0x760 вузла
-      // карти, зареєстроване за `BF2.exe`, 0x780a49.
-      // Поворот буває сталий (`setPictureNodeRotation`, у градусах — так
-      // повернуті три з чотирьох променів прицілу) і зі змінної
-      // (`setPictureNodeRotateVariable`, у радіанах — компас).
+      // `setPictureNodeRotateVariable` — an angle in radians. In the data only the
+      // minimap's compass has one (`MapCompass` -> `MinimapDelayedMapAngle`,
+      // HudElementsMap.con), and the map drives it: the map node's field +0x760,
+      // registered at `BF2.exe`, 0x780a49.
+      // A rotation may be constant (`setPictureNodeRotation`, in degrees — that is
+      // how three of the sight's four rays are turned) or from a variable
+      // (`setPictureNodeRotateVariable`, in radians — the compass).
       constexpr float kToRadians = 3.14159265358979323846f / 180.0f;
       float angle = node.rotation * kToRadians;
       if (!node.rotateVariable.empty() && context.variableValue) {
@@ -375,7 +375,7 @@ std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& fon
     }
   }
 
-  // Текст: спершу пряме значення, потім змінна, потім ключ локалізації.
+  // Text: first a direct value, then a variable, then a localisation key.
   if (node.type == NodeType::Text || node.type == NodeType::Button) {
     std::string text = node.text;
     if (text.empty() && !node.textVariable.empty() && context.variableText) {
@@ -385,11 +385,11 @@ std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& fon
     if (context.localize) text = std::string(context.localize(text));
     if (text.empty()) return pieces;
 
-    // Кегль задає сам шрифт, а не висота вузла: `setTextNodeStyle` вказує
-    // на конкретний `.dif`, і розмір стоїть у його назві
-    // (hudFontLocalBold_9, StandardTextBold_15, vehicleHudFont_6). Доти ми
-    // розтягували будь-який рядок під висоту його рамки — від того написи
-    // на табло виходили вдвічі-втричі більші за оригінал.
+    // The point size is set by the font itself, not by the node's height:
+    // `setTextNodeStyle` points at a particular `.dif`, and the size stands in its
+    // name (hudFontLocalBold_9, StandardTextBold_15, vehicleHudFont_6). Until now
+    // we stretched any string to its frame's height — which made the scoreboard's
+    // captions two or three times larger than the original's.
     const font::Font* face = &font;
     std::string atlas = fontAtlas;
     if (!node.style.empty() && context.fontFor) {
@@ -405,14 +405,14 @@ std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& fon
     layout.screenHeight = screen.height;
     layout.x = rect.x;
     layout.y = rect.y;
-    // Лишається тільки перерахунок з базових 800x600 у вікно.
+    // Only the conversion from the base 800x600 into the window is left.
     layout.scale = scaleY;
 
-    // Вирівнювання задає другий аргумент setTextNodeStyle. Обидва кінці
-    // перевірені знімком кадру оригіналу: повідомлення посеред екрана
-    // має 0 і стоїть по центру ((800-301.3)/2 = 249.35 при 249.5 у
-    // дампі), а підпис класу має 2 і починається просто з краю рамки
-    // (34 у даних проти 33.5 у дампі).
+    // The alignment is set by setTextNodeStyle's second argument. Both ends are
+    // verified by the original's frame dump: a message in the middle of the screen
+    // has 0 and stands centred ((800-301.3)/2 = 249.35 against 249.5 in the dump),
+    // while a kit's caption has 2 and starts right at the frame's edge (34 in the
+    // data against 33.5 in the dump).
     const float textPixels = font::textWidth(*face, text, layout.scale);
     if (textPixels > 0.0f && rect.width > textPixels) {
       if (node.textAlign == 0) {
@@ -437,13 +437,13 @@ std::vector<DrawPiece> buildNode(const Node& node, const font::Font& font,
                                  const Context& context) {
   auto pieces = buildNodeGeometry(node, font, fontAtlas, screen, context);
 
-  // `setNodeRGBVariables <червона> <зелена> <синя>` — колір вузла зі
-  // змінних. У даних на цьому висять числа квитків
-  // (`FriendlyTeamTopRed` і сусіди) та смуги точок захоплення.
+  // `setNodeRGBVariables <red> <green> <blue>` — a node's colour from variables.
+  // In the data the ticket numbers hang on this (`FriendlyTeamTopRed` and its
+  // neighbours) along with the capture points' bars.
   //
-  // Правило те саме, що для прозорості: **не знаємо змінної — не чіпаємо
-  // колір**. Інакше числа квитків стали б чорними, бо невідома змінна це
-  // нуль. Хто пише ці змінні в грі — **джерело не знайдене**.
+  // The rule is the same as for the alpha: **we do not know the variable, we do
+  // not touch the colour**. Otherwise the ticket numbers would go black, because
+  // an unknown variable is zero. Who writes these variables in the game is **a source not found**.
   if (node.rgbVariables.size() >= 3 && context.variableAlpha) {
     const auto channel = [&](std::size_t index) {
       return context.variableAlpha(node.rgbVariables[index]);
@@ -460,7 +460,7 @@ std::vector<DrawPiece> buildNode(const Node& node, const font::Font& font,
     }
   }
 
-  // Alpha-ефект множить прозорість усього, що вузол намалював.
+  // The alpha effect multiplies the alpha of everything the node drew.
   const float alpha = nodeShowState(node, context).alpha;
   if (alpha < 1.0f) {
     for (DrawPiece& piece : pieces) piece.tint.a *= alpha;
@@ -473,7 +473,7 @@ std::vector<DrawPiece> buildGroup(const Builder& builder, std::string_view group
                                   const Screen& screen, const Context& context) {
   std::vector<DrawPiece> pieces;
   for (const Node* node : builder.group(group)) {
-    // Вузол зі змінною показу малюємо лише тоді, коли вона ввімкнена.
+    // A node with a show variable is drawn only when that variable is on.
     if (!nodeShown(*node, context)) continue;
     for (auto& piece : buildNode(*node, font, fontAtlas, screen, context)) {
       pieces.push_back(std::move(piece));
@@ -484,10 +484,10 @@ std::vector<DrawPiece> buildGroup(const Builder& builder, std::string_view group
 
 namespace {
 
-// Вузол із прозорістю на змінній: поки та змінна нам невідома, вузол не
-// малюємо. Так само ми чинимо з `setNodeShowVariable`, і так само чинить
-// гра: `MenuBackgroundAlpha` — це тло **меню**, у бою воно нульове, і
-// широкі плашки під смугами здоров'я та набоїв там просто не видно.
+// A node with its alpha on a variable: while that variable is unknown to us, the
+// node is not drawn. We do the same with `setNodeShowVariable`, and so does the
+// game: `MenuBackgroundAlpha` is the **menu's** background, in combat it is zero,
+// and the wide plates under the health and ammo bars are simply not visible there.
 bool hiddenByAlpha(const Node& node, const Context& context) {
   if (node.alphaVariable.empty() || !context.variableAlpha) return false;
   const auto alpha = context.variableAlpha(node.alphaVariable);
@@ -502,27 +502,27 @@ std::vector<DrawPiece> buildTree(const Builder& builder, std::string_view rootGr
   std::vector<DrawPiece> pieces;
   std::vector<std::string> visited;
 
-  // Обхід у глибину в порядку оголошення: пізніші вузли лягають зверху,
-  // тож порядок обходу і є порядком малювання.
+  // A depth-first walk in declaration order: later nodes land on top, so the walk
+  // order is the drawing order.
   const auto walk = [&](auto&& self, std::string_view group, int depth) -> void {
     if (depth > maxDepth) return;
     for (const std::string& seen : visited) {
-      if (seen == group) return;  // захист від кільця у даних
+      if (seen == group) return;  // a guard against a cycle in the data
     }
     visited.emplace_back(group);
 
     for (const Node* node : builder.group(group)) {
       if (!nodeShown(*node, context)) continue;
       if (node->type == NodeType::Split) {
-        // Вузол-«розгалуження» сам нічого не малює: він підставляє групу,
-        // назва якої збігається з його іменем.
+        // A "split" node draws nothing itself: it substitutes the group whose name
+        // matches its own.
         self(self, node->name, depth + 1);
         continue;
       }
       if (hiddenByAlpha(*node, context)) continue;
       if (context.skipNode && context.skipNode(*node)) {
-        // Живий вузол: геометрію дає той, хто веде значення, а тут
-        // лишається мітка — щоб не з'їхав порядок малювання.
+        // A live node: the geometry comes from whoever drives the value, and a
+        // marker is left here — so the drawing order does not slide.
         DrawPiece marker;
         marker.node = node;
         marker.tint = node->color;
@@ -534,16 +534,16 @@ std::vector<DrawPiece> buildTree(const Builder& builder, std::string_view rootGr
       for (auto& piece : buildNode(*node, font, fontAtlas, screen, context)) {
         pieces.push_back(std::move(piece));
       }
-      // Батьком може бути **будь-який** вузол, а не лише Split: у даних
-      // гри дітей мають ще 30 вузлів-перетворень і дві картинки. Поки ми
-      // спускалися тільки крізь Split, їхні піддерева не малювалися.
+      // The parent may be **any** node, not only a Split: in the game's data 30
+      // more transform nodes and two pictures have children. While we descended
+      // only through Splits, their subtrees were not drawn.
       self(self, node->name, depth + 1);
     }
   };
   walk(walk, rootGroup, 0);
-  // `hudBuilder.newLayer` починає новий шар: усе, створене після нього,
-  // лягає поверх попереднього незалежно від місця в дереві. Порядок
-  // усередині шару — це порядок обходу, тож сортування має бути стійким.
+  // `hudBuilder.newLayer` starts a new layer: everything created after it lands on
+  // top of the previous, regardless of its place in the tree. The order within a
+  // layer is the walk order, so the sort has to be stable.
   std::stable_sort(pieces.begin(), pieces.end(), [](const DrawPiece& a, const DrawPiece& b) {
     const int left = a.node != nullptr ? a.node->layer : 0;
     const int right = b.node != nullptr ? b.node->layer : 0;
@@ -554,8 +554,8 @@ std::vector<DrawPiece> buildTree(const Builder& builder, std::string_view rootGr
 
 std::optional<Bounds> treeBounds(const Builder& builder, std::string_view rootGroup,
                                 const Context& context, int maxDepth) {
-  // Ходимо тим самим шляхом, що й buildTree: рахувати треба саме те, що
-  // справді потрапить на екран, інакше вимкнені вузли тягли б габарити.
+  // We walk the same path as buildTree: what has to be counted is exactly what
+  // really reaches the screen, otherwise disabled nodes would drag the bounds out.
   std::optional<Bounds> out;
   std::vector<std::string> visited;
   const auto walk = [&](auto&& self, std::string_view group, int depth) -> void {
@@ -646,9 +646,9 @@ void updateAnimator(const Builder& builder, std::string_view rootGroup, Animator
 
 const Node* buttonAt(const Builder& builder, std::string_view group, const Screen& screen,
                      float mouseX, float mouseY, const Context* context) {
-  // Кнопки екрана лежать глибоко в дереві (SelectKit0 сидить під
-  // Kit0NotSelected), тож обходимо його так само, як при малюванні, і
-  // з тими самими умовами показу: невидима кнопка миші не ловить.
+  // The screen's buttons lie deep in the tree (SelectKit0 sits under
+  // Kit0NotSelected), so we walk it the same way as when drawing, and with the
+  // same show conditions: an invisible button catches no mouse.
   const Node* found = nullptr;
   std::vector<std::string> visited;
   const auto walk = [&](auto&& self, std::string_view where, int depth) -> void {
@@ -662,15 +662,15 @@ const Node* buttonAt(const Builder& builder, std::string_view group, const Scree
       if (node->type == NodeType::Button && !node->command.empty()) {
         ScreenRect rect = nodeRect(*node, screen, context);
         if (node->hasMouseArea) {
-          // Ділянка миші задана зсувом від самого вузла, а не окремим
-          // місцем на екрані.
+          // The mouse region is given as an offset from the node itself rather than
+          // as a separate place on screen.
           const float scale = static_cast<float>(screen.height) / kReferenceHeight;
           rect.x += node->mouseX * scale;
           rect.y += node->mouseY * scale;
           rect.width = node->mouseWidth * scale;
           rect.height = node->mouseHeight * scale;
         }
-        // Пізніші вузли намальовані поверх, тож остання влучна і виграє.
+        // Later nodes are drawn on top, so the last hit wins.
         if (rect.contains(mouseX, mouseY)) found = node;
       }
       self(self, node->name, depth + 1);

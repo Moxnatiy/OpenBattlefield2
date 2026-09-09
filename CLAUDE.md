@@ -1,390 +1,452 @@
 # OpenBattlefield2
 
-Ліцензія: MIT (див. `LICENSE`).
+Licence: MIT (see `LICENSE`).
 
-Мета: clean-room реімплементація рушія Refractor 2 (Battlefield 2, 2005) —
-відкритий движок, який читає оригінальні ассети користувача.
+Goal: a clean-room reimplementation of the Refractor 2 engine
+(Battlefield 2, 2005) — an open engine that reads the user's own original
+assets.
 
-Це **порт один в один**, а не гра «за мотивами». Різниця принципова і
-визначає майже всі правила нижче: якщо ми не знаємо, як щось зроблено в
-оригіналі, ми це записуємо як борг, а не заповнюємо здогадом.
+This is a **one-to-one port**, not a game "inspired by" the original. The
+difference is fundamental and drives nearly every rule below: when we do
+not know how something is done in the original, we write it down as debt
+instead of filling it in with a guess.
 
-## Як влаштована робота
+## How the work goes
 
-Один захід — це не «спробувати щось і подивитися». Це чотири кроки, і
-пропускати їх дорого:
+One pass is not "try something and see". It is four steps, and skipping
+any of them is expensive:
 
-1. **Мірило.** Спершу записуємо, як дізнаємося, що задача зроблена:
-   команда, число, знімок. «Ворог рухається» — не мірило. «`--connect`
-   друкує оновлення місця для об'єкта чужого гравця частіше ніж раз на
-   секунду» — мірило.
-2. **Джерело.** Відповідь беремо з бінаря чи з даних гри, не з голови
-   (див. «Джерела істини» і правило 12).
-3. **Конспект і код.** Розібране одразу лягає в `docs/` і в `src/` —
-   **цілком**, а не тим боком, який потрібен сьогодні (правило 3).
-4. **Перевірка.** Проганяємо мірило. Не зійшлося — повертаємось до
-   джерела, а не крутимо числа.
+1. **A measure.** First write down how we will know the task is done: a
+   command, a number, a screenshot. "The enemy moves" is not a measure.
+   "`--connect` prints a position update for another player's object more
+   than once a second" is.
+2. **A source.** The answer comes from the binary or from the game's
+   data, not from memory (see "Sources of truth" and rule 12).
+3. **Notes and code.** What was reversed goes into `docs/` and `src/`
+   right away — **whole**, not just the side needed today (rule 3).
+4. **Verification.** Run the measure. If it does not match, go back to
+   the source rather than tweaking numbers.
 
-Ознака, що захід пішов не туди: третя спроба «а спробуємо отак» без
-жодного нового погляду в бінар.
+A sign the pass went wrong: a third "let's try it this way" without a
+single new look at the binary.
 
-## Правила
+## Rules
 
-### 1. Знання живуть у файлах, не в контексті
+### 1. Knowledge lives in files, not in the conversation
 
-Ніколи не тягнути цілі декомпіляції в контекст. Порядок: пошук (рядок,
-xref, таблиця) → розбір **однієї** функції знаряддям → конспект у
-`docs/functions/<модуль>.md` — і більше до бінаря не повертаємось.
+Never pull whole decompilations into the conversation. The order is:
+search (a string, an xref, a table) → take apart **one** function with a
+tool → write the notes into `docs/functions/<module>.md` — and do not go
+back to the binary after that.
 
-Конспект пишемо **одразу**, поки бінар відкритий. Кожен конспект містить
-адресу, з якої взято, — інакше його не перевірити.
+Write the notes **immediately**, while the binary is open. Every note
+carries the address it came from; without one it cannot be checked.
 
-### 2. Спершу подивись, чи знаряддя вже є
+### 2. Look whether the tool already exists
 
-Перелік — нижче, у «Знаряддях». Це не формальність: розкладку
-`readControlObjectState` довелося колупати руками по рядках `objdump`,
-хоч `tools/linuxded/bitfields.py --blocks` друкує її одним рядком за
-0.1 секунди. Знаряддя вже було.
+The list is below, under "Tools". This is not bureaucracy: the layout of
+`readControlObjectState` was picked apart by hand from `objdump` output
+even though `tools/linuxded/bitfields.py --blocks` prints it in one line
+in 0.1 seconds. The tool was already there.
 
-Якщо потрібного знаряддя немає — **спершу зробити його**, потім
-працювати. Разова ручна робота не лишає по собі нічого; скрипт видно в
-git, його можна перезапустити й на ньому видно, звідки взялася відповідь.
+If the tool is missing — **make it first**, then work. One-off manual
+work leaves nothing behind; a script is visible in git, can be re-run,
+and shows where the answer came from.
 
-### 3. Розбираємо структуру цілком, а не одне поле
+### 3. Take a structure apart whole, not one field at a time
 
-Коли відкрили функцію, формат чи структуру — виписуємо **всі** поля,
-**всі** біти маски, **всі** гілки. Навіть ті, що сьогодні не потрібні.
+When a function, a format or a structure is open — write down **all** the
+fields, **all** the mask bits, **all** the branches. Even the ones that
+are not needed today.
 
-Це не педантизм, це арифметика. Один захід у функцію коштує однаково,
-чи взяти з неї одне поле, чи двадцять. Але коли за кожним наступним
-полем доводиться повертатися, розбір розтягується на місяці — і саме це
-з нами вже сталося: у стані керованого об'єкта ми тричі поверталися по
-одному полю, і щоразу це коштувало окремого заходу користувача в гру.
+This is arithmetic, not pedantry. One trip into a function costs the same
+whether you take one field out of it or twenty. But when every next field
+means going back, the work stretches over months — which is exactly what
+happened to us: we went back into the controlled-object state three times
+for one field each, and every time it cost the user a separate trip into
+the game.
 
-Практично це означає:
+In practice that means:
 
-* у конспекті — таблиця всіх полів із розмірами й адресами читань;
-* у коді — структура з усіма полями, навіть якщо частина поки не
-  вживається (з коментарем «поки не вживається», а не мовчки);
-* поля, призначення яких не з'ясоване, теж записуємо: розмір, зсув і
-  чесне «призначення не з'ясоване».
+* in the notes — a table of every field with sizes and the addresses they
+  are read at;
+* in the code — a structure with every field, even if part of it is
+  unused (with a "not used yet" comment, not silently);
+* fields whose purpose is unclear are written down too: size, offset, and
+  an honest "purpose not established".
 
-### 4. Не винаходити те, що вже зроблено
+### 4. Do not reinvent what is already done
 
-Перед роботою над форматом — звірити з `docs/research/00-prior-art.md`.
-Використовуємо власні дані гри (`*_server.zip`, `*_client.zip`,
-`python/`, `.con`/`.tweak`), специфікації Project Dalian (MIT) і
-BfMeshView. RE — лише для того, чого нема у відкритому вигляді.
+Before working on a format, check `docs/research/00-prior-art.md`. We use
+the game's own data (`*_server.zip`, `*_client.zip`, `python/`,
+`.con`/`.tweak`), the Project Dalian specifications (MIT) and BfMeshView.
+Reverse engineering is only for what is not available openly.
 
-`reference/` (не в git) — чужі напрацювання для звірки. Ліцензії там
-різні: `breadflowerdos` — **без ліцензії**, `Refractor-2-BitStream-Emulator`
-— **GPL-3.0**, обидві несумісні з нашим MIT. Це джерело **підказок**, не
-коду: усе, що звідти взято, перевіряється на бінарі або на даних гри.
+`reference/` (not in git) holds third-party work for comparison. The
+licences there differ: `breadflowerdos` has **none**,
+`Refractor-2-BitStream-Emulator` is **GPL-3.0**; both are incompatible
+with our MIT. It is a source of **hints**, not of code: everything taken
+from there is verified against the binary or the game's data.
 
-### 5. Нічого не розпаковувати на диск
+There is one exception: `reference/gameswf` is **public domain**. It is
+the same library the original plays its Flash menu with
+(docs/research/00-prior-art.md), so code may be taken from it directly.
 
-Архіви гри читаються на місці через `obf2::FileSystem` — так само, як це
-робить `fileManager` у Refractor 2. Теку `extract/` тримаємо порожньою.
+### 5. Nothing is unpacked to disk
 
-### 6. Жодних підігнаних чисел
+The game's archives are read in place through `obf2::FileSystem`, the same
+way `fileManager` does it in Refractor 2. The `extract/` directory stays
+empty.
 
-Кожна стала в `src/` має походити з одного з трьох джерел, і саме воно
-називається в коментарі поруч:
+### 6. No fudged numbers
 
-* дані гри (`.con`, `MemeFile`, текстура, локалізація);
-* бінар (адреса в `BF2.exe`, `BF2_r.exe` чи лінукс-сервері);
-* прямий вимір знімка кадру оригіналу (`Ctrl+Shift+D`).
+Every constant in `src/` comes from one of three sources, and that source
+is named in the comment next to it:
 
-Підбирати число так, щоб «стало схоже», — заборонено, навіть коли
-результат візуально збігається. Немає джерела — лишаємо як є, пишемо
-**«не виміряно»** і кажемо про це вголос.
+* the game's data (`.con`, `MemeFile`, a texture, localisation);
+* the binary (an address in `BF2.exe`, `BF2_r.exe` or the Linux server);
+* a direct measurement from a frame dump of the original
+  (`Ctrl+Shift+D`).
 
-Непрямий висновок — теж підгонка. Приклад: трійку чисел у стані
-керованого об'єкта ми взяли за позицію, бо вона збіглася з камерою
-появи. Насправді це опорна точка стиснення, і солдата підкидало на метр
-щопакета.
+Picking a number so that it "looks about right" is forbidden, even when
+the result matches visually. With no source, leave it as it is, write
+**"not measured"**, and say so out loud.
 
-### 6a. Кожен коментар називає адресу, звідки взято
+An indirect conclusion is fudging too. Example: we took a triple of
+numbers in the controlled-object state for a position because it matched
+the spawn camera. It is in fact the compression origin, and the soldier
+was thrown a metre into the air on every packet.
 
-Будь-яка стала, будь-яке поле, будь-яка розкладка, будь-яке правило
-поведінки в коді супроводжується **адресою в бінарі** (або шляхом до
-файлу даних), звідки це взято. Не «з клієнта», а `BF2.exe, 0x62d4e0`.
+### 6a. Every comment names the address it came from
 
-Це не оформлення, а можливість перевірити. Адреса дозволяє за хвилину
-відкрити те саме місце й пересвідчитися; без неї знання живе тільки в
-голові того, хто його здобув, і за тиждень втрачається.
+Any constant, any field, any layout, any rule of behaviour in the code is
+accompanied by **the address in the binary** (or the path to the data
+file) it came from. Not "from the client", but `BF2.exe, 0x62d4e0`.
 
-Формат простий і вже вживаний по всьому коду:
+This is not decoration, it is the ability to check. The address lets
+anyone open the same place in a minute and see for themselves; without it
+the knowledge lives only in the head of whoever found it, and is lost in a
+week.
+
+The format is simple and already used throughout the code:
 
 ```cpp
-// Місце вмикає біт 0 (`BF2.exe`, SoldierNetworkable::setNetUpdate,
-// 0x62d4e0). Точність 0.001 — стала за 0x3a83126f там-таки.
+// Bit 0 marks position (`BF2.exe`, SoldierNetworkable::setNetUpdate,
+// 0x62d4e0). Precision 0.001 — constant 0x3a83126f at the same address.
 inline constexpr std::uint32_t kSoldierStatePosition = 0x1;
 ```
 
-Якщо джерело — дані гри, називаємо файл і рядок:
+If the source is the game's data, name the file and the line:
 `objects/soldiers/common/common.con`, `Vars.Set phy-soldier-jump-factor`.
 
-Якщо адреси немає — значить, і джерела немає: пишемо **«не виміряно»**
-(правило 6), а не мовчазне число.
+If there is no address, there is no source: write **"not measured"**
+(rule 6) rather than a silent number.
 
-### 7. Поведінку теж реверсимо, не лише числа
+### 7. Behaviour is reversed too, not only numbers
 
-Мало знати, *яке* значення має змінна — треба знати, **хто і коли** його
-ставить. Кожне присвоєння змінної HUD посилається на своє джерело: стан
-із `docs/functions/hud-states.md`, консольну команду з
-`docs/functions/hud-commands.md` або місце в бінарі. Те, що ставимо без
-джерела, позначаємо **«джерело не знайдене»**.
+Knowing *what* value a variable has is not enough — we need to know **who
+sets it and when**. Every HUD variable assignment refers to its source: a
+state from `docs/functions/hud-states.md`, a console command from
+`docs/functions/hud-commands.md`, or a place in the binary. Whatever we
+set without a source is marked **"source not found"**.
 
-### 8. Clean-room
+### 8. Clean room
 
-Код у `src/` пишемо за конспектами поведінки, не копіюємо
-декомпільований вивід дослівно.
+Code in `src/` is written from behaviour notes; decompiler output is
+never copied verbatim.
 
-### 9. Перевіряти себе на екрані, а не в голові
+### 9. Check yourself on screen, not in your head
 
-Зміна в HUD чи рендері не зроблена, поки її не видно на знімку. Числовий
-доказ («14 оновлень місця») — це не той самий доказ, що екранний: він
-каже, що дані є, і нічого не каже про те, чи їх видно.
+A change to the HUD or the renderer is not done until it is visible in a
+screenshot. A numeric proof ("14 position updates") is not the same proof:
+it says the data is there and says nothing about whether it is visible.
 
-Коли перевірити на екрані не вдається (немає другого гравця, порожній
-сервер) — кажемо це прямо, а не видаємо числовий доказ за екранний.
+When it cannot be checked on screen (no second player, an empty server),
+say so plainly rather than passing a numeric proof off as a visual one.
 
-### 10. Файли редагуємо вбудованими знаряддями
+### 10. Files are edited with the built-in tools
 
-Правки в код — через `Read`, `Edit`, `Write`, а не через `python3 -c
-"s.replace(...)"`. Підстановка наосліп мовчки не спрацьовує, коли текст
-трохи інший, і зачіпає не те місце, коли текст трапляється двічі.
-Скрипт лишається доречним там, де він і має бути: **зняти дані з
-бінаря чи з файлів гри**.
+Code changes go through `Read`, `Edit`, `Write`, not through `python3 -c
+"s.replace(...)"`. A blind substitution silently does nothing when the
+text differs slightly, and hits the wrong place when the text occurs
+twice. Scripts stay where they belong: **pulling data out of the binary or
+out of the game's files**.
 
-### 11. Кожна річ у своєму файлі
+### 10a. The repository is in English
 
-`src/app/main.cpp` — це запуск застосунку: розбір аргументів, вибір
-режиму, цикл кадрів. Усе інше живе у своєму модулі з власним заголовком
-і власним тестом.
+Everything published — code comments, `docs/`, `README.md`, this file —
+is written in **English**, in technical language. Ukrainian remains for
+the conversation with the maintainer and for commit messages.
 
-Правило написане не з любові до порядку: `main.cpp` виріс до **3841
-рядка**, і в ньому опинилися розбір мережевої розмови, стан екрана
-появи, таблиця станів HUD, складання геометрії. Наслідки видно: ту саму
-логіку двічі писали в двох місцях, лямбди читали мертву пам'ять, а
-тестом воно не покривається взагалі.
+The comment format does not change: the address in the binary or the path
+to the data file is named exactly as before (rule 6a).
 
-Ознака проста: якщо це можна перевірити тестом, воно не має лишатися в
-`main.cpp`. План розкладання — нижче, окремим розділом.
+`tools/translate_comments.py` moves the remaining Ukrainian comments over
+line by line; it refuses to write when a line no longer matches, so a
+stale list fails loudly instead of scrambling the source.
 
-### 12. Не знаєш — відкрий бінар, а не вигадуй обхід
+### 11. One thing per file
 
-Коли поведінка не сходиться, відповідь шукається **в бінарі**. Не
-«спробуємо інше число», не «додамо згладжування, щоб не смикалося», не
-«візьмемо сусіднє поле, бо схоже підходить».
+`src/app/main.cpp` is the application entry point: argument parsing, mode
+selection, the frame loop. Everything else lives in its own module with
+its own header and its own test.
 
-Ознака, що ви обходите замість реверсити: у коментарі кортить написати
-«схоже, що», «підібрано», «щоб не смикалося».
+The rule was not written out of tidiness: `main.cpp` grew to **3841
+lines**, and the network conversation, the spawn screen state, the HUD
+state table and geometry assembly all ended up inside it. The consequences
+are visible: the same logic was written twice in two places, lambdas read
+dead memory, and none of it is covered by a test.
 
-## Джерела істини
+The sign is simple: if it can be checked by a test, it does not belong in
+`main.cpp`. The plan for breaking it up is below, in its own section.
 
-### Головне правило: реверсимо `BF2.exe`, і робимо це через Ghidra
+### 12. When you do not know, open the binary — do not invent a way around
 
-**Ми будуємо порт клієнта.** Отже істина — в оригінальному клієнті
-`BF2.exe`, а не в лінукс-сервері. Сервер — довідник: у ньому є символи й
-сигнатури, і за ними зручно **зрозуміти**, як щось зветься і де шукати.
-Але поведінка, яку ми відтворюємо, лежить у клієнті.
+When behaviour does not match, the answer is looked for **in the binary**.
+Not "let's try another number", not "let's add smoothing so it stops
+jittering", not "let's take the neighbouring field, it looks about right".
 
-**Розбираємо через MCP `ghidra`**, а не через `objdump` і скрипти по
-рядках дизасемблера. Ghidra бачить те, чого не бачить читання за
-адресами: потік керування, межі функцій, типи, посилання. Скрипт по
-рядках на цьому й зламався — він приписав позицію об'єкта не тому біту
-маски, бо блоки в бінарі лежать не в порядку виконання.
+The sign that you are working around instead of reversing: the comment you
+are about to write wants to say "looks like", "picked", "so it stops
+jittering".
 
-Знаряддя MCP і коли їх брати:
+## Sources of truth
 
-| виклик | навіщо |
+### The main rule: we reverse `BF2.exe`, and we do it through Ghidra
+
+**We are building a port of the client.** So the truth is in the original
+client `BF2.exe`, not in the Linux server. The server is a reference: it
+has symbols and signatures, and they make it easy to **understand** what
+something is called and where to look. But the behaviour we reproduce
+lives in the client.
+
+**Take it apart through MCP `ghidra`**, not through `objdump` and scripts
+over lines of disassembly. Ghidra sees what reading by address cannot:
+control flow, function boundaries, types, references. A line-based script
+broke on exactly that — it attributed the object's position to the wrong
+mask bit, because the blocks in the binary are not laid out in execution
+order.
+
+The MCP tools and when to reach for them:
+
+| call | what for |
 |---|---|
-| `search_strings` | знайти зачіпку: назву команди, повідомлення, шлях до файлу |
-| `list_xrefs` | хто на цю адресу чи рядок посилається |
-| `decompile_function` | **головне**: псевдокод із гілками, а не сира стрічка інструкцій |
-| `disassemble` | коли потрібні саме інструкції: сталі, зсуви, ширини читань |
-| `search_symbols_by_name` | коли ім'я вже відоме (перенесене з сервера) |
-| `set_comment`, `rename_function` | лишити розібране в проєкті, щоб удруге не шукати |
+| `search_strings` | find a foothold: a command name, a message, a file path |
+| `list_xrefs` | who refers to this address or string |
+| `decompile_function` | **the main one**: pseudocode with branches, not a raw instruction stream |
+| `disassemble` | when the instructions themselves matter: constants, offsets, read widths |
+| `search_symbols_by_name` | when the name is already known (transplanted from the server) |
+| `set_comment`, `rename_function` | leave what was reversed in the project so it is not searched for twice |
 
-Порядок роботи: дані гри → `BF2.exe` через Ghidra → сервер, якщо в
-клієнті не видно імен.
+Order of work: the game's data → `BF2.exe` through Ghidra → the server, if
+the names are not visible in the client.
 
-| джерело | що дає | коли брати |
+| source | what it gives | when to reach for it |
 |---|---|---|
-| **дані гри** | `.con`, `.tweak`, `MemeFile`, локалізація | завжди спершу: більшість «сталих рушія» лежить у даних |
-| **`BF2.exe`** | оригінальний клієнт — те, що ми й портуємо | **основне джерело поведінки** |
-| **`BF2_r.exe`** | збірка з перевірками: 3111 `Debug` із файлом і рядком, 387 вихідних файлів, назви полів у текстах | словник: у якому файлі й як зветься те, що ми бачимо |
-| **лінукс-сервер 1.5** | 36 076 функцій із повними C++-сигнатурами | довідник імен і серверної логіки — **не заміна клієнту** |
+| **game data** | `.con`, `.tweak`, `MemeFile`, localisation | always first: most "engine constants" live in the data |
+| **`BF2.exe`** | the original client — the thing we are porting | **the main source of behaviour** |
+| **`BF2_r.exe`** | a checked build: 3111 `Debug` calls with file and line, 387 source files, field names in the text | a dictionary: which file something lives in and what it is called |
+| **Linux server 1.5** | 36 076 functions with full C++ signatures | a reference for names and server logic — **not a replacement for the client** |
 
-Файли: `Game Files/BF2.exe`, `Game Files/BF2_r.exe`,
-`Game Files/OtherFiles/linuxded[-full]/bin/amd-64/bf2`. Вивантажені
-символи сервера — `docs/reference/linuxded-symbols.txt`.
+Files: `Game Files/BF2.exe`, `Game Files/BF2_r.exe`,
+`Game Files/OtherFiles/linuxded[-full]/bin/amd-64/bf2`. The server's
+exported symbols are in `docs/reference/linuxded-symbols.txt`.
 
-Імена із сервера переносяться в проєкт Ghidra скриптом
-`tools/transplant_symbols.py --script` — після цього функції в `BF2.exe`
-звуться по-людськи, і `decompile_function` можна кликати за іменем.
+Names from the server are transplanted into the Ghidra project with
+`tools/transplant_symbols.py --script` — after that the functions in
+`BF2.exe` have human names and `decompile_function` can be called by name.
 
-## Знаряддя
+## Tools
 
-**Розбір бінаря — через MCP `ghidra`** (див. «Джерела істини»). Скрипти
-нижче лишаються допоміжними: вони дешеві там, де потрібен **перелік**
-або значення сталої, і не годяться там, де потрібен потік керування.
+**Binary work goes through MCP `ghidra`** (see "Sources of truth"). The
+scripts below stay auxiliary: they are cheap where a **list** or a
+constant's value is needed, and no good where control flow is needed.
 
-| команда | що дає | межа |
+| command | what it gives | limit |
 |---|---|---|
-| `tools/transplant_symbols.py --script` | імена із сервера в проєкт Ghidra | запускати першим на новому проєкті |
-| `BF2_PE="Game Files/BF2_r.exe" tools/transplant_symbols.py --source-map` | адреса → вихідний файл і рядок (3111 перевірок) | лише `BF2_r.exe` |
-| `tools/elf_symbol.py <ім'я> --type f32\|f64\|u32` | значення глобальної змінної з ELF сервера | одне число, без контексту |
-| `tools/linuxded/bitfields.py --blocks <Клас::метод>` | перелік `readBits` і граф блоків у сервері | **не каже, під яким бітом поле** |
-| `tools/linuxded/statefields.py` | чернетка «біт маски → поле» | **виводу вірити не можна**, див. файл |
-| `tools/exe_xref.py` | рядок → хто на нього посилається | Ghidra робить це краще |
-| `tools/linuxded/gen_events.py` | таблиця розмірів ігрових подій | разова генерація |
+| `tools/transplant_symbols.py --script` | server names into the Ghidra project | run this first on a new project |
+| `BF2_PE="Game Files/BF2_r.exe" tools/transplant_symbols.py --source-map` | address → source file and line (3111 checks) | `BF2_r.exe` only |
+| `tools/elf_symbol.py <name> --type f32\|f64\|u32` | the value of a global from the server's ELF | one number, no context |
+| `tools/linuxded/bitfields.py --blocks <Class::method>` | the `readBits` list and block graph in the server | **does not say which bit a field is under** |
+| `tools/linuxded/statefields.py` | a draft "mask bit → field" | **the output cannot be trusted**, see the file |
+| `tools/exe_xref.py` | string → who refers to it | Ghidra does this better |
+| `tools/linuxded/gen_events.py` | the game event size table | one-off generation |
+| `tools/hud_variables.py` | HUD variable → object, type and field | takes the decompilation of the registration functions |
+| `tools/swf_read.py` | the game's menu: screens, texts, calls into the engine | the `.swf` files in the game are uncompressed |
+| `tools/swf_disasm.py` | the menu's byte code itself: branches, function bodies, component parameters | `--tag 26` reads the parameters in `ClipActions` |
+| `tools/swiff_bridge.py` | the objects and methods of the menu → game bridge | `SwiffPlayer.dll`, groups in `.rdata` |
+| `tools/gameswf_probe.cpp` + `gameswf_macos.patch` | build gameswf and read the menu movie with it | docs/research/10-gameswf-on-arm64.md |
+| `tools/ruffle_bf2_bridge.rs` + `.patch` + `ruffle_install.sh` | the menu → game bridge for Ruffle | docs/research/11-ruffle-menu.md |
+| `tools/bmp_crop.py` | cut a piece out of a screenshot and magnify it | screenshots are BMP |
+| `tools/translate_comments.py` | move comments over to English line by line | refuses to write on a mismatch |
 
-**Дані гри:** `tools/hud_audit.py`, `hud_commands.py`, `hud_coverage.py`,
+**Game data:** `tools/hud_audit.py`, `hud_commands.py`, `hud_coverage.py`,
 `hud_states.py`, `hud_fields.py`, `con_objects.py`, `meme_read.py`,
 `meme_dump.py`, `meme_types.py`, `extract_command_descriptions.py`.
 
-**Наші структури** (C++, збираються з проєктом): `mesh_info`,
+**Our own dumpers** (C++, built with the project): `mesh_info`,
 `object_info`, `texture_info`, `ske_info`, `baf_info`, `anim_info`,
 `con_dump`, `hud_dump`, `command_audit`.
 
-**Живий стенд:** `tools/linuxded/` — Docker із оригінальним сервером,
-`capture.py` (зняти трафік), `pcap_bf2.py` (розібрати `.pcap`),
+**Live rig:** `tools/linuxded/` — Docker with the original server,
+`capture.py` (record traffic), `pcap_bf2.py` (take a `.pcap` apart),
 `rcon.py`, `probe_connect.py`.
 
-## Структура
+## Layout
 
 ```
-Game Files/     оригінальна інсталяція BF2 (не в git)
-extract/        має лишатися порожньою (правило 5)
-reference/      чужі репозиторії для звірки (не в git, чужі ліцензії)
-assets/         наше власне (меню)
-third_party/    вендорні single-file: miniz, stb
+Game Files/     the original BF2 installation (not in git)
+extract/        must stay empty (rule 5)
+reference/      third-party repositories for comparison (not in git, other licences)
+third_party/    vendored single-file libraries: miniz, stb
 ```
 
-| модуль | що робить |
+| module | what it does |
 |---|---|
-| `core` | платформа, шляхи (`normalizeAssetPath`), математика |
-| `vfs` | архіви гри, монтування як у `fileManager` |
-| `con` | лексер та інтерпретатор мови `.con` |
+| `core` | platform, paths (`normalizeAssetPath`), maths |
+| `vfs` | the game's archives, mounted the way `fileManager` does |
+| `con` | lexer and interpreter for the `.con` language |
 | `texture` | `.dds` |
-| `mesh` | меші, скелети, скінінг, колізії, прості тіла |
-| `anim` | дерево тригерів системи анімації |
+| `mesh` | meshes, skeletons, skinning, collision, simple bodies |
+| `anim` | the animation system's trigger tree |
 | `font`, `loc` | `.dif`, `.utxt` |
-| `game` | реєстр `ObjectTemplate`, сцена, керування |
-| `level` | терен, вода, розстановка, `GamePlayObjects.con` |
-| `gfx` | вікно й GPU (SDL3 + SDL_GPU) — **єдине місце з графікою** |
-| `hud` | дерево вузлів `hudBuilder`, геометрія, переходи |
-| `net` | BitStream, протокол, події, з'єднання |
-| `server` | локальний сервер, фізика солдата, колізійний світ |
-| `engine` | консоль, налаштування, розкладка клавіш |
-| `app` | виконуваний `openbf2` — і більше нічого (правило 11) |
+| `game` | the `ObjectTemplate` registry, the scene, control |
+| `level` | terrain, water, placement, `GamePlayObjects.con` |
+| `gfx` | window and GPU (SDL3 + SDL_GPU) — **the only place with graphics** |
+| `hud` | the `hudBuilder` node tree, geometry, transitions |
+| `meme` | the `MemeFile` animation graph |
+| `net` | BitStream, protocol, events, connection |
+| `server` | local server, soldier physics, collision world |
+| `engine` | console, settings, key bindings |
+| `flash` | the Flash menu: Ruffle behind a C ABI |
+| `app` | the `openbf2` executable — and nothing else (rule 11) |
 
-### Розкладання `main.cpp`
+### Breaking up `main.cpp`
 
-Черга, за спаданням користі. Кожен пункт — окремий модуль із тестом:
+In order of usefulness. Each item is a module with a test:
 
-1. **`net/bf2_session`** — `RemoteWorld` цілком: розмова з сервером,
-   стан гравців і об'єктів, потік дій. Це найбільший шматок і найбільш
-   покривається тестами (у нас уже є знятий трафік).
-2. **`app/spawn_screen`** — екран появи: стан вибору, натискання, DONE.
-3. **`app/frame_loop`** — камера, ввід, крок передбачення.
-4. **`hud/ingame`** — складання бойового HUD і живих значень.
-5. **`app/scene_build`** — завантаження рівня в сцену й вивантаження в GPU.
+1. **`net/bf2_session`** — `RemoteWorld` whole: the conversation with the
+   server, player and object state, the action stream. This is the
+   largest piece and the one best covered by tests (we already have
+   recorded traffic).
+2. **`app/spawn_screen`** — the spawn screen: selection state, clicks, DONE.
+3. **`app/frame_loop`** — camera, input, the prediction step.
+4. **`hud/ingame`** — assembling the battle HUD and its live values.
+5. **`app/scene_build`** — loading a level into the scene and uploading it
+   to the GPU.
 
-## Збірка
+## Building
 
 ```bash
 cmake --preset macos-arm64-debug && cmake --build --preset macos-arm64-debug
 ctest --test-dir build/macos-arm64-debug --output-on-failure
 ```
 
-Основна платформа — **arm64 macOS**; Windows-пресет лишається робочим.
-C++20 без розширень, `-Wall -Wextra -Wpedantic -Werror`, нічого
-платформозалежного поза `obf2/core/platform.h`, шляхи лише через
-`normalizeAssetPath`, графіка лише через `obf2::gfx`.
+The main platform is **arm64 macOS**; the Windows preset is kept building.
+C++20 without extensions, `-Wall -Wextra -Wpedantic -Werror`, nothing
+platform-specific outside `obf2/core/platform.h`, paths only through
+`normalizeAssetPath`, graphics only through `obf2::gfx`.
 
-Тести — по файлу на предмет розбору. **Без тесту не лишається жоден
-розібраний формат.**
+Tests: one file per parsed subject. **No parsed format stays without a
+test.**
 
-## Як ми себе перевіряємо
+## How we check ourselves
 
 ```bash
-# знімок екрана появи
+# a screenshot of the spawn screen
 openbf2 --level Dalian_plant --width 800 --height 600 --frames 4 --screenshot out.png
 
-# що саме лягло на екран: прямокутник, текстура, змінна показу
+# what exactly landed on screen: rectangle, texture, show variable
 openbf2 --level Dalian_plant --frames 2 --hud-rects
 
-# конкретний екран HUD
+# a particular HUD screen
 openbf2 --level Dalian_plant --frames 4 --hud-screen Scoreboard
 
-# синтетичне натискання (DONE на екрані появи)
-openbf2 --connect <хост> --level dalian_plant --frames 5000 --click --mouse 727 546
+# a synthetic click (DONE on the spawn screen)
+openbf2 --connect <host> --level dalian_plant --frames 5000 --click --mouse 727 546
 
-# зіставлення номерів шаблонів з іменами
+# clicks on a schedule — the menu leads the player through several steps
+openbf2 --frames 260 --click-at 20:400:240 --click-at 60:682:531
+
+# matching template numbers to names
 openbf2 --level dalian_plant --calibrate tests/data/bf2-world.bin
 ```
 
-Оригінал для звірки: `tools/bf2_run.sh`, `BF2_LEVEL=dalian_plant`,
-`BF2_SERVER=<хост>`. `Ctrl+Shift+D` під `mtld3d` робить дамп кадру —
-єдине джерело для вимірів рендера.
+The original for comparison: `tools/bf2_run.sh`, `BF2_LEVEL=dalian_plant`,
+`BF2_SERVER=<host>`. `Ctrl+Shift+D` under `mtld3d` dumps a frame — the
+only source for renderer measurements.
 
-## Борг: що не розібрано
+## Debt: what is not reversed
 
-Це не список побажань, а перелік місць, де ми свідомо не знаємо, як в
-оригіналі. У кожного — мірило.
+This is not a wish list. It is a list of places where we knowingly do not
+know how the original does it. Each has a measure.
 
-**Протокол (найбільший борг).**
+**The protocol (the largest debt).**
 
-| що | стан | мірило |
+| what | state | measure |
 |---|---|---|
-| `readControlObjectState` | читаємо початок, кінця не знаємо | записи привидів читаються і в пакетах зі станом керованого об'єкта |
-| записи привидів чужих солдатів | розкладку знаємо, дані не доходять | місце чужого гравця оновлюється частіше ніж раз на секунду |
-| маска стану простого об'єкта (19 біт) | знаємо 1 біт із 19 | усі 19 названі в конспекті |
-| маска стану солдата (21 біт) | знаємо 1 біт із 21 | усі 21 названі |
-| номер шаблона → ім'я | номер = порядок створення, наш порядок інший | `--calibrate` каже «збіглося 21» |
-| пінг | наш і оригінальний різняться в 5–6 разів на тій самій машині | різниця в межах похибки |
+| `readControlObjectState` | we read the start, we do not know the end | ghost records are read in packets that also carry controlled-object state |
+| ghost records for other players' soldiers | the layout is known, the data does not arrive | another player's position updates more than once a second |
+| tickets on `--connect` | the layout is known; it rides a ghost (`ScoreManager::setNetUpdate`, 0x5c9650) — blocked by the line above | the numbers match the original on the same server |
+| simple object state mask (19 bits) | we know 1 bit out of 19 | all 19 named in the notes |
+| soldier state mask (21 bits) | we know 1 bit out of 21 | all 21 named |
+| template number → name | the number is creation order, ours differs | `--calibrate` says "matched 21" |
+| ping | ours and the original's differ by 5–6× on the same machine | the difference is within noise |
 
-**Фізика.** Крок такту взято з бінаря (1/30), але сам стрибок задовгий
-проти оригіналу. Джерело висоти й тривалості стрибка не знайдене:
-`phy-soldier-jump-factor` є в даних, решта — ні. Мірило: висота і
-тривалість стрибка збігаються зі знятими з оригіналу.
+**Physics.** The tick step is taken from the binary (1/30), but the jump
+itself is too long compared with the original. The source of jump height
+and duration has not been found: `phy-soldier-jump-factor` is in the data,
+the rest is not. Measure: jump height and duration match those measured
+from the original.
 
-**HUD.** Ділянки й швидкості тепер із `Menu/Ingame` — граф виконується
-(`obf2::meme`, docs/formats/hud-meme-graph.md). Лишилося:
+**HUD.** Regions and speeds now come from `Menu/Ingame` — the graph runs
+(`obf2::meme`, docs/formats/hud-meme-graph.md). What is left:
 
-| що | стан | мірило |
+| what | state | measure |
 |---|---|---|
-| `Kit<N>Show`, `CPInterfaceEnabled`, `MapFullSizeAndSpawnShow` | джерело не знайдене | у конспекті названо, хто пише |
-| кольори квитків (`FriendlyTicketRed` 0x158, `FriendlyTeamTopRed` 0x138 і сусіди) | механізм є (`setNodeRGBVariables`), значень не знаємо | числа квитків того ж кольору, що в оригіналі |
-| `FriendlyTicketBleed` 0x8c | 0x4646b0 пише сусіднє поле 0x88 з `команда->+0x90`; чи те саме — не з'ясовано | смуга блимає, коли квитки течуть |
-| машина `BottomRight_newXPos`/`oldXPos` (0x7a62c0 реєструє поля) | не читана; перемикач тримаємо ввімкненим | права ділянка ховається і виїжджає сама |
-| `VariableColorEffect`, `AlphaFadeEffect` у графі | не виконуються | у `Menu/Ingame` вони лише на тестових квадратах під `showTest`, тож видимого боргу нема |
+| `Kit<N>Show`, `CPInterfaceEnabled` | the fields are found (`HudInformationLayer`, docs/functions/hud-variables.md: +0x202+N and +0xa8); **who writes them is not** | the notes name who writes |
+| ticket colours (`FriendlyTicketRed` +0x158 and neighbours) | the fields are confirmed in the registry (docs/functions/hud-variables.md); the mechanism exists (`setNodeRGBVariables`), the values are unknown | the ticket numbers are the same colour as in the original |
+| `FriendlyTicketBleed` 0x8c | 0x4646b0 writes the neighbouring field 0x88 from `team->+0x90`; whether it is the same is not established | the bar blinks while tickets bleed |
+| who turns on `BottomRightDirection` | the machine is reversed (docs/functions/hud-bottom-right.md), only the matching "hide" at 0x7a8280 was found | the notes name who writes the one |
+| `BottomRightFadedAlpha` (+0x14) | the formula for the left side exists (end of 0x78b600), the place for the right side was not found | nodes on this variable fade as in the original |
+| `VariableColorEffect`, `AlphaFadeEffect` in the graph | not executed | in `Menu/Ingame` they only appear on test squares under `showTest`, so there is no visible debt |
 
-**Немає еталона для бойового HUD.** Знімок кадру оригіналу
-(`docs/research/03-frame-dump.md`) у нас є лише для екрана появи — 172
-прямокутники. Для бою такого дампа нема, тому «збігається чи ні» на
-верхній смузі й на табло ми зараз сказати не можемо, лише «збігається з
-даними». Мірило: такий самий дамп, знятий у бою.
+**Menu.** The menu ↔ game bridge is reversed — seventeen objects, all
+forty methods of `Logic` with addresses (docs/functions/menu-bridge.md).
+The menu itself is the game's own `mainMenu.swf`, played by Ruffle
+(docs/research/11-ruffle-menu.md). Not done: the tables for the other
+sixteen objects (the approach is known and mechanical), what `c_GIMenu`
+and `c_GIEscape` do in the game, the screens other than singleplayer, and
+the chevrons on `PLAY NOW` — the movie never asks for
+`images/components/playNow.png` and it is not established why. Measure:
+Escape in a battle opens the menu, and it can be used to quit the game.
 
-## Граблі, на які ми вже наступали
+**There is no reference for the battle HUD.** We have a frame dump of the
+original (`docs/research/03-frame-dump.md`) only for the spawn screen —
+172 rectangles. There is no such dump for a battle, so for the top bar and
+the scoreboard we cannot currently say "matches or not", only "matches the
+data". Measure: the same dump, taken in a battle.
 
-* **Лямбда з `[&]`, яку кличуть із циклу кадрів.** Контекст HUD і стан
-  екрана появи двічі виявлялися місцевими змінними блока: після виходу
-  лямбда читала мертву пам'ять. Усе, що переживає блок, оголошуємо на
-  зовнішньому рівні.
-* **Допоміжний шар, що підміняє джерело істини.** Аніматор переходів
-  відповідав «показувати» про вузли, яких не знав. Такий шар має бути
-  **дорадчим**: не знає — вирішує основна умова.
-* **Одна й та сама логіка у двох місцях.** Сторона команди для значків
-  карти була двічі; виправили одну — друга лишилася переплутаною.
-* **Семплер із світу в інтерфейсі.** `REPEAT` на краю квада затягує
-  протилежний край текстури.
-* **Читання одним читачем усього підряд.** Помилка в розборі одного
-  запису привидів убивала весь потік. Правильно як у рушії: головний
-  прохід іде **за довжиною**, вміст читає окремий читач.
-* **Крок фізики завдовжки з кадр.** Рушій рахує тактами 1/30
-  (`WorldPref::mTickTime`), і без цього стрибок різний на 60 і 120 кадрах.
+## Rakes we have already stepped on
+
+* **A `[&]` lambda called from the frame loop.** The HUD context and the
+  spawn screen state each turned out to be local variables of a block:
+  after the block exited, the lambda read dead memory. Anything that
+  outlives the block is declared at the outer level.
+* **A helper layer that shadows the source of truth.** The transition
+  animator answered "show" about nodes it did not know. Such a layer must
+  be **advisory**: when it does not know, the main condition decides.
+* **The same logic in two places.** The team side for map icons existed
+  twice; one was fixed and the other stayed swapped.
+* **A world sampler in the interface.** `REPEAT` at the edge of a quad
+  drags in the opposite edge of the texture.
+* **One reader for everything in a row.** An error parsing one ghost
+  record killed the whole stream. The right way is the engine's way: the
+  main pass goes **by length**, the contents are read by a separate
+  reader.
+* **A physics step as long as a frame.** The engine counts in 1/30 ticks
+  (`WorldPref::mTickTime`); without that the jump differs at 60 and 120
+  frames per second.
+* **Reading the input twice in a frame.** `InputState::clicked` is an
+  edge, and `readInput()` consumes it: the second call in the same frame
+  always sees "not pressed". Read it once per frame and share it.

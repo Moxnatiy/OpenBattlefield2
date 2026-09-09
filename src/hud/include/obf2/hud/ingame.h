@@ -1,9 +1,9 @@
 #pragma once
-// Складання бойового HUD: корінь `Global` плюс кутові ділянки.
+// Assembling the combat HUD: the `Global` root plus the corner regions.
 //
-// Ділянок у грі сім, і вузли в них дістають координати **від лівого
-// верхнього кута ділянки** — це написали самі розробники в
-// `Menu/HUD/HudSetup/Readme.txt`. Де ті кути — сказано не в коді, а в
+// The game has seven regions, and the nodes in them get their coordinates **from
+// the region's top left corner** — the developers wrote that themselves in
+// `Menu/HUD/HudSetup/Readme.txt`. Where those corners are is said not in the code but in
 // `Menu/Ingame` (obf2/meme/graph.h, `Graph::layers`):
 //
 //   BottomLeftAnimate   BfTransformNode 400x64   X<-BottomLeft_XPos   Y=563
@@ -11,13 +11,13 @@
 //   BottomRightAnimate  BfTransformNode 600x100  X<-BottomRight_XPos  Y=497
 //     Next node -> TransformNode  X=401 Y=563  400x64   (Static)
 //
-// X у «рухомих» ділянок — це змінна, і в файлі збережено сховане
-// положення (-295 і 503): з ним вміст цілком за краєм екрана.
+// The X of the "moving" regions is a variable, and the file holds the hidden
+// position (-295 and 503): with it the contents are entirely beyond the screen's edge.
 //
-// Бойовий HUD доводиться складати наново, а не пекти назавжди: у грі
-// його змінні пише не старт рівня, а щокадрова робота — 0x78d0f0 бере
-// поточного гравця і або вмикає `PlayerHealthShow` (0x78d154), або
-// гасить увесь набір (0x78d2d9).
+// The combat HUD has to be reassembled rather than baked once and for all: in
+// the game its variables are written not by the level's start but by per-frame
+// work — 0x78d0f0 takes the current player and either turns on
+// `PlayerHealthShow` (0x78d154) or clears the whole set (0x78d2d9).
 #include <functional>
 #include <string>
 #include <vector>
@@ -31,21 +31,21 @@ struct IngameLayer {
   std::string group;
   float x = 0.0f;
   float y = 0.0f;
-  // До якого краю ділянка тулиться на широкому екрані. **Це наше**: у грі
-  // 800x600 і такого питання немає.
+  // Which edge the region hugs on a wide screen. **This is ours**: the game is
+  // 800x600 and has no such question.
   Anchor anchor = Anchor::Left;
 };
 
-// Ділянки за графом. `leftX`/`rightX` — поточні значення змінних, які
-// веде граф; решта чисел береться з файлу, а запасні (на випадок, коли
-// графа нема) збігаються з ним.
+// The regions by the graph. `leftX`/`rightX` are the current values of the
+// variables the graph drives; the other numbers come from the file, and the
+// fallbacks (for when there is no graph) agree with it.
 std::vector<IngameLayer> ingameLayers(const meme::Graph& graph, float leftX, float rightX);
 
-// Скласти бойовий HUD: спершу `Global`, далі кожна ділянка своїм
-// коренем — у даних ніщо не веде до них із `Global`.
+// Assemble the combat HUD: `Global` first, then every region by its own root —
+// nothing in the data leads to them from `Global`.
 //
-// `onLayer` кличеться на кожну непорожню ділянку — для звітів
-// (`--hud-rects`) і щоб не тягти сюди друк.
+// `onLayer` is called for every non-empty region — for reports (`--hud-rects`)
+// and so that printing need not be dragged in here.
 std::vector<DrawPiece> buildIngame(const Builder& builder, const std::vector<IngameLayer>& layers,
                                    const font::Font& font, const std::string& fontAtlas,
                                    const Screen& screen, const Context& context,

@@ -1,20 +1,21 @@
-# Шрифти й локалізація
+# Fonts and localisation
 
-Статус: **реалізовано** — `src/font`, `src/loc`. Обидва формати виявилися
-текстовими, реверс не знадобився.
+Status: **implemented** — `src/font`, `src/loc`. Both formats turned out
+to be textual; no reversing was needed.
 
-## Шрифт: `.dif` + `.dds`
+## Font: `.dif` + `.dds`
 
-Пара файлів у `Fonts_client.zip`, з теками під роздільність (`800/`) і мову
-(`Chinese/800/`). `.dif` — метрики, `.dds` поруч — атлас гліфів.
+A pair of files in `Fonts_client.zip`, with directories per resolution
+(`800/`) and per language (`Chinese/800/`). The `.dif` holds metrics, the
+`.dds` next to it is the glyph atlas.
 
 ```
 header
-2                          версія
-Helvetica LT CondensedBold ім'я
-128                        ширина атласа
-128                        висота атласа
-13.000000                  кегль
+2                          version
+Helvetica LT CondensedBold name
+128                        atlas width
+128                        atlas height
+13.000000                  size
 glyphs
 328
 65<TAB>0.066667<TAB>4.600000<TAB>1.266667<TAB>0<TAB>35<TAB>7<TAB>40<TAB>14
@@ -24,60 +25,60 @@ kerning
 65<TAB>84<TAB>-0.466667
 ```
 
-Поля гліфа: **код, лівий винос, ширина, правий винос, зсув по вертикалі,
-left, top, right, bottom**.
+The glyph fields are: **code, left bearing, width, right bearing, vertical
+offset, left, top, right, bottom**.
 
-Що останні чотири — це прямокутник в атласі, видно прямо з даних: `!` дає
-1×7, `"` — 2×3, `A` — 5×7, `™` — 7×4. А що п'яте поле це вертикальний зсув,
-показують розділові знаки: у коми й крапки він 5 (сидять низько), у `$` він
-−1 (виступає вгору), у літер 0.
+That the last four are a rectangle in the atlas is visible straight from
+the data: `!` gives 1×7, `"` 2×3, `A` 5×7, `™` 7×4. And that the fifth
+field is a vertical offset is shown by punctuation: the comma and the full
+stop have 5 (they sit low), `$` has −1 (it sticks up), letters have 0.
 
-Кернінг — трійки `символ, символ, поправка`, коди справжні юнікодні
-(8217 — типографський апостроф).
+Kerning is triples of `character, character, adjustment`, with real Unicode
+code points (8217 is the typographic apostrophe).
 
-## Дві пастки
+## Two traps
 
-**Текст у UTF-8, читати побайтово не можна.** Рядки локалізації містять
-не-ASCII символи, і `People’s` при побайтовому читанні перетворюється на
-`Peopleâs`. Гліф лежить під справжнім кодом (8217), а не під першим байтом.
+**The text is UTF-8 and must not be read byte by byte.** Localisation
+strings contain non-ASCII characters, and read bytewise `People’s` turns
+into `Peopleâs`. The glyph sits under the real code point (8217), not
+under the first byte.
 
-**16-бітні DDS довелося розгортати у 8-бітні.** Атласи шрифтів лежать у
-`A4R4G4B4`. У DDS порядок каналів задають маски, а імена пакованих
-16-бітних форматів у графічних API означають порядок по-своєму — гліфи
-виходили жовтими й дірявими. Розгортання в `B8G8R8A8` при завантаженні
-знімає питання; це 345 невеликих текстур інтерфейсу, ціна нульова.
+**16-bit DDS had to be expanded to 8-bit.** Font atlases are stored as
+`A4R4G4B4`. In DDS the channel order is given by masks, while the names of
+packed 16-bit formats in graphics APIs mean their own order — the glyphs
+came out yellow and full of holes. Expanding to `B8G8R8A8` on load settles
+the question; these are 345 small interface textures, so the cost is nil.
 
-## Локалізація: `.utxt`
+## Localisation: `.utxt`
 
-`Localization/<мова>/*.utxt`, **UTF-16LE з BOM**:
+`Localization/<language>/*.utxt`, **UTF-16LE with a BOM**:
 
 ```
-КЛЮЧ<пробіли>\x1B\x1B значення \x1B\x1B CRLF
+KEY<spaces>\x1B\x1B value \x1B\x1B CRLF
 ```
 
-Два символи ESC обрамляють значення з обох боків. Ключі ті самі, що
-трапляються у `.con`: `HUD_INGAME_QUIT`, `WEAPON_NAME_ammobag`,
+Two ESC characters frame the value on both sides. The keys are the same
+ones that turn up in `.con`: `HUD_INGAME_QUIT`, `WEAPON_NAME_ammobag`,
 `LOADINGSCREEN_MAPDESCRIPTION_dalianplant`.
 
-Файлів на мову кілька (основний, патч, додаток) — пізніші перекривають
-раніші. В англійському наборі **3777 рядків**.
+There are several files per language (base, patch, add-on) — later ones
+override earlier ones. The English set has **3777 lines**.
 
-Ключа, якого немає, ми не вигадуємо: повертається сам ключ — рівно так це
-видно і в оригінальній грі.
+A missing key is not invented: the key itself is returned — exactly how it
+looks in the original game.
 
-## Де це вже працює
+## Where this already works
 
-- **Меню**: заголовок, `HUD_SINGLEPLAYER_STARTGAME` з лексикону і список із
-  22 карт, чиї назви взяті з `Levels/<карта>/Info/<карта>.desc`.
-- **Екран завантаження**: `Info/loadmap.png`, назва карти й **опис карти**
-  за ключем із атрибута `<briefing locid="...">` — той самий текст, що
-  показує гра, з переносом по словах.
+- **The loading screen**: `Info/loadmap.png`, the map name and **the map
+  description** by the key from the `<briefing locid="...">` attribute —
+  the same text the game shows, word-wrapped.
+- **The menu**: the game's own `mainMenu.swf` gets its strings from the
+  same lexicon through the bridge (docs/research/11-ruffle-menu.md).
 
 ```bash
-./build/macos-arm64-debug/src/app/openbf2 --screen menu
 ./build/macos-arm64-debug/src/app/openbf2 --screen loading
 ```
 
-Інтерфейс малюється **окремим пайплайном**: без глибини, з альфа-змішуванням
-і без освітлення. Без нього гліфи були б непрозорими прямокутниками, а текст
-узагалі не проходив би тест глибини проти тла.
+The interface is drawn by a **separate pipeline**: no depth, alpha
+blending, no lighting. Without it the glyphs would be opaque rectangles
+and the text would not pass the depth test against the background at all.

@@ -10,7 +10,7 @@ using namespace obf2;
 
 namespace {
 
-// Форма взята з реального 800/scoreboardFont_8.dif.
+// The shape is taken from a real 800/scoreboardFont_8.dif.
 const std::string kDif =
     "header\r\n"
     "2\r\n"
@@ -49,7 +49,7 @@ static void testParseDif() {
   const auto font = font::parseDif(kDif, &error);
   CHECK(font.has_value());
   if (!font) {
-    std::fprintf(stderr, "  причина: %s\n", error.c_str());
+    std::fprintf(stderr, "  reason: %s\n", error.c_str());
     return;
   }
 
@@ -62,13 +62,13 @@ static void testParseDif() {
   const font::Glyph* letterA = font->glyph('A');
   CHECK(letterA != nullptr);
   if (letterA != nullptr) {
-    // Прямокутник в атласі: (35,7)-(40,14) це 5x7.
+    // The rectangle in the atlas: (35,7)-(40,14) is 5x7.
     CHECK_EQ(letterA->pixelWidth(), 5);
     CHECK_EQ(letterA->pixelHeight(), 7);
     CHECK_EQ(letterA->offsetY, 0);
   }
 
-  // Пробіл не має прямокутника, але має крок.
+  // A space has no rectangle but has an advance.
   const font::Glyph* space = font->glyph(' ');
   CHECK(space != nullptr);
   if (space != nullptr) {
@@ -77,7 +77,7 @@ static void testParseDif() {
   }
 
   CHECK(font->kerning('A', 'T') < -0.4f);
-  CHECK_EQ(font->kerning('A', 'B'), 0.0f);  // такої пари немає
+  CHECK_EQ(font->kerning('A', 'B'), 0.0f);  // there is no such pair
 }
 
 static void testMeasureUsesKerning() {
@@ -87,7 +87,7 @@ static void testMeasureUsesKerning() {
 
   const float single = font->measure("A");
   const float doubled = font->measure("AA");
-  // Дві "A" з від'ємним кернінгом коротші за подвоєну ширину однієї.
+  // Two "A"s with negative kerning are shorter than twice the width of one.
   CHECK(doubled < single * 2.0f);
   CHECK(doubled > single);
 }
@@ -97,8 +97,8 @@ static void testUtf8IsDecodedAsCodepoints() {
   CHECK(font.has_value());
   if (!font) return;
 
-  // U+2019 (’) у UTF-8 — три байти. Якщо читати побайтово, гліф 8217
-  // не знайдеться, а на екрані буде сміття замість апострофа.
+  // U+2019 (’) in UTF-8 is three bytes. Read byte by byte, glyph 8217 would not be
+  // found, and the screen would show rubbish instead of an apostrophe.
   const std::string apostrophe = "\xE2\x80\x99";
   CHECK(font->measure(apostrophe) > 1.5f);
 
@@ -119,7 +119,7 @@ static void testBuildTextGeometry() {
   layout.screenHeight = 100;
 
   const auto geometry = font::buildText(*font, "A A", layout, "atlas.dds");
-  // Дві "A" дають по чотири вершини; пробіл геометрії не додає.
+  // Two "A"s give four vertices each; a space adds no geometry.
   CHECK_EQ(geometry.vertices.size(), std::size_t(8));
   CHECK_EQ(geometry.indices.size(), std::size_t(12));
   CHECK_EQ(geometry.ranges.size(), std::size_t(1));
@@ -127,7 +127,7 @@ static void testBuildTextGeometry() {
     CHECK_EQ(geometry.ranges[0].maps.at(0), std::string("atlas.dds"));
   }
 
-  // Текст без жодного відомого гліфа не дає геометрії взагалі.
+  // Text with not a single known glyph gives no geometry at all.
   const auto empty = font::buildText(*font, "\x01\x02", layout, "atlas.dds");
   CHECK(empty.indices.empty());
   CHECK(empty.ranges.empty());
@@ -141,7 +141,7 @@ static void testWrapText() {
   const float oneLetter = font->measure("A");
   const auto lines = font::wrapText(*font, "A A A A", oneLetter * 2.5f, 1.0f);
   CHECK(lines.size() > 1);
-  // Жодне слово не губиться.
+  // Not a word is lost.
   std::string joined;
   for (const auto& line : lines) {
     if (!joined.empty()) joined += " ";
@@ -152,9 +152,9 @@ static void testWrapText() {
 
 static void testLexicon() {
   loc::Lexicon lexicon;
-  // Ключ, пробіли, два ESC, значення, два ESC.
-  // \033 (ESC) — вісімковий запис: \x1B з'їдав би наступну шістнадцяткову
-  // цифру, і "\x1BEnglish" стало б одним символом поза діапазоном.
+  // The key, spaces, two ESCs, the value, two ESCs.
+  // \033 (ESC) is written in octal: \x1B would eat the next hexadecimal digit, and
+  // "\x1BEnglish" would become one character outside the range.
   const std::string line1 = "HUD_INGAME_QUIT   \033\033Quit\033\033\r\n";
   const std::string line2 = "ID_LANGUAGE       \033\033English\033\033\r\n";
 
@@ -163,13 +163,13 @@ static void testLexicon() {
   CHECK_EQ(lexicon.text("HUD_INGAME_QUIT"), std::string_view("Quit"));
   CHECK_EQ(lexicon.text("ID_LANGUAGE"), std::string_view("English"));
 
-  // Невідомий ключ повертається як є — так само видно й у грі.
-  CHECK_EQ(lexicon.text("НЕМАЄ_ТАКОГО"), std::string_view("НЕМАЄ_ТАКОГО"));
-  CHECK(!lexicon.find("НЕМАЄ_ТАКОГО").has_value());
+  // An unknown key comes back as it is — the same is visible in the game.
+  CHECK_EQ(lexicon.text("NO_SUCH_KEY"), std::string_view("NO_SUCH_KEY"));
+  CHECK(!lexicon.find("NO_SUCH_KEY").has_value());
 }
 
 static void testLexiconLaterFilesOverride() {
-  // Гра читає кілька файлів на мову, і патч перекриває основний.
+  // The game reads several files per language, and a patch overrides the main one.
   loc::Lexicon lexicon;
   CHECK(lexicon.addUtxt(utf16("KEY   \033\033Old\033\033\r\n")));
   CHECK(lexicon.addUtxt(utf16("KEY   \033\033New\033\033\r\n")));
@@ -178,14 +178,14 @@ static void testLexiconLaterFilesOverride() {
 }
 
 static void testUtf16Decoding() {
-  // BOM пропускається, сурогатна пара складається в один символ.
+  // The BOM is skipped, a surrogate pair is combined into one character.
   const std::vector<std::byte> withEmoji = {
       std::byte{0xFF}, std::byte{0xFE},                    // BOM
-      std::byte{0x3D}, std::byte{0xD8},                    // старший сурогат
-      std::byte{0x00}, std::byte{0xDE},                    // молодший
+      std::byte{0x3D}, std::byte{0xD8},                    // the high surrogate
+      std::byte{0x00}, std::byte{0xDE},                    // the low one
   };
   const std::string decoded = loc::utf16ToUtf8(withEmoji);
-  CHECK_EQ(decoded.size(), std::size_t(4));  // U+1F600 -> 4 байти UTF-8
+  CHECK_EQ(decoded.size(), std::size_t(4));  // U+1F600 -> 4 UTF-8 bytes
 }
 
 TEST_MAIN({

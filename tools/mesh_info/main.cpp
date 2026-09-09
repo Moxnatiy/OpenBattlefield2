@@ -1,7 +1,7 @@
-// mesh_info — регресія парсера мешів на справжніх даних.
+// mesh_info — a regression of the mesh parser on the real data.
 //
 //   mesh_info <modDir> --all [staticmesh|bundledmesh|skinnedmesh]
-//   mesh_info <modDir> <шлях/усередині/vfs.staticmesh>
+//   mesh_info <modDir> <path/inside/vfs.staticmesh>
 
 #include <algorithm>
 #include <cstdio>
@@ -28,22 +28,22 @@ obf2::FileSystem mountGame(const std::filesystem::path& modDir) {
 void printOne(obf2::FileSystem& files, const std::string& path, std::size_t geometryIndex = 0,
               std::size_t lodIndex = 0) {
   const auto kind = obf2::mesh::kindFromExtension(obf2::assetExtension(path));
-  if (!kind) { std::fprintf(stderr, "невідоме розширення: %s\n", path.c_str()); return; }
+  if (!kind) { std::fprintf(stderr, "unknown extension: %s\n", path.c_str()); return; }
 
   const auto bytes = files.read(path);
-  if (!bytes) { std::fprintf(stderr, "не знайдено: %s\n", path.c_str()); return; }
+  if (!bytes) { std::fprintf(stderr, "not found: %s\n", path.c_str()); return; }
 
   std::string error;
   const auto mesh = obf2::mesh::load(*bytes, *kind, &error);
   if (!mesh) { std::fprintf(stderr, "%s: %s\n", path.c_str(), error.c_str()); return; }
 
-  std::printf("%s\n  тип: %s, версія: %u, %zu байт\n", path.c_str(),
+  std::printf("%s\n  kind: %s, version: %u, %zu bytes\n", path.c_str(),
               std::string(obf2::mesh::kindName(mesh->kind)).c_str(), mesh->header.version,
               bytes->size());
-  std::printf("  вершин: %u (stride %u), індексів: %zu, geom: %zu\n", mesh->vertexCount,
+  std::printf("  vertices: %u (stride %u), indices: %zu, geom: %zu\n", mesh->vertexCount,
               mesh->vertexStride, mesh->indices.size(), mesh->geometries.size());
 
-  std::printf("  атрибути:");
+  std::printf("  attributes:");
   for (const auto& a : mesh->attributes) {
     if (a.flag != 0) continue;
     std::printf(" usage=%u@%u(type %u)", a.usage, a.offset, a.vartype);
@@ -51,7 +51,7 @@ void printOne(obf2::FileSystem& files, const std::string& path, std::size_t geom
   std::putchar('\n');
 
   for (std::size_t g = 0; g < mesh->geometries.size(); ++g) {
-    std::printf("  geom %zu: lod-ів %zu\n", g, mesh->geometries[g].lods.size());
+    std::printf("  geom %zu: %zu lods\n", g, mesh->geometries[g].lods.size());
   }
 
   const auto render = obf2::mesh::extract(*mesh, geometryIndex, lodIndex, &error);
@@ -60,15 +60,15 @@ void printOne(obf2::FileSystem& files, const std::string& path, std::size_t geom
   if (!render->vertexPart.empty()) {
     std::map<int, int> partHistogram;
     for (const std::uint8_t part : render->vertexPart) ++partHistogram[part];
-    std::printf("  частини (geometryPart -> вершин):");
+    std::printf("  parts (geometryPart -> vertices):");
     for (const auto& [part, count] : partHistogram) std::printf(" %d:%d", part, count);
     std::putchar('\n');
   }
-  std::printf("  geom %zu lod %zu: вершин %zu, індексів %zu (%zu трикутників), діапазонів %zu\n",
+  std::printf("  geom %zu lod %zu: %zu vertices, %zu indices (%zu triangles), %zu ranges\n",
               geometryIndex, lodIndex, render->vertices.size(), render->indices.size(),
               render->indices.size() / 3, render->ranges.size());
-  // Сирі дані прив'язки вершин: вага й пара номерів кісток. Потрібні, щоб
-  // зрозуміти, як саме BLENDINDICES пакує пару в один D3DCOLOR.
+  // The raw vertex binding data: the weight and a pair of bone numbers. Needed
+  // to understand how exactly BLENDINDICES packs the pair into one D3DCOLOR.
   if (mesh->kind == obf2::mesh::Kind::Skinned) {
     std::size_t weightOffset = 0, indexOffset = 0;
     bool hasWeight = false, hasIndex = false;
@@ -79,25 +79,25 @@ void printOne(obf2::FileSystem& files, const std::string& path, std::size_t geom
     }
     if (hasWeight && hasIndex) {
       const std::size_t stride = mesh->floatsPerVertex();
-      std::printf("  прив'язка вершин (вага, байти BLENDINDICES):\n");
+      std::printf("  vertex binding (weight, BLENDINDICES bytes):\n");
       for (std::size_t v = 0; v < mesh->vertexCount && v < 8; ++v) {
         const float weight = mesh->vertexData[v * stride + weightOffset];
         float raw = mesh->vertexData[v * stride + indexOffset];
         std::uint32_t bits = 0;
         std::memcpy(&bits, &raw, 4);
-        std::printf("    %zu: вага %.3f  байти %u %u %u %u\n", v, weight, bits & 0xff,
+        std::printf("    %zu: weight %.3f  bytes %u %u %u %u\n", v, weight, bits & 0xff,
                     (bits >> 8) & 0xff, (bits >> 16) & 0xff, (bits >> 24) & 0xff);
       }
     }
   }
 
-  // Риґи скінінгу: які кістки бере кожен матеріал.
+  // Skinning rigs: which bones each material takes.
   if (mesh->kind == obf2::mesh::Kind::Skinned) {
     for (std::size_t g = 0; g < mesh->geometries.size(); ++g) {
       for (std::size_t l = 0; l < mesh->geometries[g].lods.size(); ++l) {
         const auto& lod = mesh->geometries[g].lods[l];
         for (std::size_t r = 0; r < lod.rigs.size(); ++r) {
-          std::printf("  geom %zu lod %zu риґ %zu (матеріалів %zu): кісток %zu, номери:", g, l, r,
+          std::printf("  geom %zu lod %zu rig %zu (%zu materials): %zu bones, numbers:", g, l, r,
                       lod.materials.size(), lod.rigs[r].bones.size());
           for (std::size_t b = 0; b < lod.rigs[r].bones.size() && b < 16; ++b) {
             std::printf(" %u", lod.rigs[r].bones[b].id);
@@ -113,7 +113,7 @@ void printOne(obf2::FileSystem& files, const std::string& path, std::size_t geom
               render->bounds.max.y, render->bounds.max.z);
   for (std::size_t i = 0; i < render->ranges.size() && i < 4; ++i) {
     const auto& range = render->ranges[i];
-    std::printf("    [%zu] %s / %s, індексів %u, текстур %zu%s\n", i, range.fxFile.c_str(),
+    std::printf("    [%zu] %s / %s, %u indices, %zu textures%s\n", i, range.fxFile.c_str(),
                 range.technique.c_str(), range.indexCount, range.maps.size(),
                 range.maps.empty() ? "" : (" -> " + range.maps.front()).c_str());
   }
@@ -129,11 +129,11 @@ int main(int argc, char** argv) {
   obf2::FileSystem files = mountGame(argv[1]);
   const std::string what = argv[2];
 
-  // Розвідка: які technique зустрічаються і що лежить у кожному слоті текстур.
-  // Потрібно, щоб зрозуміти, який слот вважати базовим кольором.
+  // Reconnaissance: which techniques occur and what lies in each texture slot.
+  // Needed to work out which slot to take for the base colour.
   if (what == "--materials") {
     std::map<std::string, int> techniques;
-    std::map<std::string, int> slotSuffix;  // "слот N: суфікс" -> скільки разів
+    std::map<std::string, int> slotSuffix;  // "slot N: suffix" -> how many times
 
     auto scan = files.list();
     std::sort(scan.begin(), scan.end());
@@ -155,16 +155,16 @@ int main(int argc, char** argv) {
               const std::size_t dot = map.find_last_of('.');
               const std::size_t underscore = map.find_last_of('_', dot);
               std::string suffix = (underscore == std::string::npos || dot == std::string::npos)
-                                       ? "<без суфікса>"
+                                       ? "<no suffix>"
                                        : map.substr(underscore, dot - underscore);
-              ++slotSuffix["слот " + std::to_string(slot) + ": " + suffix];
+              ++slotSuffix["slot " + std::to_string(slot) + ": " + suffix];
             }
           }
         }
       }
     }
 
-    std::puts("technique (топ-10):");
+    std::puts("technique (top 10):");
     std::vector<std::pair<std::string, int>> sortedTechniques(techniques.begin(), techniques.end());
     std::sort(sortedTechniques.begin(), sortedTechniques.end(),
               [](auto& a, auto& b) { return a.second > b.second; });
@@ -172,7 +172,7 @@ int main(int argc, char** argv) {
       std::printf("  %-28s %d\n", sortedTechniques[i].first.c_str(), sortedTechniques[i].second);
     }
 
-    std::puts("\nсуфікси текстур по слотах (топ-14):");
+    std::puts("\ntexture suffixes by slot (top 14):");
     std::vector<std::pair<std::string, int>> sortedSlots(slotSuffix.begin(), slotSuffix.end());
     std::sort(sortedSlots.begin(), sortedSlots.end(),
               [](auto& a, auto& b) { return a.second > b.second; });
@@ -182,11 +182,11 @@ int main(int argc, char** argv) {
     return 0;
   }
 
-  // Розвідка: у якому порядку обходяться вершини трикутника. Порівнюємо
-  // геометричну нормаль (векторний добуток ребер) із нормалями вершин, які
-  // художник задав явно. Якщо вони дивляться в один бік — обхід проти
-  // годинникової стрілки, і саме такі грані лицьові.
-  // Регресія парсера зіткнень на всіх .collisionmesh гри.
+  // Reconnaissance: in which order the vertices of a triangle are walked. We
+  // compare the geometric normal (the cross product of the edges) with the
+  // vertex normals the artist set explicitly. When they look the same way the
+  // walk is counter-clockwise, and those are the faces that face us.
+  // A regression of the collision parser on every .collisionmesh in the game.
   if (what == "--collision") {
     int parsed = 0, failed = 0;
     long long triangles = 0;
@@ -206,14 +206,14 @@ int main(int argc, char** argv) {
       const auto mesh = obf2::mesh::loadCollisionMesh(*bytes, &error);
       if (!mesh) {
         ++failed;
-        ++reasons[error.substr(0, error.find(" (зсув"))];
+        ++reasons[error.substr(0, error.find(" (offset"))];
         if (failed <= 3) {
           std::uint32_t major = 0, minor = 0;
           if (bytes->size() >= 8) {
             std::memcpy(&major, bytes->data(), 4);
             std::memcpy(&minor, bytes->data() + 4, 4);
           }
-          std::fprintf(stderr, "  %s: версія %u.%u — %s\n", path.c_str(), major, minor,
+          std::fprintf(stderr, "  %s: version %u.%u — %s\n", path.c_str(), major, minor,
                        error.c_str());
         }
         continue;
@@ -225,14 +225,14 @@ int main(int argc, char** argv) {
       }
     }
 
-    std::printf("розібрано: %d, не розібрано: %d\n", parsed, failed);
-    std::printf("трикутників зіткнень: %lld\n", triangles);
-    std::puts("шари за призначенням:");
+    std::printf("parsed: %d, not parsed: %d\n", parsed, failed);
+    std::printf("collision triangles: %lld\n", triangles);
+    std::puts("layers by purpose:");
     for (const auto& [type, count] : layerTypes) {
-      const char* name = type == 0   ? "снаряди"
-                         : type == 1 ? "техніка"
-                         : type == 2 ? "солдат"
-                         : type == 3 ? "боти"
+      const char* name = type == 0   ? "projectiles"
+                         : type == 1 ? "vehicles"
+                         : type == 2 ? "soldier"
+                         : type == 3 ? "bots"
                                      : "?";
       std::printf("  %-10s %d\n", name, count);
     }
@@ -282,12 +282,12 @@ int main(int argc, char** argv) {
     }
 
     const long long total = agree + disagree;
-    std::printf("мешів: %d, трикутників: %lld (вироджених %lld)\n", meshesScanned, total,
+    std::printf("meshes: %d, triangles: %lld (degenerate %lld)\n", meshesScanned, total,
                 degenerate);
     if (total > 0) {
-      std::printf("  обхід збігається з нормалями вершин: %lld (%.2f%%)\n", agree,
+      std::printf("  the walk agrees with the vertex normals: %lld (%.2f%%)\n", agree,
                   100.0 * static_cast<double>(agree) / static_cast<double>(total));
-      std::printf("  протилежний:                        %lld (%.2f%%)\n", disagree,
+      std::printf("  the opposite:                            %lld (%.2f%%)\n", disagree,
                   100.0 * static_cast<double>(disagree) / static_cast<double>(total));
     }
     return 0;
@@ -323,7 +323,7 @@ int main(int argc, char** argv) {
     const auto mesh = obf2::mesh::load(*bytes, *kind, &error);
     if (!mesh) {
       ++failed[std::string(extension)];
-      ++failureKinds[error.substr(0, error.find(" (зсув"))];
+      ++failureKinds[error.substr(0, error.find(" (offset"))];
       if (firstFailures.size() < 5) firstFailures.push_back(path + ": " + error);
       continue;
     }
@@ -335,16 +335,16 @@ int main(int argc, char** argv) {
     }
   }
 
-  std::puts("розібрано:");
+  std::puts("parsed:");
   for (const auto& [extension, count] : parsed) std::printf("  %-14s %d\n", extension.c_str(), count);
   if (!failed.empty()) {
-    std::puts("не розібрано:");
+    std::puts("not parsed:");
     for (const auto& [extension, count] : failed) std::printf("  %-14s %d\n", extension.c_str(), count);
-    std::puts("причини:");
+    std::puts("reasons:");
     for (const auto& [reason, count] : failureKinds) std::printf("  %-44s %d\n", reason.c_str(), count);
-    std::puts("приклади:");
+    std::puts("examples:");
     for (const auto& example : firstFailures) std::printf("  %s\n", example.c_str());
   }
-  std::printf("\nвершин усього: %lld, трикутників у lod0: %lld\n", vertices, triangles);
+  std::printf("\nvertices in total: %lld, triangles in lod0: %lld\n", vertices, triangles);
   return failed.empty() ? 0 : 1;
 }

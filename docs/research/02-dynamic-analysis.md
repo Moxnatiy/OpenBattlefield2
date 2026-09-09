@@ -1,9 +1,9 @@
-# Динамічний розбір оригіналу
+# Dynamic analysis of the original
 
-## Налагоджувач: приєднання вбиває гру
+## The debugger: attaching kills the game
 
-`winedbg attach` до **32-бітної** гри в цій збірці Wine (wow64) не
-працює — і не «іноді», а завжди:
+`winedbg attach` to the **32-bit** game in this Wine build (wow64) does
+not work — and not "sometimes" but always:
 
 ```
 WineDbg attached to pid 00d4
@@ -11,72 +11,74 @@ Unhandled exception: page fault on read access to 0xffd77574
   in wow64 32-bit code
 ```
 
-Щоб зупинити чужий процес, Wine вкидає в нього потік-переривач. Під
-WoW64 його точка входу лежить у перехідній сторінці `0xffd7xxxx`, яка
-32-бітному боку недоступна, тож замість зупинки виходить падіння. Той
-самий слід видно і в журналі mtld3d: `fault outside d3d9.dll,
-code=0xc0000005, addr=0xffd77574`. Sidecar тут ні до чого.
+To stop someone else's process Wine injects an interrupt thread into it.
+Under WoW64 its entry point sits in the transition page `0xffd7xxxx`,
+which the 32-bit side cannot reach, so instead of a stop you get a crash.
+The same trace shows in the mtld3d log: `fault outside d3d9.dll,
+code=0xc0000005, addr=0xffd77574`. The sidecar has nothing to do with it.
 
-Дві дрібниці, на яких легко згубити години:
+Two small things that can easily cost hours:
 
-* `winedbg` читає номер процесу **десятковим**. `attach 0x150`, не
-  `attach 00000150` — інакше «error 87»;
-* `winedbg.exe` треба брати 32-бітний (`C:\windows\syswow64\`).
-  64-бітний до 32-бітної гри не приєднається зовсім.
+* `winedbg` reads the process id in **decimal**. `attach 0x150`, not
+  `attach 00000150` — otherwise "error 87";
+* `winedbg.exe` has to be the 32-bit one (`C:\windows\syswow64\`). The
+  64-bit one will not attach to a 32-bit game at all.
 
-**Що працює:** запуск гри *під* налагоджувачем. Тоді переривач не
-потрібен, і зупинка на точці входу відбувається штатно:
+**What does work:** starting the game *under* the debugger. Then no
+interrupt thread is needed and stopping at the entry point happens
+normally:
 
 ```sh
 mkfifo cmd.fifo
-tail -f /dev/null > cmd.fifo &        # канал не має закриватися
+tail -f /dev/null > cmd.fifo &        # the pipe must not close
 wine 'C:\windows\syswow64\winedbg.exe' 'C:\bf2\BF2.exe' +loadLevel … \
      < cmd.fifo > dbg.out 2>&1 &
 echo cont > cmd.fifo
 ```
 
-Шлях до гри — без пробілів (`C:\bf2` як символічне посилання), бо
-winedbg свій рядок розбирає сам.
+The path to the game must have no spaces (`C:\bf2` as a symlink), because
+winedbg parses its own command line.
 
-Далі зупинятися треба **точками зупину**, наперед розставленими, а не
-перериванням: перервати вже запущений `cont` неможливо. `SIGINT`
-налагоджувачеві нічого не робить, а поки триває `cont`, він не читає
-команд узагалі — вони чекають у каналі до наступної зупинки.
+After that you have to stop with **breakpoints set in advance**, not by
+interrupting: interrupting a running `cont` is impossible. `SIGINT` does
+nothing to the debugger, and while `cont` runs it does not read commands
+at all — they wait in the pipe until the next stop.
 
-### Що з команд справді працює
+### Which commands actually work
 
-* `x /12x 0xa18898` — саме так. Ані `x /12wx …`, ані `x/12x …` winedbg
-  не розуміє («No symbols found for x»);
-* `cont N` пропускає N−1 спрацювань. Якщо їх лишилося менше, гра піде
-  вільно й більше не спиниться — тому N має бути точним;
-* `break *0xАДРЕСА` і `info reg` працюють як звичайно.
+* `x /12x 0xa18898` — exactly like that. winedbg understands neither
+  `x /12wx …` nor `x/12x …` ("No symbols found for x");
+* `cont N` skips N−1 hits. If fewer are left, the game runs free and never
+  stops again — so N has to be exact;
+* `break *0xADDRESS` and `info reg` work as usual.
 
-### Прив'язка має бути рідкісною
+### The breakpoint has to be a rare one
 
-Кожне спрацювання — це прохід через wineserver, кілька мілісекунд. На
-`PeekMessageA` виходить близько 5000 спрацювань на секунду, і 60 000
-минають ще до того, як гра щось завантажить; на `Sleep` завантаження
-розтягується на десятки хвилин. Покадрові прив'язки для цього непридатні.
+Every hit is a round trip through wineserver, a few milliseconds. On
+`PeekMessageA` that is about 5000 hits per second, and 60 000 pass before
+the game loads anything; on `Sleep` loading stretches into tens of
+minutes. Per-frame breakpoints are useless for this.
 
-**Робоча прив'язка — кінець побудови HUD:**
+**A working breakpoint is the end of HUD construction:**
 
 ```
-break *0x769c3e      обробник hudBuilder.setTextNodeOutLineOffset
+break *0x769c3e      the handler for hudBuilder.setTextNodeOutLineOffset
 cont
 ```
 
-Ця команда трапляється у всьому ланцюжку HUD рівно п'ять разів і всі —
-в `HudElementsGameInfo.con`, найостаннішому файлі. Перше спрацювання
-означає, що HUD зібраний; гра до нього йде на повній швидкості.
+That command occurs exactly five times in the whole HUD chain, all of them
+in `HudElementsGameInfo.con`, the very last file. The first hit means the
+HUD is assembled; the game runs to it at full speed.
 
-Як знайти обробник будь-якої іншої команди: рядок з її іменем →
-конструктор, що кладе його в `+0xc` і таблицю методів у `+0x0` →
-у таблиці **слоти 23 і 25** різні в різних команд, це і є її власні
-функції (слот 33 і далі — вже сам рядок імені, таблиця має 33 слоти).
+How to find the handler of any other command: the string with its name →
+the constructor that puts it into `+0xc` and a method table into `+0x0` →
+in that table **slots 23 and 25** differ between commands, and those are
+its own functions (slot 33 onwards is the name string itself; the table
+has 33 slots).
 
-### Що видно на живій грі
+### What is visible on a live game
 
-Зупинка справді дає читати пам'ять:
+Stopping really does let you read memory:
 
 ```
 EIP:00769c3e  ECX:00a18a98  ESI:00000002
@@ -84,22 +86,23 @@ x /8x 0xa18a98
 0x00a18a98: 0092b950 00000000 02161ca4 0092b9d4
 ```
 
-Тобто об'єкт консольної команди: `+0x0` таблиця методів, `+0x8`
-вказівник на ім'я об'єкта-власника (`"hudBuilder"` у купі), `+0xc`
-ім'я самої команди, `+0x24`/`+0x28` — розібрані аргументи.
+That is the console command's object: `+0x0` the method table, `+0x8` a
+pointer to the owning object's name (`"hudBuilder"` on the heap), `+0xc`
+the command's own name, `+0x24`/`+0x28` the parsed arguments.
 
-Чого **ще не зроблено**: дерево вузлів HUD у пам'яті. Обробник дістає
-контекст із глобального `0xa10890`, але за ним лежить сховище
-змінних, а не будівник. Щоб дійти до вузлів, потрібна розкладка
-класу — це наступний крок.
+What has **not** been done yet: the HUD node tree in memory. The handler
+takes its context from the global `0xa10890`, but behind it lies the
+variable store, not the builder. Reaching the nodes needs the class's
+layout — that is the next step.
 
-## Куди дивитися в пам'яті
+## Where to look in memory
 
-`tools/con_objects.py` знімає з образу всі 116 консольних об'єктів разом
-з їхніми статичними адресами (образ вантажиться за 0x400000 без
-релокацій, тож адреси чинні й у живій грі). Для інтерфейсу цікаві:
+`tools/con_objects.py` pulls all 116 console objects out of the image
+together with their static addresses (the image loads at 0x400000 with no
+relocations, so the addresses hold in a live game too). The interesting
+ones for the interface:
 
-| об'єкт | адреса |
+| object | address |
 |---|---|
 | `HudBuilder` | `0xa18898` |
 | `HudManager` | `0xa18be8` |
@@ -108,13 +111,15 @@ x /8x 0xa18a98
 | `Scoreboard` | `0xa17028` |
 | `Minimap` | `0xa14214` |
 
-## Екран появи — це HUD, а не Flash
+## The spawn screen is HUD, not Flash
 
-Перевірено за вмістом архівів. Flash (`swiff`) у грі лише п'ять файлів
-і всі — головне меню, завантаження та кінець раунду:
+Verified from the archives' contents. There are only five Flash (`swiff`)
+files in the game and all of them are the main menu, loading and the end
+of a round:
 `External/FlashMenu/{mainMenu,menu,loadGame,endOfRound}.swf`.
 
-Екран появи натомість зібраний звичайним `hudBuilder` з окремого кореня
-`HUD/HudSetup/SpawnInterface/HudSetupSpawnInterface.con`, який
-`HudSetupMain.con` викликає нарівні з рештою. Це 71 різна команда і 2851
-виклик.
+The spawn screen, by contrast, is assembled by the ordinary `hudBuilder`
+from its own root
+`HUD/HudSetup/SpawnInterface/HudSetupSpawnInterface.con`, which
+`HudSetupMain.con` calls alongside the rest. That is 71 distinct commands
+and 2851 calls.

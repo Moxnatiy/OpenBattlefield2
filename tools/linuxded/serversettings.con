@@ -1,7 +1,7 @@
-rem *** Налаштування для локального еталонного сервера OpenBF2.
-rem *** Це копія типових налаштувань гри з трьома змінами: ім'я,
-rem *** один гравець для старту раунду й 16 місць. PunkBuster
-rem *** лишається вимкненим, як і в оригіналі за замовчуванням.
+rem *** Settings for the local OpenBF2 reference server.
+rem *** This is a copy of the game's default settings with three changes: the
+rem *** name, one player to start a round and 16 slots. PunkBuster stays
+rem *** disabled, as it is in the original by default.
 
 sv.serverName "OpenBF2 reference"
 sv.password ""
@@ -16,9 +16,9 @@ sv.allowNoseCam 1
 sv.hitIndicator 1
 sv.maxPlayers 16
 sv.numPlayersNeededToStart 1
-rem *** Раунд не перезапускати: з кожним перезапуском сервер обирає
-rem *** новий номер виклику для перевірки вмісту, і стенд стає рухомою
-rem *** ціллю. Для дослідів це головне джерело плутанини.
+rem *** Do not restart the round: with every restart the server picks a new
+rem *** challenge number for the content check, and the rig becomes a moving
+rem *** target. For experiments that is the main source of confusion.
 sv.notEnoughPlayersRestartDelay 36000
 sv.startDelay 5
 sv.endDelay 15
@@ -73,6 +73,6 @@ sv.radioMaxSpamFlagCount 6
 sv.radioBlockedDurationTime 30
 sv.friendlyFireWithMines 0
 
-rem *** Віддалена консоль: через неї видно, які команди виконує рушій.
+rem *** The remote console: through it one can see which commands the engine runs.
 sv.rconPassword "openbf2"
 sv.adminScript "default"

@@ -11,15 +11,15 @@ std::optional<Texture> loadPng(std::span<const std::byte> bytes, std::string* er
   int height = 0;
   int channels = 0;
 
-  // Завжди просимо RGBA: так розкладка передбачувана, а альфа є навіть там,
-  // де у файлі її не було.
+  // Always ask for RGBA: the layout is then predictable, and alpha exists even
+  // where the file had none.
   stbi_uc* pixels = stbi_load_from_memory(reinterpret_cast<const stbi_uc*>(bytes.data()),
                                           static_cast<int>(bytes.size()), &width, &height,
                                           &channels, 4);
   if (pixels == nullptr) {
     if (error) {
       const char* reason = stbi_failure_reason();
-      *error = std::string("stb_image: ") + (reason != nullptr ? reason : "невідома помилка");
+      *error = std::string("stb_image: ") + (reason != nullptr ? reason : "unknown error");
     }
     return std::nullopt;
   }
@@ -31,7 +31,7 @@ std::optional<Texture> loadPng(std::span<const std::byte> bytes, std::string* er
 
   const std::size_t pixelCount = static_cast<std::size_t>(width) * height;
   texture.data.resize(pixelCount * 4);
-  // stb віддає RGBA, а наш Bgra8 очікує порядок B, G, R, A.
+  // stb returns RGBA, and our Bgra8 expects the order B, G, R, A.
   for (std::size_t i = 0; i < pixelCount; ++i) {
     texture.data[i * 4 + 0] = static_cast<std::byte>(pixels[i * 4 + 2]);
     texture.data[i * 4 + 1] = static_cast<std::byte>(pixels[i * 4 + 1]);
@@ -45,8 +45,8 @@ std::optional<Texture> loadPng(std::span<const std::byte> bytes, std::string* er
 }
 
 std::optional<Texture> loadImage(std::span<const std::byte> bytes, std::string* error) {
-  // DDS впізнаємо за підписом, усе інше віддаємо stb_image: гра тримає в
-  // інтерфейсі ще й .tga (напр. Ingame/Crosshair/ReferenceCross.tga) і .png.
+  // A DDS is recognised by its signature, everything else goes to stb_image: the
+  // game's interface also holds .tga (e.g. Ingame/Crosshair/ReferenceCross.tga) and .png.
   static constexpr std::byte kDds[4] = {std::byte{'D'}, std::byte{'D'}, std::byte{'S'},
                                         std::byte{' '}};
   if (bytes.size() >= 4 && std::memcmp(bytes.data(), kDds, 4) == 0) {

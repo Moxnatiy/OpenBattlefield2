@@ -5,8 +5,8 @@
 namespace obf2::mesh {
 namespace {
 
-// Той самий підхід, що й у решті парсерів: файл із архіву користувача,
-// довіри йому нема, тож кожне читання перевіряє межі.
+// The same approach as in the other parsers: the file comes from the user's
+// archive and is not to be trusted, so every read checks its bounds.
 class Reader {
  public:
   explicit Reader(std::span<const std::byte> data) : data_(data) {}
@@ -17,7 +17,7 @@ class Reader {
   void fail(std::string why) {
     if (ok_) {
       ok_ = false;
-      error_ = std::move(why) + " (зсув " + std::to_string(position_) + ")";
+      error_ = std::move(why) + " (offset " + std::to_string(position_) + ")";
     }
   }
 
@@ -29,12 +29,12 @@ class Reader {
   std::string text(std::size_t length, const char* what) {
     if (!ok_) return {};
     if (data_.size() - position_ < length) {
-      fail(std::string("файл обірвано: ") + what);
+      fail(std::string("file truncated: ") + what);
       return {};
     }
     const char* start = reinterpret_cast<const char*>(data_.data() + position_);
     position_ += length;
-    // Довжина в файлі рахує й завершальний нуль — у рядок його не беремо.
+    // The length in the file counts the terminating zero — it is not put into the string.
     std::size_t used = length;
     while (used > 0 && start[used - 1] == '\0') --used;
     return std::string(start, used);
@@ -46,7 +46,7 @@ class Reader {
     T value{};
     if (!ok_) return value;
     if (data_.size() - position_ < sizeof(T)) {
-      fail(std::string("файл обірвано: ") + what);
+      fail(std::string("file truncated: ") + what);
       return value;
     }
     std::memcpy(&value, data_.data() + position_, sizeof(T));
@@ -72,34 +72,34 @@ int Skeleton::find(std::string_view name) const {
 std::optional<Skeleton> loadSkeleton(std::span<const std::byte> bytes, std::string* error) {
   Reader reader(bytes);
   Skeleton skeleton;
-  skeleton.version = reader.dword("версія");
-  const std::uint32_t count = reader.dword("кількість кісток");
+  skeleton.version = reader.dword("version");
+  const std::uint32_t count = reader.dword("bone count");
 
-  // Обмеження від здорового глузду: у солдата 80 кісток, найбільший
-  // скелет гри — прапор на 40. Мільйон означає пошкоджений файл.
+  // A sanity limit: a soldier has 80 bones, and the game's largest skeleton is
+  // a flag with 40. A million means a corrupt file.
   if (reader.ok() && count > 4096) {
-    reader.fail("забагато кісток: " + std::to_string(count));
+    reader.fail("too many bones: " + std::to_string(count));
   }
 
   skeleton.bones.reserve(reader.ok() ? count : 0);
   for (std::uint32_t i = 0; i < count && reader.ok(); ++i) {
     SkeletonBone bone;
-    const std::uint16_t nameLength = reader.word("довжина імені");
-    bone.name = reader.text(nameLength, "ім'я кістки");
+    const std::uint16_t nameLength = reader.word("name length");
+    bone.name = reader.text(nameLength, "bone name");
 
-    const std::int16_t parent = reader.sword("батько");
-    // -1 позначає корінь; будь-яке інше значення має вказувати на вже
-    // прочитану кістку, інакше ієрархія некоректна.
+    const std::int16_t parent = reader.sword("parent");
+    // -1 marks the root; any other value has to point at an already read bone,
+    // otherwise the hierarchy is malformed.
     if (parent >= 0 && static_cast<std::uint32_t>(parent) >= i) {
-      reader.fail("батько " + std::to_string(parent) + " у кістки " + std::to_string(i));
+      reader.fail("parent " + std::to_string(parent) + " on bone " + std::to_string(i));
       break;
     }
     bone.parent = parent;
 
-    for (float& value : bone.rotation) value = reader.real("поворот");
-    bone.position.x = reader.real("зсув x");
-    bone.position.y = reader.real("зсув y");
-    bone.position.z = reader.real("зсув z");
+    for (float& value : bone.rotation) value = reader.real("rotation");
+    bone.position.x = reader.real("translation x");
+    bone.position.y = reader.real("translation y");
+    bone.position.z = reader.real("translation z");
 
     skeleton.bones.push_back(std::move(bone));
   }

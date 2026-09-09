@@ -1,248 +1,250 @@
-# Мережевий протокол BF2 — підтверджене
+# BF2's network protocol — what is confirmed
 
-Тут лише те, що **перевірено на живому сервері** й працює. Хроніка
-пошуків і хибні здогади — в `docs/research/09-network-protocol.md`.
+Only what has been **verified against a live server** and works. The
+chronicle of the search and the wrong guesses is in
+`docs/research/09-network-protocol.md`.
 
-Джерела: символи Linux-сервера 1.5.3153, налагоджувальне складання
-`BF2_r.exe`, заміри на стенді (`tools/linuxded/`).
+Sources: the 1.5.3153 Linux server's symbols, the debug build `BF2_r.exe`,
+measurements on the rig (`tools/linuxded/`).
 
-## Пакет
+## The packet
 
-Біти пакуються молодшими вперед.
+Bits are packed low first.
 
-### Заголовок, 72 біти
+### The header, 72 bits
 
-| поле | бітів |
+| field | bits |
 |---|---|
-| тип пакета | 4 |
-| номер з'єднання | 8 |
-| номер пакета | 6 |
-| підтвердження | 6 |
-| маска підтверджень | 32 |
-| довжина корисної частини, байтів | 16 |
+| packet type | 4 |
+| connection id | 8 |
+| packet number | 6 |
+| acknowledgement | 6 |
+| acknowledgement mask | 32 |
+| payload length, bytes | 16 |
 
-Номер пакета зростає з **кожним** надісланим пакетом, включно з
-відповідями на пінги. Пакет із тим самим номером, що й попередній
-прийнятий, сервер відкидає як дублікат.
+The packet number grows with **every** packet sent, ping replies included. A
+packet with the same number as the previous one accepted is discarded by the
+server as a duplicate.
 
-### Типи пакетів
+### Packet types
 
-| № | що це |
+| # | what it is |
 |---:|---|
-| 1 | запит на під'єднання |
-| 2 | прийнято |
-| 3 | відмова |
-| 4 | підтвердження прийняття |
-| 5 | від'єднання |
-| 7 | запит пінгу |
-| 8 | відповідь на пінг |
-| 9 | запит відомостей про сервер |
-| 15 | дані |
+| 1 | connection request |
+| 2 | accepted |
+| 3 | denied |
+| 4 | acknowledgement of acceptance |
+| 5 | disconnect |
+| 7 | ping request |
+| 8 | ping reply |
+| 9 | server info request |
+| 15 | data |
 
-### Три потоки в пакеті даних
+### Three streams in a data packet
 
-Ідуть один за одним, у сталому порядку. Кожен починається з біта «є
-дані», і навіть порожній потік цей біт має написати.
+They come one after another in a fixed order. Each begins with a "has data"
+bit, and even an empty stream has to write that bit.
 
-1. **дії гравця** — 1 біт; якщо 1, далі 4 біти кількості, 9 бітів,
-   1 біт знака + 31 біт базового такту, і самі дії;
-2. **події** — 1 біт; якщо 1, далі 8 бітів кількості, 5 бітів номера
-   пачки, 1 біт, і самі події;
-3. **привиди** — 1 біт; якщо 1, далі 32 біти часу (ділиться на 30),
-   8 бітів кількості записів, 1 біт «є стан керованого об'єкта».
+1. **player actions** — 1 bit; if 1, then 4 bits of count, 9 bits, 1 sign bit
+   + 31 bits of the base tick, and the actions themselves;
+2. **events** — 1 bit; if 1, then 8 bits of count, 5 bits of batch number,
+   1 bit, and the events themselves;
+3. **ghosts** — 1 bit; if 1, then 32 bits of time (divided by 30), 8 bits of
+   record count, 1 bit "there is a controlled-object state".
 
-Номер пачки подій має починатися з нуля й зростати на одиницю з кожною
-пачкою: сервер віддає їх грі лише поспіль.
+The event batch number has to start at zero and grow by one with every batch:
+the server hands them to the game only in sequence.
 
-## Події
+## Events
 
-Тип події — 7 бітів. Повна таблиця з 69 типів і розкладка полів кожної —
-у `docs/functions/game-events.md`.
+An event's type is 7 bits. The full table of 69 types and each one's field
+layout is in `docs/functions/game-events.md`.
 
-## Рукостискання
+## The handshake
 
-Перевірено наскрізно: після цього сервер шле потік привидів.
+Verified end to end: after it the server sends a ghost stream.
 
 ```
-1. запит на під'єднання (тип 1)
-      u32 0x1002, u32 версія 0x150C5100, 1 біт PunkBuster,
-      u32 токен, 32 байти пароля, 32 байти теки мода
-2. сервер: прийнято (тип 2) — номер з'єднання, час, PunkBuster
-3. клієнт: підтвердження (тип 4)
-4. сервер: подія-виклик (тип 1 у потоці подій)
-5. клієнт: відповідь на виклик (подія типу 2)
-6. клієнт: ClientInfo блоком даних (тип блока 1)
-7. сервер: блок з рівнем (тип блока 5), база гравців, об'єкти світу
-8. клієнт: NELoadComplete
-9. клієнт: ContentCheckEvent — три хеші
-10. клієнт: NEDatabaseComplete
-11. клієнт: NESelectTeam, NESelectKit, NESelectSpawnGroup
-12. сервер: потік привидів
+1. connection request (type 1)
+      u32 0x1002, u32 version 0x150C5100, 1 bit PunkBuster,
+      u32 token, 32 bytes of password, 32 bytes of mod directory
+2. server: accepted (type 2) — connection id, time, PunkBuster
+3. client: acknowledgement (type 4)
+4. server: a challenge event (type 1 in the event stream)
+5. client: the challenge reply (event type 2)
+6. client: ClientInfo as a data block (block type 1)
+7. server: the level block (block type 5), the player base, world objects
+8. client: NELoadComplete
+9. client: ContentCheckEvent — three hashes
+10. client: NEDatabaseComplete
+11. client: NESelectTeam, NESelectKit, NESelectSpawnGroup
+12. server: the ghost stream
 ```
 
-### ClientInfo (блок даних, тип 1)
+### ClientInfo (data block, type 1)
 
-| поле | розмір |
+| field | size |
 |---|---|
-| довжина + ім'я | u16 + байти |
-| хеш імені | u32 |
-| номер профілю | 1 біт знак + 31 біт |
-| довжина + тег клану | u16 + байти |
-| довжина + рядок автентифікації | u16 + байти |
-| прапорець | 1 біт |
+| length + name | u16 + bytes |
+| the name's hash | u32 |
+| profile number | 1 sign bit + 31 bits |
+| length + clan tag | u16 + bytes |
+| length + authentication string | u16 + bytes |
+| a flag | 1 bit |
 
-Хеш імені: `h = 0x1505`, далі для кожного символу в нижньому регістрі
-`h = h * 0x21 ^ c`. На сервері без рейтингу не перевіряється.
+The name's hash: `h = 0x1505`, then for every lower-cased character
+`h = h * 0x21 ^ c`. On a server without ranking it is not checked.
 
-Підсумкове ім'я гравця сервер складає як «тег + пробіл + ім'я».
+The player's final name is assembled by the server as "tag + space + name".
 
-### Блок з рівнем (тип блока 5)
+### The level block (block type 5)
 
-| поле | розмір |
+| field | size |
 |---|---|
-| номер виклику | 1 біт знака + 31 біт |
-| довжина + назва рівня | u16 + байти |
-| довжина + режим гри | u16 + байти |
-| розмір | u16 |
+| challenge number | 1 sign bit + 31 bits |
+| length + level name | u16 + bytes |
+| length + game mode | u16 + bytes |
+| size | u16 |
 
-Перше поле читається як «знак плюс 31 біт», а не як звичайне `u32`
-(`MapInfo::setFromDataBlock`), тож байти `01 00 00 00` означають нуль.
+The first field is read as "a sign plus 31 bits", not as an ordinary `u32`
+(`MapInfo::setFromDataBlock`), so the bytes `01 00 00 00` mean zero.
 
-**Але це не номер виклику.** Перевірено дослідом: блок каже 0, а
-перевірка вмісту проходить лише з номером 5. Звідки клієнт бере
-справжній номер — ще не знайдено.
+**But it is not the challenge number.** Verified by experiment: the block says
+0, while the content check only passes with the number 5. Where the client
+gets the real number has not been found yet.
 
-### ContentCheckEvent (подія типу 46)
+### ContentCheckEvent (event type 46)
 
-Три хеші по 128 бітів, у такому порядку:
+Three 128-bit hashes, in this order:
 
-1. **misc** — MD5 по `.con`-файлах мода
-   (`ChecksumContext::runMiscChecksum`). Обидва боки рахують його самі.
+1. **misc** — an MD5 over the mod's `.con` files
+   (`ChecksumContext::runMiscChecksum`). Both sides compute it themselves.
 
-   Будова підрахунку: `MD5Init`, далі цикл — на кожне ім'я з переліку
-   файл відкривається через `fileManager` і йде в `MD5Update`, — і
-   наприкінці `MD5Final`. Поруч лежить великий локальний буфер на
-   16 кілобайтів: файли читаються шматками.
+   The shape of the computation: `MD5Init`, then a loop — for every name in a
+   list the file is opened through `fileManager` and fed to `MD5Update` — and
+   `MD5Final` at the end. Beside it sits a large 16-kilobyte local buffer: the
+   files are read in chunks.
 
-   Сам перелік у коді не літеральний: імена беруться з пам'яті, а
-   заповнюється він десь раніше. Де саме — ще не знайдено. Налагоджувальне
-   складання друкує «dep: hashing misc con files», а тоді «dep:
-   checksumming file <ім'я>» на кожен, тож перелік можна буде звірити,
-   якщо колись запустити клієнта.
+   The list itself is not literal in the code: the names are taken from
+   memory, and it is filled somewhere earlier. Where exactly has not been
+   found yet. The debug build prints "dep: hashing misc con files" and then
+   "dep: checksumming file <name>" for each one, so the list can be checked
+   off if the client is ever run.
 
-   Поки що хеш передається прапорцем `--misc-hash` і застаріває після
-   кожного перезапуску сервера;
-2. **архіви** — рядок із `mods/bf2/std_archive.md5`;
-3. **рівень** — рядок із `mods/<мод>/levels/<рівень>/archive.md5`.
+   For now the hash is passed with the `--misc-hash` flag and goes stale after
+   every server restart;
+2. **archives** — a line from `mods/bf2/std_archive.md5`;
+3. **the level** — a line from
+   `mods/<mod>/levels/<level>/archive.md5`.
 
-Номер рядка в обох файлах — «номер виклику». Він змінюється **з кожним
-раундом**, а не лише між запусками сервера: сервер обирає новий при
-кожному завантаженні рівня. Джерело для клієнта поки не знайдене, тож
-зонд підбирає його перебором (варіантів рівно десять — стільки рядків у
-файлах відбитків).
+The line number in both files is the "challenge number". It changes **with
+every round**, not only between server restarts: the server picks a new one at
+every level load. The source for the client has not been found yet, so the
+probe brute-forces it (there are exactly ten options — as many as there are
+lines in the fingerprint files).
 
-Через це стенд треба тримати на одному раунді, інакше номер змінюється
-просто під час дослідів:
+Because of this the rig has to be kept on a single round, otherwise the number
+changes in the middle of an experiment:
 
 ```
 sv.notEnoughPlayersRestartDelay 36000
 ```
 
-Формат файлів: `номер md5` для архівів, `назва номер md5` для рівня.
+The files' format: `number md5` for the archives, `name number md5` for the
+level.
 
-Перевірку сервер розглядає лише коли стан з'єднання **більший за
-одиницю**, тобто після `NELoadComplete`. Інакше він мовчки її ігнорує.
+The server considers the check only when the connection's state is **greater
+than one**, that is after `NELoadComplete`. Otherwise it silently ignores it.
 
-### Мережеві події
+### Network events
 
-Їдуть у `PostRemoteEvent` (подія типу 11): 4 біти категорії, 32 біти
-номера, 32 біти затримки (float), 8 бітів довжини даних, самі байти.
-Категорія мережевих подій — **6**. Ті, що несуть значення, чекають у
-даних 32-бітне число.
+They travel in `PostRemoteEvent` (event type 11): 4 bits of category, 32 bits
+of number, 32 bits of delay (float), 8 bits of data length, then the bytes.
+The network events' category is **6**. The ones that carry a value expect a
+32-bit number in the data.
 
-Повна таблиця номерів — у `docs/functions/network-events.md`.
+The full table of numbers is in `docs/functions/network-events.md`.
 
-Важливо: мережеві події виконуються **наступним тактом**, а не на місці.
-Перевірка вмісту, навпаки, виконується одразу. Тому складати їх в один
-пакет не можна — порядок зламається.
+Important: network events execute on the **next tick**, not in place. The
+content check, on the contrary, executes immediately. So they cannot be put
+into a single packet — the order would break.
 
-## Потік привидів
+## The ghost stream
 
-Заголовок потоку (перевірено, читається правильно):
+The stream's header (verified, reads correctly):
 
-| поле | бітів |
+| field | bits |
 |---|---|
-| є дані | 1 |
-| час (ділиться на 30) | 32 |
-| кількість записів | 8 |
-| є стан керованого об'єкта | 1 |
+| has data | 1 |
+| time (divided by 30) | 32 |
+| record count | 8 |
+| has a controlled-object state | 1 |
 
-Час зростає рівномірно приблизно на 8 одиниць між пакетами — це такти по
-1/30 секунди. Записів у пакеті буває від одного до двох десятків.
+The time grows evenly by about 8 units between packets — those are ticks of
+1/30 of a second. A packet holds anywhere from one to a couple of dozen
+records.
 
-### Запис
+### A record
 
-| поле | бітів |
+| field | bits |
 |---|---|
-| вид | 2 |
-| мережевий номер | 16 |
+| kind | 2 |
+| network id | 16 |
 
-Далі за видом (`GhostManager::readData`):
+Then, by kind (`GhostManager::readData`):
 
-| вид | що це |
+| kind | what it is |
 |---:|---|
-| 0 | більше нічого не читається |
-| 1 | оновлення стану: 1 біт, **11 бітів довжини вмісту**, сам вміст |
-| 2 | рушій вважає це помилкою потоку й припиняє розбір |
-| 3 | об'єкт зникає (рушій шукає його в `NetworkManager`) |
+| 0 | nothing more is read |
+| 1 | a state update: 1 bit, **11 bits of content length**, the content |
+| 2 | the engine treats this as a stream error and stops parsing |
+| 3 | the object disappears (the engine looks it up in `NetworkManager`) |
 
-Головне тут — **довжина всередині запису**: завдяки їй запис можна
-пропустити, не розуміючи вмісту. Саме так робить і рушій, коли не знає
-об'єкта.
+The key thing here is the **length inside the record**: thanks to it a record
+can be skipped without understanding its content. That is exactly what the
+engine does when it does not know the object.
 
-Ширину поля довжини рушій обчислює на льоту, а на дроті це рівно
-одинадцять бітів. Перевірено підбором на зразку: з одинадцятьма всі 132
-пакети розбираються до останнього байта, з будь-якою іншою шириною —
-жоден.
+The engine computes the length field's width on the fly, and on the wire it is
+exactly eleven bits. Verified by trial on a sample: with eleven all 132
+packets parse to the last byte, with any other width not one does.
 
-Мережевий номер збігається з тим, що приходив у `CreateObjectEvent`.
-У зразку 306 записів для 41 об'єкта, і два з них (1842, 1849)
-оновлюються майже щопакета — це рухомі.
+The network id matches the one that came in `CreateObjectEvent`. In the sample
+there are 306 records for 41 objects, and two of them (1842, 1849) are updated
+almost every packet — those are the moving ones.
 
-Коли в заголовку стоїть «є стан керованого об'єкта», перед записами йде
-ще й він; його розкладка поки не розібрана, тож такі пакети пропускаємо.
+When the header says "there is a controlled-object state", it comes before the
+records; its layout has not been worked out yet, so we skip such packets.
 
-Зразок на 172 пакети з привидами: `tests/data/bf2-ghosts.bin`,
-знято командою
+A 172-packet sample with ghosts: `tests/data/bf2-ghosts.bin`, taken with
 
 ```bash
-tools/linuxded/capture.py --stage spawn --misc-hash <хеш> --out <файл>
+tools/linuxded/capture.py --stage spawn --misc-hash <hash> --out <file>
 ```
 
-## Стан з'єднання
+## The connection's state
 
-`0 -> 1 -> 3 -> 4`. Одиницю ставить `clientSendPlayerDatabase`, трійку —
-`NELoadComplete`, четвірку — `clientSendDatabaseComplete`. Остання
-працює лише коли в клієнта виставлено `contentValid`, інакше сервер
-ставить його в чергу на від'єднання з причиною 27.
+`0 -> 1 -> 3 -> 4`. The one is set by `clientSendPlayerDatabase`, the three by
+`NELoadComplete`, the four by `clientSendDatabaseComplete`. The last only
+works when the client has `contentValid` set, otherwise the server queues it
+for disconnection with reason 27.
 
-Потік привидів іде тільки тим, у кого стан більший за три
+The ghost stream goes only to those whose state is greater than three
 (`GameServer::isClientReady`).
 
 
-## Про налагоджувальні повідомлення
+## About debug messages
 
-Linux-сервер — реліз: із усього набору в ньому лишився тільки рядок
-« for using modified data». Перемикачі `GSDebugNetwork`,
-`GSDebugGhostManager`, `GSDebugBitStream` у ньому є як налаштування, але
-самих повідомлень немає.
+The Linux server is a release build: of the whole set only the string
+" for using modified data" survives in it. The switches `GSDebugNetwork`,
+`GSDebugGhostManager`, `GSDebugBitStream` are there as settings, but the
+messages themselves are not.
 
-Натомість `BF2_r.exe` — складання з налагодженням, і саме воно найкраще
-джерело: 448 вихідних файлів проти 163 і повний набір повідомлень із
-префіксом `dep:`. Кілька з них уже дали розгадки:
+`BF2_r.exe`, on the other hand, is a debug build, and it is the best source:
+448 source files against 163 and a full set of messages with the `dep:`
+prefix. Several of them have already yielded answers:
 
-- `in level fingerprint map` — третій хеш перевірки вмісту є відбитком
-  рівня;
-- `dep: hashing misc con files` — перший хеш рахується по `.con`;
-- `dep: kicking client N (ім'я) for using modified data` — цей друкує і
-  Linux-сервер, тож у журнал варто дивитися завжди.
+- `in level fingerprint map` — the content check's third hash is the level's
+  fingerprint;
+- `dep: hashing misc con files` — the first hash is computed over `.con`;
+- `dep: kicking client N (name) for using modified data` — this one the Linux
+  server prints too, so the log is always worth looking at.

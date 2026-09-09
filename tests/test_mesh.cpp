@@ -9,9 +9,9 @@ using namespace obf2::mesh;
 
 namespace {
 
-// Збирач бінарного .staticmesh. Тест не має залежати від наявності гри на
-// диску, тому мінімальний валідний меш будуємо руками — заодно це фіксує
-// розкладку формату в коді, а не лише в документації.
+// A binary .staticmesh builder. The test must not depend on the game being on
+// disk, so a minimal valid mesh is built by hand — which also fixes the format's
+// layout in code rather than only in the documentation.
 class MeshBuilder {
  public:
   void u32(std::uint32_t value) { raw(&value, sizeof(value)); }
@@ -39,7 +39,7 @@ class MeshBuilder {
   std::vector<std::byte> bytes_;
 };
 
-// Один трикутник: позиція + нормаль + UV, stride 32 байти.
+// One triangle: position + normal + UV, a stride of 32 bytes.
 std::vector<std::byte> buildTriangleMesh(std::uint32_t version = 11) {
   MeshBuilder mesh;
 
@@ -48,41 +48,41 @@ std::vector<std::byte> buildTriangleMesh(std::uint32_t version = 11) {
   mesh.u32(0);        // header.u3
   mesh.u32(0);        // header.u4
   mesh.u32(0);        // header.u5
-  mesh.u8(0);         // маркер гри: 0 = BF2, не Play4Free
+  mesh.u8(0);         // the game marker: 0 = BF2, not Play4Free
 
   mesh.u32(1);  // geom
-  mesh.u32(1);  // lod-ів у geom 0
+  mesh.u32(1);  // lods in geom 0
 
-  mesh.u32(3);                       // атрибутів
+  mesh.u32(3);                       // attributes
   mesh.u16(0); mesh.u16(0);  mesh.u16(2); mesh.u16(0);  // POSITION float3 @0
   mesh.u16(0); mesh.u16(12); mesh.u16(2); mesh.u16(3);  // NORMAL   float3 @12
   mesh.u16(0); mesh.u16(24); mesh.u16(1); mesh.u16(5);  // TEXCOORD float2 @24
 
-  mesh.u32(4);   // vertexFormat: розмір компонента
+  mesh.u32(4);   // vertexFormat: the component's size
   mesh.u32(32);  // vertexStride
-  mesh.u32(3);   // вершин
+  mesh.u32(3);   // vertices
   mesh.vec3(0.0f, 0.0f, 0.0f); mesh.vec3(0.0f, 1.0f, 0.0f); mesh.f32(0.0f); mesh.f32(0.0f);
   mesh.vec3(1.0f, 0.0f, 0.0f); mesh.vec3(0.0f, 1.0f, 0.0f); mesh.f32(1.0f); mesh.f32(0.0f);
   mesh.vec3(0.0f, 0.0f, 1.0f); mesh.vec3(0.0f, 1.0f, 0.0f); mesh.f32(0.0f); mesh.f32(1.0f);
 
-  mesh.u32(3);  // індексів
+  mesh.u32(3);  // indices
   mesh.u16(0); mesh.u16(1); mesh.u16(2);
 
-  mesh.u32(0);  // u2 — є в усіх, крім skinned
+  mesh.u32(0);  // u2 — present in all but skinned
 
   // lod 0
   mesh.vec3(0.0f, 0.0f, 0.0f);  // min
   mesh.vec3(1.0f, 0.0f, 1.0f);  // max
   if (version <= 6) mesh.vec3(0.0f, 0.0f, 0.0f);  // pivot
-  mesh.u32(1);                                    // вузлів
+  mesh.u32(1);                                    // nodes
   mesh.identityMatrix();
 
-  // матеріали lod 0
+  // lod 0's materials
   mesh.u32(1);
   mesh.u32(0);                     // alphaMode
   mesh.string("StaticMesh.fx");    // fxFile
   mesh.string("Base");             // technique
-  mesh.u32(1);                     // текстур
+  mesh.u32(1);                     // textures
   mesh.string("objects/test.dds");
   mesh.u32(0);  // vertexStart
   mesh.u32(0);  // indexStart
@@ -91,7 +91,7 @@ std::vector<std::byte> buildTriangleMesh(std::uint32_t version = 11) {
   mesh.u32(0);  // nodeIndex
   mesh.u16(0);
   mesh.u16(0);
-  if (version == 11) {  // bounds лише у версії 11
+  if (version == 11) {  // bounds in version 11 only
     mesh.vec3(0.0f, 0.0f, 0.0f);
     mesh.vec3(1.0f, 0.0f, 1.0f);
   }
@@ -114,7 +114,7 @@ static void testParseTriangle() {
   const auto mesh = load(bytes, Kind::Static, &error);
   CHECK(mesh.has_value());
   if (!mesh) {
-    std::fprintf(stderr, "  причина: %s\n", error.c_str());
+    std::fprintf(stderr, "  reason: %s\n", error.c_str());
     return;
   }
 
@@ -145,14 +145,14 @@ static void testExtractGeometry() {
   const auto render = extract(*mesh, 0, 0, &error);
   CHECK(render.has_value());
   if (!render) {
-    std::fprintf(stderr, "  причина: %s\n", error.c_str());
+    std::fprintf(stderr, "  reason: %s\n", error.c_str());
     return;
   }
 
   CHECK_EQ(render->vertices.size(), std::size_t(3));
   CHECK_EQ(render->indices.size(), std::size_t(3));
   CHECK_EQ(render->ranges.size(), std::size_t(1));
-  // Канали мають потрапити у свої поля, а не переплутатися місцями.
+  // The channels have to land in their own fields rather than swap places.
   CHECK_EQ(render->vertices[1].position.x, 1.0f);
   CHECK_EQ(render->vertices[2].position.z, 1.0f);
   CHECK_EQ(render->vertices[0].normal.y, 1.0f);
@@ -161,28 +161,28 @@ static void testExtractGeometry() {
 }
 
 static void testVersion6HasPivot() {
-  // У версіях <= 6 у lod додається pivot; якщо його не прочитати, поїде
-  // весь подальший розбір.
+  // In versions <= 6 a pivot is added to a lod; failing to read it makes all the
+  // parsing after it slide.
   const auto bytes = buildTriangleMesh(6);
   const auto mesh = load(bytes, Kind::Static);
   CHECK(mesh.has_value());
   if (mesh) {
     CHECK_EQ(mesh->geometries[0].lods[0].materials.size(), std::size_t(1));
-    // bounds пишуться лише у версії 11
+    // bounds are written in version 11 only
     CHECK(!mesh->geometries[0].lods[0].materials[0].hasBounds);
   }
 }
 
 static void testTruncatedFilesAreRejected() {
-  // Файли приходять з архівів користувача: обрізаний або зіпсований меш має
-  // давати помилку, а не читання за межами буфера.
+  // The files come from the user's archives: a truncated or corrupt mesh has to give
+  // an error rather than a read past the buffer.
   const auto full = buildTriangleMesh();
   for (std::size_t size = 0; size < full.size(); size += 7) {
     std::vector<std::byte> truncated(full.begin(), full.begin() + static_cast<long>(size));
     std::string error;
     const auto mesh = load(truncated, Kind::Static, &error);
     if (mesh.has_value()) {
-      std::fprintf(stderr, "FAIL: обрізаний до %zu байт меш розібрався\n", size);
+      std::fprintf(stderr, "FAIL: a mesh truncated to %zu bytes parsed\n", size);
       ++obf2test::g_failures;
     } else {
       CHECK(!error.empty());
@@ -191,7 +191,7 @@ static void testTruncatedFilesAreRejected() {
 }
 
 static void testAbsurdCountsAreRejected() {
-  // Класична атака на парсер: лічильник у заголовку значно більший за файл.
+  // The classic attack on a parser: a counter in the header far larger than the file.
   auto bytes = buildTriangleMesh();
   const std::uint32_t absurd = 0xFFFFFFFFu;
   std::memcpy(bytes.data() + 21, &absurd, sizeof(absurd));  // geometryCount

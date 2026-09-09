@@ -18,7 +18,7 @@ std::optional<Packet> LoopbackConnection::receive() {
 }
 
 void LoopbackConnection::close() {
-  // Обидва кінці мають дізнатися про розрив, інакше другий чекав би вічно.
+  // Both ends have to learn of the break, otherwise the second would wait forever.
   if (peer_ != nullptr) peer_->peer_ = nullptr;
   peer_ = nullptr;
   incoming_.clear();

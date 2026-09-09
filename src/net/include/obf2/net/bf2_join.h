@@ -1,56 +1,56 @@
 #pragma once
-// Порядок, у якому клієнт доводить розмову з оригінальним сервером BF2
-// до появи гравця.
+// The order in which the client drives its conversation with an original BF2
+// server up to the player spawning.
 //
-// Це чиста логіка без сокета: вона лише каже, **що** слати наступним і
-// **коли** настав час. Пакети складає і відправляє той, хто нею
-// користується. Так її можна перевірити тестом, не піднімаючи сервера, —
-// а перевіряти є що, бо кожне правило тут здобуте вимірюванням на
-// живому сервері й коштувало нам не одного хибного висновку.
+// This is pure logic with no socket: it only says **what** to send next and
+// **when** the time has come. Packets are assembled and sent by whoever uses it.
+// That way it can be checked by a test without bringing a server up — and there
+// is plenty to check, because every rule here was won by measurement against a
+// live server and cost us more than one wrong conclusion.
 //
-// Правила, і звідки вони взялися:
+// The rules, and where they came from:
 //
-//   * **пауза між кроками.** Мережеві події виконуються наступним тактом
-//     сервера, тож два кроки в одному пакеті застають старий стан. Три
-//     секунди — з досліду; менше не перевіряли;
-//   * **`NELoadComplete` — після справжнього завантаження.** Подія саме
-//     це й означає. Поки ми вантажили рівень (близько одинадцяти секунд)
-//     і мовчали, сервер устигав нас відключити;
-//   * **вибір чекає на гравця.** Команду, набір і місце появи шле не
-//     послідовність сама, а екран появи — після DONE. У безголовому
-//     запуску вибір задають наперед, і тоді `Ready` проходиться відразу;
-//   * **порядок вибору саме такий.** `NESelectTeam`, `NESelectKit`,
-//     `NESelectSpawnGroup` — перевірено на оригінальному сервері, після
-//     них викликається `ServerGameLogic::spawnPlayer`.
+//   * **the pause between steps.** Network events execute on the server's next
+//     tick, so two steps in one packet meet the old state. Three seconds comes
+//     from experiment; less was not tried;
+//   * **`NELoadComplete` comes after the level really loaded.** That is what the
+//     event means. While we loaded the level (about eleven seconds) and stayed
+//     silent, the server managed to disconnect us;
+//   * **the choice waits for the player.** The team, the kit and the spawn point
+//     are sent not by the sequence itself but by the spawn screen — after DONE.
+//     In a headless run the choice is set in advance, and `Ready` then passes at once;
+//   * **the order of the choice is exactly this.** `NESelectTeam`, `NESelectKit`,
+//     `NESelectSpawnGroup` — verified against an original server, after them
+//     `ServerGameLogic::spawnPlayer` is called.
 //
-// Докладніше — docs/functions/network-events.md.
+// More in docs/functions/network-events.md.
 #include <chrono>
 #include <optional>
 
 namespace obf2::net::bf2 {
 
-// Що робимо на цьому кроці.
+// What we do at this step.
 enum class JoinStep {
-  Level,       // сказати «рівень завантажено»
-  Content,     // перевірка вмісту
-  Database,    // сказати «база гравців отримана»
-  Simulation,  // NEStartSimulation — «почати відлік»
-  Ready,       // екран появи: чекаємо, поки гравець натисне DONE
+  Level,       // say "the level is loaded"
+  Content,     // the content check
+  Database,    // say "the player base was received"
+  Simulation,  // NEStartSimulation — "start counting"
+  Ready,       // the spawn screen: waiting for the player to press DONE
   Team,        // NESelectTeam
   Kit,         // NESelectKit
   Group,       // NESelectSpawnGroup
-  Done,        // більше нічого не шлемо
+  Done,        // we send nothing more
 };
 
 const char* joinStepName(JoinStep step);
 
-// Що обрав гравець на екрані появи.
+// What the player chose on the spawn screen.
 struct JoinChoice {
   int team = 1;
   int kit = 0;
-  // Номер групи появи **з переліку сервера** (`CreateSpawnGroupEvent`),
-  // а не номер контрольної точки з даних рівня. Нуль означає «не
-  // обрано»: сервер спавнить лише тих, у кого `getSpawnGroup() > 0`.
+  // The spawn group's number **from the server's list** (`CreateSpawnGroupEvent`),
+  // not the control point's number from the level's data. Zero means "not
+  // chosen": the server spawns only those whose `getSpawnGroup() > 0`.
   int group = 0;
 };
 
@@ -58,40 +58,40 @@ class JoinSequence {
  public:
   using Clock = std::chrono::steady_clock;
 
-  // Паузи взяті зі знятого трафіку оригіналу, а не з обережності.
+  // The pauses are taken from the original's captured traffic, not from caution.
   //
-  // Перевірка вмісту йде **в кінці завантаження**, разом із
-  // `NELoadComplete` — одним пакетом, без паузи. Так воно й має бути за
-  // змістом: сервер питає, чи збігається вміст, саме тоді, коли клієнт
-  // щойно його прочитав. Ми ж тримали тут три секунди «про запас», і на
-  // швидкому натисканні DONE перевірка виходила **після** появи —
-  // послідовність, неможлива в оригіналі.
+  // The content check goes **at the end of loading**, together with
+  // `NELoadComplete` — in one packet, without a pause. That is how it should be
+  // by its meaning: the server asks whether the content matches exactly when the
+  // client has just read it. We used to hold three seconds here "to be safe", and
+  // on a fast DONE press the check came out **after** the spawn — a sequence
+  // impossible in the original.
   static constexpr std::chrono::milliseconds kContentDelay{0};
 
-  // `NEDatabaseComplete` — через 1.1 с після перевірки. Це виміряне
-  // число з дампу, а не округлення.
+  // `NEDatabaseComplete` comes 1.1 s after the check. That is a measured number
+  // from the dump, not a rounding.
   static constexpr std::chrono::milliseconds kStepDelay{1100};
 
-  // А от вибір гравця йде **без паузи**: у дампі три події появи
-  // розділяють ті самі частки секунди, що й натискання, а сервер
-  // відповідає `NEPlayerSpawned` за 100 мс. Пауза тут була нашою
-  // вигадкою і давала майже десять секунд між DONE і появою.
+  // The player's choice, on the other hand, goes **without a pause**: in the dump
+  // the three spawn events are separated by the same fractions of a second as the
+  // presses, and the server answers `NEPlayerSpawned` within 100 ms. The pause
+  // here was our invention and gave almost ten seconds between DONE and the spawn.
   static constexpr std::chrono::milliseconds kChoiceDelay{0};
 
-  // Сервер сказав, який рівень він грає.
+  // The server said which level it is playing.
   void setLevelReady() { levelReady_ = true; }
-  // Ми справді завантажили рівень і можемо відповідати на пінги.
+  // We really did load the level and can answer pings.
   void setClientLoaded() { clientLoaded_ = true; }
 
-  // Досліди: пропустити перевірку вмісту або повідомлення про базу.
+  // Experiments: skip the content check or the message about the base.
   void setSkipContent(bool skip) { skipContent_ = skip; }
   void setSkipDatabase(bool skip) { skipDatabase_ = skip; }
-  // `NEStartSimulation` — «почати відлік». Чи потрібна вона для появи,
-  // ми ще з'ясовуємо, тож крок вимикається прапорцем.
+  // `NEStartSimulation` — "start counting". Whether it is needed for spawning we
+  // are still working out, so the step is switched by a flag.
   void setSkipSimulation(bool skip) { skipSimulation_ = skip; }
 
-  // Гравець натиснув DONE. Можна кликати ще до рукостискання — тоді
-  // послідовність не спиниться на `Ready`.
+  // The player pressed DONE. It may be called even before the handshake — then
+  // the sequence will not stop at `Ready`.
   void ask(const JoinChoice& choice) {
     choice_ = choice;
     asked_ = true;
@@ -102,21 +102,21 @@ class JoinSequence {
   JoinStep step() const { return step_; }
   bool done() const { return step_ == JoinStep::Done; }
 
-  // Чи настав час для наступного кроку. nullopt — ще чекаємо: не минула
-  // пауза, не завантажилися, або стоїмо на `Ready` без вибору.
+  // Whether it is time for the next step. nullopt means we are still waiting: the
+  // pause has not passed, we have not loaded, or we stand at `Ready` with no choice.
   //
-  // Кроки, які нічого не шлють (пропущена перевірка, `Ready` з уже
-  // зробленим вибором), проходяться тут-таки, тож повернутий крок завжди
-  // той, який справді треба відіслати.
+  // Steps that send nothing (a skipped check, `Ready` with the choice already
+  // made) are passed through right here, so the step returned is always one that
+  // really has to be sent.
   std::optional<JoinStep> next(Clock::time_point now);
 
-  // Крок відіслано: наступний піде не раніше, ніж через паузу.
+  // The step was sent: the next one comes no sooner than after the pause.
   void commit(Clock::time_point now);
 
  private:
   JoinStep step_ = JoinStep::Level;
-  // Окремий прапорець, а не порівняння часу з нулем: нульова мітка — це
-  // теж дійсний момент, і в тесті вона трапляється відразу.
+  // A separate flag rather than comparing the time against zero: a zero stamp is
+  // a valid moment too, and in a test it occurs straight away.
   bool started_ = false;
   Clock::time_point last_{};
   bool levelReady_ = false;

@@ -10,8 +10,8 @@ RenderMesh buildBox(const Vec3& size, const std::string& map) {
   RenderMesh out;
   out.bounds = Aabb{Vec3{-hx, 0.0f, -hz}, Vec3{hx, top, hz}};
 
-  // Шість граней окремо: у куба на ребрі нормалі різні, тож вершини не
-  // діляться між гранями.
+  // Six faces separately: a cube's normals differ across an edge, so vertices
+  // are not shared between faces.
   struct Face {
     Vec3 normal;
     Vec3 corner[4];

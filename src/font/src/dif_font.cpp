@@ -6,7 +6,7 @@
 namespace obf2::font {
 namespace {
 
-// Читач рядків, стійкий до CRLF: файли шрифтів прийшли з Windows.
+// A line reader tolerant of CRLF: the font files came from Windows.
 class LineReader {
  public:
   explicit LineReader(std::string_view text) : text_(text) {}
@@ -30,7 +30,7 @@ class LineReader {
   int lineNumber_ = 0;
 };
 
-// Поля розділені табуляціями.
+// The fields are separated by tabs.
 std::vector<std::string_view> split(std::string_view line) {
   std::vector<std::string_view> fields;
   std::size_t start = 0;
@@ -48,8 +48,8 @@ bool parseInt(std::string_view text, int& out) {
 }
 
 bool parseFloat(std::string_view text, float& out) {
-  // Числа у файлі завжди у форматі C; from_chars для float є не всюди,
-  // тому там, де його нема, лишається strtof із локаллю "C".
+  // The numbers in the file are always in the C format; from_chars for float is
+  // not available everywhere, so where it is missing strtof with the "C" locale remains.
 #if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L
   const auto result = std::from_chars(text.data(), text.data() + text.size(), out);
   return result.ec == std::errc{};
@@ -92,9 +92,9 @@ float Font::measure(std::string_view text) const {
 }
 
 std::uint32_t nextCodepoint(std::string_view text, std::size_t& position) {
-  // Рядки локалізації — UTF-8, і в них трапляються не-ASCII символи
-  // (типографський апостроф у "People’s"). Читати їх побайтово не можна:
-  // у шрифті гліф лежить під справжнім кодом, а не під першим байтом.
+  // Localisation strings are UTF-8, and non-ASCII characters occur in them
+  // (the typographic apostrophe in "People’s"). They must not be read byte by
+  // byte: in the font a glyph sits under its real code, not under the first byte.
   if (position >= text.size()) return 0;
 
   const auto first = static_cast<unsigned char>(text[position]);
@@ -113,7 +113,7 @@ std::uint32_t nextCodepoint(std::string_view text, std::size_t& position) {
     extra = 3;
     code = first & 0x07u;
   } else {
-    ++position;  // зіпсований байт — пропускаємо
+    ++position;  // a corrupt byte — skip it
     return 0xFFFDu;
   }
 
@@ -138,65 +138,65 @@ std::optional<Font> parseDif(std::string_view text, std::string* error) {
   std::string_view line;
 
   auto fail = [&](const std::string& why) -> std::optional<Font> {
-    if (error) *error = why + " (рядок " + std::to_string(reader.lineNumber()) + ")";
+    if (error) *error = why + " (line " + std::to_string(reader.lineNumber()) + ")";
     return std::nullopt;
   };
 
-  if (!reader.next(line) || line != "header") return fail("немає секції header");
+  if (!reader.next(line) || line != "header") return fail("no header section");
 
   Font font;
   int version = 0;
-  if (!reader.next(line) || !parseInt(line, version)) return fail("немає версії");
-  if (version != 2) return fail("непідтримувана версія: " + std::to_string(version));
+  if (!reader.next(line) || !parseInt(line, version)) return fail("no version");
+  if (version != 2) return fail("unsupported version: " + std::to_string(version));
 
-  if (!reader.next(line)) return fail("немає імені шрифту");
+  if (!reader.next(line)) return fail("no font name");
   font.name = std::string(line);
 
-  if (!reader.next(line) || !parseInt(line, font.atlasWidth)) return fail("немає ширини атласа");
-  if (!reader.next(line) || !parseInt(line, font.atlasHeight)) return fail("немає висоти атласа");
-  if (!reader.next(line) || !parseFloat(line, font.size)) return fail("немає кегля");
+  if (!reader.next(line) || !parseInt(line, font.atlasWidth)) return fail("no atlas width");
+  if (!reader.next(line) || !parseInt(line, font.atlasHeight)) return fail("no atlas height");
+  if (!reader.next(line) || !parseFloat(line, font.size)) return fail("no point size");
 
-  if (!reader.next(line) || line != "glyphs") return fail("немає секції glyphs");
+  if (!reader.next(line) || line != "glyphs") return fail("no glyphs section");
   int glyphCount = 0;
   if (!reader.next(line) || !parseInt(line, glyphCount) || glyphCount < 0) {
-    return fail("немає кількості гліфів");
+    return fail("no glyph count");
   }
 
   for (int i = 0; i < glyphCount; ++i) {
-    if (!reader.next(line)) return fail("гліфи обірвалися");
+    if (!reader.next(line)) return fail("the glyphs are truncated");
     const auto fields = split(line);
-    if (fields.size() < 9) return fail("у гліфа замало полів");
+    if (fields.size() < 9) return fail("a glyph has too few fields");
 
     Glyph glyph;
     int code = 0;
-    if (!parseInt(fields[0], code)) return fail("некоректний код гліфа");
+    if (!parseInt(fields[0], code)) return fail("malformed glyph code");
     glyph.code = static_cast<std::uint32_t>(code);
 
     if (!parseFloat(fields[1], glyph.bearingLeft) || !parseFloat(fields[2], glyph.width) ||
         !parseFloat(fields[3], glyph.bearingRight) || !parseInt(fields[4], glyph.offsetY) ||
         !parseInt(fields[5], glyph.left) || !parseInt(fields[6], glyph.top) ||
         !parseInt(fields[7], glyph.right) || !parseInt(fields[8], glyph.bottom)) {
-      return fail("некоректні метрики гліфа");
+      return fail("malformed glyph metrics");
     }
     font.glyphs_.emplace(glyph.code, glyph);
   }
 
-  // Секція кернінгу необов'язкова.
+  // The kerning section is optional.
   if (reader.next(line) && line == "kerning") {
     int kerningCount = 0;
     if (!reader.next(line) || !parseInt(line, kerningCount) || kerningCount < 0) {
-      return fail("немає кількості пар кернінгу");
+      return fail("no kerning pair count");
     }
     for (int i = 0; i < kerningCount; ++i) {
-      if (!reader.next(line)) return fail("кернінг обірвався");
+      if (!reader.next(line)) return fail("the kerning is truncated");
       const auto fields = split(line);
-      if (fields.size() < 3) return fail("у пари кернінгу замало полів");
+      if (fields.size() < 3) return fail("a kerning pair has too few fields");
 
       int first = 0, second = 0;
       float offset = 0.0f;
       if (!parseInt(fields[0], first) || !parseInt(fields[1], second) ||
           !parseFloat(fields[2], offset)) {
-        return fail("некоректна пара кернінгу");
+        return fail("malformed kerning pair");
       }
       font.kerning_.emplace(Font::pairKey(static_cast<std::uint32_t>(first),
                                           static_cast<std::uint32_t>(second)),

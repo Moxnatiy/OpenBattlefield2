@@ -5,7 +5,7 @@
 namespace obf2::server {
 
 void PhysicsConstants::bind(engine::Console& console) {
-  // `Vars.Set <ім'я> <значення>` — перший аргумент це ім'я змінної.
+  // `Vars.Set <name> <value>` — the first argument is the variable's name.
   console.bind("Vars.Set", [this](const con::Command& command) {
     const std::string_view name = command.argStr(0);
     const auto value = command.argFloat(1);
@@ -40,19 +40,19 @@ void stepSoldier(BodyState& body, const Vec3f& wish, float maxSpeed, bool jump,
                  const PhysicsConstants& constants, float groundHeight, float step) {
   const float targetSpeed = maxSpeed * constants.speedFactor;
 
-  // У повітрі керування майже немає — саме тому в BF2 не можна змінити
-  // напрямок стрибка в польоті.
+  // There is almost no control in the air — which is exactly why in BF2 a jump's
+  // direction cannot be changed in flight.
   const float control = body.onGround ? 1.0f : constants.airMovementFactor;
 
   const Vec3f target{wish.x * targetSpeed, 0.0f, wish.z * targetSpeed};
   const Vec3f horizontal{body.velocity.x, 0.0f, body.velocity.z};
 
-  // Розгін і гальмування мають різні коефіцієнти: зупиняється солдат
-  // швидше, ніж розганяється (0.4 проти 0.2).
+  // Acceleration and braking have different coefficients: a soldier stops faster
+  // than he accelerates (0.4 against 0.2).
   const bool accelerating = length(target) > length(horizontal);
   const float rate = (accelerating ? constants.acceleration : constants.deceleration) * control;
 
-  // Коефіцієнти задані на такт 30 Гц, тому масштабуємо під фактичний крок.
+  // The coefficients are given for a 30 Hz tick, so they are scaled to the actual step.
   const float blend = std::min(1.0f, rate * step * 30.0f);
   const Vec3f moved = horizontal + (target - horizontal) * blend;
 
@@ -68,8 +68,8 @@ void stepSoldier(BodyState& body, const Vec3f& wish, float maxSpeed, bool jump,
 
   body.position = body.position + body.velocity * step;
 
-  // Земля: нижче терену не провалюємось. Це поки що єдина колізія —
-  // геометрія об'єктів ще не бере участі.
+  // The ground: we do not fall below the terrain. This is so far the only
+  // collision — the objects' geometry does not take part yet.
   if (body.position.y <= groundHeight) {
     body.position.y = groundHeight;
     if (body.velocity.y < 0.0f) body.velocity.y = 0.0f;
@@ -80,7 +80,7 @@ void stepSoldier(BodyState& body, const Vec3f& wish, float maxSpeed, bool jump,
 }
 
 std::vector<float> soldierSphereHeights(const PhysicsConstants& constants) {
-  // Поки що солдат завжди стоїть: присідання й лежання ще немає.
+  // For now the soldier always stands: crouching and going prone do not exist yet.
   const int count = constants.standSpheres;
   const float height = constants.standHeight;
   std::vector<float> centers;

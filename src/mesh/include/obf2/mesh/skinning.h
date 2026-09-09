@@ -1,16 +1,16 @@
 #pragma once
-// Скелетна анімація: поза зі скелета й кліпу, і деформація меша.
+// Skeletal animation: a pose from a skeleton and a clip, and mesh deformation.
 //
-// Ланцюжок такий самий, як в оригіналі:
+// The chain is the same as in the original:
 //
-//   .ske  — кістки з локальним поворотом і зсувом (поза спокою);
-//   .baf  — на кожен кадр свій поворот і зсув для частини кісток;
-//   .skinnedmesh — вершини з парою номерів кісток **у риґу** і вагою,
-//                  плюс сам риґ: номер кістки в скелеті та обернена
-//                  матриця прив'язки.
+//   .ske  — bones with a local rotation and translation (the rest pose);
+//   .baf  — a rotation and translation per frame for some of the bones;
+//   .skinnedmesh — vertices with a pair of bone ids **in the rig** and a weight,
+//                  plus the rig itself: the bone's index in the skeleton and the
+//                  inverse bind matrix.
 //
-// Матриця, якою рухається вершина:
-//   світова(кістка) * обернена_прив'язка(риґ)
+// The matrix a vertex is moved by:
+//   world(bone) * inverse_bind(rig)
 #include <cstdint>
 #include <vector>
 
@@ -20,35 +20,35 @@
 
 namespace obf2::mesh {
 
-// Один кліп у позі: анімація, кадр і вага.
+// One clip in a pose: the animation, the frame and the weight.
 //
-// Модель узята з рушія (`Skeleton::applySimpleAnimationStage`): у кожної
-// кістки свій стек застосованих кліпів **не більше п'яти**, і кліп із
-// вагою 1 або більше цей стек **очищає** — тобто повністю володіє кісткою.
-// Кліп торкається лише тих кісток, які перелічені в ньому самому, і саме
-// так у BF2 виходить верх тіла від зброї й ноги від руху одночасно.
+// The model comes from the engine (`Skeleton::applySimpleAnimationStage`): every
+// bone has its own stack of applied clips, **no more than five**, and a clip with
+// a weight of 1 or more **clears** that stack — that is, owns the bone entirely.
+// A clip touches only the bones listed in itself, and that is exactly how BF2
+// gets the upper body from the weapon and the legs from the movement at once.
 struct PoseStage {
   const BoneAnimation* animation = nullptr;
   std::uint32_t frame = 0;
   float weight = 1.0f;
 };
 
-// Скільки кліпів рушій тримає на одну кістку.
+// How many clips the engine keeps per bone.
 inline constexpr int kMaxPoseStagesPerBone = 5;
 
-// Поза з кількох кліпів.
+// A pose made of several clips.
 std::vector<Mat4> poseSkeleton(const Skeleton& skeleton, const std::vector<PoseStage>& stages);
 
-// Світові матриці всіх кісток. Якщо кліп заданий, кістки з нього беруть
-// поворот і зсув на вказаному кадрі, решта лишається в позі спокою.
+// The world matrices of every bone. When a clip is given, the bones in it take
+// their rotation and translation at the stated frame, and the rest stay at rest.
 //
-// Ієрархія у файлі вже впорядкована (батько завжди раніше за дитину), тож
-// вистачає одного проходу вперед.
+// The hierarchy in the file is already ordered (a parent always precedes its
+// child), so one forward pass is enough.
 std::vector<Mat4> poseSkeleton(const Skeleton& skeleton, const BoneAnimation* animation,
                                std::uint32_t frame);
 
-// Деформує вершини за позою. `bindPose` — меш як він лежить у файлі,
-// `out` отримує зміщені позиції й нормалі. Обидва мають однаковий розмір.
+// Deforms the vertices by a pose. `bindPose` is the mesh as it lies in the file,
+// `out` receives the moved positions and normals. Both are the same size.
 void skinMesh(const RenderMesh& bindPose, const std::vector<Mat4>& boneWorld, RenderMesh& out);
 
 }  // namespace obf2::mesh

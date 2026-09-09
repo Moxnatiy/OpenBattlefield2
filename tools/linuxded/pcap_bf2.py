@@ -1,30 +1,30 @@
 #!/usr/bin/env python3
-"""Розбирає знятий трафік BF2 і показує, чим саме говорить клієнт.
+"""Takes captured BF2 traffic apart and shows what the client actually says.
 
     sudo tcpdump -i any -w /tmp/bf2.pcap "udp port 16567"
     tools/linuxded/pcap_bf2.py /tmp/bf2.pcap
     tools/linuxded/pcap_bf2.py /tmp/bf2.pcap --from-client --events
 
-Сенс простий: коли наш клієнт поводиться не так, як оригінал, найдешевше
-покласти поруч байти обох і подивитися, де вони розходяться. Формат
-tcpdump на macOS — pcapng з PKTAP-заголовком, тож обидва тут і розбираємо.
+The point is simple: when our client behaves differently from the original, the
+cheapest thing is to put both sets of bytes side by side and see where they
+diverge. tcpdump's format on macOS is pcapng with a PKTAP header, so both are taken apart here.
 
-Розкладка пакета взята з нашого ж `obf2/net/bf2_protocol.h`, тобто з того,
-що вже зреверсовано: 4 біти виду, 8 бітів номера з'єднання, далі —
-залежно від виду.
+The packet's layout comes from our own `obf2/net/bf2_protocol.h`, that is from
+what has already been reversed: 4 bits of kind, 8 bits of connection id, then
+whatever the kind implies.
 """
 import argparse
 import struct
 import sys
 
-# Види пакетів (bf2_protocol.h).
+# The packet kinds (bf2_protocol.h).
 KINDS = {
     1: "ConnectRequest", 2: "ConnectAccept", 3: "ConnectDenied",
     4: "ConnectAcceptAck", 5: "Disconnect", 7: "PingRequest",
     8: "PingResponse", 9: "ServerInfoRequest", 15: "Data",
 }
 
-# Мережеві події (docs/functions/network-events.md).
+# The network events (docs/functions/network-events.md).
 NET_EVENTS = {
     1: "NEDataBlockReady", 2: "NELoadComplete", 3: "NEStartSimulation",
     4: "NEDatabaseComplete", 5: "NEReset", 6: "NESelectSpawnGroup",
@@ -37,7 +37,7 @@ NET_EVENTS = {
 
 
 class Bits:
-    """Читач бітів у тому ж порядку, що й BitStream рушія: молодші перші."""
+    """A bit reader in the same order as the engine's BitStream: low bits first."""
 
     def __init__(self, data):
         self.data = data
@@ -59,7 +59,7 @@ class Bits:
 
 
 def read_pcapng(path):
-    """Пакети з pcapng: (час, байти, тип каналу)."""
+    """Packets from a pcapng: (time, bytes, link type)."""
     data = open(path, "rb").read()
     out = []
     at = 0
@@ -85,7 +85,7 @@ def read_pcapng(path):
 
 
 def strip_pktap(packet):
-    """PKTAP: змінний заголовок, за ним справжній пакет зі своїм DLT."""
+    """PKTAP: a variable header, then the real packet with its own DLT."""
     if len(packet) < 4:
         return None, None
     length, = struct.unpack_from("<I", packet, 0)
@@ -96,7 +96,7 @@ def strip_pktap(packet):
 
 
 def udp_payload(frame, dlt):
-    """(джерело, призначення, дані) або None."""
+    """(source, destination, data) or None."""
     if dlt == 1:  # Ethernet
         if len(frame) < 14 or struct.unpack_from(">H", frame, 12)[0] != 0x0800:
             return None
@@ -120,10 +120,10 @@ def udp_payload(frame, dlt):
 
 
 def load_event_table():
-    """Таблиця подій із того самого `bf2_events.inc`, що й у нашому коді.
+    """The event table from the same `bf2_events.inc` as in our code.
 
-    Дублювати її тут було б помилкою: вона згенерована з бінаря, і два
-    списки неминуче розійшлися б.
+    Duplicating it here would be a mistake: it is generated from the binary, and two
+    lists would inevitably diverge.
     """
     import os
     import re
@@ -152,22 +152,22 @@ GAME_EVENTS, EVENT_WIDTHS, EVENT_BRANCHY = load_event_table()
 
 
 def read_actions(bits):
-    """Потік дій гравця, якщо він у пакеті є.
+    """The player action stream, if the packet holds one.
 
-    Розкладка з `PlayerActionManager::processReceivedPacket` (0x44d670):
+    The layout comes from `PlayerActionManager::processReceivedPacket` (0x44d670):
 
-        1 біт                  чи є дії
-        4 біти                 скільки записів
-        9 біт                  номер
-        1 біт знак + 31 біт    число (спільне для всіх записів)
-        далі кожен запис:
-            6 разів: 1 біт знака + 15 бітів значення
-            32 біти  маска кнопок
-            9 бітів  номер запису
-            1 біт    прапорець
+        1 bit                  are there actions
+        4 bits                 how many records
+        9 bits                 a number
+        1 sign bit + 31 bits   a number (shared by every record)
+        then, per record:
+            6 times: 1 sign bit + 15 bits of value
+            32 bits  the button mask
+            9 bits   the record's number
+            1 bit    a flag
 
-    Розмір запису в пам'яті — 28 байтів, і зсуви (+4..+0xe слова,
-    +0x10 u32, +0x14 u32, +0x18 байт) сходяться з цим переліком точно.
+    A record's size in memory is 28 bytes, and the offsets (+4..+0xe words,
+    +0x10 u32, +0x14 u32, +0x18 a byte) agree with this list exactly.
     """
     if bits.read(1) != 1:
         return None
@@ -199,40 +199,39 @@ def read_actions(bits):
 
 
 def describe_events(payload):
-    """Події з пакета даних. Повертає перелік рядків.
+    """The events from a data packet. Returns a list of lines.
 
-    Розкладка заголовка — та сама, що в нашому `writeDataHeader`:
-    4 біти виду, 8 номера з'єднання, 6 sequence, 6 ack, 32 ackBits,
-    16 довжини корисної частини. Далі каркас потоку подій: біт потоку
-    дій, біт «події є», 8 бітів кількості, 5 номера пачки, 1 запасний.
+    The header's layout is the same as in our `writeDataHeader`:
+    4 bits of kind, 8 of connection id, 6 sequence, 6 ack, 32 ackBits,
+    16 of payload length. Then the event stream's framing: the action stream's
+    bit, the "there are events" bit, 8 bits of count, 5 of batch number, 1 spare.
     """
     bits = Bits(payload)
     if bits.read(4) != 15:
         return []
-    bits.read(8)                      # номер з'єднання
+    bits.read(8)                      # the connection id
     bits.read(6), bits.read(6)        # sequence, ack
     bits.read(32)                     # ackBits
-    bits.read(16)                     # довжина корисної частини
-    bits.read(1)                      # потік дій гравця
+    bits.read(16)                     # the payload's length
+    bits.read(1)                      # the player action stream
     if bits.read(1) != 1:
         return []
     count = bits.read(8)
-    bits.read(5), bits.read(1)        # номер пачки, запасний біт
+    bits.read(5), bits.read(1)        # the batch number, the spare bit
 
     out = []
     for _ in range(count or 0):
         kind_id = bits.read(7)
         if kind_id is None:
             break
-        name = GAME_EVENTS.get(kind_id, f"подія {kind_id}")
+        name = GAME_EVENTS.get(kind_id, f"event {kind_id}")
 
-        # Події з рівним переліком полів проходимо за таблицею; ті, у
-        # яких поля лежать за умовою, розбираємо руками — рівно так само,
-        # як це робить наш `skipEvent`.
+        # Events with a flat field list we walk by the table; the ones whose fields
+        # sit behind a condition we parse by hand — exactly as our `skipEvent` does.
         if kind_id == 11:             # PostRemoteEvent
             category = bits.read(4)
             number = bits.read(32)
-            bits.read(32)             # затримка (float)
+            bits.read(32)             # the delay (float)
             length = bits.read(8)
             value = None
             if length == 4:
@@ -246,29 +245,29 @@ def describe_events(payload):
                 for _ in range(length):
                     bits.read(8)
             label = NET_EVENTS.get(number, str(number)) if category == 6 \
-                else f"кат {category} № {number}"
+                else f"category {category} no {number}"
             out.append(label + (f" = {value}" if value is not None else ""))
             continue
-        if kind_id == 9:              # EnterVehicleEvent: гравець і об'єкт
+        if kind_id == 9:              # EnterVehicleEvent: the player and the object
             player = bits.read(8)
             obj = bits.read(16)
             flag = bits.read(1)
-            out.append(f"{name}: гравець {player} -> об'єкт {obj} ({flag})")
+            out.append(f"{name}: player {player} -> object {obj} ({flag})")
             continue
         if kind_id == 10:             # ExitVehicleEvent
-            out.append(f"{name}: гравець {bits.read(8)} ({bits.read(1)})")
+            out.append(f"{name}: player {bits.read(8)} ({bits.read(1)})")
             continue
         if kind_id == 7:              # DestroyObjectEvent
-            out.append(f"{name}: об'єкт {bits.read(16)}")
+            out.append(f"{name}: object {bits.read(16)}")
             continue
         if kind_id == 4:              # DataBlockEvent
             if bits.read(1) == 1:
-                out.append(f"{name}: заголовок тип {bits.read(32)} розмір {bits.read(32)}")
+                out.append(f"{name}: header type {bits.read(32)} size {bits.read(32)}")
             else:
                 length = bits.read(8) or 0
                 for _ in range(length):
                     bits.read(8)
-                out.append(f"{name}: шматок {length}б")
+                out.append(f"{name}: chunk {length}b")
             continue
         if kind_id == 0:              # StringManagerEvent
             if bits.read(1) != 0:
@@ -282,16 +281,16 @@ def describe_events(payload):
             branch = bits.read(1)
             if branch == 1:
                 bits.read(8)
-                out.append(f"{name}: шаблон {template}, номер {network}")
+                out.append(f"{name}: template {template}, id {network}")
             else:
                 if bits.read(1) == 1:
                     bits.read(96)
                 if bits.read(1) == 1:
                     bits.read(96)
-                out.append(f"{name}: шаблон {template}, номер {network}")
+                out.append(f"{name}: template {template}, id {network}")
             continue
         if kind_id in EVENT_BRANCHY:
-            out.append(name + " (розбір попереду)")
+            out.append(name + " (parsing still ahead)")
             break
         for width in EVENT_WIDTHS.get(kind_id, []):
             bits.read(width)
@@ -303,10 +302,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("path")
     parser.add_argument("--from-client", action="store_true",
-                        help="лише те, що шле клієнт (пакети на порт 16567)")
-    parser.add_argument("--events", action="store_true", help="розбирати події")
-    parser.add_argument("--hex", type=int, default=0, help="скільки байтів показувати")
-    parser.add_argument("--kind", help="лише цей вид пакета")
+                        help="only what the client sends (packets to port 16567)")
+    parser.add_argument("--events", action="store_true", help="parse the events")
+    parser.add_argument("--hex", type=int, default=0, help="how many bytes to show")
+    parser.add_argument("--kind", help="this packet kind only")
     args = parser.parse_args()
 
     first = None
@@ -325,13 +324,13 @@ def main():
         if not payload:
             continue
         kind = payload[0] & 0xF
-        name = KINDS.get(kind, f"вид {kind}")
+        name = KINDS.get(kind, f"kind {kind}")
         counts[name] = counts.get(name, 0) + 1
         if args.kind and args.kind != name:
             continue
         if first is None:
             first = stamp
-        line = f"{(stamp - first) / 1e6:8.2f}с  {'клієнт->сервер' if to_server else 'сервер->клієнт'}  {name:16s} {len(payload):4d}б"
+        line = f"{(stamp - first) / 1e6:8.2f}s  {'client->server' if to_server else 'server->client'}  {name:16s} {len(payload):4d}b"
         extra = describe_events(payload) if args.events and kind == 15 else []
         if extra:
             line += "  " + "; ".join(extra)
@@ -340,7 +339,7 @@ def main():
         if not args.events or extra or kind != 15:
             print(line)
 
-    print("\nусього:", ", ".join(f"{k} {v}" for k, v in sorted(counts.items())))
+    print("\ntotal:", ", ".join(f"{k} {v}" for k, v in sorted(counts.items())))
     return 0
 
 

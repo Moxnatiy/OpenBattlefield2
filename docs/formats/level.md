@@ -1,97 +1,102 @@
-# Рівень
+# Levels
 
-Статус: **реалізовано** — `src/level`. Dalian Plant завантажується цілком:
-терен 1025×1025, 51 патч із колормапами, море, 906 статичних об'єктів,
-2.35 млн трикутників на кадр.
+Status: **implemented** — `src/level`. Dalian Plant loads in full: a
+1025×1025 terrain, 51 patches with colour maps, the sea, 906 static
+objects, 2.35 M triangles a frame.
 
-## Реверс тут не потрібен
+## No reversing needed here
 
-Рівень описує сам себе звичайними `.con`, які наш інтерпретатор уже вміє:
+A level describes itself with ordinary `.con` files, which our interpreter
+already handles:
 
-| Файл | Що дає |
+| File | What it gives |
 |---|---|
-| `Heightdata.con` | розмір, масштаб і розрядність карти висот, рівень моря |
-| `Terrain.con` | розмір патча, імена колормап / лайтмап / детейлмап |
-| `StaticObjects.con` | 907 розстановок: `Object.create` + `absolutePosition` + `rotation` |
-| `Water.con` | колір і параметри води |
-| `HeightmapPrimary.raw` | 1025×1025×2 = 2 101 250 байт, 16 біт, little-endian |
+| `Heightdata.con` | size, scale and bit depth of the height map, sea level |
+| `Terrain.con` | patch size, colour / light / detail map names |
+| `StaticObjects.con` | 907 placements: `Object.create` + `absolutePosition` + `rotation` |
+| `Water.con` | the water's colour and parameters |
+| `HeightmapPrimary.raw` | 1025×1025×2 = 2 101 250 bytes, 16-bit, little-endian |
 
-Розміри сходяться без жодних припущень: `1025 * 1025 * 2` — рівно розмір
-файлу. Масштаб `2/0.00640869/2` означає 2 світові одиниці між вузлами й
-максимальну висоту `65535 * 0.00640869 ≈ 420`.
+The sizes work out without a single assumption: `1025 * 1025 * 2` is
+exactly the file's size. A scale of `2/0.00640869/2` means 2 world units
+between nodes and a maximum height of `65535 * 0.00640869 ≈ 420`.
 
-## Головне рішення: йдемо редакторською гілкою
+## The main decision: take the editor branch
 
-`Init.con` рівня має дві гілки:
+A level's `Init.con` has two branches:
 
 ```
 if v_arg1 == BF2Editor
-  run Heightdata.con          ← вихідні .raw, формат описаний даними
+  run Heightdata.con          ← the source .raw, format described by the data
   ...
 else
-  terrain.load Levels/<name>/terraindata.raw   ← скомпільований блоб
+  terrain.load Levels/<name>/terraindata.raw   ← a compiled blob
 endIf
 ```
 
-Ігрова гілка читає **скомпільований** `terraindata.raw`, розбір якого
-потребував би реверсу. Редакторська читає вихідні карти висот, чий формат
-повністю визначений із самого `Heightdata.con`. Тому рушій виконує `.con`
-рівня з аргументом `BF2Editor` — і отримує ті самі дані без жодного
-реверс-інжинірингу.
+The game branch reads the **compiled** `terraindata.raw`, which would need
+reversing to parse. The editor branch reads the source height maps, whose
+format is fully determined by `Heightdata.con` itself. So the engine runs
+the level's `.con` with the argument `BF2Editor` — and gets the same data
+with no reverse engineering at all.
 
-## Пастка з аргументами addHeightmap
+## The addHeightmap argument trap
 
 ```
-heightmapcluster.addHeightmap Heightmap 0 0     ← основна карта
-heightmapcluster.addHeightmap Heightmap 0 -1    ← оточення на горизонті
+heightmapcluster.addHeightmap Heightmap 0 0     ← the main map
+heightmapcluster.addHeightmap Heightmap 0 -1    ← the surroundings on the horizon
 ```
 
-Нульовий аргумент — це **ім'я**, а не координата. Якщо читати координати
-кластера з позицій 0 і 1, то `Heightmap 0 -1` розбереться як (0, 0) і
-вторинна карта 257×257 підмінить основну 1025×1025. Саме це й сталося на
-першому запуску: рівень завантажився, але вчетверо меншим і з масштабом
-оточення. Тест на цю підміну є.
+The zeroth argument is a **name**, not a coordinate. Read the cluster
+coordinates from positions 0 and 1 and `Heightmap 0 -1` parses as (0, 0),
+so the secondary 257×257 map replaces the main 1025×1025 one. That is
+exactly what happened on the first run: the level loaded, but four times
+smaller and at the surroundings' scale. There is a test for this
+substitution.
 
-Кластер — 3×3: центральна карта це власне ігрова зона, вісім навколо —
-низькодетальне оточення, яке видно на горизонті. Ми беремо лише центральну.
+The cluster is 3×3: the central map is the playable area, the eight around
+it are the low-detail surroundings visible on the horizon. We take only
+the central one.
 
-## Терен
+## Terrain
 
-Розбивається на патчі по `patchSize` (128) квадів: 1024 / 128 = **8×8 = 64
-патчі**. Вузол на межі спільний із сусіднім патчем, інакше між ними лишалися
-б щілини, тому патч має 129×129 вершин.
+It is split into patches of `patchSize` (128) quads: 1024 / 128 = **8×8 =
+64 patches**. The node on a border is shared with the neighbouring patch,
+otherwise gaps would remain between them, so a patch has 129×129 vertices.
 
-Кожен патч має власну колормапу `Colormaps/tx<колонка>x<рядок>.dds`. У грі їх
-**51 із 64** — для патчів повністю під водою колормап просто немає, і гра їх
-не малює. Ми так само пропускаємо ці патчі, а море закриває водна площина на
-`setSeaWaterLevel` (141.4 для Dalian Plant) кольором із `renderer.waterColor`.
+Every patch has its own colour map `Colormaps/tx<column>x<row>.dds`. The
+game has **51 of the 64** — patches entirely under water simply have no
+colour map, and the game does not draw them. We skip those patches too,
+and the sea is covered by a water plane at `setSeaWaterLevel` (141.4 for
+Dalian Plant) in the colour from `renderer.waterColor`.
 
-Терен центрований на початку координат: `x = (вузол - (size-1)/2) * scale.x`.
-Це та сама система, в якій задані `Object.absolutePosition`, тому об'єкти
-одразу опиняються на своїх місцях без жодних поправок.
+The terrain is centred on the origin: `x = (node - (size-1)/2) * scale.x`.
+That is the same system `Object.absolutePosition` is given in, so objects
+land in their places right away with no corrections.
 
-## Статичні об'єкти
+## Static objects
 
-`Object.create <шаблон>` + `absolutePosition x/y/z` + `rotation yaw/pitch/roll`.
-Кожен шаблон розв'язується через реєстр `ObjectTemplate` і збирається так
-само, як техніка (див. [vehicle-assembly.md](vehicle-assembly.md)).
+`Object.create <template>` + `absolutePosition x/y/z` +
+`rotation yaw/pitch/roll`. Every template is resolved through the
+`ObjectTemplate` registry and assembled the same way vehicles are (see
+[vehicle-assembly.md](vehicle-assembly.md)).
 
-907 розстановок дають **131 унікальну геометрію** — той самий будинок
-трапляється десятками разів, тому меш вантажиться в GPU один раз, а далі
-малюється з різними матрицями. Без геометрії лишився один шаблон,
-`DefaultEnvMap` — це не об'єкт, а карта оточення.
+907 placements give **131 unique geometries** — the same building occurs
+dozens of times, so a mesh is uploaded to the GPU once and then drawn with
+different matrices. One template was left without geometry,
+`DefaultEnvMap` — that is not an object but an environment map.
 
-## Перевірка
+## Checking
 
 ```bash
 ./build/macos-arm64-debug/src/app/openbf2 --level Dalian_plant
 ./build/macos-arm64-debug/src/app/openbf2 --level Dalian_plant --focus -40/180/-200 --dist 220
 ```
 
-## Чого ще немає
+## What is still missing
 
-- Лайтмапи (`Lightmaps/`) і детейлмапи — читаємо лише колормапу, тому терен
-  рівний за освітленням.
-- Рослинність: `Overgrowth/` і `Undergrowth` — окремі формати.
-- Дороги (`CompiledRoads.con`) — свій формат мешу.
-- Відсікання невидимого: зараз малюються всі 2.35 млн трикутників щокадру.
+- Light maps (`Lightmaps/`) and detail maps — we read only the colour map,
+  so the terrain is flat in lighting terms.
+- Vegetation: `Overgrowth/` and `Undergrowth` — separate formats.
+- Roads (`CompiledRoads.con`) — a mesh format of their own.
+- Culling: right now all 2.35 M triangles are drawn every frame.

@@ -3,8 +3,8 @@
 namespace obf2::hud {
 namespace {
 
-// Ділянка з графа за іменем змінної, до якої прив'язано її X. Немає
-// графа — беремо запасні числа; вони збігаються з файлом.
+// A region from the graph by the name of the variable its X is bound to. With no
+// graph we take the fallback numbers; they agree with the file.
 struct Placement {
   float y;
   float twinX;

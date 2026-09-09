@@ -1,8 +1,8 @@
 #pragma once
-// Побудова геометрії тексту: рядок -> прямокутники з координатами в атласі.
+// Building text geometry: a string -> quads with atlas coordinates.
 //
-// Рендерер малює це тим самим пайплайном, що й усе інше, тому текст стає
-// звичайним RenderMesh з однією текстурою — атласом шрифту.
+// The renderer draws this with the same pipeline as everything else, so text
+// becomes an ordinary RenderMesh with one texture — the font's atlas.
 #include <string>
 #include <string_view>
 #include <vector>
@@ -13,25 +13,25 @@
 namespace obf2::font {
 
 struct TextLayout {
-  float x = 0.0f;      // ліворуч-угору, у пікселях екрана
+  float x = 0.0f;      // left and up, in screen pixels
   float y = 0.0f;
-  float scale = 1.0f;  // множник до кегля
+  float scale = 1.0f;  // a multiplier on the point size
   int screenWidth = 1280;
   int screenHeight = 720;
 };
 
-// Геометрія в координатах NDC, готова до малювання без матриці.
-// Порожній результат означає, що жодного гліфа не знайшлося.
+// Geometry in NDC coordinates, ready to draw without a matrix.
+// An empty result means not a single glyph was found.
 mesh::RenderMesh buildText(const Font& font, std::string_view text, const TextLayout& layout,
                            const std::string& atlasPath);
 
-// Розбиває текст на рядки, що вміщаються в задану ширину. Перенос лише по
-// пробілах: слово, довше за рядок, лишається цілим і вилазить за межу —
-// так само поводиться й оригінал.
+// Splits the text into lines that fit the given width. Wrapping happens only at
+// spaces: a word longer than the line stays whole and overflows the edge —
+// which is what the original does too.
 std::vector<std::string> wrapText(const Font& font, std::string_view text, float maxWidth,
                                   float scale);
 
-// Скільки пікселів займе рядок — щоб центрувати чи вирівнювати праворуч.
+// How many pixels a string takes — for centring or right-aligning it.
 float textWidth(const Font& font, std::string_view text, float scale);
 
 }  // namespace obf2::font

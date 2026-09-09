@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Проходить рукостискання з оригінальним сервером до реєстрації гравця.
+"""Carries the handshake with an original server through to player registration.
 
   tools/linuxded/handshake.py [host] [port]
 
-Кроки ті самі, що й у клієнта: запит на під'єднання, підтвердження,
-відповідь на виклик, далі блок ClientInfo. Пінги дзеркалимо, інакше
-сервер рве з'єднання.
+The steps are the same as the client's: a connection request, the acknowledgement,
+the challenge reply, then the ClientInfo block. We mirror the pings, otherwise the
+server breaks the connection.
 """
 import os
 import socket
@@ -73,19 +73,19 @@ class Session:
             except socket.timeout:
                 continue
         else:
-            raise SystemExit("сервер мовчить")
+            raise SystemExit("the server is silent")
         r = Reader(data)
         kind, _ = r.read(4), r.read(8)
         if kind == 3:
             reason = r.read(32)
-            raise SystemExit("відмова: " + DENY.get(reason, "код %d" % reason))
+            raise SystemExit("denied: " + DENY.get(reason, "code %d" % reason))
         if kind != 2:
-            raise SystemExit("несподіваний тип %d" % kind)
+            raise SystemExit("unexpected type %d" % kind)
         self.conn = r.read(8)
         server_time = r.read(32)
         pb = r.read(1)
-        print("прийнято: з'єднання %d, час сервера %d, PunkBuster %d" % (self.conn, server_time, pb))
-        self.send(short(4, self.conn))     # підтвердження
+        print("accepted: connection %d, server time %d, PunkBuster %d" % (self.conn, server_time, pb))
+        self.send(short(4, self.conn))     # the acknowledgement
 
     def pump(self, seconds, on_challenge=None):
         until = time.time() + seconds
@@ -112,19 +112,19 @@ class Session:
                     continue
                 count, _batch, _rep = r.read(8), r.read(5), r.read(1)
                 first = r.read(EVENT_TYPE_BITS)
-                print("  пакет даних: подій %d, перша типу %d" % (count, first))
+                print("  data packet: events %d, the first of type %d" % (count, first))
                 if first == 1:
                     self.challenges += 1
                     if on_challenge:
                         on_challenge()
             elif kind == 5:
-                print("  сервер від'єднав нас")
+                print("  the server disconnected us")
                 return False
         return True
 
 
 def alive(host, port=16567):
-    """Чи живий сервер: на запит під'єднання він завжди щось відповідає."""
+    """Whether the server is alive: it always answers a connection request with something."""
     probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     probe.settimeout(2.0)
     try:
@@ -153,23 +153,23 @@ def main():
             return
         answered.append(True)
         s.send_events([challenge_response_event()])
-        print("  надіслано відповідь на виклик")
+        print("  challenge reply sent")
 
     s.pump(5, on_challenge=answer)
     if not answered:
-        print("виклику не було")
+        print("there was no challenge")
 
     blob = client_info_blob(name=s.name, second="", third="",
                             number=name_hash(s.name), value=0)
     events = data_block_events(CLIENT_INFO_BLOCK, blob)
-    print("ClientInfo: %d байтів, подій %d" % (len(blob), len(events)))
+    print("ClientInfo: %d bytes, events %d" % (len(blob), len(events)))
     for event in events:
         s.send_events([event])
         s.pump(2)
 
-    # Тримаємо з'єднання: сервер має бачити гравця, поки ми відповідаємо.
+    # We keep the connection up: the server has to see the player while we answer.
     s.pump(int(os.environ.get("HOLD", "30")))
-    print("пакетів даних: %d, викликів: %d" % (s.data_packets, s.challenges))
+    print("data packets: %d, challenges: %d" % (s.data_packets, s.challenges))
 
 
 if __name__ == "__main__":

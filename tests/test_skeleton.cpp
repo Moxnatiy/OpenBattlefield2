@@ -9,22 +9,22 @@ using namespace obf2;
 
 namespace {
 
-// Збирач `.ske` — тест не залежить від наявності гри й заодно фіксує
-// розкладку формату в коді.
+// A `.ske` builder — the test does not depend on the game being present and also
+// fixes the format's layout in code.
 class SkeletonBuilder {
  public:
   explicit SkeletonBuilder(std::uint32_t boneCount) {
-    u32(2);  // версія
+    u32(2);  // version
     u32(boneCount);
   }
 
   void addBone(const std::string& name, std::int16_t parent, float x, float y, float z) {
-    // Довжина рахує завершальний нуль.
+    // The length counts the terminating zero.
     u16(static_cast<std::uint16_t>(name.size() + 1));
     for (const char c : name) byte(static_cast<std::uint8_t>(c));
     byte(0);
     u16(static_cast<std::uint16_t>(parent));
-    real(0.0f); real(0.0f); real(0.0f); real(1.0f);  // одиничний кватерніон
+    real(0.0f); real(0.0f); real(0.0f); real(1.0f);  // the identity quaternion
     real(x); real(y); real(z);
   }
 
@@ -62,23 +62,23 @@ static void testHierarchyIsRead() {
   CHECK_EQ(skeleton->bones[0].parent, -1);
   CHECK_EQ(skeleton->bones[2].parent, 1);
   CHECK_EQ(skeleton->find("knee"), 2);
-  CHECK_EQ(skeleton->find("немає"), -1);
-  // Зсув локальний, відносно батька.
+  CHECK_EQ(skeleton->find("nothing"), -1);
+  // The translation is local, relative to the parent.
   CHECK(std::abs(skeleton->bones[2].position.y + 0.4f) < 0.001f);
 }
 
 static void testSizeMatchesLayout() {
-  // Розкладка перевірена на даних гри саме так: порахований розмір має
-  // збігатися з файлом байт у байт.
+  // The layout was verified against the game's data exactly like this: the computed
+  // size has to match the file byte for byte.
   SkeletonBuilder builder(2);
   builder.addBone("root", -1, 0.0f, 0.0f, 0.0f);
   builder.addBone("joint1", 0, 0.0f, 0.0f, 0.0f);
-  // 8 заголовок + (2 + 5 + 2 + 28) + (2 + 7 + 2 + 28)
+  // 8 header + (2 + 5 + 2 + 28) + (2 + 7 + 2 + 28)
   CHECK_EQ(builder.bytes().size(), std::size_t(8 + 37 + 39));
 }
 
 static void testBadParentIsRejected() {
-  // Батько має бути вже прочитаною кісткою — інакше файл пошкоджений.
+  // The parent has to be an already read bone — otherwise the file is corrupt.
   SkeletonBuilder builder(2);
   builder.addBone("root", -1, 0.0f, 0.0f, 0.0f);
   builder.addBone("broken", 5, 0.0f, 0.0f, 0.0f);
@@ -99,7 +99,7 @@ static void testTruncatedFileDoesNotCrash() {
     std::vector<std::byte> truncated(full.begin(), full.begin() + static_cast<long>(size));
     std::string error;
     const auto skeleton = mesh::loadSkeleton(truncated, &error);
-    if (skeleton.has_value()) continue;  // дуже короткий обрізок може бути «порожнім» скелетом
+    if (skeleton.has_value()) continue;  // a very short truncation may be an "empty" skeleton
     CHECK(!error.empty());
   }
 }

@@ -1,17 +1,17 @@
 #pragma once
-// Стан світу, зібраний із пакетів сервера.
+// The world's state, assembled from the server's packets.
 //
-// Клієнт дізнається про світ трьома різними шляхами, і всі троє сходяться
-// тут:
+// The client learns about the world by three different routes, and all three
+// converge here:
 //
-//   * **події** — хто грає (`CreatePlayerEvent`), які об'єкти створено
-//     (`CreateObjectEvent`), хто чим керує (`EnterVehicleEvent`);
-//   * **стан керованого об'єкта** — опорна точка стиснення на пакет;
-//   * **записи потоку привидів** — де зараз рухомі об'єкти.
+//   * **events** — who is playing (`CreatePlayerEvent`), which objects were
+//     created (`CreateObjectEvent`), who controls what (`EnterVehicleEvent`);
+//   * **the controlled-object state** — the compression reference point per packet;
+//   * **the ghost stream's records** — where the moving objects are now.
 //
-// Тримати це в циклі кадрів немає сенсу: тут немає ні вікна, ні часу, ні
-// вводу — самі лише пакети. Тому воно живе окремо й перевіряється тестом
-// на знятому трафіку (`tests/data/bf2-spawned.bin`), а не «на око в грі».
+// Keeping this in the frame loop makes no sense: there is no window here, no
+// time and no input — only packets. So it lives separately and is checked by a
+// test on captured traffic (`tests/data/bf2-spawned.bin`) rather than "by eye in the game".
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -25,39 +25,39 @@
 
 namespace obf2::net::bf2 {
 
-// Об'єкт, який сервер створив уже в грі: чужий солдат або техніка.
+// An object the server created while in the game: another player's soldier or a vehicle.
 struct RemoteObject {
   Vec3f position;
-  std::optional<float> yaw;  // градуси, якщо приходило рискання
-  // Команда власника. Нуль — це не солдат гравця (техніка, майно рівня).
+  std::optional<float> yaw;  // degrees, when a yaw arrived
+  // The owner's team. Zero means it is not a player's soldier (a vehicle, level property).
   int team = 0;
-  bool fromGhostStream = false;  // місце вже уточнене потоком, не лише подією
+  bool fromGhostStream = false;  // the position is refined by the stream, not only by an event
 
-  // Слід — це мірило розбору, а не прикраса. Солдат стоїть на землі, тож
-  // стала різниця з рельєфом означає зсув початку об'єкта, а різниця, що
-  // росте, — помилку розбору. Для нерухомого гравця `travelled` має
-  // лишатися близьким до нуля.
+  // The track is a measure of the parsing, not decoration. A soldier stands on
+  // the ground, so a constant difference from the terrain means the object's
+  // origin is offset, while a growing difference means a parsing error. For a
+  // motionless player `travelled` has to stay close to zero.
   Vec3f firstSeen;
   int updates = 0;
-  float travelled = 0.0f;    // найбільший зсув від першого місця
-  float aboveGround = 0.0f;  // сума перевищень над рельєфом
+  float travelled = 0.0f;    // the largest displacement from the first position
+  float aboveGround = 0.0f;  // the sum of the heights above the terrain
 };
 
 struct RemotePlayer {
   std::string name;
   int team = 0;
-  std::uint16_t object = 0;  // об'єкт, який гравець зайняв
+  std::uint16_t object = 0;  // the object the player occupied
 };
 
 class WorldView {
  public:
-  // Один пакет даних від сервера. Порядок усередині важливий: спершу
-  // події (з них ми дізнаємося, хто солдат), потім стан керованого
-  // об'єкта (опорна точка), і аж тоді записи привидів.
+  // One data packet from the server. The order inside matters: the events first
+  // (from them we learn which object is a soldier), then the controlled-object
+  // state (the reference point), and only then the ghost records.
   void feed(std::span<const std::byte> packet);
 
-  // Ім'я, за яким упізнаємо себе. Сервер складає його як «тег клану,
-  // пробіл, ім'я», тож порівнюємо хвостом.
+  // The name we recognise ourselves by. The server assembles it as "clan tag,
+  // space, name", so we compare by the tail.
   void setOwnName(std::string name) { ownName_ = std::move(name); }
   void setPlayerSpawned(bool spawned) { playerSpawned_ = spawned; }
 
@@ -69,13 +69,13 @@ class WorldView {
   const std::map<std::uint16_t, RemoteObject>& objects() const { return objects_; }
   const Vec3f& compressionReference() const { return compressionReference_; }
 
-  // Скільки місць прийшло з потоку і скільки ми відкинули як нечитані.
+  // How many positions arrived from the stream and how many we rejected as unreadable.
   int positionUpdates() const { return positionUpdates_; }
   int rejected() const { return rejected_; }
 
-  // Перевірка розбору: солдат стоїть на землі, тож стала різниця з
-  // рельєфом — це зсув початку об'єкта, а розбіжність, що росте, —
-  // помилка розбору. Хто кличе, той і знає рельєф.
+  // A check on the parsing: a soldier stands on the ground, so a constant
+  // difference from the terrain is an offset of the object's origin, while a
+  // growing divergence is a parsing error. Whoever calls knows the terrain.
   void setGroundProbe(std::function<float(const Vec3f&)> probe) { ground_ = std::move(probe); }
 
  private:
@@ -91,7 +91,7 @@ class WorldView {
 
   std::map<std::uint32_t, RemotePlayer> players_;
   std::map<std::uint16_t, RemoteObject> objects_;
-  std::map<std::uint16_t, std::uint32_t> owners_;  // об'єкт -> гравець
+  std::map<std::uint16_t, std::uint32_t> owners_;  // object -> player
   Vec3f compressionReference_;
   std::function<float(const Vec3f&)> ground_;
   int positionUpdates_ = 0;

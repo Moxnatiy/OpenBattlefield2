@@ -1,4 +1,4 @@
-# Оригінальні файли гри — ніколи не потрапляють у git
+# The original game files — these never go into git
 Game Files/
 game/
 extract/
@@ -12,17 +12,27 @@ ghidra_projects/
 .venv/
 __pycache__/
 
-# Збірка. 167 файлів і 103 МБ об'єктників у git — це шум у кожному
-# `git status` і в кожному diff. Каталог лишається на диску, просто
-# більше не відстежується.
+# Build output. 167 files and 103 MB of object files in git is noise in
+# every `git status` and every diff. The directory stays on disk, it is
+# just no longer tracked.
 build/
 
-# Архіви / macOS
+# Archives / macOS
 *.arc
 .DS_Store
 
-# Чужі напрацювання для звірки. У git їх не тримаємо навмисно: ліцензії
-# різні (GPL-3.0, а подекуди й зовсім немає), а наше дерево — MIT.
-# Це джерело **підказок**, не коду: усе, що звідти взято, спершу
-# перевіряється на оригінальному бінарі або на даних гри.
+# Third-party work kept for comparison. Deliberately not in git: the
+# licences differ (GPL-3.0, and in places none at all) while our tree is
+# MIT. It is a source of **hints**, not of code: everything taken from
+# there is first verified against the original binary or the game's data.
 reference/
+
+# Rust build output (`src/flash`). Same reason as `build/`: hundreds of
+# megabytes of artefacts that are rebuilt from source anyway.
+target/
+
+# The Ghidra MCP server's configuration. It is nothing but absolute paths
+# to one machine's checkout, Ghidra and JDK, so it is useless to anyone
+# else and would publish the author's home directory. Copy
+# `.mcp.json.example` and fill in your own.
+.mcp.json

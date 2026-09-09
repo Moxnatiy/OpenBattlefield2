@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""Доводить з'єднання з оригінальним сервером до потрібного етапу і
-записує все, що прийшло, у файл-зразок.
+"""Drives a connection with an original server to the required stage and
+records everything that arrived into a sample file.
 
     tools/linuxded/capture.py --stage world --out tests/data/world.bin
     tools/linuxded/capture.py --stage player --show
     tools/linuxded/capture.py --wait
 
-Етапи:
-    connect   запит і підтвердження
-    challenge + відповідь на виклик
-    player    + блок ClientInfo (сервер заводить гравця)
-    world     + «рівень завантажено» (сервер починає слати світ)
+The stages:
+    connect   the request and the acknowledgement
+    challenge + the challenge reply
+    player    + the ClientInfo block (the server creates the player)
+    world     + "the level is loaded" (the server starts sending the world)
 
-Сенс у тому, щоб кожен дослід був прапорцем, а не новим скриптом, і щоб
-спіймані пакети лишалися назавжди — з них ростуть тести, які не
-потребують ані стенда, ані мережі.
+The point is that every experiment is a flag rather than a new script, and that
+the captured packets stay forever — tests grow out of them that need neither the
+rig nor a network.
 
-Формат файлу простий: для кожного пакета u32 довжина, далі байти.
+The file's format is simple: a u32 length per packet, then the bytes.
 """
 import argparse
 import os
@@ -30,30 +30,30 @@ from handshake import Session, ping_response
 
 STAGES = ["connect", "challenge", "player", "world", "spawn"]
 
-# Блок з відомостями про рівень (`GameServer::sendClientMapInfo`).
+# The block with the level's details (`GameServer::sendClientMapInfo`).
 MAP_INFO_BLOCK = 5
 
-# Друга подія, що рухає стан з'єднання (`clientSendDatabaseComplete`).
-# Ланцюжок появи гравця. Номери з таблиці, яку BF2.exe реєструє сам
-# (див. docs/functions/network-events.md).
+# The second event that moves the connection's state (`clientSendDatabaseComplete`).
+# The player spawn chain. The numbers come from the table BF2.exe registers itself
+# (see docs/functions/network-events.md).
 NET_DATABASE_COMPLETE = 4
 NET_SELECT_SPAWN_GROUP = 6
 NET_SELECT_TEAM = 7
 NET_SELECT_KIT = 8
 
-# NEDatabaseComplete (4) навмисно не шлемо: після неї сервер замовкає —
-# перестає слати пінги й наші наступні пакети до нього вже не доходять.
-# Справжній клієнт шле її в іншому місці розмови.
+# We deliberately do not send NEDatabaseComplete (4): after it the server falls
+# silent — it stops sending pings and our next packets no longer reach it.
+# The real client sends it elsewhere in the conversation.
 
 
 def post_remote(category, event, value=None):
-    """Мережева подія. Ті, що несуть значення, чекають 32-бітне число."""
+    """A network event. The ones carrying a value expect a 32-bit number."""
     payload = b"" if value is None else struct.pack("<i", value)
 
     def fill(w):
         w.write(category, 4)
         w.write(event, 32)
-        w.write(0, 32)   # затримка, float 0.0
+        w.write(0, 32)   # the delay, float 0.0
         w.write(len(payload), 8)
         for byte in payload:
             w.write(byte, 8)
@@ -61,10 +61,10 @@ def post_remote(category, event, value=None):
 
 
 def wait_for_server(host, port, attempts=60, delay=5):
-    """Чекає, поки сервер підніметься й завантажить рівень."""
+    """Waits for the server to come up and load the level."""
     for _ in range(attempts):
         answer = p.probe(p.GAME_VERSION, host=host, port=port, timeout=2, punkbuster=0)
-        if "ПРИЙНЯТО" in answer:
+        if "ACCEPTED" in answer:
             return True
         time.sleep(delay)
     return False
@@ -88,20 +88,20 @@ class Capture:
         self._block_size = 0
 
     def _handle_blocks(self, data):
-        """Складає блоки даних; повертає True, коли прийшов блок із рівнем."""
+        """Assembles data blocks; returns True once the level block has arrived."""
         info = p.walk_events(data)
         if not info:
             return False
         got_level = False
-        for event in info["події"]:
-            if event.get("клас") != "DataBlockEvent":
+        for event in info["events"]:
+            if event.get("class") != "DataBlockEvent":
                 continue
-            if event["заголовок"]:
-                self._block_type = event["тип блока"]
-                self._block_size = event["розмір"]
+            if event["header"]:
+                self._block_type = event["block type"]
+                self._block_size = event["size"]
                 self._block = bytearray()
             elif self._block is not None:
-                self._block += event["дані"]
+                self._block += event["data"]
                 if len(self._block) >= self._block_size:
                     if self._block_type == MAP_INFO_BLOCK:
                         self.map_info = bytes(self._block)
@@ -110,14 +110,14 @@ class Capture:
         return got_level
 
     def _answer_challenge(self, data):
-        """Відповідає на виклик, якщо він у цьому пакеті."""
+        """Answers the challenge if it is in this packet."""
         if self.answered:
             return
         info = p.walk_events(data)
         if not info:
             return
-        for event in info["події"]:
-            if event.get("тип") == 1:
+        for event in info["events"]:
+            if event.get("type") == 1:
                 self.answered = True
                 self.session.send_events([p.challenge_response_event()])
                 return
@@ -151,9 +151,9 @@ class Capture:
             self._drain(hold)
             return
 
-        # Виклик і відповідь на нього обробляє сам `_drain`: тільки він
-        # записує пакети й збирає блоки, тож іншого циклу прийому бути
-        # не повинно — інакше блок із рівнем проходить повз.
+        # The challenge and its reply are handled by `_drain` itself: only it writes
+        # packets and assembles blocks, so there must be no other receive loop —
+        # otherwise the level block goes past.
         self._drain(6)
         if stage == "challenge":
             self._drain(hold)
@@ -161,8 +161,8 @@ class Capture:
 
         info = p.client_info_blob(name=s.name, number=p.name_hash(s.name))
         for event in p.data_block_events(p.CLIENT_INFO_BLOCK, info):
-            # Пауза між заголовком блока і шматком: сервер має встигнути
-            # завести блок, перш ніж у нього щось складатимуть.
+            # A pause between the block's header and a chunk: the server has to
+            # manage to create the block before anything is put into it.
             s.send_events([event])
             self._drain(2)
         self._drain(4)
@@ -170,24 +170,24 @@ class Capture:
             self._drain(hold)
             return
 
-        # Спершу дочекатися блока з рівнем — саме в такому порядку працює
-        # оригінал: сервер шле рівень, клієнт його завантажує і аж тоді
-        # каже «готово». Інакше об'єкти приходять раніше за рівень.
+        # The level block has to be waited for first — that is the order the original
+        # works in: the server sends the level, the client loads it and only then
+        # says "ready". Otherwise the objects arrive before the level.
         waited = 0.0
         while self.map_info is None and waited < 20.0:
             self._drain(1.0)
             waited += 1.0
         if self.map_info is None:
-            print("блок із рівнем не прийшов")
+            print("the level block did not arrive")
         s.send_events([post_remote(p.NETWORK_CATEGORY, p.NET_LOAD_COMPLETE)])
         if stage == "world":
             self._drain(hold)
             return
 
-        # Перевірка вмісту: без неї `clientSendDatabaseComplete` іде
-        # гілкою відмови й стан з'єднання не доростає до потрібного.
-        # Перший хеш — той, що сервер рахує сам; решта два з файлів
-        # відбитків у теці мода.
+        # The content check: without it `clientSendDatabaseComplete` takes the
+        # refusal branch and the connection's state does not grow far enough.
+        # The first hash is the one the server computes itself; the other two come
+        # from the fingerprint files in the mod's directory.
         self._drain(3)
         here = os.path.dirname(os.path.abspath(__file__))
         mods = os.path.join(here, "..", "..", "Game Files", "mods", "bf2")
@@ -196,13 +196,13 @@ class Capture:
             archives = p.read_fingerprints(os.path.join(mods, "std_archive.md5"))
             level = p.read_fingerprints(
                 os.path.join(mods, "levels", self.level, "archive.md5"))
-            # Номер рядка у файлах відбитків — «номер виклику». Сервер
-            # обирає його при завантаженні рівня й шле в блоці з рівнем
-            # першим числом.
-            # Номер виклику приходить у блоці з рівнем першим полем —
-            # знак плюс 31 біт, а не звичайне u32.
-            # Номер виклику приходить у блоці з рівнем; --ordinal його
-            # перекриває, коли треба перебрати варіанти.
+            # The line number in the fingerprint files is the "challenge number". The
+            # server picks it when it loads the level and sends it in the level block
+            # as the first number.
+            # The challenge number arrives in the level block as its first field —
+            # a sign plus 31 bits rather than an ordinary u32.
+            # The challenge number arrives in the level block; --ordinal overrides it
+            # when the options have to be tried.
             ordinal = self.ordinal
             if ordinal < 0:
                 ordinal = 0
@@ -213,9 +213,9 @@ class Capture:
             s.send_events([post_remote(p.NETWORK_CATEGORY, NET_DATABASE_COMPLETE)])
             self._drain(4)
 
-        # Поява: команда, набір, місце. Саме в такому порядку і саме
-        # цими подіями — перевірено, `ServerGameLogic::spawnPlayer`
-        # після них викликається.
+        # Spawning: the team, the kit, the point. In exactly this order and with
+        # exactly these events — verified, `ServerGameLogic::spawnPlayer` is called
+        # after them.
         for event, value in ((NET_SELECT_TEAM, self.team), (NET_SELECT_KIT, self.kit),
                              (NET_SELECT_SPAWN_GROUP, self.group)):
             s.send_events([post_remote(p.NETWORK_CATEGORY, event, value)])
@@ -224,7 +224,7 @@ class Capture:
 
 
 def load(path):
-    """Читає файл-зразок: для кожного пакета u32 довжина, далі байти."""
+    """Reads a sample file: a u32 length per packet, then the bytes."""
     packets = []
     with open(path, "rb") as handle:
         while True:
@@ -236,12 +236,12 @@ def load(path):
 
 
 def describe(packets):
-    """Показує, що в пакетах, і де саме розбір спіткнувся.
+    """Shows what is in the packets and where exactly the parsing stumbled.
 
-    Тип події не буває більшим за 69 — усе понад це означає, що
-    попередня подія прочитана неправильної довжини. Тому поруч з
-    невідомим типом друкуємо й ту, після якої він трапився: так одразу
-    видно, чию розкладку треба виправляти.
+    An event's type is never greater than 69 — anything above that means the
+    previous event was read at the wrong length. So next to an unknown type we also
+    print the one after which it occurred: that shows at once whose layout has to be
+    fixed.
     """
     kinds, unknown, blamed = {}, {}, {}
     for data in packets:
@@ -249,22 +249,22 @@ def describe(packets):
         if not info:
             continue
         previous = None
-        for event in info["події"]:
-            if event.get("невідома"):
-                kind = event["тип"]
+        for event in info["events"]:
+            if event.get("unknown"):
+                kind = event["type"]
                 unknown[kind] = unknown.get(kind, 0) + 1
                 if kind > 69 and previous:
                     blamed[previous] = blamed.get(previous, 0) + 1
                 continue
-            kinds[event["клас"]] = kinds.get(event["клас"], 0) + 1
-            previous = event["клас"]
-    print("пакетів: %d" % len(packets))
+            kinds[event["class"]] = kinds.get(event["class"], 0) + 1
+            previous = event["class"]
+    print("packets: %d" % len(packets))
     for name, count in sorted(kinds.items()):
         print("  %-24s %d" % (name, count))
     if unknown:
-        print("  ще не розбираємо: %s" % unknown)
+        print("  not parsed yet: %s" % unknown)
     if blamed:
-        print("  збилося після: %s" % blamed)
+        print("  went astray after: %s" % blamed)
 
 
 def main():
@@ -273,19 +273,19 @@ def main():
     parser.add_argument("--port", type=int, default=16567)
     parser.add_argument("--name", default="OpenBF2")
     parser.add_argument("--stage", choices=STAGES, default="world")
-    parser.add_argument("--hold", type=float, default=20.0, help="скільки секунд слухати")
-    parser.add_argument("--out", help="куди записати спіймані пакети")
-    parser.add_argument("--show", action="store_true", help="розібрати й показати вміст")
-    parser.add_argument("--wait", action="store_true", help="лише дочекатися сервера")
-    parser.add_argument("--replay", help="розібрати раніше спіймані пакети з файлу")
-    parser.add_argument("--team", type=int, default=1, help="команда для етапу spawn")
-    parser.add_argument("--kit", type=int, default=0, help="набір для етапу spawn")
-    parser.add_argument("--group", type=int, default=1, help="місце появи для етапу spawn")
+    parser.add_argument("--hold", type=float, default=20.0, help="how many seconds to listen")
+    parser.add_argument("--out", help="where to write the captured packets")
+    parser.add_argument("--show", action="store_true", help="parse and show the contents")
+    parser.add_argument("--wait", action="store_true", help="only wait for the server")
+    parser.add_argument("--replay", help="parse previously captured packets from a file")
+    parser.add_argument("--team", type=int, default=1, help="the team for the spawn stage")
+    parser.add_argument("--kit", type=int, default=0, help="the kit for the spawn stage")
+    parser.add_argument("--group", type=int, default=1, help="the spawn point for the spawn stage")
     parser.add_argument("--ordinal", type=int, default=-1,
-                        help="номер рядка у файлах відбитків")
-    parser.add_argument("--level", default="dalian_plant", help="назва рівня для відбитка")
+                        help="the line number in the fingerprint files")
+    parser.add_argument("--level", default="dalian_plant", help="the level's name for the fingerprint")
     parser.add_argument("--misc-hash", dest="misc_hash",
-                        help="перший хеш для перевірки вмісту (сервер рахує його сам)")
+                        help="the content check's first hash (the server computes it itself)")
     args = parser.parse_args()
 
     if args.replay:
@@ -294,7 +294,7 @@ def main():
 
     if args.wait:
         ok = wait_for_server(args.host, args.port)
-        print("сервер готовий" if ok else "сервер не відповідає")
+        print("the server is ready" if ok else "the server does not answer")
         return 0 if ok else 1
 
     capture = Capture(args.host, args.port, args.name, args.team, args.kit, args.group,
@@ -306,7 +306,7 @@ def main():
             for packet in capture.packets:
                 handle.write(struct.pack("<I", len(packet)))
                 handle.write(packet)
-        print("записано %d пакетів у %s" % (len(capture.packets), args.out))
+        print("wrote %d packets into %s" % (len(capture.packets), args.out))
     if args.show or not args.out:
         describe(capture.packets)
     return 0

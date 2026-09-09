@@ -1,27 +1,27 @@
-# Оригінальний виділений сервер BF2 1.5 під Linux у контейнері.
+# The original BF2 1.5 dedicated server for Linux, in a container.
 #
-# Двійковий файл 2009 року й зібраний під x86-64, тож образ теж amd64 —
-# на Apple Silicon Docker запускає його через емуляцію.
+# The binary is from 2009 and built for x86-64, so the image is amd64 too —
+# on Apple Silicon Docker runs it through emulation.
 #
-# Самих файлів гри в образі немає: вони монтуються ззовні. Це і законно
-# правильно, і зручно — образ лишається маленьким.
+# The game's files are not in the image: they are mounted from outside. That is
+# both legally right and convenient — the image stays small.
 FROM --platform=linux/amd64 debian:bullseye-slim
 
-# Чого бракує двійковому файлу з 2009-го. libncurses5 потрібен для
-# текстової консолі сервера, решта — звичайна база.
+# What a 2009 binary is missing. libncurses5 is needed for the server's text
+# console, the rest is an ordinary base.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       libncurses5 libstdc++6 zlib1g libgcc-s1 \
  && rm -rf /var/lib/apt/lists/*
 
-# Сервер не потребує root.
+# The server does not need root.
 RUN useradd --create-home --uid 1000 bf2
 WORKDIR /server
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-# 16567 — ігровий трафік, 29900 — GameSpy, 4711 — віддалена консоль.
+# 16567 is the game traffic, 29900 GameSpy, 4711 the remote console.
 EXPOSE 16567/udp 29900/udp 4711/tcp
 
 USER bf2

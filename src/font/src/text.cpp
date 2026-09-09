@@ -5,9 +5,9 @@
 namespace obf2::font {
 namespace {
 
-// Нормаль уздовж джерела світла з фрагментного шейдера: так півламбертів
-// множник дорівнює одиниці й текст не темніє. Тимчасово, доки немає
-// окремого пайплайна для інтерфейсу (див. docs/TODO.md).
+// The normal points along the light source from the fragment shader: that way the
+// half-Lambert factor equals one and the text does not darken. Temporary, until
+// there is a separate pipeline for the interface (see docs/TODO.md).
 mesh::Vec3 unlitNormal() {
   const Vec3f light = normalize(Vec3f{0.4f, 0.9f, 0.35f});
   return mesh::Vec3{light.x, light.y, light.z};
@@ -57,7 +57,7 @@ mesh::RenderMesh buildText(const Font& font, std::string_view text, const TextLa
   const float atlasW = static_cast<float>(font.atlasWidth);
   const float atlasH = static_cast<float>(font.atlasHeight);
 
-  // Пікселі екрана -> NDC. Вісь Y у NDC дивиться вгору, у тексті — вниз.
+  // Screen pixels -> NDC. The Y axis points up in NDC and down in text.
   auto toNdcX = [&](float pixels) { return pixels / static_cast<float>(layout.screenWidth) * 2.0f - 1.0f; };
   auto toNdcY = [&](float pixels) { return 1.0f - pixels / static_cast<float>(layout.screenHeight) * 2.0f; };
 
@@ -91,7 +91,7 @@ mesh::RenderMesh buildText(const Font& font, std::string_view text, const TextLa
       out.vertices.push_back(mesh::Vertex{{toNdcX(x0), toNdcY(y1), 0.0f}, normal, {u0, v1}});
       out.vertices.push_back(mesh::Vertex{{toNdcX(x1), toNdcY(y1), 0.0f}, normal, {u1, v1}});
 
-      // Обхід проти годинникової — той самий, що й у мешах гри.
+      // Counter-clockwise winding — the same as in the game's meshes.
       out.indices.insert(out.indices.end(),
                          {base, base + 2, base + 1, base + 1, base + 2, base + 3});
     }

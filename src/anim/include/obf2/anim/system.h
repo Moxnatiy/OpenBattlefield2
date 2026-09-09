@@ -1,26 +1,26 @@
 #pragma once
-// Система анімацій солдата: що саме програвати залежно від стану.
+// The soldier animation system: what to play depending on the state.
 //
-// Уся вона описана в даних гри — `soldiers/Common/Animations/
-// AnimationSystem3p.inc` (728 рядків) і `ValueHolders.inc`. Це звичайний
-// `.con`, тож читаємо його нашим же інтерпретатором:
+// All of it is described in the game's data — `soldiers/Common/Animations/
+// AnimationSystem3p.inc` (728 lines) and `ValueHolders.inc`. It is ordinary
+// `.con`, so we read it with our own interpreter:
 //
-//   animationSystem.createAnimation <шлях.baf>   [animationManager.looping 0]
-//   animationSystem.createBundle <ім'я>
-//     animationBundle.addAnimation <анімація>
+//   animationSystem.createAnimation <path.baf>   [animationManager.looping 0]
+//   animationSystem.createBundle <name>
+//     animationBundle.addAnimation <animation>
 //     animationBundle.fadeInTime / fadeOutTime / isLooping
-//   animationSystem.createTrigger <тип> <ім'я>
-//     animationTrigger.addChild <тригер>
-//     animationTrigger.addBundle <бандл>
-//     animationTrigger.valueHolder <діапазон>
-//   AnimationSystem.createValueHolder <ім'я>
+//   animationSystem.createTrigger <type> <name>
+//     animationTrigger.addChild <trigger>
+//     animationTrigger.addBundle <bundle>
+//     animationTrigger.valueHolder <range>
+//   AnimationSystem.createValueHolder <name>
 //     AnimationValueHolder.values <a> <b> <c>
 //
-// Тригери утворюють дерево з коренем `completeTree`. Як воно обходиться —
-// див. `docs/functions/animation-system.md`; коротко: звичайний тригер
-// питає дітей, потім додає свої бандли; `PoseTrigger` вибирає дитину за
-// позою; `MovementTrigger` вмикається, лише коли швидкість потрапляє в
-// діапазон його valueHolder.
+// The triggers form a tree rooted at `completeTree`. How it is walked is in
+// `docs/functions/animation-system.md`; in short: an ordinary trigger asks its
+// children and then adds its own bundles; a `PoseTrigger` picks a child by
+// pose; a `MovementTrigger` fires only when the speed falls inside its
+// valueHolder's range.
 #include <map>
 #include <optional>
 #include <string>
@@ -32,14 +32,14 @@
 
 namespace obf2::anim {
 
-// Пози йдуть у тому ж порядку, що й діти тригера `pose` у даних, і збігаються
-// з номерами поз у фізиці (`SoldierResponsePhysics::getSoldierHeight`).
+// The poses come in the same order as the children of the `pose` trigger in the
+// data, and match the pose numbers in the physics (`SoldierResponsePhysics::getSoldierHeight`).
 enum class Pose { Stand = 0, Crouch = 1, Prone = 2, Swim = 3 };
 
 struct Animation {
   std::string path;
   bool looping = true;
-  float length = 0.0f;    // 0 = з самого файлу
+  float length = 0.0f;    // 0 = from the file itself
   float fadeInTime = 0.0f;
 };
 
@@ -51,9 +51,9 @@ struct Bundle {
   bool looping = true;
 };
 
-// Діапазон значень, за яким вмикається MovementTrigger. Перші два числа —
-// межі (порядок може бути зворотним для від'ємних), третє рушій використовує
-// окремо, для швидкості програвання.
+// The value range a MovementTrigger fires on. The first two numbers are the
+// bounds (the order may be reversed for negative ones), and the engine uses the
+// third separately, for the playback speed.
 struct ValueHolder {
   std::string name;
   float low = 0.0f;
@@ -72,19 +72,19 @@ struct Trigger {
   float fadeInTime = 0.0f;
 };
 
-// Стан гравця, за яким вибираються анімації.
+// The player's state, by which the animations are chosen.
 struct State {
   Pose pose = Pose::Stand;
-  float speed = 0.0f;  // швидкість руху, м/с
+  float speed = 0.0f;  // movement speed, m/s
 };
 
 class System {
  public:
-  // Читає скрипт (і все, що він підключає) через інтерпретатор `.con`.
+  // Reads the script (and everything it includes) through the `.con` interpreter.
   static std::optional<System> load(FileSystem& files, const std::string& scriptPath,
                                     std::string* error = nullptr);
 
-  // Обхід дерева від кореня: які бандли грати в цьому стані.
+  // A walk of the tree from the root: which bundles to play in this state.
   std::vector<const Bundle*> select(const State& state) const;
 
   const std::map<std::string, Animation>& animations() const { return animations_; }
@@ -92,7 +92,7 @@ class System {
   const std::map<std::string, Trigger>& triggers() const { return triggers_; }
   const std::map<std::string, ValueHolder>& valueHolders() const { return valueHolders_; }
 
-  // Корені дерева — тригери, які нікому не діти.
+  // The tree's roots are the triggers that are nobody's child.
   std::vector<std::string> roots() const;
 
   void feed(const con::Command& command);
@@ -106,7 +106,7 @@ class System {
   std::map<std::string, Trigger> triggers_;
   std::map<std::string, ValueHolder> valueHolders_;
 
-  // Куди йдуть наступні властивості.
+  // Where the following properties go.
   std::string activeAnimation_;
   std::string activeBundle_;
   std::string activeTrigger_;

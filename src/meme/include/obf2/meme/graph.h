@@ -1,24 +1,24 @@
 #pragma once
-// Виконання графа `MemeFile` — тієї самої системи, якою рушій анімує HUD.
+// Execution of the `MemeFile` graph — the very system the engine animates the HUD with.
 //
-// Граф не «описує» анімацію, він її **робить**: щокадру системою йде
-// подія оновлення, вузли з умовами пропускають її далі або ні, а дії
-// рухають іменовані змінні. Саме через це кутові ділянки їдуть, а не
-// стрибають, і саме звідти беруться `BottomLeft_XPos`,
-// `BottomRight_alpha` та решта.
+// The graph does not "describe" the animation, it **performs** it: an update
+// event goes through the system every frame, nodes with conditions pass it on or
+// not, and actions move named variables. That is why the corner regions travel
+// rather than jump, and that is where `BottomLeft_XPos`,
+// `BottomRight_alpha` and the rest come from.
 //
-// Що з чого (усе з `MemeDll.dll`/`MemeBf.dll`, які експортують повні
-// символи C++):
+// What comes from where (all of it from `MemeDll.dll`/`MemeBf.dll`, which export
+// full C++ symbols):
 //
 //   `CullVariableActionNode::onEvent`  0x10004e99
-//       немає дії — нічого; є «Variable» і воно нуль — нічого;
-//       інакше виконати дію.
-//   `SetVariableSoftAction::onEvent`   0x10004d2c  рівномірно до цілі
-//   `SetVariableSineAction::onEvent`   0x10001050  те саме + гальмування
-//   `CullNode::iterateUpdate`          0x10004a57  хід показу, In/Out time
+//       no action — nothing; there is a "Variable" and it is zero — nothing;
+//       otherwise run the action.
+//   `SetVariableSoftAction::onEvent`   0x10004d2c  linearly towards the target
+//   `SetVariableSineAction::onEvent`   0x10001050  the same plus braking
+//   `CullNode::iterateUpdate`          0x10004a57  the show progress, In/Out time
 //
-// Подія оновлення має номер **0x16** — це видно з перевірки
-// `*(int *)param_4 != 0x16` на початку обох дій.
+// The update event has the number **0x16** — visible from the check
+// `*(int *)param_4 != 0x16` at the start of both actions.
 #include <map>
 #include <string>
 #include <string_view>
@@ -28,21 +28,21 @@
 
 namespace obf2::meme {
 
-// Крок дії `SetVariableSineAction::onEvent` (`MemeDll.dll`, 0x10001050):
+// The step of `SetVariableSineAction::onEvent` (`MemeDll.dll`, 0x10001050):
 //
-//   відстань = |ціль - значення|
-//   якщо відстань >= гальмування:  крок = швидкість * dt
-//   інакше:  крок = cos(1.57075 - (відстань/гальмування) * 1.57075)
-//                   * швидкість * dt
-//   значення йде до цілі на крок, але не далі за неї
+//   distance = |target - value|
+//   if distance >= braking:  step = speed * dt
+//   else:  step = cos(1.57075 - (distance/braking) * 1.57075)
+//                 * speed * dt
+//   the value moves towards the target by step, but no further than it
 //
-// `cos(pi/2 - x)` — це `sin(x)`, тобто біля цілі крок згасає синусоїдою.
-// З нульовим гальмуванням це рівно `SetVariableSoftAction::onEvent`
-// (0x10004d2c), тобто рівномірний рух.
+// `cos(pi/2 - x)` is `sin(x)`, so near the target the step decays as a sine.
+// With zero braking this is exactly `SetVariableSoftAction::onEvent`
+// (0x10004d2c), that is linear movement.
 void approachVariable(float& value, float target, float speed, float brakingDistance, float dt);
 
-// Змінні графа. Усе тримаємо числами: булеве в самому графі теж число,
-// `BoolData` читається одним байтом і порівнюється з нулем.
+// The graph's variables. Everything is kept as numbers: a boolean in the graph is
+// a number too, and `BoolData` is read as one byte and compared against zero.
 class Variables {
  public:
   float get(std::string_view name) const;
@@ -56,36 +56,36 @@ class Variables {
 
 class Graph {
  public:
-  // Прочитати файл і засіяти змінні початковими значеннями з нього.
+  // Read the file and seed the variables with the initial values from it.
   bool load(const std::vector<std::byte>& data, std::string* error = nullptr);
 
-  // Один такт: подія 0x16 з часом кадру в секундах.
+  // One tick: event 0x16 with the frame's time in seconds.
   void update(float dt);
 
   Variables& variables() { return variables_; }
   const Variables& variables() const { return variables_; }
   const File& file() const { return file_; }
 
-  // Обчислити вузол-дані за номером. -1 — нема чого рахувати, нуль.
+  // Evaluate a data node by index. -1 means there is nothing to compute, zero.
   float evaluate(int index) const;
 
-  // Скільки дій виконано за останній такт — для перевірок.
+  // How many actions ran on the last tick — for checks.
   int lastActions() const { return actions_; }
 
-  // Ділянка HUD, як її задає файл. `BfTransformNode` — це **рухома**
-  // ділянка: її X і Y — вузли-дані, тож X може бути прив'язаний до
-  // змінної. Її ж `Next node` — звичайний `TransformNode` із сталими
-  // числами, і це нерухомий двійник тієї самої ділянки.
+  // A HUD region as the file defines it. A `BfTransformNode` is the **moving**
+  // region: its X and Y are data nodes, so X can be bound to a variable. Its
+  // `Next node` is an ordinary `TransformNode` with constant numbers, and that
+  // is the static twin of the same region.
   //
-  // Для `Menu/Ingame` виходить рівно чотири ділянки, які ми доти
-  // тримали числами в коді:
+  // For `Menu/Ingame` that gives exactly four regions, which until now we kept
+  // as numbers in the code:
   //
   //   BottomLeftAnimate   X = BottomLeft_XPos,  Y = 563, 400x64
   //   BottomLeftStatic    X = -1,               Y = 563, 400x64
   //   BottomRightAnimate  X = BottomRight_XPos, Y = 497, 600x100
   //   BottomRightStatic   X = 401,              Y = 563, 400x64
   struct Layer {
-    std::string variable;  // до якої змінної прив'язано X рухомої
+    std::string variable;  // the variable the moving region's X is bound to
     float x = 0.0f;
     float y = 0.0f;
     float width = 0.0f;
@@ -103,7 +103,7 @@ class Graph {
   void walk(int index, float dt);
   void collectLayers(int index, std::vector<Layer>& out) const;
   void run(int action, float dt);
-  // Ім'я змінної, у яку пише дія: це вузол-дані з непорожнім іменем.
+  // The name of the variable an action writes into: a data node with a non-empty name.
   const Object* named(int index) const;
 
   File file_;

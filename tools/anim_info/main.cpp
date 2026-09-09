@@ -1,8 +1,8 @@
-// anim_info — система анімацій солдата: дерево тригерів і що грає у стані.
+// anim_info — the soldier animation system: the trigger tree and what plays in a state.
 //
-//   anim_info <modDir> <скрипт.inc> [поза] [швидкість]
+//   anim_info <modDir> <script.inc> [pose] [speed]
 //
-// поза: 0 стоїть, 1 присів, 2 лежить, 3 пливе.
+// pose: 0 standing, 1 crouched, 2 prone, 3 swimming.
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -11,7 +11,7 @@
 
 int main(int argc, char** argv) {
   if (argc < 3) {
-    std::fputs("usage: anim_info <modDir> <скрипт.inc> [поза] [швидкість]\n", stderr);
+    std::fputs("usage: anim_info <modDir> <script.inc> [pose] [speed]\n", stderr);
     return 2;
   }
 
@@ -24,17 +24,17 @@ int main(int argc, char** argv) {
   std::string error;
   const auto system = obf2::anim::System::load(files, argv[2], &error);
   if (!system) {
-    std::fprintf(stderr, "не прочитано: %s\n", error.c_str());
+    std::fprintf(stderr, "not read: %s\n", error.c_str());
     return 1;
   }
 
-  std::printf("анімацій %zu, бандлів %zu, тригерів %zu, діапазонів %zu\n",
+  std::printf("animations %zu, bundles %zu, triggers %zu, ranges %zu\n",
               system->animations().size(), system->bundles().size(), system->triggers().size(),
               system->valueHolders().size());
 
   if (argc <= 3) {
-    // Без стану просто показуємо дерево.
-    for (const std::string& root : system->roots()) std::printf("корінь: %s\n", root.c_str());
+    // With no state we simply show the tree.
+    for (const std::string& root : system->roots()) std::printf("root: %s\n", root.c_str());
     return 0;
   }
 
@@ -42,9 +42,9 @@ int main(int argc, char** argv) {
   state.pose = static_cast<obf2::anim::Pose>(std::atoi(argv[3]));
   state.speed = argc > 4 ? static_cast<float>(std::atof(argv[4])) : 0.0f;
 
-  std::printf("поза %d, швидкість %.2f -> бандли:\n", std::atoi(argv[3]), state.speed);
+  std::printf("pose %d, speed %.2f -> bundles:\n", std::atoi(argv[3]), state.speed);
   for (const obf2::anim::Bundle* bundle : system->select(state)) {
-    std::printf("  %-28s анімацій %zu", bundle->name.c_str(), bundle->animations.size());
+    std::printf("  %-28s animations %zu", bundle->name.c_str(), bundle->animations.size());
     if (!bundle->animations.empty()) {
       const std::string& first = bundle->animations.front();
       const std::size_t slash = first.find_last_of("/\\");

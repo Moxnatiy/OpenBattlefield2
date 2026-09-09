@@ -10,8 +10,8 @@ using namespace obf2;
 
 namespace {
 
-// Світ, який зазвичай приходить із рівня. Тут його робимо руками, щоб
-// тест не залежав від наявності гри на диску.
+// The world that normally comes from a level. Here we make it by hand so the test
+// does not depend on the game being on disk.
 level::Level makeLevel(std::size_t objectCount) {
   level::Level world;
   world.name = "testmap";
@@ -25,7 +25,7 @@ level::Level makeLevel(std::size_t objectCount) {
   return world;
 }
 
-// Проганяє обидві сторони, доки вони обмінюються пакетами.
+// Runs both sides while they exchange packets.
 void pump(server::GameServer& gameServer, server::GameClient& client, int steps = 8) {
   for (int i = 0; i < steps; ++i) {
     gameServer.tick(1.0f / 60.0f);
@@ -40,20 +40,20 @@ static void testLoopbackDeliversBothWays() {
   const std::byte payload[] = {std::byte{1}, std::byte{2}, std::byte{3}};
 
   CHECK(first->send(payload));
-  CHECK(!first->receive().has_value());  // собі нічого не приходить
+  CHECK(!first->receive().has_value());  // nothing arrives back to itself
 
   const auto got = second->receive();
   CHECK(got.has_value());
   if (got) CHECK_EQ(got->size(), std::size_t(3));
 
-  // Розрив бачать обидва кінці.
+  // Both ends see the break.
   first->close();
   CHECK(!first->connected());
   CHECK(!second->connected());
 }
 
 static void testFullHandshakeAndWorldTransfer() {
-  // Це і є одиночна гра: локальний сервер плюс клієнт через петлю.
+  // This is a single-player game: a local server plus a client through the loop.
   server::ServerSettings settings;
   settings.levelName = "Dalian_plant";
   settings.gameMode = "gpm_cq";
@@ -76,14 +76,14 @@ static void testFullHandshakeAndWorldTransfer() {
   CHECK_EQ(client.gameMode(), std::string("gpm_cq"));
   CHECK(client.playerId() != 0);
 
-  // Увесь світ доїхав: 50 статичних об'єктів плюс солдат, якого сервер
-  // створив під цього гравця.
+  // The whole world arrived: 50 static objects plus the soldier the server created
+  // for this player.
   CHECK_EQ(client.objects().size(), std::size_t(51));
   const auto first = client.objects().find(1);
   CHECK(first != client.objects().end());
   if (first != client.objects().end()) {
     CHECK_EQ(first->second.templateName, std::string("hangar_0"));
-    // Позиція йде стисненим вектором, тому звіряємо з точністю квантування.
+    // The position travels as a compressed vector, so we compare to the quantisation's precision.
     CHECK(std::abs(first->second.position.y - 100.0f) < 0.05f);
   }
 }
@@ -105,11 +105,11 @@ static void testServerNamesThePlayer() {
 }
 
 static void testWrongProtocolVersionIsDenied() {
-  // Клієнт зі старою версією не має потрапити у світ.
+  // A client with an old version must not get into the world.
   server::GameServer gameServer(server::ServerSettings{});
   auto [clientSide, serverSide] = net::LoopbackConnection::createPair();
 
-  // Надсилаємо запит руками з чужою версією.
+  // We send the request by hand with a foreign version.
   std::vector<std::byte> buffer(256);
   net::BitWriter writer(buffer);
   net::ConnectionRequest request;
@@ -137,7 +137,7 @@ static void testWrongProtocolVersionIsDenied() {
 }
 
 static void testWorldIsNotSentBeforeAcknowledge() {
-  // Сервер не має сипати об'єктами, поки клієнт не підтвердив під'єднання.
+  // The server must not pour out objects before the client has acknowledged the connection.
   server::GameServer gameServer(server::ServerSettings{});
   gameServer.loadWorld(makeLevel(10));
 
@@ -154,7 +154,7 @@ static void testWorldIsNotSentBeforeAcknowledge() {
   gameServer.tick(0.016f);
   gameServer.tick(0.016f);
 
-  // Прийшов рівно один пакет — прийняття, без жодного об'єкта.
+  // Exactly one packet arrived — the acceptance, without a single object.
   CHECK_EQ(clientSide->pending(), std::size_t(1));
 }
 
@@ -174,8 +174,8 @@ static void testDisconnectRemovesPlayer() {
 }
 
 static void testPlayerInputMovesSoldier() {
-  // Повний цикл: клієнт шле ввід, сервер рухає солдата фіксованим кроком,
-  // оновлення повертається клієнтові.
+  // The full cycle: the client sends input, the server moves the soldier at a fixed
+  // step, the update comes back to the client.
   server::ServerSettings settings;
   settings.walkSpeed = 4.0f;
   settings.tickRate = 30.0f;
@@ -189,7 +189,7 @@ static void testPlayerInputMovesSoldier() {
   pump(gameServer, client);
   CHECK(client.state() == server::ClientState::InWorld);
 
-  // Сервер створив солдата під гравця.
+  // The server created a soldier for the player.
   CHECK_EQ(gameServer.objects().size(), std::size_t(1));
   const std::uint32_t soldierId = gameServer.objects().front().id;
   const Vec3f start = gameServer.objects().front().position;
@@ -199,7 +199,7 @@ static void testPlayerInputMovesSoldier() {
   input.yaw = 0.0f;
   client.setInput(input);
 
-  // Рівно секунда рівними кроками.
+  // Exactly a second in equal steps.
   for (int i = 0; i < 30; ++i) {
     client.tick(1.0f / 30.0f);
     gameServer.tick(1.0f / 30.0f);
@@ -207,10 +207,10 @@ static void testPlayerInputMovesSoldier() {
 
   const Vec3f finish = gameServer.objects().front().position;
   const float travelled = length(finish - start);
-  // За секунду ходьби зі швидкістю 4 має бути близько чотирьох одиниць.
+  // A second of walking at speed 4 has to give about four units.
   CHECK(travelled > 3.0f && travelled < 5.0f);
 
-  // Клієнт побачив рух.
+  // The client saw the movement.
   const auto seen = client.objects().find(soldierId);
   CHECK(seen != client.objects().end());
   if (seen != client.objects().end()) CHECK(seen->second.moved);
@@ -245,7 +245,7 @@ static void testSprintIsFaster() {
 }
 
 static void testDiagonalIsNotFaster() {
-  // Класична помилка: рух по діагоналі виходить швидшим за рух прямо.
+  // The classic bug: moving diagonally comes out faster than moving straight.
   server::ServerSettings settings;
   settings.walkSpeed = 4.0f;
 
@@ -274,8 +274,8 @@ static void testDiagonalIsNotFaster() {
 }
 
 static void testFixedStepIsIndependentOfFrameRate() {
-  // Той самий ввід за ту саму секунду має дати ту саму відстань,
-  // хоч на 30 кадрах, хоч на 120.
+  // The same input over the same second has to give the same distance, whether at
+  // 30 frames or at 120.
   auto travelDistance = [](int frames) {
     server::ServerSettings settings;
     server::GameServer gameServer(settings);
@@ -303,7 +303,7 @@ static void testFixedStepIsIndependentOfFrameRate() {
 }
 
 static void testStaleInputIsIgnored() {
-  // Пакет зі старим номером не має відкидати гравця назад.
+  // A packet with a stale number must not throw the player back.
   server::GameServer gameServer(server::ServerSettings{});
   auto [clientSide, serverSide] = net::LoopbackConnection::createPair();
   gameServer.accept(std::move(serverSide));
@@ -318,7 +318,7 @@ static void testStaleInputIsIgnored() {
   std::vector<std::byte> buffer(256);
   net::BitWriter writer(buffer);
   net::writePlayerInput(writer, input);
-  // Клієнтський кінець уже переданий у GameClient, тому шлемо через нього.
+  // The client's end has already been handed to GameClient, so we send through it.
   client.setInput(input);
   for (int i = 0; i < 10; ++i) {
     client.tick(1.0f / 30.0f);
@@ -328,13 +328,13 @@ static void testStaleInputIsIgnored() {
   CHECK(afterMoving > 0.5f);
 }
 
-// Без вибору місця гравець не з'являється — так само, як у рушії, де
-// сервер спавнить рівно тих, у кого `Player::getSpawnGroup() > 0`.
+// Without choosing a point the player does not spawn — the same as in the engine,
+// where the server spawns exactly those whose `Player::getSpawnGroup() > 0`.
 static void testSpawnWaitsForChoice() {
   server::ServerSettings settings;
   settings.levelName = "TestLevel";
-  // Вимикаємо наш обхід для безголових запусків: перевіряємо саме шлях
-  // через екран появи.
+  // We turn off our workaround for headless runs: we check exactly the path through
+  // the spawn screen.
   settings.spawnOnJoin = false;
 
   server::GameServer gameServer(settings);
@@ -347,9 +347,9 @@ static void testSpawnWaitsForChoice() {
 
   CHECK_EQ(gameServer.players().size(), std::size_t(1));
   if (gameServer.players().empty()) return;
-  // Рукостискання пройшло, а солдата немає: місце ще не обране. Світ у
-  // цьому тесті порожній, тож і пакета стану поки нема чим наповнити —
-  // клієнт лишається в Accepted.
+  // The handshake went through but there is no soldier: no point has been chosen
+  // yet. The world in this test is empty, so there is nothing to fill a state packet
+  // with either — the client stays in Accepted.
   CHECK(gameServer.players().front().acknowledged);
   CHECK_EQ(gameServer.objects().size(), std::size_t(0));
   CHECK(!gameServer.players().front().alive);
@@ -359,14 +359,14 @@ static void testSpawnWaitsForChoice() {
   pump(gameServer, client);
 
   CHECK_EQ(gameServer.objects().size(), std::size_t(1));
-  // А тепер є що слати — і клієнт бачить світ.
+  // And now there is something to send — and the client sees the world.
   CHECK(client.state() == server::ClientState::InWorld);
   const server::Player& player = gameServer.players().front();
   CHECK(player.alive);
   CHECK_EQ(player.team, 2);
   CHECK_EQ(player.kit, 3);
 
-  // Невідомий гравець — відмова, і нічого не з'явилося.
+  // An unknown player is a refusal, and nothing appeared.
   CHECK(!gameServer.requestSpawn(playerId + 100, 1, 0, 0));
   CHECK_EQ(gameServer.objects().size(), std::size_t(1));
 }

@@ -1,18 +1,18 @@
 #pragma once
-// Прості тіла, яких немає у файлах гри.
+// Simple bodies that are not in the game's files.
 //
-// Потрібні там, де ми знаємо, **де** об'єкт, але ще не вміємо взяти його
-// справжню геометрію. Такий заповнювач чесніший за порожнє місце: видно,
-// що об'єкт є, і видно, що це не його справжній вигляд.
+// Needed where we know **where** an object is but cannot yet take its real
+// geometry. Such a placeholder is more honest than an empty space: it shows
+// the object is there, and shows this is not what it really looks like.
 #include <string>
 
 #include "obf2/mesh/bf2_mesh.h"
 
 namespace obf2::mesh {
 
-// Коробка з центром у середині основи (нуль на рівні ніг), розміром
-// size і одним матеріалом із заданою «текстурою». Ім'я виду `#RRGGBB`
-// малюється суцільним кольором — так само, як колір води.
+// A box centred in the middle of its base (zero at foot level), of the given
+// size and with one material carrying the given "texture". A name of the form
+// `#RRGGBB` is drawn as a solid colour — the same as the water's colour.
 RenderMesh buildBox(const Vec3& size, const std::string& map);
 
 }  // namespace obf2::mesh

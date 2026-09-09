@@ -1,115 +1,119 @@
-# Відкриті питання й рішення, які треба ухвалити
+# Open questions and decisions that have to be made
 
-Тут лежить те, що я **не вирішую сам**: місця, де можливі кілька шляхів і
-вибір змінює архітектуру. Дрібні технічні рішення приймаються на місці й
-описуються в коді або в `docs/`.
+This holds what I **do not decide alone**: places where several routes are
+possible and the choice changes the architecture. Small technical
+decisions are made on the spot and described in the code or in `docs/`.
 
-## Потребує рішення
+## Needs a decision
 
-*(порожньо — усі відкриті питання наразі закриті)*
+*(empty — every open question is currently closed)*
 
-## Прийняті рішення
+## Decisions taken
 
-- **Ліцензія — MIT.** Файл `LICENSE`. Сторонні компоненти в `third_party/`
-  лишаються під своїми (miniz — MIT, stb_image — public domain).
-  LGPL-код навмешу з редактора **не потрапляє до нашого дерева**: читаємо як
-  специфікацію формату, пишемо своє.
-- **Flash — реалізуємо через готове рішення, але терміновість низька.**
-  З'ясувалося, що ігровий інтерфейс (HUD, табло, екран появи) — це `.con`,
-  а не Flash; Flash лишається тільки в головному меню. Див.
-  `docs/research/06-server-and-hud.md`. Меню BF2 крутилося на
-  [gameswf](https://tulrich.com/geekstuff/gameswf.html) (public domain, C++,
-  для ігрових інтерфейсів) — це видно з шляхів у `SwiffPlayer_r.dll`. Отже
-  сумісність із 5 `.swf` меню гарантована конструктивно. Ціна: рендер
-  gameswf написаний під OpenGL, його треба перекласти на `obf2::gfx`.
-  Альтернатива Ruffle (Rust, MIT) відкладена: FFI і без гарантій щодо
-  саме цих файлів. Див. `docs/research/05-editor-and-tools.md`.
-- **Головне меню — на власному `hudBuilder`, не на Flash.** Меню описане в
-  `assets/menu/MainMenu.con` тими самими командами, що й ігровий інтерфейс:
-  вузли, підписи з лексикону BF2 (`MAINBUTTON_*`), кнопки з консольними
-  командами. Кнопка тримає текстовий рядок, який виконує
-  `Console::executeLine` — так само, як `setButtonNodeConCmd` в оригіналі.
-  Вибір рівня завершує сесію меню й заводить наступну вже у грі
-  (`runSession` у `src/app/main.cpp`). Коли з'явиться gameswf, оригінальні
-  `.swf` стануть альтернативним фронтендом до тієї ж консолі.
-- **Побайтова сумісність із оригінальними серверами — поки ні.** Формат
-  читаємо й розуміємо, але сумісності не обіцяємо. Можливо, повернемось.
-  Стенд для цього вже є: оригінальний виділений сервер піднімається в
-  контейнері (`tools/linuxded/`), з віддаленою консоллю й без PunkBuster.
-  **Рукостискання вже сумісне**: `openbf2 --connect` під'єднується до
-  оригінального сервера й тримає зв'язок (`docs/research/09-network-protocol.md`).
-  Лишився вміст пакетів даних.
-- **Майстер-сервер — поки лише прямі під'єднання.** GameSpy не відтворюємо,
-  до BF2Hub/OpenSpy не чіпляємось.
-- **PunkBuster не реалізуємо** і не вдаємо його наявність.
-- **SDL3 + SDL_GPU** замість OpenGL — `docs/research/01-render-backend.md`
-- **Bink не повторюємо** — логіка й порядок заставок 1:1, показ свій —
+- **The licence is MIT.** The `LICENSE` file. Third-party components in
+  `third_party/` keep their own (miniz — MIT, stb_image — public domain).
+  The editor's LGPL navmesh code **does not enter our tree**: we read it as
+  a specification of the format and write our own.
+- **Flash — done, the movie is played by Ruffle.** The in-game interface
+  (HUD, scoreboard, spawn screen) is `.con`, not Flash; Flash is left only
+  in the menu (`docs/research/06-server-and-hud.md`). We first bet on
+  gameswf (public domain, the very library the original plays it with),
+  but it would not run on arm64 —
+  `docs/research/10-gameswf-on-arm64.md`. We went with **Ruffle** (Rust,
+  MIT/Apache-2.0): it plays the same `mainMenu.swf` the game opens. The
+  price is Rust in the build and a C ABI to our C++ (`src/flash`).
+- **The main menu is the original `mainMenu.swf`.** Our own menu built on
+  `hudBuilder` existed and was removed: it never showed what is actually in
+  the game, and keeping two menus side by side turned out to be actively
+  harmful — a click past the movie ran the other menu's commands. Now
+  `openbf2` with no arguments opens the same movie the original does, and
+  the engine gives it what `SwiffPlayer.dll` gives it in the game: the
+  seventeen bridge objects, localisation, the profiles from `Documents`,
+  the map list from the `.desc` files
+  (docs/functions/menu-bridge.md, docs/research/11-ruffle-menu.md).
+- **Byte-for-byte compatibility with original servers — not yet.** We read
+  and understand the format, but we do not promise compatibility. We may
+  come back to it. The rig is already there: the original dedicated server
+  runs in a container (`tools/linuxded/`), with remote console and without
+  PunkBuster. **The handshake is already compatible**: `openbf2 --connect`
+  joins an original server and stays connected
+  (`docs/research/09-network-protocol.md`). What is left is the contents of
+  the data packets.
+- **Master server — direct connections only for now.** We do not reproduce
+  GameSpy and do not attach to BF2Hub/OpenSpy.
+- **We do not implement PunkBuster** and do not pretend it is there.
+- **SDL3 + SDL_GPU** instead of OpenGL — `docs/research/01-render-backend.md`
+- **We do not reproduce Bink** — the logic and the order of the intro
+  movies are 1:1, the playback is ours —
   `docs/research/03-startup-and-menu.md`
-- **Редакторська гілка `.con` рівня** замість скомпільованого
+- **The editor branch of a level's `.con`** instead of the compiled
   `terraindata.raw` — `docs/formats/level.md`
-- **Windows-збірка відкладена**, база лишається портованою — `CLAUDE.md`
+- **The Windows build is deferred**, the base stays portable — `CLAUDE.md`
 
-## Знайдено, але ще не використано
+## Found, but not used yet
 
-- **Лінукс-сервер 1.5 із повними символами й DWARF** —
-  `Game Files/OtherFiles/linuxded/bin/ia-32/bf2`, імпортований у Ghidra.
-  68 921 символ. Головний інструмент для netcode; поки взято лише API
-  BitStream. Див. `docs/research/04-netcode.md`.
-- **Вихідний код генератора навмешу** (LGPL, 121 файл) у
-  `bf2editor_and_tools/NavMesh/Navmesh_SDK/` — документує формати
-  `.qti`, `.cls`, `.vbf` з `GTSData/` рівнів.
-- **`bf2editor/Help/`** — `ObjectEditor_Help.xls`, `UserGuide.doc`,
-  теки `Workshop` і `Tutorial`. Розібрано лише `CommandDescriptions.dat`
-  (546 команд).
-- **`maya/`** (49 МБ) — офіційні експортери й MEL-скрипти конвеєра мешів.
-- **Таблиці компресії векторів** у секції даних ELF
-  (`m_compressionVectorBitTable*`) — читаються напряму, ще не витягнуті.
+- **The 1.5 Linux server with full symbols and DWARF** —
+  `Game Files/OtherFiles/linuxded/bin/ia-32/bf2`, imported into Ghidra.
+  68 921 symbols. The main instrument for netcode; so far only BitStream's
+  API has been taken from it. See `docs/research/04-netcode.md`.
+- **The navmesh generator's source code** (LGPL, 121 files) in
+  `bf2editor_and_tools/NavMesh/Navmesh_SDK/` — it documents the `.qti`,
+  `.cls` and `.vbf` formats from the levels' `GTSData/`.
+- **`bf2editor/Help/`** — `ObjectEditor_Help.xls`, `UserGuide.doc`, the
+  `Workshop` and `Tutorial` directories. Only `CommandDescriptions.dat` has
+  been taken apart (546 commands).
+- **`maya/`** (49 MB) — the official exporters and MEL scripts of the mesh
+  pipeline.
+- **The vector compression tables** in the ELF's data section
+  (`m_compressionVectorBitTable*`) — readable directly, not extracted yet.
 
-## Технічний борг
+## Technical debt
 
-- ~~Немає відсікання невидимого~~ — зроблено: піраміда видимості відсікає
-  ~60% примірників на рівні.
-- ~~Немає лайтмап терену~~ — зроблено: запечене освітлення множиться на
-  TerrainSunColor/TerrainSkyColor зі Sky.con; туман теж із даних рівня.
-- **Фрагментні uniform-буфери в SDL_GPU до шейдера не доходять** (читаються
-  чужі дані). Обійшли: сталі кадру їдуть вершинним uniform і далі varyings.
-  Варто розібратися — це або наша помилка в налаштуванні пайплайна, або
-  особливість Metal-бекенда.
-- LOD мешів не перемикається: завжди береться lod 0. Дані для решти рівнів
-  у файлах є (3-4 на меш).
-- Звук не реалізовано: 37 команд `Sound.con` (`objecttemplate.soundFilename`,
-  `sound.masterVolume`) лишаються без обробника.
-- Меню не інтерактивне: список карт малюється, але вибрати карту мишею
-  не можна — немає обробки вводу поверх `ControlMap`.
-- HUD розбирається, але ще не малюється: 1615 вузлів у дереві. Команд без
-  обробника лишилося 260 із 1574 (покриття 83%) — це вузькоспеціалізовані
-  вузли на кшталт `setObjectMarkerNodeLockOnType`.
-- Рослинність (`Overgrowth/`) і ambient-об'єкти не завантажуються: дерева
-  на рівні є лише ті, що стоять у `StaticObjects.con`.
-- ~~Сервер лише роздає стан світу~~ — зроблено: ввід, фіксований тік 30 Гц,
-  рух солдата, розсилка рухомих об'єктів, згладжування на клієнті.
-- Немає передбачення руху на клієнті (client-side prediction): на високому
-  пінгу керування відчуватиметься млявим.
-- Немає UDP-каналу: працює лише петля в пам'яті. Абстракція `net::Connection`
-  для цього вже готова.
-- ~~Немає зіткнень~~ — зроблено: `.collisionmesh` читається (1447 з 1450
-  файлів гри), шар солдата переводиться у світові координати й лягає в
-  сітку 8 м. На Dalian Plant це 472 об'єкти й 52 587 трикутників. Крізь
-  стіни більше не пройти.
-- Зіткнення сферою, а не капсулою: у вузьких дверях можна застрягти.
-- 435 об'єктів рівня не мають `collisionMesh` у шаблоні — крізь них
-  проходимо (це переважно рослинність і декор).
-- **Базова швидкість солдата в BF2 задана анімацією**, а не числом:
-  `AnimationSystem3p.inc` рухає його разом із програванням кліпу. Доки
-  скелетної анімації немає, швидкість береться з налаштувань сервера — це
-  єдине місце, де ми свідомо відходимо від оригіналу.
-- Логіка режиму зроблена частково: контрольні точки захоплюються, поява
-  йде на точку своєї команди. Немає квитків, команд гравців, спавну
-  техніки зі спавнерів (27 їх на Dalian Plant уже прочитано), смерті.
-- Команд `.con` без обробника: **378 унікальних, 9.1% викликів**. Перелік
-  із прикладами аргументів дає `tools/command_audit`.
-- **Скелетна анімація не реалізована**: `.ske` (скелет) і `.baf` (анімація)
-  ще не читаються, тож солдати й техніка нерухомі всередині.
-- Тривалість заставок узята умовною: Bink не декодуємо, справжніх
-  тривалостей не знаємо.
-- `stb_image` зібрано лише з PNG — якщо знадобиться JPEG, вмикати окремо.
+- ~~No culling~~ — done: the view frustum culls ~60 % of the level's
+  instances.
+- ~~No terrain light maps~~ — done: the baked lighting is multiplied by
+  TerrainSunColor/TerrainSkyColor from Sky.con; the fog comes from the
+  level's data too.
+- **Fragment uniform buffers in SDL_GPU never reach the shader** (other
+  data is read instead). Worked around: per-frame constants travel through
+  a vertex uniform and then varyings. Worth getting to the bottom of —
+  either our pipeline setup is wrong or it is a quirk of the Metal
+  backend.
+- Mesh LODs do not switch: lod 0 is always taken. The data for the other
+  levels is in the files (3-4 per mesh).
+- Sound is not implemented: 37 `Sound.con` commands
+  (`objecttemplate.soundFilename`, `sound.masterVolume`) have no handler.
+- The vegetation (`Overgrowth/`) and ambient objects are not loaded: the
+  only trees on a level are the ones placed in `StaticObjects.con`.
+- ~~The server only broadcasts world state~~ — done: input, a fixed 30 Hz
+  tick, soldier movement, broadcasting moving objects, smoothing on the
+  client.
+- No client-side prediction: on a high ping the controls will feel sluggish.
+- No UDP channel: only the in-memory loop works. The `net::Connection`
+  abstraction for it is ready.
+- ~~No collision~~ — done: `.collisionmesh` reads (1447 of the game's 1450
+  files), the soldier layer is transformed into world coordinates and put
+  into an 8 m grid. On Dalian Plant that is 472 objects and 52 587
+  triangles. Walls can no longer be walked through.
+- Collision uses a sphere rather than a capsule: it is possible to get
+  stuck in narrow doorways.
+- 435 level objects have no `collisionMesh` in their template — we walk
+  through them (mostly vegetation and decoration).
+- **The soldier's base speed in BF2 is set by animation**, not by a
+  number: `AnimationSystem3p.inc` moves him along with the clip's
+  playback. Until skeletal animation exists, the speed comes from the
+  server's settings — the one place where we knowingly depart from the
+  original.
+- The game mode's logic is partly done: control points are captured and
+  spawning goes to your own team's point. There are no tickets, no player
+  teams, no vehicle spawning from the spawners (27 of them on Dalian Plant
+  are already read), no death.
+- `.con` commands without a handler: **378 unique, 9.1 % of calls**.
+  `tools/command_audit` lists them with example arguments.
+- **Skeletal animation is not implemented**: `.ske` (skeleton) and `.baf`
+  (animation) are not read yet, so soldiers and vehicles are motionless
+  inside.
+- The intro movies' durations are nominal: we do not decode Bink and do not
+  know the real ones.
+- `stb_image` is built with PNG only — enable JPEG separately if it is ever
+  needed.

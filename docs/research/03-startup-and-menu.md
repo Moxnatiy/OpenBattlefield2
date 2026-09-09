@@ -1,75 +1,95 @@
-# Точка входу: запуск → заставки → меню
+# The entry point: start-up → intro movies → menu
 
-Статус: **перший зріз готовий** — `src/engine`. `openbf2` без аргументів
-проходить стартовий ланцюжок так само, як гра, і виходить у меню зі
-справжнім тлом із ассетів BF2.
+Status: **the first slice is done** — `src/engine`. `openbf2` with no
+arguments goes through the start-up chain the same way the game does and
+ends up in the menu with the real background from BF2's assets.
 
-## Що робить гра на старті
+## What the game does at start-up
 
-Порядок відновлено з даних і з таблиці рядків `BF2.exe`:
+The order was recovered from the data and from `BF2.exe`'s string table:
 
-1. Читає налаштування — `Settings/VideoDefault.con`, `Settings/Video.con`,
-   `Settings/GeneralOptions.con` (який робить `run Profiles/<профіль>/GeneralOptions.con`),
-   `Settings/Sound.con`, `Settings/Controls.con`.
-2. Програє заставки з `Movies/`: `EA.bik`, `Dice.bik`, `Legal.bik`, `Intro.bik`.
-   Показ вимикається через `GeneralSettings.setViewIntroMovie 0`.
-3. Показує головне меню.
+1. Reads the settings — `Settings/VideoDefault.con`, `Settings/Video.con`,
+   `Settings/GeneralOptions.con` (which does
+   `run Profiles/<profile>/GeneralOptions.con`), `Settings/Sound.con`,
+   `Settings/Controls.con`.
+2. Plays the intro movies from `Movies/`: `EA.bik`, `Dice.bik`,
+   `Legal.bik`, `Intro.bik`. Playback is switched off with
+   `GeneralSettings.setViewIntroMovie 0`.
+3. Shows the main menu.
 
-Усе це — звичайні `.con`, які проходять через **консоль**: у Refractor 2 вона
-єдина точка входу для будь-якої команди, чи то з файлу, чи набраної гравцем
-(`IO/Console/Console.cpp` у структурі вихідників).
+All of it is ordinary `.con` going through **the console**: in Refractor 2
+that is the single entry point for any command, whether from a file or
+typed by the player (`IO/Console/Console.cpp` in the source layout).
 
-## Дві технології, які ми свідомо не повторюємо
+## Two technologies we deliberately do not reproduce
 
-**Заставки — це Bink** (`binkw32.dll` поруч із грою; саме `Intro.bik` важить
-132 МБ). **Меню — це Macromedia Flash**, який рушій крутить власним
-програвачем: у таблиці рядків видно `dice.hfe.geom.FSMoviePlayer`, а ассети
-лежать у `menu/external/flashmenu/`.
+**The intro movies are Bink** (`binkw32.dll` next to the game; `Intro.bik`
+alone is 132 MB). **The menu is Macromedia Flash**, which the engine plays
+with its own player: the string table shows
+`dice.hfe.geom.FSMoviePlayer`, and the assets live in
+`menu/external/flashmenu/`.
 
-Відтворювати ні Bink, ні Flash сенсу немає — це велика робота заради
-технологій 2005 року, а мета порту не в цьому. Тому:
+Reproducing either from scratch makes no sense — it is a lot of work for
+2005 technology, and that is not the point of the port. Hence:
 
-| Що | Логіка | Технологія |
+> **A caveat, September 2026.** The second half of that statement no
+> longer holds. The Flash here is not "some Flash" but **gameswf** — a
+> public-domain library, and it is exactly what DICE put into
+> `External\gameswf\SwiffPlayer\`. So the "lot of work" is already done
+> and sits under a licence that suits us
+> (docs/research/00-prior-art.md). In the end we went with Ruffle
+> (docs/research/11-ruffle-menu.md); the decision below stands as a
+> choice, not as a dead end.
+
+| What | Logic | Technology |
 |---|---|---|
-| Налаштування | 1:1, ті самі імена команд і файлів | наша |
-| Стани й переходи | 1:1 (Boot → Intro → MainMenu → …) | наша |
-| Заставки | порядок і сам факт показу зберігаємо | Bink не декодуємо |
-| Меню | структура й дані з `.con` гри | замість Flash — свій інтерфейс |
+| Settings | 1:1, the same command and file names | ours |
+| States and transitions | 1:1 (Boot → Intro → MainMenu → …) | ours |
+| Intro movies | the order and the fact of playing are kept | Bink is not decoded |
+| Menu | the original `mainMenu.swf` | Flash through Ruffle (11-ruffle-menu.md) |
 
-Імена команд налаштувань — той випадок, де відхилятися **не можна взагалі**:
-файли пише сам користувач, і вони мають лишатися сумісними з оригіналом.
-Тло меню беремо з `menu/external/flashmenu/images/background/background_2.png` —
-ассети Flash-меню це звичайні PNG, тому знадобився й декодер PNG
-(`third_party/stb`), тоді як ігрові текстури лишаються DDS.
+The settings command names are the one case where deviating is **not
+allowed at all**: the user writes those files, and they have to stay
+compatible with the original.
 
-## Головна метрика порту
+The menu background is taken from
+`menu/external/flashmenu/images/background/background_2.png`: the engine
+draws it and the movie is laid over it with a transparent stage — there is
+not a single reference to `images/background/` inside `mainMenu.swf`.
 
-Консоль рахує команди без обробника — і це найчесніший показник готовності:
+Careful with extensions: most "png" files in the game are in fact DDS
+(details in 11-ruffle-menu.md), so the PNG decoder (`third_party/stb`) is
+needed but on its own does not even cover the menu's assets.
+
+## The port's main metric
+
+The console counts commands with no handler — the most honest measure of
+readiness:
 
 ```
-консоль: обробників 30, виконано команд 11, невідомих 314
-  без обробника: chat.setchatmessagesize, chat.setkillmessagesize, ...
+console: handlers 30, commands executed 11, unknown 314
+  no handler: chat.setchatmessagesize, chat.setkillmessagesize, ...
 ```
 
-314 невідомих команд лише зі стартових файлів — це не помилка, а **список
-робіт у чистому вигляді**. Разом із витягнутим із бінаря переліком
-[1735 команд рушія](../reference/con-commands-from-exe.txt) він показує, де
-саме порт зараз порожній.
+314 unknown commands from the start-up files alone is not an error but **a
+work list in its purest form**. Together with the
+[1735 engine commands](../reference/con-commands-from-exe.txt) pulled out
+of the binary it shows exactly where the port is currently empty.
 
-## Перевірка
+## Checking
 
 ```bash
-./build/macos-arm64-debug/src/app/openbf2              # запуск → заставки → меню
+./build/macos-arm64-debug/src/app/openbf2              # start-up → intro → menu
 ./build/macos-arm64-debug/src/app/openbf2 --level Dalian_plant
 ```
 
-Пробіл або Enter пропускають заставку, Esc виходить.
+Space or Enter skips an intro movie, Esc quits.
 
-## Далі по цій лінії
+## Next along this line
 
-- Список рівнів у меню: `mods/bf2/Settings/maplist.con` і `Levels/*/Info/*.desc`
-  вже читаються нашим інтерпретатором.
-- Локалізація: `ExcelLexicon.cpp` у структурі вихідників, дані в `Localization/`.
-  Без неї меню лишається без підписів.
-- Шрифти: `Menu/GameMenu/DifFont.cpp` — власний формат BF2, потрібен для
-  будь-якого тексту на екрані.
+- The map list in the menu: `mods/bf2/Settings/maplist.con` and
+  `Levels/*/Info/*.desc` are already read by our interpreter.
+- Localisation: `ExcelLexicon.cpp` in the source layout, data in
+  `Localization/`. Without it the menu has no captions.
+- Fonts: `Menu/GameMenu/DifFont.cpp` — BF2's own format, needed for any
+  text on screen.

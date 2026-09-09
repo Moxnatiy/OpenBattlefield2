@@ -1,20 +1,22 @@
-# Netcode: перший зріз
+# Netcode: the first slice
 
-Статус: **BitStream реалізовано** — `src/net`. Протокол розібрано на рівні
-примітивів і заголовків; логіка з'єднання ще попереду.
+Status: **BitStream implemented** — `src/net`. The protocol is taken apart
+at the level of primitives and headers; the connection logic is still
+ahead.
 
-## Головна знахідка: лінукс-сервер має символи
+## The main find: the Linux server has symbols
 
-`bf2-linuxded-1.5.3153.0-installer.sh` розпаковується без запуску (це
-makeself-архів; корисне навантаження починається після 375-го рядка). Усередині:
+`bf2-linuxded-1.5.3153.0-installer.sh` unpacks without being run (it is a
+makeself archive; the payload starts after line 375). Inside:
 
 ```
-bin/ia-32/bf2    16 МБ   ELF 32-bit, with debug_info, not stripped
-bin/amd-64/bf2   18 МБ   ELF 64-bit, with debug_info, not stripped
+bin/ia-32/bf2    16 MB   ELF 32-bit, with debug_info, not stripped
+bin/amd-64/bf2   18 MB   ELF 64-bit, with debug_info, not stripped
 ```
 
-**68 921 символ, 16 830 функцій, повний DWARF** — і та сама версія 1.5, що й
-`BF2.exe`. Це незрівнянно краще за реверс Windows-бінаря без символів:
+**68 921 symbols, 16 830 functions, full DWARF** — and the same version
+1.5 as `BF2.exe`. That is incomparably better than reversing a Windows
+binary without symbols:
 
 ```
 dice::hfe::io::BitStream::writeUnsigned(unsigned int, unsigned int, unsigned int)
@@ -24,54 +26,56 @@ dice::hfe::io::PacketBuffer::pushBack(dice::hfe::io::Packet&)
 dice::hfe::io::NetServer::getServerAddress() const
 ```
 
-Бінар імпортовано в Ghidra (`ghidra_projects/OpenBF2`, програма `bf2`), DWARF
-дає не лише імена, а й типи та розкладку структур.
+The binary was imported into Ghidra (`ghidra_projects/OpenBF2`, program
+`bf2`); DWARF gives not only names but types and structure layouts.
 
-**Висновок:** усю подальшу роботу над netcode вести на лінукс-сервері, а
-`BF2.exe` лишити для звірки клієнтської частини.
+**Conclusion:** do all further netcode work on the Linux server and keep
+`BF2.exe` for checking the client side.
 
-## Що вміє BitStream в оригіналі
+## What BitStream can do in the original
 
-Повний перелік методів із символів:
+The full method list from the symbols:
 
-| Група | Методи |
+| Group | Methods |
 |---|---|
-| Базове | `writeBits`, `readBits`, `writeUnsigned`, `writeSigned`, `skipBits` |
-| Вектори | `write/readCompressedVector`, `...Vector2`, `...HighCompressedVector` |
-| Нормалі | `write/readNormalVector`, `shrinkNormalVector` |
-| Кватерніони | `write/readUnitQuaternion`, `...3Comp` |
-| Стан | `setCompressionVector`, `resetCompressionVector`, `m_relativeCompressionEnabled` |
+| Basics | `writeBits`, `readBits`, `writeUnsigned`, `writeSigned`, `skipBits` |
+| Vectors | `write/readCompressedVector`, `...Vector2`, `...HighCompressedVector` |
+| Normals | `write/readNormalVector`, `shrinkNormalVector` |
+| Quaternions | `write/readUnitQuaternion`, `...3Comp` |
+| State | `setCompressionVector`, `resetCompressionVector`, `m_relativeCompressionEnabled` |
 
-Три статичні таблиці — `m_compressionVectorBitTable`,
-`m_compressionVectorBitTable2`, `m_highCompressionVectorBitTable` — задають,
-скільки біт іде на компоненту вектора. Їх значення лежать у секції даних
-і читаються напряму, без декомпіляції.
+Three static tables — `m_compressionVectorBitTable`,
+`m_compressionVectorBitTable2`, `m_highCompressionVectorBitTable` — say how
+many bits go to a vector component. Their values sit in the data section
+and can be read directly, without decompilation.
 
-Тобто позиції передаються **відносно опорного вектора** зі змінною
-точністю, а обертання — трикомпонентними кватерніонами. Це і є причина,
-чому трафік BF2 такий щільний.
+So positions are sent **relative to a reference vector** at variable
+precision, and rotations as three-component quaternions. That is why BF2's
+traffic is so dense.
 
-## Що вже зроблено
+## What is already done
 
-`obf2::net::BitStream` реалізує базовий рівень: `writeBits`/`readBits`,
-рядки, службові заголовки. Розкладка бітів перевірена тестом і збігається
-з [Refractor-2-BitStream-Emulator](https://github.com/matthias-hoste/Refractor-2-BitStream-Emulator)
-(робоче рукостискання з реальним сервером, C#):
+`obf2::net::BitStream` implements the base level: `writeBits`/`readBits`,
+strings, service headers. The bit layout is covered by a test and matches
+[Refractor-2-BitStream-Emulator](https://github.com/matthias-hoste/Refractor-2-BitStream-Emulator)
+(a working handshake with a real server, C#):
 
-**У кожному байті молодші біти йдуть першими.** Запис `0b101` у трьох бітах
-дає байт `0x05`, а не `0xA0`. Якщо переплутати — протокол розсиплеться на
-першому ж пакеті, тому це найважливіший тест у наборі.
+**Within each byte the low bits come first.** Writing `0b101` into three
+bits gives the byte `0x05`, not `0xA0`. Get that wrong and the protocol
+falls apart on the very first packet, which makes it the most important
+test in the set.
 
-Службові заголовки:
+The service headers:
 
 ```
-основний:    4 біти тип + 8 біт підтип
-розширений:  6 біт тип + 6 біт id + 32 біти порядковий номер
+main:      4 bits type + 8 bits subtype
+extended:  6 bits type + 6 bits id + 32 bits sequence number
 ```
 
-Типи пакетів (з того ж проєкту, підтверджені роботою з живим сервером):
+Packet types (from the same project, confirmed by working with a live
+server):
 
-| Код | Пакет |
+| Code | Packet |
 |---:|---|
 | 1 | ConnectionRequest |
 | 2 | ConnectionAccept |
@@ -82,12 +86,13 @@ dice::hfe::io::NetServer::getServerAddress() const
 | 8 | PingResponse |
 | 15 | Data |
 
-На відміну від оригіналу, наш читач **перевіряє межі**: пакет приходить
-з мережі, і вихід за буфер тут неприпустимий. Тести це покривають окремо.
+Unlike the original, our reader **checks bounds**: a packet comes off the
+network and running past the buffer is not acceptable here. The tests
+cover that separately.
 
-## Реплікація частково лежить у відкритих даних
+## Replication partly lives in open data
 
-`Common/Networkables.con` описує, як саме об'єкти синхронізуються:
+`Common/Networkables.con` describes how objects are synchronised:
 
 ```
 NetworkableInfo.createNewInfo HandFireArmsInfo
@@ -99,14 +104,15 @@ NetworkableInfo.setPredictionMode PMLinear
 NetworkableInfo.setBasePriority c_NIGhostAlways
 ```
 
-Тобто режим передбачення (`PMNone`, `PMLinear`), пріоритет і сталі
-мережеві id задані **даними**, а не кодом. Це той самий підхід, що й з
-рівнями: частину протоколу можна відновити без жодного реверсу.
+So the prediction mode (`PMNone`, `PMLinear`), the priority and the fixed
+network ids are given by **data**, not by code. The same approach as with
+levels: part of the protocol can be recovered without any reversing.
 
-## Далі
+## Next
 
-1. Компресія векторів і кватерніонів — таблиці бітів читаються з даних ELF.
-2. Рукостискання: ConnectionRequest → Accept → Acknowledge.
-3. `NetworkableInfo` як реєстр реплікації поверх `ObjectTemplate`.
-4. Сумісність із оригінальними серверами — **рішення не ухвалене**, див.
+1. Vector and quaternion compression — the bit tables can be read from the
+   ELF's data.
+2. The handshake: ConnectionRequest → Accept → Acknowledge.
+3. `NetworkableInfo` as a replication registry on top of `ObjectTemplate`.
+4. Compatibility with original servers — **not decided**, see
    `docs/TODO.md`.

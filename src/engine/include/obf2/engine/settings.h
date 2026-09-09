@@ -1,12 +1,12 @@
 #pragma once
-// Налаштування гри.
+// The game's settings.
 //
-// Імена команд узяті 1:1 з оригіналу — і з файлів гри (`Settings/*.con`,
-// `Settings/Profiles/<профіль>/*.con`), і з таблиці рядків BF2.exe. Це той
-// випадок, коли відхилятися не можна взагалі: файли налаштувань пише сам
-// користувач, і вони мають лишатися сумісними.
+// The command names are taken 1:1 from the original — both from the game's files
+// (`Settings/*.con`, `Settings/Profiles/<profile>/*.con`) and from BF2.exe's
+// string table. This is the case where departing is not allowed at all: the
+// settings files are written by the user, and they have to stay compatible.
 //
-// Значення за замовчуванням — ті, що в стоковому BF2.
+// The default values are the ones in a stock BF2.
 #include <string>
 
 #include "obf2/engine/console.h"
@@ -34,10 +34,10 @@ struct GeneralSettings {
   std::string playerName;
   bool viewIntroMovie = true;   // GeneralSettings.setViewIntroMovie
   int connectionType = 2;       // game.setConnection
-  // Прозорість HUD і мінікарти. У грі це байт 0..255, а вузли HUD
-  // дістають його вже часткою: BF2.exe множить обидва поля на 1/255
-  // (0x8a4a64) і кладе у змінні MenuBackgroundAlpha та MenuMapAlpha
-  // (див. 0x4b68d3 і 0x4b6907). Типове значення профілю — 204.
+  // The HUD's and the minimap's alpha. In the game it is a byte 0..255, while
+  // the HUD's nodes receive it as a fraction: BF2.exe multiplies both fields by
+  // 1/255 (0x8a4a64) and puts them into the variables MenuBackgroundAlpha and
+  // MenuMapAlpha (see 0x4b68d3 and 0x4b6907). The profile's default is 204.
   int hudTransparency = 204;      // GeneralSettings.setHUDTransparency
   int minimapTransparency = 204;  // GeneralSettings.setMinimapTransparency
   bool staticMinimap = true;
@@ -53,7 +53,7 @@ struct GeneralSettings {
   int defaultPort = 0;
 };
 
-// Розміри повідомлень у чаті — окремий блок команд `chat.*`.
+// The chat messages' sizes — a separate block of `chat.*` commands.
 struct ChatSettings {
   int chatMessageSize = 4;
   int gameInfoMessageSize = 2;
@@ -78,8 +78,8 @@ struct Settings {
   AudioSettings audio;
   ChatSettings chat;
 
-  // Реєструє обробники в консолі. Все, що прочитається з .con, потрапить
-  // сюди; решта осяде в списку невідомих команд.
+  // Registers the handlers in the console. Everything that reads out of a .con
+  // lands here; the rest settles in the list of unknown commands.
   void bind(Console& console);
 };
 

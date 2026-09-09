@@ -12,15 +12,15 @@
 
 namespace obf2::gfx {
 
-// Геометрія, завантажена у відеопам'ять.
+// Geometry uploaded into video memory.
 struct GpuMesh {
-  // Один виклик малювання: діапазон індексів плюс його текстура.
+  // One draw call: a range of indices plus its texture.
   struct Range {
     std::uint32_t indexStart = 0;
     std::uint32_t indexCount = 0;
-    SDL_GPUTexture* texture = nullptr;   // базовий колір; nullptr -> заглушка
-    SDL_GPUTexture* lightmap = nullptr;  // запечене освітлення; nullptr -> біла
-    SDL_GPUTexture* detail = nullptr;    // дрібна структура, тайлиться
+    SDL_GPUTexture* texture = nullptr;   // base colour; nullptr -> placeholder
+    SDL_GPUTexture* lightmap = nullptr;  // baked lighting; nullptr -> white
+    SDL_GPUTexture* detail = nullptr;    // fine structure, tiled
   };
 
   SDL_GPUBuffer* vertices = nullptr;
@@ -28,21 +28,21 @@ struct GpuMesh {
   std::vector<Range> ranges;
   std::vector<SDL_GPUTexture*> ownedTextures;
 
-  // Обмежувальна сфера в локальних координатах меша — для відсікання
-  // невидимого. Сфера, а не паралелепіпед: перевірка вчетверо дешевша,
-  // а зайвих об'єктів пропускає одиниці.
+  // The bounding sphere in the mesh's local coordinates — for culling what is
+  // not visible. A sphere rather than a box: the test is four times cheaper and
+  // it lets only a handful of extra objects through.
   Vec3f boundsCenter;
   float boundsRadius = 0.0f;
 };
 
-// Рендер мешів з базовою текстурою. Матеріали BF2 мають до чотирьох слотів
-// (`_c` базовий колір, `_de` детейл, `_deb` нормаль детейлу, `_di`/`_cr`
-// бруд і тріщини) — тут використовується лише нульовий; решта чекає на
-// повноцінний матеріальний конвеєр.
+// Mesh rendering with a base texture. BF2's materials have up to four slots
+// (`_c` base colour, `_de` detail, `_deb` detail normal, `_di`/`_cr` dirt and
+// cracks) — only the zeroth is used here; the rest await a proper material
+// pipeline.
 class MeshRenderer {
  public:
-  // Як знайти й прочитати текстуру за іменем із матеріалу. Зроблено
-  // колбеком, щоб gfx нічого не знав про VFS та архіви гри.
+  // How to find and read a texture by the name in a material. Made a callback
+  // so that gfx knows nothing about the VFS and the game's archives.
   using TextureResolver =
       std::function<std::optional<texture::Texture>(const std::string& mapName)>;
 
@@ -56,23 +56,23 @@ class MeshRenderer {
                                 std::string* error = nullptr);
   void release(GpuMesh& gpuMesh);
 
-  // Повний прохід: очищення кольору й глибини плюс малювання всіх діапазонів.
+  // A full pass: clear the colour and the depth, then draw every range.
   void render(const Frame& frame, const GpuMesh& gpuMesh, const Mat4& modelViewProjection,
               Color clearColor);
 
-  // Один меш, поставлений у світ власною матрицею. Однакова геометрія
-  // (а на рівні це сотні однакових будинків) вантажиться раз і малюється
-  // стільки разів, скільки її розставили.
+  // One mesh placed into the world by its own matrix. Identical geometry (and on
+  // a level that is hundreds of identical buildings) is uploaded once and drawn
+  // as many times as it was placed.
   struct DrawItem {
     const GpuMesh* mesh = nullptr;
     Mat4 transform;
-    // Відтінок накладу. У HUD це `setNodeColor`: гра множить ним текстуру
-    // вузла, і без нього жовті написи, підсвітка вкладок та кольорові
-    // смуги виходять просто білими.
+    // The overlay's tint. In the HUD this is `setNodeColor`: the game multiplies
+    // a node's texture by it, and without it the yellow captions, the tabs'
+    // highlight and the coloured bars all come out plain white.
     float tint[4] = {1.0f, 1.0f, 1.0f, 1.0f};
   };
 
-  // Туман беремо з даних рівня (Sky.con). fogEnd == 0 вимикає його.
+  // The fog comes from the level's data (Sky.con). fogEnd == 0 disables it.
   struct Fog {
     Color color;
     float start = 0.0f;
@@ -80,8 +80,8 @@ class MeshRenderer {
   };
   void setFog(const Fog& fog) { fog_ = fog; }
 
-  // Кольори, якими множиться запечена лайтмапа терену (LightSettings.* рівня).
-  // Скільки разів детейл-текстура повторюється на патч терену.
+  // The colours the terrain's baked light map is multiplied by (the level's LightSettings.*).
+  // How many times the detail texture repeats over a terrain patch.
   void setDetailTiling(float tiles) { detailTiling_ = tiles; }
 
   void setTerrainLighting(Color sun, Color sky) {
@@ -92,13 +92,13 @@ class MeshRenderer {
   void renderScene(const Frame& frame, const std::vector<DrawItem>& items,
                    const Mat4& viewProjection, Color clearColor);
 
-  // Скільки примірників намальовано й скільки відсічено за останній кадр.
+  // How many instances were drawn and how many culled in the last frame.
   int drawnLastFrame() const { return drawn_; }
   int culledLastFrame() const { return culled_; }
 
-  // Прохід для інтерфейсу: без глибини, з альфа-змішуванням і без освітлення.
-  // Координати вершин уже в NDC, тому матриця не потрібна.
-  // clear = false лишає те, що вже намальовано: так HUD лягає поверх сцени.
+  // The interface pass: no depth, with alpha blending and without lighting.
+  // The vertex coordinates are already in NDC, so no matrix is needed.
+  // clear = false keeps what is already drawn: that is how the HUD lands over the scene.
   void renderOverlay(const Frame& frame, const std::vector<DrawItem>& items, Color clearColor,
                      bool clear = true);
 
@@ -110,11 +110,11 @@ class MeshRenderer {
   SDL_GPUGraphicsPipeline* pipeline_ = nullptr;
   SDL_GPUGraphicsPipeline* overlayPipeline_ = nullptr;
   SDL_GPUSampler* sampler_ = nullptr;
-  // Окремий семплер для інтерфейсу: там текстура ніколи не тайлиться, а
-  // повторення на краю квада затягує протилежний край і лишає темну
-  // смужку в один піксель.
+  // A separate sampler for the interface: there a texture is never tiled, and
+  // repeating at a quad's edge drags in the opposite edge and leaves a
+  // one-pixel dark line.
   SDL_GPUSampler* overlaySampler_ = nullptr;
-  SDL_GPUTexture* placeholder_ = nullptr;  // біла 1x1 для матеріалів без текстури
+  SDL_GPUTexture* placeholder_ = nullptr;  // a white 1x1 for materials with no texture
   Fog fog_;
   Color terrainSun_{1.0f, 1.0f, 1.0f, 1.0f};
   Color terrainSky_{0.6f, 0.7f, 0.9f, 1.0f};

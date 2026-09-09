@@ -1,6 +1,6 @@
 #pragma once
-// Визначення платформи/архітектури. Ціль: arm64 macOS та x86_64 Windows.
-// Ніякого платформозалежного коду поза цим заголовком і src/platform/.
+// Platform/architecture detection. Targets: arm64 macOS and x86_64 Windows.
+// No platform-specific code outside this header and src/platform/.
 
 #include <cstdint>
 
@@ -14,7 +14,7 @@
   #define OBF2_PLATFORM_LINUX 1
   #define OBF2_PLATFORM_NAME "linux"
 #else
-  #error "OpenBattlefield2: непідтримувана платформа"
+  #error "OpenBattlefield2: unsupported platform"
 #endif
 
 #if defined(__aarch64__) || defined(_M_ARM64)
@@ -24,18 +24,18 @@
   #define OBF2_ARCH_X64 1
   #define OBF2_ARCH_NAME "x86_64"
 #else
-  #error "OpenBattlefield2: непідтримувана архітектура"
+  #error "OpenBattlefield2: unsupported architecture"
 #endif
 
-// Файли BF2 — little-endian. Обидві наші цілі теж LE, тому свопи не потрібні;
-// якщо колись з'явиться BE-платформа, тут воно зламається голосно й одразу.
-static_assert(sizeof(void*) == 8, "потрібна 64-бітна збірка");
+// BF2's files are little-endian. Both our targets are LE too, so no swaps are
+// needed; should a BE platform ever appear, this breaks loudly and at once.
+static_assert(sizeof(void*) == 8, "a 64-bit build is required");
 
 namespace obf2 {
 
-// Шляхи всередині ассетів BF2 регістронезалежні й з зворотними слешами
-// (Windows-звичка 2005 року). На APFS/NTFS це майже завжди неважливо, але
-// на case-sensitive томах — критично, тому нормалізація обов'язкова всюди.
+// Paths inside BF2's assets are case-insensitive and use backslashes (a 2005
+// Windows habit). On APFS/NTFS that almost never matters, but on
+// case-sensitive volumes it is critical, so normalisation is mandatory.
 inline constexpr bool kAssetPathsAreCaseInsensitive = true;
 
 }  // namespace obf2

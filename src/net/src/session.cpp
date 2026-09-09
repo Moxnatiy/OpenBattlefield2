@@ -3,9 +3,9 @@
 namespace obf2::net {
 namespace {
 
-// Скільки об'єктів може бути в одному пакеті оновлення. Обмеження потрібне
-// не для економії, а для безпеки: без нього зіпсований лічильник змусив би
-// нас виділяти скільки завгодно пам'яті.
+// How many objects may be in one update packet. The limit exists not for economy
+// but for safety: without it a corrupt counter would make us allocate any amount
+// of memory.
 constexpr unsigned kUpdateCountBits = 12;
 constexpr std::uint32_t kMaxUpdatesPerPacket = (1u << kUpdateCountBits) - 1u;
 
@@ -21,14 +21,14 @@ bool writeHeader(BitWriter& writer, PacketType type) {
 
 std::string_view denyReasonName(DenyReason reason) {
   switch (reason) {
-    case DenyReason::ServerFull: return "сервер заповнений";
-    case DenyReason::WrongVersion: return "невідповідна версія";
-    case DenyReason::Banned: return "заблоковано";
+    case DenyReason::ServerFull: return "the server is full";
+    case DenyReason::WrongVersion: return "mismatched version";
+    case DenyReason::Banned: return "banned";
   }
-  return "невідома причина";
+  return "unknown reason";
 }
 
-// --- запис ---------------------------------------------------------------
+// --- writing -------------------------------------------------------------
 
 bool writeConnectionRequest(BitWriter& writer, const ConnectionRequest& request) {
   return writeHeader(writer, PacketType::ConnectionRequest) &&
@@ -62,12 +62,12 @@ bool writeObjectUpdates(BitWriter& writer, const std::vector<ObjectUpdate>& upda
 
   for (const ObjectUpdate& update : updates) {
     if (!writer.writeBits(update.objectId, kObjectIdBits)) return false;
-    // Ім'я шаблону їде лише при появі: далі об'єкт відомий за id.
+    // The template's name travels only on a spawn: after that the object is known by id.
     if (!writer.writeBool(update.spawn)) return false;
     if (update.spawn && !writer.writeString(update.templateName, kTemplateNameLength)) return false;
 
     if (!writer.writeCompressedVector(update.position, reference, kPositionPrecision)) return false;
-    // Кути в градусах: діапазон невеликий, тому вистачає 16 біт на вісь.
+    // The angles are in degrees: the range is small, so 16 bits per axis is enough.
     for (const float angle : {update.rotation.x, update.rotation.y, update.rotation.z}) {
       const auto quantized = static_cast<std::uint32_t>((angle + 360.0f) * 32.0f) & 0xFFFFu;
       if (!writer.writeBits(quantized, 16)) return false;
@@ -77,14 +77,14 @@ bool writeObjectUpdates(BitWriter& writer, const std::vector<ObjectUpdate>& upda
 }
 
 bool writePlayerInput(BitWriter& writer, const PlayerInput& input) {
-  // Підтип основного заголовка розрізняє напрямки: ввід іде тим самим
-  // типом Data, що й оновлення світу, але від клієнта до сервера.
+  // The basic header's subtype tells the directions apart: input travels under the
+  // same Data type as a world update, but from client to server.
   if (!writer.writeBasicHeader(BasicHeader{static_cast<std::uint32_t>(PacketType::Data), 1})) {
     return false;
   }
   if (!writer.writeBits(input.sequence & 0xFFFFu, kInputSequenceBits)) return false;
 
-  // Осі -1..1 -> 0..255. Половина діапазону відповідає нулю.
+  // Axes -1..1 -> 0..255. Half the range corresponds to zero.
   auto quantizeAxis = [](float value) {
     const float clamped = value < -1.0f ? -1.0f : (value > 1.0f ? 1.0f : value);
     return static_cast<std::uint32_t>((clamped + 1.0f) * 127.5f);
@@ -92,7 +92,7 @@ bool writePlayerInput(BitWriter& writer, const PlayerInput& input) {
   if (!writer.writeBits(quantizeAxis(input.moveForward), kInputAxisBits)) return false;
   if (!writer.writeBits(quantizeAxis(input.moveRight), kInputAxisBits)) return false;
 
-  // Кути огляду: 16 біт на вісь, як і в оновленнях об'єктів.
+  // The look angles: 16 bits per axis, as in the object updates.
   const auto yaw = static_cast<std::uint32_t>((input.yaw + 360.0f) * 32.0f) & 0xFFFFu;
   const auto pitch = static_cast<std::uint32_t>((input.pitch + 360.0f) * 32.0f) & 0xFFFFu;
   if (!writer.writeBits(yaw, 16) || !writer.writeBits(pitch, 16)) return false;
@@ -101,7 +101,7 @@ bool writePlayerInput(BitWriter& writer, const PlayerInput& input) {
          writer.writeBool(input.sprint);
 }
 
-// --- читання -------------------------------------------------------------
+// --- reading -------------------------------------------------------------
 
 std::optional<PlayerInput> readPlayerInput(BitReader& reader) {
   PlayerInput input;

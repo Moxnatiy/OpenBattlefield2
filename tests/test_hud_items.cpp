@@ -1,4 +1,4 @@
-// Значення HUD за іменами — без вікна й без геометрії.
+// HUD values by name — without a window and without geometry.
 #include <string>
 
 #include "obf2/hud/hud_items.h"
@@ -6,8 +6,8 @@
 
 using namespace obf2;
 
-// `hudItems.setBool` — цим інтерфейс вмикає власні прапорці. Ім'я
-// команди з даних (setButtonNodeConCmd), не наше.
+// `hudItems.setBool` — this is what the interface turns its own flags on with. The
+// command's name comes from the data (setButtonNodeConCmd), not from us.
 void testSetBoolFromConsole() {
   engine::Console console;
   hud::HudItems items;
@@ -21,7 +21,7 @@ void testSetBoolFromConsole() {
   console.executeLine("hudItems.setBool SetSpawnPoint 0");
   CHECK(!items.flags()["SetSpawnPoint"]);
 
-  // Команда без другого аргумента нічого не міняє й не падає.
+  // A command without a second argument changes nothing and does not crash.
   items.clearDirty();
   console.executeLine("hudItems.setBool Lonely");
   CHECK(!items.dirty());
@@ -31,14 +31,14 @@ void testTextValueAlpha() {
   hud::HudItems items;
   items.setText("PlayerHealthString", "100");
   CHECK_EQ(std::string(items.text("PlayerHealthString")), std::string("100"));
-  CHECK(items.text("НемаєТакої").empty());
+  CHECK(items.text("NoSuchThing").empty());
 
   items.setValue("PlayerHealth", 0.75f);
   CHECK(items.value("PlayerHealth") > 0.74f && items.value("PlayerHealth") < 0.76f);
-  CHECK(items.value("НемаєТакої") == 0.0f);
+  CHECK(items.value("NoSuchThing") == 0.0f);
 
-  // Невідома прозорість — це саме «не знаю», а не нуль: інакше вузол
-  // зник би зовсім.
+  // An unknown alpha means exactly "I do not know" rather than zero: otherwise the
+  // node would disappear entirely.
   CHECK(!items.alpha("BottomLeftHealthAlpha").has_value());
   items.setAlpha("MenuBackgroundAlpha", 0.8f);
   CHECK(items.alpha("MenuBackgroundAlpha").has_value());
