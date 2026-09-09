@@ -70,8 +70,8 @@ on in any order.
  # lib.exe-compatible mode based on the name it is invoked under. That mode is what
 --- a/windows/d3d9/src/device.rs
 +++ b/windows/d3d9/src/device.rs
-@@ -10218,6 +10218,20 @@
-         );
+@@ -8302,6 +8302,20 @@
+         warn!(target: LOG_TARGET, "DrawPrimitive: no vertex buffer bound");
          return D3DERR_INVALIDCALL;
      };
 +    // The bounding box for the Ctrl+Shift+D dump — from the same buffer that
@@ -91,7 +91,7 @@ on in any order.
      emit_snapshot_deltas(&obj);
      drop(snap);
      let _push = CycleAddTimer::start(draw_push_op_ptr(perf_ptr));
-@@ -10486,6 +10500,32 @@
+@@ -8474,6 +8488,20 @@
          return D3DERR_INVALIDCALL;
      };
  
@@ -109,6 +109,13 @@ on in any order.
 +            );
 +        }
 +    }
+     emit_snapshot_deltas(&obj);
+     drop(snap);
+     let _push = CycleAddTimer::start(draw_push_op_ptr(perf_ptr));
+@@ -8691,6 +8719,18 @@
+     // were just initialised by the copy above.
+     unsafe { vertex_copy.set_len(data_size) };
+ 
 +    // The draw bounding box for the Ctrl+Shift+D dump: the position is the
 +    // first two floats of each vertex, so min/max over them gives the rectangle.
 +    if dev.frame_dump.active {
@@ -124,8 +131,8 @@ on in any order.
      emit_snapshot_deltas(&obj);
      drop(snap);
      let _push = CycleAddTimer::start(draw_push_op_ptr(perf_ptr));
-@@ -11764,6 +11804,18 @@
-         )
+@@ -9656,6 +9696,18 @@
+         (metal_prim, index_copy, index_count)
      };
  
 +    // The draw bounding box for the Ctrl+Shift+D dump: the position is the
@@ -145,7 +152,7 @@ on in any order.
      emit_snapshot_deltas(&obj);
 --- a/windows/d3d9/src/device/frame_dump.rs
 +++ b/windows/d3d9/src/device/frame_dump.rs
-@@ -43,6 +43,115 @@
+@@ -35,6 +35,115 @@
  /// Dump events name surfaces by texture id so they cross-reference the
  /// per-draw lines, which print the same ids; the raw COM pointer alone
  /// cannot be matched to anything.
@@ -261,10 +268,10 @@ on in any order.
  pub fn surface_label(surface: *mut c_void) -> String {
      if surface.is_null() {
          return String::from("null");
-@@ -83,6 +192,15 @@
-     /// single one, so cross-frame resource flow (a depth texture written in
-     /// frame N and consumed in frame N+1) is visible in one capture.
-     pub frames_remaining: u32,
+@@ -89,6 +198,15 @@
+     /// bound above slot 0: their contents decide occlusion-style effects,
+     /// and only a readback can say whether the bytes are sane.
+     pub readback: Vec<DumpReadback>,
 +    /// Screen-space extent of the next draw, filled by the draw entry point.
 +    ///
 +    /// The dump already names every texture a draw samples, with its size;
@@ -277,39 +284,39 @@ on in any order.
  }
  
  impl FrameDump {
-@@ -90,6 +208,7 @@
-         active: false,
+@@ -97,6 +215,7 @@
          draws: 0,
          frames_remaining: 0,
+         readback: Vec::new(),
 +        geom: String::new(),
      };
  
-     /// Consecutive frames one F12 press dumps and captures.
-@@ -136,6 +255,7 @@
-             active: remaining > 0,
+     /// Consecutive frames one Ctrl+Shift+D press captures.
+@@ -135,6 +254,7 @@
              draws: 0,
              frames_remaining: remaining.saturating_sub(1),
+             readback: Vec::new(),
 +            geom: String::new(),
          };
          if self.frame_dump.active {
-             let index = FrameDump::FRAMES - remaining + 1;
-@@ -299,7 +419,7 @@
+             info!(
+@@ -494,7 +614,7 @@
              "[dump] draw {seq}: rt={rt} ds={ds}/{:#x} vs={vs} ps={ps} \
               z=[{},{},{}] blend=[{},{},{},{} sep={} {},{},{}] cull={} cw=[{:#x},{:#x},{:#x},{:#x}] \
               alpha=[{},{},{}] stencil=[{},{},{:#x},{:#x},{:#x} {},{},{} two={} ccw={},{},{},{}] \
--             bias=[{:#x},{:#x}] vp={},{}+{}x{} scissor={} tex=[{}]",
-+             bias=[{:#x},{:#x}] vp={},{}+{}x{} scissor={} tex=[{}] geom=[{}]",
+-             bias=[{:#x},{:#x}] scissor={} tex=[{}]",
++             bias=[{:#x},{:#x}] scissor={} tex=[{}] geom=[{}]",
              self.snapshot_cache.depth_stencil.bits(),
              rs(D3DRS_ZENABLE),
              rs(D3DRS_ZWRITEENABLE),
-@@ -341,7 +461,10 @@
-             vp.height,
+@@ -532,7 +652,10 @@
+             rs(D3DRS_SLOPESCALEDEPTHBIAS),
              rs(D3DRS_SCISSORTESTENABLE),
              textures.trim_start(),
 +            self.frame_dump.geom,
          );
 +        // Every call carries its own box; the next one fills it in afresh.
 +        self.frame_dump.geom.clear();
-         // Draws that fetch raw depth reconstruct positions from shared PS
-         // constants (screen scale, linearization); print the window those
-         // shaders read so wrong uploads are visible next to the draw.
+         for tex in note {
+             // SAFETY: collected above from live bound stages on this thread;
+             // nothing between there and here can release them.

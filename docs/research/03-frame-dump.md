@@ -27,6 +27,28 @@ richer `geom` line (stride, per-quad rectangles, the first and last
 vertex) lived only in the working tree for a while and was nearly lost to
 an update.
 
+## The checkout is pinned to b37f18d, on purpose
+
+`reference/mtld3d` sits on a branch called `openbf2-pinned` at **b37f18d**,
+not on upstream's `main`. Moving it to `02622eb` (294 commits later, past
+v0.8.0) broke the picture in the game: **smoke turned purple and the
+leaves on trees came out deformed**. Both are upstream's, not ours — our
+patches only add logging and read vertex data, they write nothing.
+
+The suspects, from the commits in that range that touch shader translation:
+
+| commit | why it fits |
+|---|---|
+| `5be21e4` Apply sampler swizzles to texture sample results | a wrong swizzle turns a texture's channels round, which is what purple smoke looks like |
+| `e55f04a` Give vs_1_1 expp its four-component result | vegetation is animated in the vertex shader |
+| `9aa8e7f` Honor predicates on mova address writes | same shader, address registers |
+| `568ef66` Translate predicate-based shader flow control | same |
+| `626ecbd` Preserve components masked by SM3 predicates | same |
+
+Narrowing it further means a bisect, and every step costs a cross-build
+and a run of the game. Worth doing before reporting it upstream, not
+before the next thing we actually need.
+
 ## How to take one
 
 1. Start the game: `BF2_LEVEL=dalian_plant BF2_RES=800x600 tools/bf2_run.sh`

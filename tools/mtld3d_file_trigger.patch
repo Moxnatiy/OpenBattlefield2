@@ -11,21 +11,23 @@ patches are `mtld3d_frame_dump_geom.patch` and
 `mtld3d_frame_dump_constants.patch`; the three are independent and can go
 on in any order.
 
+diff --git a/windows/d3d9/src/capture.rs b/windows/d3d9/src/capture.rs
+index 556b2b7..3eb2d42 100644
 --- a/windows/d3d9/src/capture.rs
 +++ b/windows/d3d9/src/capture.rs
-@@ -1,5 +1,9 @@
- //! F12 hotkey poll: one press arms the frame dump and the Metal GPU capture.
- //!
-+//! Both requests can also be armed by file — `/tmp/mtld3d_dump` and
-+//! `/tmp/mtld3d_capture`. A hotkey needs a hand on the keyboard; a file is
-+//! reachable from a script, a headless run, or a remote shell.
+@@ -1,4 +1,8 @@
+-//! F12 hotkey poll for one-shot Metal GPU frame capture.
++//! F12 / Ctrl+Shift+D poll for GPU capture and draw-state dump.
 +//!
- //! Both diagnostics cover the same [`FrameDump::FRAMES`] consecutive frames
- //! (see `device::frame_dump`): the dump logs the D3D9-level events a GPU
- //! trace cannot know, the trace holds everything Metal saw, and the dump's
-@@ -25,7 +29,35 @@
++//! Both requests can also be armed by file — `/tmp/mtld3d_dump` and
++//! `/tmp/mtld3d_capture`. A hotkey needs a hand on the keyboard; a file
++//! is reachable from a script, a headless run, or a remote shell.
  //!
- //! [`FrameDump::FRAMES`]: crate::device::frame_dump::FrameDump::FRAMES
+ //! Apple gates capture itself on `MTL_CAPTURE_ENABLED=1` at process
+ //! launch — no mtld3d-side env guard needed; without the Apple env, the
+@@ -11,7 +15,35 @@
+ //! the next frame and brackets `run_frame` with `StartGpuCapture` /
+ //! `StopGpuCapture` thunks. Output is `/tmp/mtld3d_capture.gputrace`.
  
 -use std::sync::atomic::{AtomicBool, Ordering};
 +use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -59,10 +61,10 @@ on in any order.
 +}
  
  const VK_F12: i32 = 0x7B;
- 
-@@ -52,6 +84,17 @@
-     if down && !was_down {
-         CAPTURE_REQUESTED.store(true, Ordering::Release);
+ const VK_SHIFT: i32 = 0x10;
+@@ -53,6 +85,17 @@ pub fn poll() {
+     if chord && !was_chord {
+         FRAME_DUMP_REQUESTED.store(true, Ordering::Release);
      }
 +
 +    // The same two requests, armed from outside the process.
@@ -77,4 +79,4 @@ on in any order.
 +    }
  }
  
- /// Take the pending F12 request, if any; the next frames are then dumped and captured.
+ /// Take the pending Ctrl+Shift+D request, if any; the next frame is then dumped.
