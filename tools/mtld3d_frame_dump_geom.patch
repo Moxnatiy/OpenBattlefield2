@@ -1,8 +1,33 @@
-diff --git a/windows/.cargo/config.toml b/windows/.cargo/config.toml
-index bcedbde..cd11411 100644
+The frame dump says where a draw call landed, not only what it drew.
+
+The dump named *which* texture was drawn but not **where**, so a frame of
+the original could not be compared with ours rectangle by rectangle. This
+adds the bounds: the position is the first two floats of every vertex, so
+a min/max over them gives the rectangle. It goes in at three entry points
+— `DrawPrimitiveUP`, `DrawIndexedPrimitiveUP` and, most importantly,
+`DrawPrimitive`/`DrawIndexedPrimitive`: BF2's interface goes through bound
+vertex buffers, not through `*UP`, so without that path not one of the
+frame's 853 calls gave any bounds.
+
+Beside the rectangle it prints the vertex stride and the numbers of the
+first and last vertex — after the position come the colour and the texture
+coordinates, and those say which piece of a picture the game is showing.
+And because the game folds small icons into a single call, where a batch is
+a small multiple of four it prints the rectangle of every four vertices
+too: those are the individual icons, which the shared bounding box says
+nothing about.
+
+`windows/.cargo/config.toml` is machine-specific — it points the linker at
+this checkout's `reference/xwin` instead of `/opt/xwin`.
+
+Applies to `reference/mtld3d` before `tools/mtld3d_build.sh`. Its companion
+patches are `mtld3d_file_trigger.patch` and
+`mtld3d_frame_dump_constants.patch`; the three are independent and can go
+on in any order.
+
 --- a/windows/.cargo/config.toml
 +++ b/windows/.cargo/config.toml
-@@ -35,9 +35,9 @@ linker = "lld-link"
+@@ -35,9 +35,9 @@
  rustflags = [
      "-C", "target-cpu=nehalem",
      "-C", "target-feature=-crt-static",
@@ -15,7 +40,7 @@ index bcedbde..cd11411 100644
  ]
  
  [target.x86_64-pc-windows-msvc]
-@@ -45,9 +45,9 @@ linker = "lld-link"
+@@ -45,9 +45,9 @@
  rustflags = [
      "-C", "target-cpu=x86-64-v2",
      "-C", "target-feature=-crt-static",
@@ -28,7 +53,7 @@ index bcedbde..cd11411 100644
  ]
  
  [env]
-@@ -72,10 +72,10 @@ rustflags = [
+@@ -72,10 +72,10 @@
  # environment variable with no composition, so the knob could only reach them by
  # restating everything above in the Makefile. This is a fixed, small amount of
  # code (snmalloc-sys and zstd-sys) whose frames are worth keeping walkable.
@@ -43,12 +68,10 @@ index bcedbde..cd11411 100644
  # The MSVC librarian, as a bare name resolved from PATH: `make setup-rust` puts an
  # `llvm-lib` symlink in the cargo bin directory onto `llvm-ar`, which switches to
  # lib.exe-compatible mode based on the name it is invoked under. That mode is what
-diff --git a/windows/d3d9/src/device.rs b/windows/d3d9/src/device.rs
-index 91a7468..fb5ffbb 100644
 --- a/windows/d3d9/src/device.rs
 +++ b/windows/d3d9/src/device.rs
-@@ -8302,6 +8302,20 @@ extern "system" fn device_draw_primitive(
-         warn!(target: LOG_TARGET, "DrawPrimitive: no vertex buffer bound");
+@@ -10218,6 +10218,20 @@
+         );
          return D3DERR_INVALIDCALL;
      };
 +    // The bounding box for the Ctrl+Shift+D dump — from the same buffer that
@@ -68,7 +91,7 @@ index 91a7468..fb5ffbb 100644
      emit_snapshot_deltas(&obj);
      drop(snap);
      let _push = CycleAddTimer::start(draw_push_op_ptr(perf_ptr));
-@@ -8474,6 +8488,20 @@ extern "system" fn device_draw_indexed_primitive(
+@@ -10486,6 +10500,32 @@
          return D3DERR_INVALIDCALL;
      };
  
@@ -86,13 +109,6 @@ index 91a7468..fb5ffbb 100644
 +            );
 +        }
 +    }
-     emit_snapshot_deltas(&obj);
-     drop(snap);
-     let _push = CycleAddTimer::start(draw_push_op_ptr(perf_ptr));
-@@ -8691,6 +8719,18 @@ extern "system" fn device_draw_primitive_up(
-     // were just initialised by the copy above.
-     unsafe { vertex_copy.set_len(data_size) };
- 
 +    // The draw bounding box for the Ctrl+Shift+D dump: the position is the
 +    // first two floats of each vertex, so min/max over them gives the rectangle.
 +    if dev.frame_dump.active {
@@ -108,8 +124,8 @@ index 91a7468..fb5ffbb 100644
      emit_snapshot_deltas(&obj);
      drop(snap);
      let _push = CycleAddTimer::start(draw_push_op_ptr(perf_ptr));
-@@ -9656,6 +9696,18 @@ extern "system" fn device_draw_indexed_primitive_up(
-         (metal_prim, index_copy, index_count)
+@@ -11764,6 +11804,18 @@
+         )
      };
  
 +    // The draw bounding box for the Ctrl+Shift+D dump: the position is the
@@ -127,11 +143,9 @@ index 91a7468..fb5ffbb 100644
      let perf_ptr = DeviceInner::perf_ptr_of(obj.inner);
      let snap = CycleAddTimer::start(draw_snapshot_ptr(perf_ptr));
      emit_snapshot_deltas(&obj);
-diff --git a/windows/d3d9/src/device/frame_dump.rs b/windows/d3d9/src/device/frame_dump.rs
-index c45f49d..7ca9c65 100644
 --- a/windows/d3d9/src/device/frame_dump.rs
 +++ b/windows/d3d9/src/device/frame_dump.rs
-@@ -35,6 +35,65 @@ use crate::{
+@@ -43,6 +43,115 @@
  /// Dump events name surfaces by texture id so they cross-reference the
  /// per-draw lines, which print the same ids; the raw COM pointer alone
  /// cannot be matched to anything.
@@ -163,7 +177,57 @@ index c45f49d..7ca9c65 100644
 +        x1 = x1.max(x);
 +        y1 = y1.max(y);
 +    }
-+    format!("{x0:.1},{y0:.1} {:.1}x{:.1}", x1 - x0, y1 - y0)
++    // Beside the bounding box, print the vertex stride and the first numbers
++    // of the first vertex. They show the layout: after the position come the
++    // colour and the texture coordinates, and it is those that say which piece
++    // of a picture the game is showing (the in-game map is cropped to the
++    // combat area).
++    let floats = (stride / 4) as usize;
++    let dump = |index: u32| {
++        let mut out = String::new();
++        for i in 0..floats.min(12) {
++            // SAFETY: `index` is below `vertices`, checked by the caller.
++            let v = unsafe {
++                base.add(index as usize * stride as usize + i * 4)
++                    .cast::<f32>()
++                    .read_unaligned()
++            };
++            let _ = std::fmt::Write::write_fmt(&mut out, format_args!(" {v:.4}"));
++        }
++        out.trim().to_string()
++    };
++    // The game folds small icons into one call, and a shared bounding box says
++    // nothing about them. So for small batches print the rectangle of every
++    // four vertices as well — those are the individual icons.
++    let mut parts = String::new();
++    if vertices % 4 == 0 && vertices <= 64 {
++        for q in 0..(vertices / 4) {
++            let (mut qx0, mut qy0) = (f32::MAX, f32::MAX);
++            let (mut qx1, mut qy1) = (f32::MIN, f32::MIN);
++            for k in 0..4u32 {
++                let at = (q * 4 + k) as usize * stride as usize;
++                // SAFETY: within the range checked by the caller.
++                let x = unsafe { base.add(at).cast::<f32>().read_unaligned() };
++                let y = unsafe { base.add(at + 4).cast::<f32>().read_unaligned() };
++                qx0 = qx0.min(x);
++                qy0 = qy0.min(y);
++                qx1 = qx1.max(x);
++                qy1 = qy1.max(y);
++            }
++            let _ = std::fmt::Write::write_fmt(
++                &mut parts,
++                format_args!(" {qx0:.1},{qy0:.1},{:.1},{:.1}", qx1 - qx0, qy1 - qy0),
++            );
++        }
++    }
++    format!(
++        "{x0:.1},{y0:.1} {:.1}x{:.1} stride={stride} verts={vertices} quads=[{}] v0=[{}] vN=[{}]",
++        x1 - x0,
++        y1 - y0,
++        parts.trim(),
++        dump(0),
++        dump(vertices - 1)
++    )
 +}
 +
 +/// Same extent, for a draw that reads a bound vertex buffer.
@@ -197,10 +261,10 @@ index c45f49d..7ca9c65 100644
  pub fn surface_label(surface: *mut c_void) -> String {
      if surface.is_null() {
          return String::from("null");
-@@ -89,6 +148,15 @@ pub struct FrameDump {
-     /// bound above slot 0: their contents decide occlusion-style effects,
-     /// and only a readback can say whether the bytes are sane.
-     pub readback: Vec<DumpReadback>,
+@@ -83,6 +192,15 @@
+     /// single one, so cross-frame resource flow (a depth texture written in
+     /// frame N and consumed in frame N+1) is visible in one capture.
+     pub frames_remaining: u32,
 +    /// Screen-space extent of the next draw, filled by the draw entry point.
 +    ///
 +    /// The dump already names every texture a draw samples, with its size;
@@ -213,39 +277,39 @@ index c45f49d..7ca9c65 100644
  }
  
  impl FrameDump {
-@@ -97,6 +165,7 @@ impl FrameDump {
+@@ -90,6 +208,7 @@
+         active: false,
          draws: 0,
          frames_remaining: 0,
-         readback: Vec::new(),
 +        geom: String::new(),
      };
  
-     /// Consecutive frames one Ctrl+Shift+D press captures.
-@@ -135,6 +204,7 @@ impl DeviceInner {
+     /// Consecutive frames one F12 press dumps and captures.
+@@ -136,6 +255,7 @@
+             active: remaining > 0,
              draws: 0,
              frames_remaining: remaining.saturating_sub(1),
-             readback: Vec::new(),
 +            geom: String::new(),
          };
          if self.frame_dump.active {
-             info!(
-@@ -494,7 +564,7 @@ impl DeviceInner {
+             let index = FrameDump::FRAMES - remaining + 1;
+@@ -299,7 +419,7 @@
              "[dump] draw {seq}: rt={rt} ds={ds}/{:#x} vs={vs} ps={ps} \
               z=[{},{},{}] blend=[{},{},{},{} sep={} {},{},{}] cull={} cw=[{:#x},{:#x},{:#x},{:#x}] \
               alpha=[{},{},{}] stencil=[{},{},{:#x},{:#x},{:#x} {},{},{} two={} ccw={},{},{},{}] \
--             bias=[{:#x},{:#x}] scissor={} tex=[{}]",
-+             bias=[{:#x},{:#x}] scissor={} tex=[{}] geom=[{}]",
+-             bias=[{:#x},{:#x}] vp={},{}+{}x{} scissor={} tex=[{}]",
++             bias=[{:#x},{:#x}] vp={},{}+{}x{} scissor={} tex=[{}] geom=[{}]",
              self.snapshot_cache.depth_stencil.bits(),
              rs(D3DRS_ZENABLE),
              rs(D3DRS_ZWRITEENABLE),
-@@ -532,7 +602,10 @@ impl DeviceInner {
-             rs(D3DRS_SLOPESCALEDEPTHBIAS),
+@@ -341,7 +461,10 @@
+             vp.height,
              rs(D3DRS_SCISSORTESTENABLE),
              textures.trim_start(),
 +            self.frame_dump.geom,
          );
 +        // Every call carries its own box; the next one fills it in afresh.
 +        self.frame_dump.geom.clear();
-         for tex in note {
-             // SAFETY: collected above from live bound stages on this thread;
-             // nothing between there and here can release them.
+         // Draws that fetch raw depth reconstruct positions from shared PS
+         // constants (screen scale, linearization); print the window those
+         // shaders read so wrong uploads are visible next to the draw.

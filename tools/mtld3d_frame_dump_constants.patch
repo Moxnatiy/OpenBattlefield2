@@ -22,7 +22,7 @@ Applies on top of `tools/mtld3d_frame_dump_geom.patch`, to
 
 --- a/windows/d3d9/src/device/frame_dump.rs
 +++ b/windows/d3d9/src/device/frame_dump.rs
-@@ -675,5 +675,30 @@
+@@ -357,5 +357,30 @@
                  c[78]
              );
          }

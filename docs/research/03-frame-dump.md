@@ -7,6 +7,26 @@ check the HUD against number by number rather than by eye.
 
 mtld3d's licence is zlib, so patching it is free.
 
+Our three patches live in `tools/` and are kept applicable to upstream's
+current `main`: `mtld3d_frame_dump_geom.patch` (where a draw landed),
+`mtld3d_file_trigger.patch` (arm a dump from a file instead of a keypress)
+and `mtld3d_frame_dump_constants.patch` (the frame's vertex constants).
+They are independent and go on in any order:
+
+```bash
+cd reference/mtld3d
+for p in geom file_trigger constants; do
+    patch -p1 < ../../tools/mtld3d_frame_dump_$p.patch
+done
+```
+
+When upstream moves, re-cut them from the working tree rather than
+hand-editing: the tree is the thing that builds, and a patch that has
+drifted from it silently loses work. That has happened once already — the
+richer `geom` line (stride, per-quad rectangles, the first and last
+vertex) lived only in the working tree for a while and was nearly lost to
+an update.
+
 ## How to take one
 
 1. Start the game: `BF2_LEVEL=dalian_plant BF2_RES=800x600 tools/bf2_run.sh`
