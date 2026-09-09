@@ -1,19 +1,19 @@
 cmake_minimum_required(VERSION 3.24)
 project(OpenBattlefield2 VERSION 0.1.0 LANGUAGES C CXX)
 
-# --- Мультиплатформа: arm64 macOS + x86_64 Windows ---------------------------
+# --- Cross-platform: arm64 macOS + x86_64 Windows ---------------------------
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)              # без GNU-розширень: MSVC їх не має
+set(CMAKE_CXX_EXTENSIONS OFF)              # no GNU extensions: MSVC has none
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "" FORCE)
 endif()
 
-option(OBF2_WERROR "Тлумачити попередження як помилки" OFF)
-option(OBF2_BUILD_TESTS "Збирати тести" ON)
-option(OBF2_BUILD_TOOLS "Збирати CLI-утиліти" ON)
+option(OBF2_WERROR "Treat warnings as errors" OFF)
+option(OBF2_BUILD_TESTS "Build the tests" ON)
+option(OBF2_BUILD_TOOLS "Build the CLI utilities" ON)
 
 add_library(obf2_flags INTERFACE)
 if(MSVC)
@@ -57,6 +57,7 @@ add_subdirectory(src/server)
 add_subdirectory(src/font)
 add_subdirectory(src/loc)
 add_subdirectory(src/gfx)
+add_subdirectory(src/flash)
 add_subdirectory(src/app)
 
 if(OBF2_BUILD_TOOLS)

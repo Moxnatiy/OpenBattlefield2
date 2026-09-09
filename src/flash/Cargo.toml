@@ -1,0 +1,29 @@
+[package]
+name = "obf2_flash"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+# A dynamic library with a C interface: that way it pulls in Metal and the rest
+# itself, and CMake only has to link one file.
+[lib]
+name = "obf2_flash"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+# Ruffle lies in `reference/ruffle` — like the other third-party work, not in
+# git (docs/research/11-ruffle-menu.md). Our bridge has to be applied to it with
+# `tools/ruffle_bf2_bridge.patch`.
+[dependencies]
+ruffle_core = { path = "../../reference/ruffle/core", features = ["default_font"] }
+ruffle_render_wgpu = { path = "../../reference/ruffle/render/wgpu" }
+futures = "0.3"
+# PNG re-encoding for the game's DDS images; same version as Ruffle uses.
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+# The player's log: enabled by the OBF2_FLASH_LOG variable.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+opt-level = 2

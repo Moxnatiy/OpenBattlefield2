@@ -1,0 +1,192 @@
+diff --git a/core/src/avm1/globals.rs b/core/src/avm1/globals.rs
+index ccbdfce6..d29727aa 100644
+--- a/core/src/avm1/globals.rs
++++ b/core/src/avm1/globals.rs
+@@ -15,6 +15,8 @@ use std::sync::Arc;
+ use swf::TagCode;
+ 
+ mod accessibility;
++// [openbf2] the "menu -> game" bridge for the Battlefield 2 movies
++pub mod bf2_bridge;
+ pub(super) mod array;
+ pub(crate) mod as_broadcaster;
+ mod as_setup_error;
+@@ -721,6 +723,9 @@ pub fn create_globals<'gc>(
+     };
+     context.define_properties_on(globals, decls);
+ 
++    // [openbf2] The objects the BF2 menu expects.
++    bf2_bridge::install(context, globals);
++
+     // flash
+     let decls = declare_properties! {
+         "text" => value(text);
+diff --git a/core/src/avm1/runtime.rs b/core/src/avm1/runtime.rs
+index 3bbddf3c..77b55745 100644
+--- a/core/src/avm1/runtime.rs
++++ b/core/src/avm1/runtime.rs
+@@ -392,8 +392,17 @@ impl<'gc> Avm1<'gc> {
+     }
+ 
+     #[inline(always)]
+-    pub fn is_case_sensitive(swf_version: u8) -> bool {
+-        swf_version >= 7
++    pub fn is_case_sensitive(_swf_version: u8) -> bool {
++        // [openbf2] The BF2 menu is played not by Flash Player but by
++        // SwiffPlayer — and that one is built on gameswf, where properties
++        // live in a `stringi_hash`, that is **case-insensitively**
++        // (reference/gameswf, gameswf_object.h:44). The movie relies on it:
++        // the active account's caption is set by a call to
++        // `profiletext.setvalue(...)` while the method is called `setValue`.
++        // By Adobe's rule (version 7 and up — case-sensitive) the call
++        // silently misses and "Label" stays on screen. We reproduce the
++        // original player, so we take its behaviour. docs/research/11-ruffle-menu.md.
++        false
+     }
+ 
+     /// Obtain a reference to the global scope.
+diff --git a/core/src/drawing.rs b/core/src/drawing.rs
+index f3dc5bd0..32951156 100644
+--- a/core/src/drawing.rs
++++ b/core/src/drawing.rs
+@@ -129,7 +129,7 @@ impl Drawing {
+         self.paths
+             .extend(self.pending_lines.drain(..).map(DrawingPath::Line));
+         if let Some(mut existing) = self.current_line.take() {
+-            existing.is_closed = self.cursor == self.fill_start;
++            existing.is_closed = line_run_start(&existing) == Some(self.cursor);
+             let style = existing.style.clone();
+             self.paths.push(DrawingPath::Line(existing));
+             self.current_line = Some(DrawingLine {
+@@ -167,7 +167,7 @@ impl Drawing {
+ 
+     pub fn set_line_style(&mut self, style: Option<LineStyle>) {
+         if let Some(mut existing) = self.current_line.take() {
+-            existing.is_closed = self.cursor == self.fill_start;
++            existing.is_closed = line_run_start(&existing) == Some(self.cursor);
+             if self.current_fill.is_some() {
+                 self.pending_lines.push(existing);
+             } else {
+@@ -281,7 +281,7 @@ impl Drawing {
+                     commands.push(DrawCommand::LineTo(self.fill_start));
+                     true
+                 } else {
+-                    self.cursor == self.fill_start
++                    line_run_start(line) == Some(self.cursor)
+                 };
+                 paths.push(DrawPath::Stroke {
+                     style: &line.style,
+@@ -296,7 +296,7 @@ impl Drawing {
+                     commands.push(DrawCommand::LineTo(self.fill_start));
+                     true
+                 } else {
+-                    self.cursor == self.fill_start
++                    line_run_start(line) == Some(self.cursor)
+                 };
+                 paths.push(DrawPath::Stroke {
+                     style: &line.style,
+@@ -433,6 +433,25 @@ impl BitmapSource for Drawing {
+     }
+ }
+ 
++// [openbf2] Where a stroke run itself begins.
++//
++// A stroke without a fill is closed only when it comes back to **its own**
++// first point. Comparing against `fill_start` — the last `moveTo` of the
++// whole drawing — closes runs that merely end where some earlier subpath
++// began, and `close()` then draws a segment across the shape.
++//
++// BF2's menu hits this on every button: the bevel is drawn as
++// `moveTo(100,0) lineTo(0,0) lineTo(0,100)`, then `lineStyle` starts a
++// second run at (0,100) which ends back at (100,0). That run was being
++// closed, and the connecting segment showed up as a diagonal across each
++// button and input field (docs/research/11-ruffle-menu.md).
++fn line_run_start(line: &DrawingLine) -> Option<Point<Twips>> {
++    match line.commands.first() {
++        Some(DrawCommand::MoveTo(point)) => Some(*point),
++        _ => None,
++    }
++}
++
+ #[derive(Debug, Clone)]
+ struct DrawingFill {
+     style: FillStyle,
+diff --git a/core/src/lib.rs b/core/src/lib.rs
+index d76c1cba..539adc4f 100644
+--- a/core/src/lib.rs
++++ b/core/src/lib.rs
+@@ -14,6 +14,15 @@ extern crate num_derive;
+ 
+ #[macro_use]
+ mod avm1;
++// [openbf2] The menu asks the host to do things (start a level, quit);
++// the host picks the orders up once per frame.
++pub use crate::avm1::globals::bf2_bridge::host_version_text as bf2_host_version;
++pub use crate::avm1::globals::bf2_bridge::take_command as bf2_take_command;
++// [openbf2] Types needed to wrap `NavigatorBackend` outside this crate:
++// the game spells menu paths with a `$` prefix for the mod root.
++pub use async_channel;
++pub use encoding_rs;
++pub use url;
+ mod avm2;
+ mod avm_rng;
+ mod binary_data;
+diff --git a/core/src/library.rs b/core/src/library.rs
+index 74188cd5..9be3c4c1 100644
+--- a/core/src/library.rs
++++ b/core/src/library.rs
+@@ -587,6 +587,39 @@ impl<'gc> Library<'gc> {
+             return Some(font);
+         }
+ 
++        // [openbf2] Before taking anything else — look for a font from
++        // **the movie itself** under the same name.
++        //
++        // The BF2 menu is played by SwiffPlayer on gameswf, and that pulls
++        // glyphs in this order: first the system font **by name**, and only
++        // then the embedded one (`reference/gameswf`, gameswf_font.cpp:306,
++        // "then use an embedded character"). On a machine with no
++        // `TradeGothic LT BdCondTwenty` installed the embedded one is drawn
++        // — and `mainMenu.swf` carries it with it, 241 glyphs.
++        //
++        // Without this, fields with a system font went to the general
++        // fallback Noto Sans, and the menu looked wide where it should be
++        // narrow. We look **by name**, not by the triple "name + bold +
++        // italic": that is how gameswf asks (`m_fontname`), and under one
++        // name the movie holds both an empty stub (zero glyphs — that is how
++        // Flash marks "the field is drawn with a system font") and the real
++        // font. An exact match found the stub.
++        let wanted = name.to_lowercase();
++        let pick = |fonts: &FontMap<'gc>| {
++            fonts
++                .iter_all()
++                .find(|font| font.descriptor().lowercase_name() == wanted && font.has_glyphs())
++        };
++        if let Some(font) = pick(&self.global_fonts) {
++            return Some(font);
++        }
++        for (_, library) in self.movie_libraries.0.iter() {
++            if let Some(font) = pick(&library.fonts) {
++                tracing::debug!(target: "bf2_bridge", "font {} taken from the movie", name);
++                return Some(font);
++            }
++        }
++
+         // Fallback: Try to find an existing font to re-use instead of giving up.
+         self.device_fonts.find(&query)
+     }
+diff --git a/core/src/player.rs b/core/src/player.rs
+index 2d58d056..5839502d 100644
+--- a/core/src/player.rs
++++ b/core/src/player.rs
+@@ -2068,6 +2068,10 @@ impl Player {
+             // TODO: Is this order correct?
+             run_all_phases_avm2(context);
+             Avm1::run_frame(context);
++            // [openbf2] The BF2 menu's deferred captions: the components are
++            // built by now, so the translation can go on top of the keys their
++            // `arrange()` has just written.
++            crate::avm1::globals::bf2_bridge::flush_delayed_strings(context);
+             AudioManager::update_sounds(context);
+             LocalConnections::update_connections(context);
+ 

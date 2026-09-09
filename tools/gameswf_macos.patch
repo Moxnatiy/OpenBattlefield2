@@ -1,0 +1,190 @@
+diff --git a/tu-testbed/base/container.h b/tu-testbed/base/container.h
+index cffe6ac..2ca6f40 100644
+--- a/tu-testbed/base/container.h
++++ b/tu-testbed/base/container.h
+@@ -805,7 +805,7 @@ public:
+ 		assert(m_table);
+ 		m_table->m_entry_count++;
+ 
+-		unsigned int	hash_value = (unsigned int) compute_hash(key);
++		size_t	hash_value = compute_hash(key);	// [openbf2] was truncated to 32 bits
+ 		int	index = hash_value & m_table->m_size_mask;
+ 
+ 		entry*	natural_entry = &(E(index));
+@@ -998,7 +998,11 @@ public:
+ 			: m_next_in_chain(e.m_next_in_chain), m_hash_value(e.m_hash_value), first(e.first), second(e.second)
+ 		{
+ 		}
+-		entry(const T& key, const U& value, int next_in_chain, int hash_value)
++		// [openbf2] the hash here was an `int`: a 32-bit value with the top
++		// bit set went into a size_t **signed**, and the record ended up
++		// holding 0xFFFFFFFF……, which a lookup never found. On 32 bits there
++		// was no difference, so in the original the fault is not visible.
++		entry(const T& key, const U& value, int next_in_chain, size_t hash_value)
+ 			: m_next_in_chain(next_in_chain), m_hash_value(hash_value), first(key), second(value)
+ 		{
+ 		}
+@@ -1219,7 +1223,12 @@ private:
+ 	{
+ 		if (m_table == NULL) return -1;
+ 
+-		size_t	hash_value = compute_hash(key);
++		// [openbf2] `add` (line 808) truncates the hash to 32 bits and puts
++		// **the truncated one** into the record. The lookup has to truncate
++		// the same way, otherwise on 64 bits the comparison never matches and
++		// no key is ever found. On the 32 bits tu-testbed was written for,
++		// size_t and unsigned int are the same, so the fault was not visible.
++		size_t	hash_value = (unsigned int) compute_hash(key);
+ 		int	index = (int) (hash_value & m_table->m_size_mask);
+ 
+ 		const entry*	e = &E(index);
+diff --git a/tu-testbed/base/utility.h b/tu-testbed/base/utility.h
+index 8827415..e649a7c 100644
+--- a/tu-testbed/base/utility.h
++++ b/tu-testbed/base/utility.h
+@@ -99,9 +99,9 @@ void	operator delete[](void* ptr);
+ inline int64	i64abs(int64 i) { if (i < 0) return -i; else return i; }
+ inline int	iabs(int i) { if (i < 0) return -i; else return i; }
+ inline int	imax(int a, int b) { if (a < b) return b; else return a; }
+-inline float	fmax(float a, float b) { if (a < b) return b; else return a; }
++// [openbf2] inline float	fmax(float a, float b) { if (a < b) return b; else return a; }   // clashes with std::fmax/fmin in libc++
+ inline int	imin(int a, int b) { if (a < b) return a; else return b; }
+-inline float	fmin(float a, float b) { if (a < b) return a; else return b; }
++// [openbf2] inline float	fmin(float a, float b) { if (a < b) return a; else return b; }   // clashes with std::fmax/fmin in libc++
+ 
+ 
+ inline int	iclamp(int i, int min, int max) {
+@@ -117,7 +117,7 @@ inline float	fclamp(float f, float xmin, float xmax) {
+ inline float flerp(float a, float b, float f) { return (b - a) * f + a; }
+ 
+ const float LN_2 = 0.693147180559945f;
+-inline float	log2(float f) { return logf(f) / LN_2; }
++// [openbf2] inline float	log2(float f) { return logf(f) / LN_2; }   // clashes with std::log2
+ 
+ inline int	fchop( float f ) { return (int) f; }	// replace w/ inline asm if desired
+ inline int	frnd(float f) { return fchop(f + 0.5f); }	// replace with inline asm if desired
+diff --git a/tu-testbed/base/vert_types.h b/tu-testbed/base/vert_types.h
+index e07a541..adb1f10 100755
+--- a/tu-testbed/base/vert_types.h
++++ b/tu-testbed/base/vert_types.h
+@@ -76,7 +76,7 @@ inline sint64	determinant_sint16(const vec2<sint16>& a, const vec2<sint16>& b, c
+ template<class coord_t>
+ inline int	vertex_left_test(const vec2<coord_t>& a, const vec2<coord_t>& b, const vec2<coord_t>& c)
+ {
+-	compiler_assert(0);	// must specialize
++	// [openbf2] compiler_assert(0): a modern clang sees a duplicate case in it
+ 	return -1;
+ }
+ 
+diff --git a/tu-testbed/gameswf/gameswf_environment.cpp b/tu-testbed/gameswf/gameswf_environment.cpp
+index 26d0bff..5cd87c4 100644
+--- a/tu-testbed/gameswf/gameswf_environment.cpp
++++ b/tu-testbed/gameswf/gameswf_environment.cpp
+@@ -346,7 +346,7 @@ namespace gameswf
+ 	}
+ 
+ 
+-	as_value	as_environment::get_variable(const tu_string& varname, const array<with_stack_entry>& with_stack) const
++	as_value	as_environment::get_variable(const tu_string& varname, const ::array<with_stack_entry>& with_stack) const
+ 	// Return the value of the given var, if it's defined.
+ 	{
+ 		// Path lookup rigamarole.
+@@ -384,7 +384,7 @@ namespace gameswf
+ 
+ 	as_value	as_environment::get_variable_raw(
+ 		const tu_string& varname,
+-		const array<with_stack_entry>& with_stack) const
++		const ::array<with_stack_entry>& with_stack) const
+ 	// varname must be a plain variable name; no path parsing.
+ 	{
+ 		as_value	val;
+@@ -494,7 +494,7 @@ namespace gameswf
+ 	void	as_environment::set_variable(
+ 		const tu_string& varname,
+ 		const as_value& val,
+-		const array<with_stack_entry>& with_stack)
++		const ::array<with_stack_entry>& with_stack)
+ 	// Given a path to variable, set its value.
+ 	{
+ 		IF_VERBOSE_ACTION(log_msg("-------------- %s = %s\n", varname.c_str(), val.to_string()));//xxxxxxxxxx
+@@ -521,7 +521,7 @@ namespace gameswf
+ 	void	as_environment::set_variable_raw(
+ 		const tu_string& varname,
+ 		const as_value& val,
+-		const array<with_stack_entry>& with_stack)
++		const ::array<with_stack_entry>& with_stack)
+ 	// No path rigamarole.
+ 	{
+ 		// Check the with-stack.
+diff --git a/tu-testbed/gameswf/gameswf_environment.h b/tu-testbed/gameswf/gameswf_environment.h
+index e020620..ea7f2f6 100644
+--- a/tu-testbed/gameswf/gameswf_environment.h
++++ b/tu-testbed/gameswf/gameswf_environment.h
+@@ -147,7 +147,7 @@ namespace gameswf
+ 	{
+ 		vm_stack m_scope;	// scope stack for AVM2
+ 		as_value	m_global_register[GLOBAL_REGISTER_COUNT];
+-		array<as_value>	m_local_register;	// function2 uses this
++		::array<as_value>	m_local_register;	// function2 uses this
+ 		gc_ptr<as_object>	m_target;
+ 
+ 		// For local vars.  Use empty names to separate frames.
+@@ -159,7 +159,7 @@ namespace gameswf
+ 			frame_slot() {}
+ 			frame_slot(const tu_string& name, const as_value& val) : m_name(name), m_value(val) {}
+ 		};
+-		array<frame_slot>	m_local_frames;
++		::array<frame_slot>	m_local_frames;
+ 
+ 		weak_ptr<player> m_player;
+ 
+@@ -176,13 +176,13 @@ namespace gameswf
+ 		void set_target(character* target);
+ 		void set_target(as_value& target, character* original_target);
+ 
+-		as_value	get_variable(const tu_string& varname, const array<with_stack_entry>& with_stack) const;
++		as_value	get_variable(const tu_string& varname, const ::array<with_stack_entry>& with_stack) const;
+ 		// no path stuff:
+-		as_value	get_variable_raw(const tu_string& varname, const array<with_stack_entry>& with_stack) const;
++		as_value	get_variable_raw(const tu_string& varname, const ::array<with_stack_entry>& with_stack) const;
+ 
+-		void	set_variable(const tu_string& path, const as_value& val, const array<with_stack_entry>& with_stack);
++		void	set_variable(const tu_string& path, const as_value& val, const ::array<with_stack_entry>& with_stack);
+ 		// no path stuff:
+-		void	set_variable_raw(const tu_string& path, const as_value& val, const array<with_stack_entry>& with_stack);
++		void	set_variable_raw(const tu_string& path, const as_value& val, const ::array<with_stack_entry>& with_stack);
+ 
+ 		void	set_local(const tu_string& varname, const as_value& val);
+ 		void	add_local(const tu_string& varname, const as_value& val);	// when you know it doesn't exist.
+diff --git a/tu-testbed/gameswf/gameswf_impl.cpp b/tu-testbed/gameswf/gameswf_impl.cpp
+index 131812e..86808f6 100755
+--- a/tu-testbed/gameswf/gameswf_impl.cpp
++++ b/tu-testbed/gameswf/gameswf_impl.cpp
+@@ -1815,6 +1815,14 @@ namespace gameswf
+ 			{
+ 				m->export_resource(resource_name, ch);
+ 			}
++			// [openbf2] Bitmaps lie in a separate table (add_bitmap_character),
++			// and nobody asked for them here — because of that attachMovie by
++			// an image name returned nothing. That is exactly how the BF2 menu
++			// pulls its images/*.png out of the movie's library.
++			else if (bitmap_character_def* bm = m->get_bitmap_character(id))
++			{
++				m->export_resource(resource_name, bm);
++			}
+ 			else
+ 			{
+ 				log_error("export error: don't know how to export resource '%s'\n", resource_name.c_str());
+diff --git a/tu-testbed/gameswf/gameswf_player.cpp b/tu-testbed/gameswf/gameswf_player.cpp
+index 8527ffb..32eb17d 100644
+--- a/tu-testbed/gameswf/gameswf_player.cpp
++++ b/tu-testbed/gameswf/gameswf_player.cpp
+@@ -232,7 +232,7 @@ namespace gameswf
+ #ifdef WIN32
+ 	static tu_string s_gameswf_version("WIN "__DATE__" "__TIME__);
+ #else
+-	static tu_string s_gameswf_version("LINUX "__DATE__" "__TIME__);
++	static tu_string s_gameswf_version("LINUX " __DATE__ " " __TIME__);
+ #endif
+ 		
+ 		return s_gameswf_version.c_str();
