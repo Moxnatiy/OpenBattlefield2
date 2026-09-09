@@ -108,6 +108,28 @@ void printOne(obf2::FileSystem& files, const std::string& path, std::size_t geom
     }
   }
 
+  // The range of every TEXCOORD set. A light map's unwrap is unique and lives
+  // in [0,1]; a detail set tiles and runs far past it. This is how to tell them
+  // apart without guessing which index means what.
+  {
+    const std::size_t stride = mesh->floatsPerVertex();
+    for (const auto& attribute : mesh->attributes) {
+      if (attribute.flag != 0) continue;
+      if ((attribute.usage & 0xFF) != 5) continue;  // TEXCOORD
+      const std::size_t at = attribute.offset / sizeof(float);
+      float minU = 1e30f, maxU = -1e30f, minV = 1e30f, maxV = -1e30f;
+      for (std::uint32_t v = 0; v < mesh->vertexCount; ++v) {
+        const std::size_t base = static_cast<std::size_t>(v) * stride + at;
+        if (base + 1 >= mesh->vertexData.size()) break;
+        const float u = mesh->vertexData[base], w = mesh->vertexData[base + 1];
+        minU = std::min(minU, u); maxU = std::max(maxU, u);
+        minV = std::min(minV, w); maxV = std::max(maxV, w);
+      }
+      std::printf("  TEXCOORD%u (usage %#x): u %.3f..%.3f  v %.3f..%.3f\n",
+                  attribute.usage >> 8, attribute.usage, minU, maxU, minV, maxV);
+    }
+  }
+
   std::printf("  bbox: %.2f/%.2f/%.2f .. %.2f/%.2f/%.2f\n", render->bounds.min.x,
               render->bounds.min.y, render->bounds.min.z, render->bounds.max.x,
               render->bounds.max.y, render->bounds.max.z);
@@ -129,6 +151,60 @@ int main(int argc, char** argv) {
   }
   obf2::FileSystem files = mountGame(argv[1]);
   const std::string what = argv[2];
+
+  // Which TEXCOORD set holds the light map's unwrap. The engine names it per
+  // material (`TexLightMapInd`) and we cannot read that, so the question is
+  // whether a rule holds over the whole corpus: a light map's unwrap is unique
+  // and lives inside [0,1], while the detail sets tile and run far past it.
+  if (what == "--lightmapuv") {
+    int meshes = 0, withSets = 0, lastInUnitSquare = 0, earlierInUnitSquare = 0;
+    std::map<int, int> setCounts;
+    auto scan = files.list();
+    std::sort(scan.begin(), scan.end());
+    scan.erase(std::unique(scan.begin(), scan.end()), scan.end());
+    for (const auto& path : scan) {
+      if (obf2::assetExtension(path) != "staticmesh") continue;
+      const auto bytes = files.read(path);
+      if (!bytes) continue;
+      const auto mesh = obf2::mesh::load(*bytes, obf2::mesh::Kind::Static);
+      if (!mesh || mesh->vertexCount == 0) continue;
+      ++meshes;
+
+      const std::size_t stride = mesh->floatsPerVertex();
+      std::vector<std::pair<int, std::size_t>> sets;  // set index -> float offset
+      for (const auto& attribute : mesh->attributes) {
+        if (attribute.flag != 0) continue;
+        if ((attribute.usage & 0xFF) != 5) continue;
+        sets.emplace_back(attribute.usage >> 8, attribute.offset / sizeof(float));
+      }
+      ++setCounts[static_cast<int>(sets.size())];
+      if (sets.size() < 2) continue;
+      ++withSets;
+      std::sort(sets.begin(), sets.end());
+
+      auto insideUnitSquare = [&](std::size_t at) {
+        for (std::uint32_t v = 0; v < mesh->vertexCount; ++v) {
+          const std::size_t base = static_cast<std::size_t>(v) * stride + at;
+          if (base + 1 >= mesh->vertexData.size()) return false;
+          const float u = mesh->vertexData[base], w = mesh->vertexData[base + 1];
+          if (u < -0.001f || u > 1.001f || w < -0.001f || w > 1.001f) return false;
+        }
+        return true;
+      };
+      if (insideUnitSquare(sets.back().second)) ++lastInUnitSquare;
+      for (std::size_t i = 0; i + 1 < sets.size(); ++i) {
+        if (insideUnitSquare(sets[i].second)) { ++earlierInUnitSquare; break; }
+      }
+    }
+    std::printf("static meshes: %d, with two or more TEXCOORD sets: %d\n", meshes, withSets);
+    std::printf("  last set inside [0,1]:     %d\n", lastInUnitSquare);
+    std::printf("  some earlier set inside:   %d\n", earlierInUnitSquare);
+    std::puts("TEXCOORD sets per mesh:");
+    for (const auto& [count, howMany] : setCounts) {
+      std::printf("  %d sets: %d meshes\n", count, howMany);
+    }
+    return 0;
+  }
 
   // Reconnaissance: which techniques occur and what lies in each texture slot.
   // Needed to work out which slot to take for the base colour.

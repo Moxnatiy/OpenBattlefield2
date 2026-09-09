@@ -710,6 +710,7 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
   GpuMesh gpuMesh;
   gpuMesh.vertices = vertexBuffer;
   gpuMesh.indices = indexBuffer;
+  gpuMesh.hasLightmapUv = source.hasLightmapUv;
 
   // A sphere around the mesh's bounds: the centre in the middle, the radius to a corner.
   const Vec3f minimum{source.bounds.min.x, source.bounds.min.y, source.bounds.min.z};
@@ -891,7 +892,13 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
       const Mat4 modelViewProjection = viewProjection * transform;
       std::memcpy(uniforms.modelViewProjection, modelViewProjection.m, sizeof(Mat4));
       uniforms.material[1] = item.road ? 1.0f : 0.0f;
-      std::memcpy(uniforms.lightmapOffset, item.lightmapOffset, sizeof(uniforms.lightmapOffset));
+      const bool bakedItem = item.lightmap != nullptr && item.mesh->hasLightmapUv;
+      if (bakedItem) {
+        std::memcpy(uniforms.lightmapOffset, item.lightmapOffset,
+                    sizeof(uniforms.lightmapOffset));
+      } else {
+        std::memset(uniforms.lightmapOffset, 0, sizeof(uniforms.lightmapOffset));
+      }
       uniforms.material[2] = item.sky ? 1.0f : 0.0f;
       // No fog on the sky: the dome's texture already holds the horizon the fog
       // fades into. `SkyDome.fx` computes none either.
@@ -905,8 +912,13 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
         // the same building stands on a level thirty times and each copy has
         // its own window into the level's atlas, so the geometry is shared and
         // the light map is not.
-        SDL_GPUTexture* lightmapTexture =
-            item.lightmap != nullptr ? item.lightmap : range.lightmap;
+        // Only when the geometry has the light map's UV set. A mesh without
+        // TEXCOORD2 has `uv3` all zeroes, so it would sample a single texel at
+        // the corner of its window — and where that texel is black, the whole
+        // object goes black. The atlas may well hold an entry for the placement
+        // anyway.
+        const bool baked = item.lightmap != nullptr && item.mesh->hasLightmapUv;
+        SDL_GPUTexture* lightmapTexture = baked ? item.lightmap : range.lightmap;
         const SDL_GPUTextureSamplerBinding bindings[3] = {
             {range.texture != nullptr ? range.texture : placeholder_, sampler_},
             {lightmapTexture != nullptr ? lightmapTexture : placeholder_, sampler_},

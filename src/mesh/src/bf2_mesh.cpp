@@ -263,6 +263,7 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
   // is what a material with no detail channel wants anyway.
   bool hasPosition = false, hasNormal = false, hasUv = false, hasUv2 = false, hasUv3 = false;
   bool hasPart = false;
+  std::uint16_t lightmapUsage = 0;
   std::size_t positionFloat = 0, normalFloat = 0, uvFloat = 0, uv2Float = 0, uv3Float = 0;
   std::size_t partFloat = 0;
   std::size_t weightFloat = 0;
@@ -270,28 +271,52 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
   for (const VertexAttribute& attribute : mesh.attributes) {
     if (attribute.flag != 0) continue;  // 255 = the channel is disabled
     const std::size_t index = attribute.offset / sizeof(float);
-    // usage is encoded as (channel number << 8) | purpose, so TEXCOORD1 is
-    // 0x105 and TEXCOORD2 (the light map) is 0x205. We want the zeroth.
+    // usage is encoded as (channel number << 8) | purpose, so purpose 5 is
+    // TEXCOORD and the high byte is which set. A mesh carries between one and
+    // five of them and they are not interchangeable:
+    //
+    //   * set 0 is the base map's unwrap;
+    //   * set 1 is the tiling one the detail map is sampled with
+    //     (`Shaders_client.zip:RaShaderSTM.fx:224`);
+    //   * the **last** set is the light map's unwrap.
+    //
+    // Which set the engine reads for which map is a per-material index we
+    // cannot see (`TexLightMapInd`). What is visible is the shape of the data:
+    // a light map's unwrap is unique and lies inside [0,1], while the detail
+    // sets tile and run past ±15. Measured with `mesh_info --lightmapuv` — of
+    // the 1253 static meshes with more than one set, 1021 have their last
+    // inside the unit square.
+    //
+    // The other 232 are checked after the vertices are read and simply get no
+    // light map, which is what they want: taking a tiling set for one puts the
+    // whole object on a single texel, and where that texel is dark the object
+    // turns black. That is exactly what happened when this was assumed to be
+    // TEXCOORD2.
+    if ((attribute.usage & 0xFF) == 5) {
+      const std::uint16_t set = static_cast<std::uint16_t>(attribute.usage >> 8);
+      if (set == 0 && !hasUv) { uvFloat = index; hasUv = true; }
+      if (set == 1 && !hasUv2) { uv2Float = index; hasUv2 = true; }
+      if (attribute.usage >= lightmapUsage) {
+        lightmapUsage = attribute.usage;
+        uv3Float = index;
+        hasUv3 = true;
+      }
+      continue;
+    }
     switch (attribute.usage) {
       case 0: positionFloat = index; hasPosition = true; break;
       case 1: weightFloat = index; hasWeight = true; break;
       case 2: partFloat = index; hasPart = true; break;
       case 3: normalFloat = index; hasNormal = true; break;
-      case 5:
-        if (!hasUv) { uvFloat = index; hasUv = true; }
-        break;
-      case 0x105:
-        if (!hasUv2) { uv2Float = index; hasUv2 = true; }
-        break;
-      case 0x205:
-        if (!hasUv3) { uv3Float = index; hasUv3 = true; }
-        break;
       default: break;
     }
   }
   if (!hasPosition) return fail("the mesh has no POSITION");
 
   RenderMesh out;
+  // Only a set that really is a unique unwrap. Filled in after the vertices are
+  // read, below.
+  out.hasLightmapUv = false;
   out.bounds = Aabb{lod.min, lod.max};
   out.vertices.resize(mesh.vertexCount);
   if (hasPart && mesh.kind == Kind::Bundled) out.vertexPart.resize(mesh.vertexCount);
@@ -347,6 +372,19 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
     if (hasUv3 && base + uv3Float + 1 < mesh.vertexData.size()) {
       vertex.uv3[0] = mesh.vertexData[base + uv3Float];
       vertex.uv3[1] = mesh.vertexData[base + uv3Float + 1];
+    }
+  }
+
+  // Is the set we took actually an unwrap? A tiling one is not a light map, and
+  // treating it as one is worse than having none.
+  if (hasUv3 && lightmapUsage > 5) {
+    out.hasLightmapUv = true;
+    for (const Vertex& vertex : out.vertices) {
+      if (vertex.uv3[0] < -0.001f || vertex.uv3[0] > 1.001f || vertex.uv3[1] < -0.001f ||
+          vertex.uv3[1] > 1.001f) {
+        out.hasLightmapUv = false;
+        break;
+      }
     }
   }
 

@@ -85,6 +85,10 @@ struct Args {
   float cameraYaw = 0.0f;    // degrees; 0 looks along +Z, as the engine counts
   float cameraPitch = 0.0f;  // degrees; positive is up
   bool noHud = false;
+  // --no-lightmaps: draw without the levels' baked light maps. For telling a
+  // wrong light map apart from a dark one — the two look alike on screen and
+  // only an A/B says which.
+  bool noLightmaps = false;
   // --own-box: draw a placeholder at our own soldier's position too. It is not
   // needed in the game itself, but without it the other players' placeholder
   // cannot be checked on an empty server.
@@ -172,6 +176,7 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--hosted") args.hosted = true;
     else if (flag == "--topdown") args.topDown = true;
     else if (flag == "--no-hud") args.noHud = true;
+    else if (flag == "--no-lightmaps") args.noLightmaps = true;
     else if (flag == "--camera" && i + 1 < argc) {
       obf2::con::Command command;
       command.args.emplace_back(argv[++i]);
@@ -2044,7 +2049,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       // The baked light map is keyed by the template's name and the placement's
       // own position, so it is looked up here rather than with the geometry:
       // the mesh is shared between copies and the light map is not.
-      if (const auto* baked = objectLightmaps.find(object.templateName, object.position)) {
+      const auto* baked =
+          args.noLightmaps ? nullptr
+                           : objectLightmaps.find(object.templateName, object.position);
+      if (baked != nullptr) {
         instance.lightmapAtlas = baked->atlas;
         instance.lightmapOffset[0] = baked->scaleU;
         instance.lightmapOffset[1] = baked->scaleV;

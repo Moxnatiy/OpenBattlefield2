@@ -142,6 +142,13 @@ struct RenderMesh {
   // (their count always equals the number of materials).
   std::vector<SkinBinding> skin;
   std::vector<Rig> rigs;
+
+  // Whether the mesh really carried TEXCOORD2, the set a baked light map is
+  // sampled with. When it did not, `Vertex::uv3` is all zeroes and sampling by
+  // it would put the whole object on one texel — which is how a building turns
+  // solid black. The level's atlas may still have an entry for the placement,
+  // so the mesh has to say.
+  bool hasLightmapUv = false;
 };
 
 // The type is decided by the file's extension — it cannot be told from the contents.

@@ -31,6 +31,10 @@ struct GpuMesh {
     bool alphaTest = false;
   };
 
+  // Whether the geometry carried the light map's own UV set. Without it a baked
+  // light map cannot be sampled at all, whatever the level's atlas says.
+  bool hasLightmapUv = false;
+
   SDL_GPUBuffer* vertices = nullptr;
   SDL_GPUBuffer* indices = nullptr;
   std::vector<Range> ranges;

@@ -279,11 +279,35 @@ assumed:
 is the reverse of the order the shader wants them in — `LightMapOffset` is
 xy scale, zw offset (`RaShaderSTM.fx:216`).
 
-Two consequences for the renderer. The light map is sampled with
-**TEXCOORD2**, a third UV set the vertex now carries. And it belongs to
-the *placement*, not the geometry: the same building stands on a level
-thirty times and each copy has its own window into the atlas, so the mesh
-is shared and the light map is not.
+Two consequences for the renderer. The light map has a UV set of its own,
+a third one the vertex now carries. And it belongs to the *placement*, not
+the geometry: the same building stands on a level thirty times and each
+copy has its own window into the atlas, so the mesh is shared and the
+light map is not.
+
+**Which UV set is the light map's** was assumed at first and the assumption
+was wrong. A comment in our own parser said TEXCOORD2, and taking it turned
+whole buildings solid black — a mesh has between one and five sets, the
+engine picks per material through `TexLightMapInd`, and that index is not
+in the data we can read.
+
+What is in the data is the shape of the sets, and `mesh_info --lightmapuv`
+measures it. A light map's unwrap is unique and lies inside [0,1]; a detail
+set tiles and runs past ±15. On `house_high_06`:
+
+```
+TEXCOORD0 (usage 0x5):   u -3.379..4.993       v -2.751..1.306
+TEXCOORD1 (usage 0x105): u -15.806..65535.000  v -3.608..1.557
+TEXCOORD2 (usage 0x205): u -15.806..15.991     v -4.012..1.962
+TEXCOORD3 (usage 0x305): u -15.806..15.991     v -4.601..1.854
+TEXCOORD4 (usage 0x405): u 0.000..0.996        v 0.000..0.953
+```
+
+It is the **last** set, not the second. Over the corpus: of the 1253 static
+meshes with more than one set, 1021 have their last inside the unit square.
+The other 232 are not unwraps, so the loader checks every vertex and gives
+those meshes no light map at all rather than putting the whole object on
+one texel — which is what produced the black buildings.
 
 `obf2::level::ObjectLightmaps` reads the file and
 `tests/test_lightmap_atlas.cpp` holds four of its entries verbatim.
