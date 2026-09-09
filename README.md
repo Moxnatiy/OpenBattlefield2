@@ -32,6 +32,40 @@ This is a research project in progress. What works today:
 What is deliberately absent: no game content is redistributed, Bink video
 is not decoded, and there is no anti-cheat.
 
+## Screenshots
+
+Everything below is our engine, on macOS/arm64, reading an original
+Battlefield 2 1.5 installation. Every frame was produced by the command
+printed under it — no hands on the keyboard.
+
+The game's own `mainMenu.swf`, running under Ruffle with our bridge:
+
+![Main menu](docs/screenshots/menu-main.png)
+
+```bash
+openbf2 --frames 600 --click-at 300:490:285 --screenshot menu-main.png
+```
+
+The spawn screen on Dalian Plant — kits, the minimap, control points, all
+built from the game's own `.con` node tree:
+
+![Spawn screen](docs/screenshots/spawn-dalian.png)
+
+```bash
+openbf2 --level Dalian_plant --frames 8 --screenshot spawn-dalian.png
+```
+
+In the world after DONE: terrain, static meshes, the combat HUD:
+
+![In game, Dalian Plant](docs/screenshots/ingame.png)
+
+![In game, Strike at Karkand](docs/screenshots/karkand.png)
+
+```bash
+openbf2 --level Dalian_plant --frames 120 \
+    --click-at 20:730:585 --click-at 60:1110:833 --screenshot ingame.png
+```
+
 ## Requirements
 
 * An installed **Battlefield 2 1.5** (any edition); the path is given with
