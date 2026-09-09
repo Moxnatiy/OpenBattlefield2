@@ -255,10 +255,14 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
   const std::size_t stride = mesh.floatsPerVertex();
   if (stride == 0) return fail("zero vertex stride");
 
-  // The offsets of the channels we need. We take the first TEXCOORD: BF2 has up
-  // to three (base, detail, light map), and geometry needs only the zeroth.
-  bool hasPosition = false, hasNormal = false, hasUv = false, hasPart = false;
-  std::size_t positionFloat = 0, normalFloat = 0, uvFloat = 0, partFloat = 0;
+  // The offsets of the channels we need. BF2 has up to three TEXCOORDs, and
+  // they are not interchangeable: the zeroth is the base map's unique unwrap,
+  // the first is the tiling one the detail map is sampled with
+  // (`Shaders_client.zip:RaShaderSTM.fx:224`), the second is the light map.
+  // We take the zeroth and the first; a mesh with only one set reuses it, which
+  // is what a material with no detail channel wants anyway.
+  bool hasPosition = false, hasNormal = false, hasUv = false, hasUv2 = false, hasPart = false;
+  std::size_t positionFloat = 0, normalFloat = 0, uvFloat = 0, uv2Float = 0, partFloat = 0;
   std::size_t weightFloat = 0;
   bool hasWeight = false;
   for (const VertexAttribute& attribute : mesh.attributes) {
@@ -273,6 +277,9 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
       case 3: normalFloat = index; hasNormal = true; break;
       case 5:
         if (!hasUv) { uvFloat = index; hasUv = true; }
+        break;
+      case 0x105:
+        if (!hasUv2) { uv2Float = index; hasUv2 = true; }
         break;
       default: break;
     }
@@ -324,6 +331,13 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
     if (hasUv && base + uvFloat + 1 < mesh.vertexData.size()) {
       vertex.uv[0] = mesh.vertexData[base + uvFloat];
       vertex.uv[1] = mesh.vertexData[base + uvFloat + 1];
+    }
+    if (hasUv2 && base + uv2Float + 1 < mesh.vertexData.size()) {
+      vertex.uv2[0] = mesh.vertexData[base + uv2Float];
+      vertex.uv2[1] = mesh.vertexData[base + uv2Float + 1];
+    } else {
+      vertex.uv2[0] = vertex.uv[0];
+      vertex.uv2[1] = vertex.uv[1];
     }
   }
 

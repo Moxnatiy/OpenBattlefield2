@@ -21,6 +21,10 @@ struct GpuMesh {
     SDL_GPUTexture* texture = nullptr;   // base colour; nullptr -> placeholder
     SDL_GPUTexture* lightmap = nullptr;  // baked lighting; nullptr -> white
     SDL_GPUTexture* detail = nullptr;    // fine structure, tiled
+    // Whether the detail is multiplied into the base colour. True for a mesh
+    // material with a `Detail` channel, false for the terrain, whose slot 2 is
+    // a weight map and not a colour.
+    bool detailMultiply = false;
   };
 
   SDL_GPUBuffer* vertices = nullptr;
@@ -35,10 +39,11 @@ struct GpuMesh {
   float boundsRadius = 0.0f;
 };
 
-// Mesh rendering with a base texture. BF2's materials have up to four slots
-// (`_c` base colour, `_de` detail, `_deb` detail normal, `_di`/`_cr` dirt and
-// cracks) — only the zeroth is used here; the rest await a proper material
-// pipeline.
+// Mesh rendering. Which slot of a BF2 material holds what is named by its own
+// technique, and `obf2::mesh::materialLayout` reads it. The base colour and the
+// detail are drawn (base * detail, as the game's shader does); the dirt, the
+// crack and the normal maps are not — the last need a tangent frame we do not
+// build yet.
 class MeshRenderer {
  public:
   // How to find and read a texture by the name in a material. Made a callback
@@ -70,6 +75,10 @@ class MeshRenderer {
     // a node's texture by it, and without it the yellow captions, the tabs'
     // highlight and the coloured bars all come out plain white.
     float tint[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    // A road is a skin on the terrain, not geometry of its own: it is lifted a
+    // centimetre, blended by its texture's alpha and does not write depth.
+    // Drawn like everything else it fights the terrain for the same pixels.
+    bool road = false;
   };
 
   // The fog comes from the level's data (Sky.con). fogEnd == 0 disables it.
@@ -108,6 +117,7 @@ class MeshRenderer {
 
   Device* device_ = nullptr;
   SDL_GPUGraphicsPipeline* pipeline_ = nullptr;
+  SDL_GPUGraphicsPipeline* roadPipeline_ = nullptr;
   SDL_GPUGraphicsPipeline* overlayPipeline_ = nullptr;
   SDL_GPUSampler* sampler_ = nullptr;
   // A separate sampler for the interface: there a texture is never tiled, and

@@ -84,7 +84,11 @@ struct Mesh {
 struct Vertex {
   Vec3 position;
   Vec3 normal;
+  // TEXCOORD0: the base map's unwrap, unique per surface.
   float uv[2]{};
+  // TEXCOORD1: the tiling set the detail map is sampled with. When the mesh has
+  // only one set this is a copy of `uv`.
+  float uv2[2]{};
 };
 
 // A range of indices sharing one material — one draw call.

@@ -1724,14 +1724,23 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   // Unique geometry is kept apart from the placement: on a level the same building
   // occurs dozens of times, and uploading it to the GPU each time makes no sense.
   struct Scene {
+    // One placement of a piece of geometry. `road` says the renderer must draw
+    // it as a skin on the terrain rather than as geometry of its own — what that
+    // means is `obf2::gfx`'s business, not ours.
+    struct Instance {
+      int mesh = -1;
+      obf2::Mat4 transform;
+      bool road = false;
+    };
+
     std::vector<obf2::mesh::RenderMesh> meshes;
-    std::vector<std::pair<int, obf2::Mat4>> instances;  // the mesh's index + a transform
+    std::vector<Instance> instances;
     obf2::Vec3f center;
     float radius = 1.0f;
 
-    void add(obf2::mesh::RenderMesh&& geometry, const obf2::Mat4& transform) {
+    void add(obf2::mesh::RenderMesh&& geometry, const obf2::Mat4& transform, bool road = false) {
       meshes.push_back(std::move(geometry));
-      instances.emplace_back(static_cast<int>(meshes.size()) - 1, transform);
+      instances.push_back(Instance{static_cast<int>(meshes.size()) - 1, transform, road});
     }
   } scene;
 
@@ -1777,7 +1786,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     int roadsPlaced = 0;
     for (auto& road : level->roads) {
       if (road.geometry.indices.empty()) continue;
-      scene.add(std::move(road.geometry), obf2::translation(road.position));
+      scene.add(std::move(road.geometry), obf2::translation(road.position), true);
       ++roadsPlaced;
     }
     std::printf("  roads in the scene: %d\n", roadsPlaced);
@@ -1977,7 +1986,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
                                                              object.rotation.z);
         }
       }
-      scene.instances.emplace_back(found->second, transform);
+      scene.instances.push_back(Scene::Instance{found->second, transform, false});
       ++placed;
     }
 
@@ -3318,10 +3327,13 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   std::vector<obf2::gfx::MeshRenderer::DrawItem> items;
   items.reserve(scene.instances.size());
   long long drawnTriangles = 0;
-  for (const auto& [meshIndex, transform] : scene.instances) {
+  for (const Scene::Instance& instance : scene.instances) {
+    const int meshIndex = instance.mesh;
     if (meshIndex < 0 || !uploadedOk[static_cast<std::size_t>(meshIndex)]) continue;
-    items.push_back(obf2::gfx::MeshRenderer::DrawItem{
-        &gpuMeshes[static_cast<std::size_t>(meshIndex)], transform});
+    obf2::gfx::MeshRenderer::DrawItem item{&gpuMeshes[static_cast<std::size_t>(meshIndex)],
+                                           instance.transform};
+    item.road = instance.road;
+    items.push_back(item);
     drawnTriangles += static_cast<long long>(scene.meshes[static_cast<std::size_t>(meshIndex)]
                                                  .indices.size() / 3);
   }

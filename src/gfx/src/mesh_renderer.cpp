@@ -2,8 +2,16 @@
 
 #include <cstring>
 
+#include "obf2/mesh/material.h"
+
 namespace obf2::gfx {
 namespace {
+
+// The original lifts a road one centimetre in world space before the projection
+// (`Shaders_client.zip:RoadCompiled.fx:95`, `wPos.y += .01;`; the editor's
+// shader agrees, Road.fx:59). Our roads are placed by a plain translation, so
+// lifting the instance is the same thing.
+constexpr float kRoadLift = 0.01f;
 
 // The shaders are supplied as MSL text: SDL_GPU hands them to the Metal compiler
 // at runtime, so for macOS a separate shader build step is not needed yet.
@@ -16,12 +24,16 @@ struct VertexIn {
     float3 position [[attribute(0)]];
     float3 normal   [[attribute(1)]];
     float2 uv       [[attribute(2)]];
+    float2 uv2      [[attribute(3)]];
 };
 
 struct VertexOut {
     float4 position [[position]];
     float3 normal;
     float2 uv;
+    // The detail map has a tiling UV set of its own
+    // (`Shaders_client.zip:RaShaderSTM.fx:224`), not the base map's unwrap.
+    float2 uv2;
     float viewDepth;
     // The frame's parameters travel to the fragment shader through varyings
     // rather than in a uniform buffer of their own: in the fragment stage they
@@ -31,6 +43,7 @@ struct VertexOut {
     float4 fogParams;
     float4 sunColor;
     float4 skyColor;
+    float4 material;
 };
 
 struct Uniforms {
@@ -39,6 +52,9 @@ struct Uniforms {
     float4 fogParams;  // x: start, y: end (0 = no fog), z: light map mode, w: detail tiling
     float4 sunColor;   // TerrainSunColor
     float4 skyColor;   // TerrainSkyColor
+    // x: multiply the detail map in (a mesh material with a Detail channel);
+    // y: take the alpha from the texture rather than 1 (the road pass).
+    float4 material;
 };
 
 vertex VertexOut vertex_main(VertexIn in [[stage_in]],
@@ -47,6 +63,7 @@ vertex VertexOut vertex_main(VertexIn in [[stage_in]],
     out.position = uniforms.modelViewProjection * float4(in.position, 1.0);
     out.normal = in.normal;
     out.uv = in.uv;
+    out.uv2 = in.uv2;
     // For a perspective projection w in clip space equals the distance along the
     // view — exactly what the fog needs.
     out.viewDepth = out.position.w;
@@ -54,6 +71,7 @@ vertex VertexOut vertex_main(VertexIn in [[stage_in]],
     out.fogParams = uniforms.fogParams;
     out.sunColor = uniforms.sunColor;
     out.skyColor = uniforms.skyColor;
+    out.material = uniforms.material;
     return out;
 }
 
@@ -65,6 +83,16 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
                               sampler lightSampler [[sampler(1)]],
                               sampler detailSampler [[sampler(2)]]) {
     float4 albedo = baseColor.sample(baseSampler, in.uv);
+
+    // A material whose technique names a `Detail` channel is the base
+    // **multiplied by** the detail, and the detail is sampled with the tiling
+    // UV set (`Shaders_client.zip:RaShaderSTM.fx:262`, getCompositeDiffuse:
+    // `totalDiffuse *= detail`). Without this only the base is drawn, and on
+    // surfaces whose base map is a low-frequency tint — tree trunks, fences,
+    // dumpsters — the base alone is very nearly white.
+    if (in.material.x > 0.5) {
+        albedo *= detail.sample(detailSampler, in.uv2);
+    }
 
     float3 light;
     if (in.fogParams.z > 0.5) {
@@ -98,7 +126,10 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
                            max(in.fogParams.y - in.fogParams.x, 0.001));
         color = mix(color, in.fogColor.rgb, t);
     }
-    return float4(color, 1.0);
+    // Roads blend into the terrain by the alpha of their own texture
+    // (`Shaders_client.zip:Road.fx:78`, `outcolor.a = tex0.a`); everything else
+    // is opaque.
+    return float4(color, in.material.y > 0.5 ? albedo.a : 1.0);
 }
 )MSL";
 
@@ -194,17 +225,19 @@ struct VertexUniforms {
   float fogParams[4]{};  // start, end, lightmapMode, 0
   float sunColor[4]{};
   float skyColor[4]{};
+  float material[4]{};  // x: multiply the detail map in, y: alpha from the texture
 };
 
 }  // namespace
 
-static_assert(sizeof(mesh::Vertex) == 32, "the vertex layout must match the shader");
+static_assert(sizeof(mesh::Vertex) == 40, "the vertex layout must match the shader");
 
 MeshRenderer::~MeshRenderer() {
   if (device_ == nullptr) return;
   SDL_GPUDevice* gpu = device_->gpu();
   if (placeholder_ != nullptr) SDL_ReleaseGPUTexture(gpu, placeholder_);
   if (overlayPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, overlayPipeline_);
+  if (roadPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, roadPipeline_);
   if (sampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, sampler_);
   if (overlaySampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, overlaySampler_);
   if (pipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, pipeline_);
@@ -227,10 +260,11 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
 
   const SDL_GPUVertexBufferDescription bufferDescription{
       0, static_cast<Uint32>(sizeof(mesh::Vertex)), SDL_GPU_VERTEXINPUTRATE_VERTEX, 0};
-  const SDL_GPUVertexAttribute attributes[3] = {
+  const SDL_GPUVertexAttribute attributes[4] = {
       {0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offsetof(mesh::Vertex, position)},
       {1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offsetof(mesh::Vertex, normal)},
       {2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(mesh::Vertex, uv)},
+      {3, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(mesh::Vertex, uv2)},
   };
 
   SDL_GPUColorTargetDescription colorTarget{};
@@ -242,7 +276,7 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   info.vertex_input_state.vertex_buffer_descriptions = &bufferDescription;
   info.vertex_input_state.num_vertex_buffers = 1;
   info.vertex_input_state.vertex_attributes = attributes;
-  info.vertex_input_state.num_vertex_attributes = 3;
+  info.vertex_input_state.num_vertex_attributes = 4;
   info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
   // Vertex winding in BF2 is counter-clockwise: across all 1635 meshes in the
   // game (2.2 M triangles) the geometric normal agrees with the vertex normals
@@ -270,13 +304,36 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   }
 
   SDL_GPUGraphicsPipeline* pipeline = SDL_CreateGPUGraphicsPipeline(gpu, &info);
+
+  // Roads are the same geometry drawn a second way. The original tests depth
+  // but does **not** write it, and blends by the texture's alpha
+  // (`Shaders_client.zip:RoadCompiled.fx:194`, technique roadcompiledFull, pass
+  // NV3x: `ZEnable = TRUE, ZWriteEnable = FALSE, SrcBlend = SRCALPHA,
+  // DestBlend = INVSRCALPHA`). Drawn as ordinary opaque geometry they land on
+  // the terrain's own depth and fight it for every pixel.
+  SDL_GPUColorTargetDescription roadTarget = colorTarget;
+  roadTarget.blend_state.enable_blend = true;
+  roadTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
+  roadTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+  roadTarget.blend_state.color_blend_op = SDL_GPU_BLENDOP_ADD;
+  roadTarget.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+  roadTarget.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+  roadTarget.blend_state.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
+
+  SDL_GPUGraphicsPipelineCreateInfo roadInfo = info;
+  roadInfo.target_info.color_target_descriptions = &roadTarget;
+  roadInfo.depth_stencil_state.enable_depth_write = false;
+  SDL_GPUGraphicsPipeline* roadPipeline = SDL_CreateGPUGraphicsPipeline(gpu, &roadInfo);
+
   SDL_ReleaseGPUShader(gpu, vertexShader);
   SDL_ReleaseGPUShader(gpu, fragmentShader);
   if (pipeline == nullptr) return fail("graphics pipeline");
+  if (roadPipeline == nullptr) return fail("road pipeline");
 
   auto renderer = std::unique_ptr<MeshRenderer>(new MeshRenderer());
   renderer->device_ = &device;
   renderer->pipeline_ = pipeline;
+  renderer->roadPipeline_ = roadPipeline;
 
   // The second pipeline is for the interface: no depth (the call order decides
   // that), but with alpha blending, without which the font's glyphs would be
@@ -497,34 +554,37 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
   gpuMesh.boundsCenter = (minimum + maximum) * 0.5f;
   gpuMesh.boundsRadius = length(maximum - minimum) * 0.5f;
 
-  // A material's slot 0 is the base colour (`_c`): that is visible both from the
-  // technique names ("BaseDetailNDetail") and from the suffix distribution over the game's 4524 materials.
+  // Which slot holds what is named by the material's own technique — the
+  // texture list follows its tokens in order (`obf2::mesh::materialLayout`).
+  // The terrain is the exception: it is ours, not the game's, and
+  // `level::buildTerrainPatches` puts the baked light map in slot 1 and the
+  // detail weights in slot 2 itself.
   for (const mesh::DrawRange& source_range : source.ranges) {
     GpuMesh::Range range;
     range.indexStart = source_range.indexStart;
     range.indexCount = source_range.indexCount;
 
-    if (!source_range.maps.empty() && resolve) {
-      if (const auto decoded = resolve(source_range.maps.front())) {
-        range.texture = uploadTexture(*decoded);
-        if (range.texture != nullptr) gpuMesh.ownedTextures.push_back(range.texture);
-      }
-    }
-    // The terrain's third slot is the detail map.
-    if (source_range.maps.size() > 2 && resolve && source_range.lightmapInSecondSlot) {
-      if (const auto decoded = resolve(source_range.maps[2])) {
-        range.detail = uploadTexture(*decoded);
-        if (range.detail != nullptr) gpuMesh.ownedTextures.push_back(range.detail);
-      }
-    }
-    // The terrain's second slot is the baked lighting. For ordinary meshes slot 1
-    // is the detail map, which we do not use yet, so the light map is taken only
-    // where it was explicitly put (see level::buildTerrainPatches).
-    if (source_range.maps.size() > 1 && resolve && source_range.lightmapInSecondSlot) {
-      if (const auto decoded = resolve(source_range.maps[1])) {
-        range.lightmap = uploadTexture(*decoded);
-        if (range.lightmap != nullptr) gpuMesh.ownedTextures.push_back(range.lightmap);
-      }
+    auto load = [&](int slot) -> SDL_GPUTexture* {
+      if (slot < 0 || !resolve) return nullptr;
+      if (static_cast<std::size_t>(slot) >= source_range.maps.size()) return nullptr;
+      const auto decoded = resolve(source_range.maps[static_cast<std::size_t>(slot)]);
+      if (!decoded) return nullptr;
+      SDL_GPUTexture* uploaded = uploadTexture(*decoded);
+      if (uploaded != nullptr) gpuMesh.ownedTextures.push_back(uploaded);
+      return uploaded;
+    };
+
+    if (source_range.lightmapInSecondSlot) {
+      range.texture = load(0);
+      range.lightmap = load(1);
+      range.detail = load(2);
+    } else {
+      const mesh::MaterialLayout layout = mesh::materialLayout(source_range.technique);
+      // With no technique at all (31 materials in the game) slot 0 is still the
+      // base colour: every one of them carries a single `_c` map.
+      range.texture = load(layout.base >= 0 ? layout.base : 0);
+      range.detail = load(layout.detail);
+      range.detailMultiply = range.detail != nullptr;
     }
     gpuMesh.ranges.push_back(range);
   }
@@ -607,8 +667,6 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
   SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(frame.commands, &colorTarget, 1,
                                                    depth != nullptr ? &depthTarget : nullptr);
 
-  SDL_BindGPUGraphicsPipeline(pass, pipeline_);
-
   // The view frustum is taken from the same matrix we draw with, so the culling
   // is guaranteed to agree with what the camera sees.
   const Frustum frustum = extractFrustum(viewProjection);
@@ -631,47 +689,62 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
   uniforms.skyColor[1] = terrainSky_.g;
   uniforms.skyColor[2] = terrainSky_.b;
 
-  for (const DrawItem& item : items) {
-    if (item.mesh == nullptr || item.mesh->vertices == nullptr) continue;
+  // Two passes over the same list. The roads go second and through their own
+  // pipeline: they are a skin on the terrain, not geometry of their own.
+  auto drawLayer = [&](bool roads) {
+    for (const DrawItem& item : items) {
+      if (item.road != roads) continue;
+      if (item.mesh == nullptr || item.mesh->vertices == nullptr) continue;
 
-    if (item.mesh->boundsRadius > 0.0f) {
-      const Vec3f center = transformPoint(item.transform, item.mesh->boundsCenter);
-      if (!frustum.intersectsSphere(center, item.mesh->boundsRadius)) {
-        ++culled_;
-        continue;
+      Mat4 transform = item.transform;
+      if (item.road) transform.m[13] += kRoadLift;
+
+      if (item.mesh->boundsRadius > 0.0f) {
+        const Vec3f center = transformPoint(transform, item.mesh->boundsCenter);
+        if (!frustum.intersectsSphere(center, item.mesh->boundsRadius)) {
+          ++culled_;
+          continue;
+        }
+      }
+      ++drawn_;
+
+      const SDL_GPUBufferBinding vertexBinding{item.mesh->vertices, 0};
+      SDL_BindGPUVertexBuffers(pass, 0, &vertexBinding, 1);
+      const SDL_GPUBufferBinding indexBinding{item.mesh->indices, 0};
+      SDL_BindGPUIndexBuffer(pass, &indexBinding, SDL_GPU_INDEXELEMENTSIZE_32BIT);
+
+      const Mat4 modelViewProjection = viewProjection * transform;
+      std::memcpy(uniforms.modelViewProjection, modelViewProjection.m, sizeof(Mat4));
+      uniforms.material[1] = item.road ? 1.0f : 0.0f;
+
+      for (const GpuMesh::Range& range : item.mesh->ranges) {
+        if (range.indexCount == 0) continue;
+
+        const SDL_GPUTextureSamplerBinding bindings[3] = {
+            {range.texture != nullptr ? range.texture : placeholder_, sampler_},
+            {range.lightmap != nullptr ? range.lightmap : placeholder_, sampler_},
+            {range.detail != nullptr ? range.detail : placeholder_, sampler_},
+        };
+        SDL_BindGPUFragmentSamplers(pass, 0, bindings, 3);
+
+        // The lighting mode changes from range to range, so the uniform is pushed
+        // before every draw call.
+        uniforms.fogParams[2] = range.lightmap != nullptr ? 1.0f : 0.0f;
+        // How many times the detail repeats over a patch. With no texture the
+        // tiling is zero and the sampling lands in the white placeholder.
+        uniforms.fogParams[3] = range.detail != nullptr ? detailTiling_ : 0.0f;
+        uniforms.material[0] = range.detailMultiply ? 1.0f : 0.0f;
+        SDL_PushGPUVertexUniformData(frame.commands, 0, &uniforms, sizeof(uniforms));
+
+        SDL_DrawGPUIndexedPrimitives(pass, range.indexCount, 1, range.indexStart, 0, 0);
       }
     }
-    ++drawn_;
+  };
 
-    const SDL_GPUBufferBinding vertexBinding{item.mesh->vertices, 0};
-    SDL_BindGPUVertexBuffers(pass, 0, &vertexBinding, 1);
-    const SDL_GPUBufferBinding indexBinding{item.mesh->indices, 0};
-    SDL_BindGPUIndexBuffer(pass, &indexBinding, SDL_GPU_INDEXELEMENTSIZE_32BIT);
-
-    const Mat4 modelViewProjection = viewProjection * item.transform;
-    std::memcpy(uniforms.modelViewProjection, modelViewProjection.m, sizeof(Mat4));
-
-    for (const GpuMesh::Range& range : item.mesh->ranges) {
-      if (range.indexCount == 0) continue;
-
-      const SDL_GPUTextureSamplerBinding bindings[3] = {
-          {range.texture != nullptr ? range.texture : placeholder_, sampler_},
-          {range.lightmap != nullptr ? range.lightmap : placeholder_, sampler_},
-          {range.detail != nullptr ? range.detail : placeholder_, sampler_},
-      };
-      SDL_BindGPUFragmentSamplers(pass, 0, bindings, 3);
-
-      // The lighting mode changes from range to range, so the uniform is pushed
-      // before every draw call.
-      uniforms.fogParams[2] = range.lightmap != nullptr ? 1.0f : 0.0f;
-      // How many times the detail repeats over a patch. With no texture the
-      // tiling is zero and the sampling lands in the white placeholder.
-      uniforms.fogParams[3] = range.detail != nullptr ? detailTiling_ : 0.0f;
-      SDL_PushGPUVertexUniformData(frame.commands, 0, &uniforms, sizeof(uniforms));
-
-      SDL_DrawGPUIndexedPrimitives(pass, range.indexCount, 1, range.indexStart, 0, 0);
-    }
-  }
+  SDL_BindGPUGraphicsPipeline(pass, pipeline_);
+  drawLayer(false);
+  SDL_BindGPUGraphicsPipeline(pass, roadPipeline_);
+  drawLayer(true);
 
   SDL_EndGPURenderPass(pass);
 }
