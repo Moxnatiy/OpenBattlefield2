@@ -29,7 +29,7 @@ settings are supplied from the repository so the game itself is left alone:
 | File | What is changed |
 |---|---|
 | `serversettings.con` | the server's name, 16 slots, a round starts with one player |
-| `maplist.con` | only `dalian_plant gpm_cq 16` — what our client can handle |
+| `maplist.con` | one level, `strike_at_karkand gpm_cq 16` — whichever is being compared |
 | `admin-default.cfg` | the remote console's password |
 
 **PunkBuster is not enabled.** The game's default settings have

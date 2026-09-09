@@ -1,2 +1,3 @@
-rem *** Only the levels our client can already handle.
-mapList.append dalian_plant gpm_cq 16
+rem *** One level at a time: the rig is for comparing our client against the
+rem *** original, and that means both standing on the same map.
+mapList.append strike_at_karkand gpm_cq 16

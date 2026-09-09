@@ -72,7 +72,7 @@ def wait_for_server(host, port, attempts=60, delay=5):
 
 class Capture:
     def __init__(self, host, port, name, team=1, kit=0, group=1, misc_hash=None,
-                 level="dalian_plant", ordinal=0):
+                 level="strike_at_karkand", ordinal=0):
         self.ordinal = ordinal
         self.misc_hash = misc_hash
         self.level = level
@@ -283,7 +283,8 @@ def main():
     parser.add_argument("--group", type=int, default=1, help="the spawn point for the spawn stage")
     parser.add_argument("--ordinal", type=int, default=-1,
                         help="the line number in the fingerprint files")
-    parser.add_argument("--level", default="dalian_plant", help="the level's name for the fingerprint")
+    parser.add_argument("--level", default="strike_at_karkand",
+                        help="the level's name for the fingerprint; must match maplist.con")
     parser.add_argument("--misc-hash", dest="misc_hash",
                         help="the content check's first hash (the server computes it itself)")
     args = parser.parse_args()
