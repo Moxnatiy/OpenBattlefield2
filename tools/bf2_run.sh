@@ -110,6 +110,14 @@ elif [ -n "$BF2_LEVEL" ]; then
         +gameMode ${BF2_MODE:-gpm_cq} +maxPlayers ${BF2_PLAYERS:-16}"
 fi
 
+# The frame dump does not come out here. Since v0.8.0 mtld3d's D3D9 side writes
+# to its own file — `mtld3d-logs/<exe stem>-<pid>.log` beside the game's .exe,
+# or wherever the `log.dir` setting points — and this log holds only Wine's own
+# output plus the shim's one startup line. Looking for `[dump]` in here and
+# finding nothing is not the driver ignoring Ctrl+Shift+D.
+# RUST_LOG is not needed: mtld3d's default filter is already `info`, and the
+# variable only adds to it.
+
 if [ -n "$BF2_PLAIN" ] || [ ! -x "$WINE" ] || [ ! -x "$SIDECAR" ]; then
     CX="$HOME/Applications/CrossOver.app/Contents/SharedSupport/CrossOver"
     "$CX/bin/wine" --bottle "$BOTTLE" "$GAME\\BF2.exe" $ARGS >"$LOG" 2>&1 &

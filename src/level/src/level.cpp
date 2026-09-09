@@ -141,10 +141,17 @@ class LevelBuilder {
       // Here there are FOUR slash-separated components ("0.00/610.00/0.00/0.50"),
       // so argVec3 will not do — we parse it ourselves. Only the first two are needed.
       float values[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-      if (parseSlashList(command.argStr(0), values, 4) >= 2) {
+      const std::size_t read = parseSlashList(command.argStr(0), values, 4);
+      if (read >= 2) {
         level_.terrain.fogStart = values[0];
         level_.terrain.fogEnd = values[1];
       }
+      // All four matter, and the name accounts for only three. The third is
+      // the slope of the near ramp and the fourth the floor under it; both
+      // were measured out of the engine's own uploaded constants
+      // (docs/formats/shaders.md).
+      if (read >= 3) level_.terrain.fogBase = values[2];
+      if (read >= 4) level_.terrain.fogFloor = values[3];
       return;
     }
     // --- Sky.con, the `Skydome.*` block ---

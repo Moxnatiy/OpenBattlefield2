@@ -79,14 +79,22 @@ string nor as a semantic, so the binding lives in the compiled effect and
 the code addresses parameters by handle.
 
 ```
-[dump] vsc c93: 0.000000 135.000000 0.000000 0.000000
+[dump] draw 40 vsc c7: 0.005882 -0.008235 -0.176471 1.176471
+[dump] draw 40 vsc c8: 0.827451 0.749020 0.639216 0.400000
 ```
 
-To read it, take a dump on two levels whose fog differs —
-`Renderer.fogStartEndAndBase` is `0/135` on Strike at Karkand and `0/610`
-on Dalian Plant — and the row that moves with them is the one. Two levels
-rather than one on purpose: a single frame would let almost any row be
-read as a fog range.
+Two levels rather than one on purpose: a single frame would let almost any
+row be read as a fog range. It worked — `FogRange` is settled, see
+[../formats/shaders.md](../formats/shaders.md).
+
+## Where the dump comes out
+
+**Not in the game's log.** Since v0.8.0 mtld3d's D3D9 side writes to a file
+of its own: `mtld3d-logs/<exe stem>-<pid>.log` beside the game's `.exe`, or
+wherever the `log.dir` setting points. `/tmp/bf2run.log` holds only Wine's
+output and the shim's one startup line, so grepping it for `[dump]` and
+finding nothing looks exactly like a driver ignoring Ctrl+Shift+D. It is
+not.
 
 ## Two things that are visible at once
 

@@ -9,9 +9,11 @@ neither as a string nor as a semantic, so the binding lives in the
 compiled effect and the code addresses parameters by handle. A frame-dump
 measurement is a source under rule 6; a guess is not.
 
-One line per non-zero constant row, on the first draw of each dumped
-frame: the fog does not change within a frame, and printing it per draw
-would bury an 850-call log.
+One line per non-zero constant row, on every fortieth draw of a dumped
+frame. Per frame would be enough for a frame constant, but the first draw
+of a frame turned out to be a shadow or interface pass whose constants
+hold no fog at all — a handful of snapshots across the frame catches the
+passes that do, without burying an 850-call log.
 
 To read the result, take a dump on two levels whose fog differs —
 `Renderer.fogStartEndAndBase` is 0/135 on Strike at Karkand and 0/610 on
@@ -22,12 +24,12 @@ Applies on top of `tools/mtld3d_frame_dump_geom.patch`, to
 
 --- a/windows/d3d9/src/device/frame_dump.rs
 +++ b/windows/d3d9/src/device/frame_dump.rs
-@@ -357,5 +357,30 @@
+@@ -357,5 +357,34 @@
                  c[78]
              );
          }
 +
-+        // [openbf2] The frame's vertex constants, once per dumped frame.
++        // [openbf2] The frame's vertex constants.
 +        //
 +        // Everything the engine uploads per frame rather than per draw lands
 +        // here, and none of it is in the game's data files. The fog is the
@@ -36,9 +38,13 @@ Applies on top of `tools/mtld3d_frame_dump_geom.patch`, to
 +        // *is* is packed by the engine and its name is nowhere in `BF2.exe` —
 +        // neither as a string nor as a semantic.
 +        //
-+        // On the first draw rather than at frame start: at frame start the
-+        // effect has not set its parameters yet.
-+        if seq == 0 {
++        // Every fortieth draw, not just the first. A frame constant would need
++        // only one snapshot, but the first draw of a frame turned out to be a
++        // shadow or interface pass whose constants hold no fog at all; a
++        // handful across the frame catches the passes that do without burying
++        // an 850-call log. Not at frame start either — there the effect has not
++        // set its parameters yet.
++        if seq % 40 == 0 {
 +            let vs = self.shader_bindings().vs_constants_copy();
 +            for (row, value) in vs.iter().enumerate() {
 +                if value.iter().all(|component| *component == 0.0) {
@@ -46,7 +52,7 @@ Applies on top of `tools/mtld3d_frame_dump_geom.patch`, to
 +                }
 +                info!(
 +                    target: LOG_TARGET,
-+                    "[dump] vsc c{row}: {:.6} {:.6} {:.6} {:.6}",
++                    "[dump] draw {seq} vsc c{row}: {:.6} {:.6} {:.6} {:.6}",
 +                    value[0], value[1], value[2], value[3]
 +                );
 +            }

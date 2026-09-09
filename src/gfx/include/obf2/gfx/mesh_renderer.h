@@ -109,6 +109,10 @@ class MeshRenderer {
     Color color;
     float start = 0.0f;
     float end = 0.0f;
+    // `Renderer.fogStartEndAndBase`'s third and fourth numbers: the slope of
+    // the near ramp, and the floor it cannot fall below.
+    float base = 0.0f;
+    float floorVisibility = 1.0f;
   };
   void setFog(const Fog& fog) { fog_ = fog; }
 

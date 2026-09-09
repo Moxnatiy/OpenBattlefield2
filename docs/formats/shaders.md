@@ -51,33 +51,56 @@ term is a separate straight line clamped from below by `FogColor.w`, so
 the alpha of the fog colour is a floor on visibility rather than an
 opacity.
 
-`FogRange` is **not established**: the engine packs those four numbers
-itself, and the name is nowhere in `BF2.exe` — neither as a string nor as
-a semantic, so the binding lives in the compiled effect and the code
-addresses parameters by handle. The Linux server only stores the setting
-(`dice::hfe::GameLogic::setFogStartEndAndBase(Vec4 const&)`); the packing
-is client-side. The cheap way to settle it is a measurement rather than a
-hunt: a frame dump of the original under `mtld3d` carries the uploaded
-constants, and rule 6 takes a frame-dump measurement as a source.
+`FogRange` is **measured**, not guessed. Its name is nowhere in `BF2.exe`
+— neither as a string nor as a semantic, so the binding lives in the
+compiled effect and the code addresses parameters by handle — but the
+engine has to upload the four numbers, and a frame dump of the original
+under `mtld3d` catches them on the way (rule 6 takes a frame-dump
+measurement as a source; `tools/mtld3d_frame_dump_constants.patch` adds
+the constants to the dump).
 
-The package also ships a **second, simpler fog**, and this one we can
-feed. `Common.dfx:4`:
+Two levels settle it, because one cannot. Mashtuur City
+(`fogStartEndAndBase 30/200/1.40/0.40`) uploads
 
-```hlsl
-vec4 fogDistances : fogDistances : register(vs_1_1, c93);
-
-float calcFog(float w)
-{
-    return ((fogDistances.y - w) / (fogDistances.y - fogDistances.x));
-}
+```
+[dump] draw 40 vsc c7: 0.005882 -0.008235 -0.176471 1.176471
+[dump] draw 40 vsc c8: 0.827451 0.749020 0.639216 0.400000
 ```
 
-Visibility, linear between start and end, and the caller blends
-`lerp(FogColor, color, fog)`. Written the other way round that is
-`mix(color, fogColor, (w - start) / (end - start))` — algebraically the
-same thing our renderer already did. So the fog we draw is a shipped BF2
-formula after all; what it lacked was the citation, and that is now next
-to it in `src/gfx/src/mesh_renderer.cpp`.
+and with `r = end - start = 170` those are `1/170`, `-1.40/170`,
+`-30/170` and `1 + 30/170` exactly. Strike at Karkand (`0/135/2.30/0.40`)
+gives `0.007407 -0.017037 -0.000000 1.000000` — the same four with
+`start = 0`, down to the negative zero in the third. So:
+
+```
+r        = end - start
+FogRange = ( 1/r, -base/r, -start/r, 1 + start/r )
+FogColor = ( r/255, g/255, b/255, floor )
+```
+
+where `floor` is the **fourth** number of `fogStartEndAndBase`, which the
+name does not account for at all.
+
+Substituted back into `calcFog`, the packing cancels out and what is left
+has no engine in it. With `t = (w - start) / (end - start)`:
+
+```
+fogVals.x  = t
+fogVals.y  = 1 - base * t
+visibility = max(1 - base * t, floor) - t³
+```
+
+A straight line of slope `base` down to a floor, and a cubic that finishes
+it off at the end. On Karkand that reaches the floor within 35 m — a
+dense, close dust, which is what the map is; our old linear ramp gave 0.85
+visibility at 20 m where the game gives 0.66. On Dalian `base` is 0, so
+the line stays at 1 and only the cubic acts, and the air is clear until
+several hundred metres.
+
+The same dump settled something else for free. Two rows above the fog sat
+`0.800000 0.740000 0.580000` on Karkand — `Lightmanager.staticSunColor`
+exactly. Pairing `Lights[0].color` with that triple had been a reading
+from the names; it is now a measurement.
 
 ## What "there is no fog" actually was: there was no sky
 

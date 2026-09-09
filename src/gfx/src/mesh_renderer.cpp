@@ -50,6 +50,7 @@ struct VertexOut {
     float4 sunDirection;
     float4 pointColor;
     float4 lightmapOffset;
+    float4 fogShape;
 };
 
 struct Uniforms {
@@ -78,6 +79,9 @@ struct Uniforms {
     // (`Shaders_client.zip:RaShaderSTM.fx:216`). All zero means this object has
     // no baked light map — the vegetation and the thin props have none.
     float4 lightmapOffset;
+    // x: the fog's `base`, the slope of its near ramp. Its floor rides in
+    // `fogColor.w`, which is where the engine keeps it too.
+    float4 fogShape;
 };
 
 // The order of the fields above is the order of `VertexUniforms` below, and the
@@ -114,6 +118,7 @@ vertex VertexOut vertex_main(VertexIn in [[stage_in]],
     out.sunDirection = uniforms.sunDirection;
     out.pointColor = uniforms.pointColor;
     out.lightmapOffset = uniforms.lightmapOffset;
+    out.fogShape = uniforms.fogShape;
     return out;
 }
 
@@ -230,28 +235,49 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
 
     float3 color = albedo.rgb * light;
 
-    // The game's own fog, `Shaders_client.zip:Common.dfx:4`:
+    // The game's own fog. The shape is in the shipped shader
+    // (`Shaders_client.zip:RaCommon.fx:54`) and the four numbers it wants were
+    // measured out of the engine's uploaded constants — a frame dump of the
+    // original under mtld3d, which rule 6 takes as a source:
     //
-    //     float calcFog(float w) {
-    //         return (fogDistances.y - w) / (fogDistances.y - fogDistances.x);
-    //     }
+    //   scalar calcFog(scalar w) {
+    //       half2 fogVals = w*FogRange.xy + FogRange.zw;
+    //       half close = max(fogVals.y, FogColor.w);
+    //       half far = pow(fogVals.x, 3);
+    //       return close-far;                        // visibility, not density
+    //   }
     //
-    // It returns visibility, and the caller blends `lerp(FogColor, color, fog)`;
-    // written the other way round that is exactly the mix below. `w` is the
-    // clip-space w, which for a perspective projection is the distance along the
-    // view — our `viewDepth`. Start and end come from the level's
-    // `Renderer.fogStartEndAndBase` (Karkand: 0.00/135.00/2.30/0.40).
+    // With `Renderer.fogStartEndAndBase = start/end/base/floor` and
+    // r = end - start, the engine uploads
     //
-    // The RaShader family — meshes, roads, terrain — uses a second, cubic form
-    // (`RaCommon.fx:54`) whose four `FogRange` numbers the engine packs itself.
-    // How it packs them is **not established**, so we keep to the form whose
-    // inputs we have. See docs/formats/shaders.md.
+    //   FogRange = ( 1/r, -base/r, -start/r, 1 + start/r )
+    //   FogColor = ( r, g, b, floor )
+    //
+    // measured on two levels at once: Mashtuur City (30/200/1.40/0.40) gave
+    // 0.005882 -0.008235 -0.176471 1.176471, which is 1/170, -1.4/170, -30/170
+    // and 1+30/170 exactly; Strike at Karkand (0/135/2.30/0.40) gave
+    // 0.007407 -0.017037 -0.000000 1.000000 on the same four.
+    //
+    // Substituting, the whole thing collapses to a shape with no packing left
+    // in it. With t = (w - start) / (end - start):
+    //
+    //   fogVals.x  = t
+    //   fogVals.y  = 1 - base * t
+    //   visibility = max(1 - base * t, floor) - t^3
+    //
+    // So the near fall-off is a straight line of slope `base` clamped from
+    // below by `floor`, and the cubic finishes it off at the end. On Karkand
+    // that reaches the floor within 35 m — a dense, close fog, which is what
+    // the map is. On Dalian base is 0, so the line stays at 1 and only the
+    // cubic acts, and the map is clear until far away.
     //
     // fogParams.y == 0 means the level has no fog.
     if (in.fogParams.y > 0.0) {
         float t = saturate((in.viewDepth - in.fogParams.x) /
                            max(in.fogParams.y - in.fogParams.x, 0.001));
-        color = mix(color, in.fogColor.rgb, t);
+        float visibility =
+            saturate(max(1.0 - in.fogShape.x * t, in.fogColor.w) - t * t * t);
+        color = mix(in.fogColor.rgb, color, visibility);
     }
     // Roads blend into the terrain by the alpha of their own texture
     // (`Shaders_client.zip:Road.fx:78`, `outcolor.a = tex0.a`); everything else
@@ -357,6 +383,7 @@ struct VertexUniforms {
   float sunDirection[4]{};
   float pointColor[4]{};
   float lightmapOffset[4]{};
+  float fogShape[4]{};  // x: the fog's base
 };
 
 }  // namespace
@@ -847,9 +874,10 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
   uniforms.fogColor[0] = fog_.color.r;
   uniforms.fogColor[1] = fog_.color.g;
   uniforms.fogColor[2] = fog_.color.b;
-  uniforms.fogColor[3] = 1.0f;
+  uniforms.fogColor[3] = fog_.floorVisibility;
   uniforms.fogParams[0] = fog_.start;
   uniforms.fogParams[1] = fog_.end;
+  uniforms.fogShape[0] = fog_.base;
   uniforms.sunDirection[0] = sunDirection_.x;
   uniforms.sunDirection[1] = sunDirection_.y;
   uniforms.sunDirection[2] = sunDirection_.z;

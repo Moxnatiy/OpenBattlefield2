@@ -42,10 +42,15 @@ struct TerrainInfo {
   float seaLevel = 0.0f;
   Vec3f waterColor{0.10f, 0.13f, 0.16f};  // renderer.waterColor from Water.con
 
-  // Fog: Renderer.fogColor is given in the range 0..255, not 0..1.
+  // Fog. `Renderer.fogColor` is 0..255, not 0..1, and
+  // `Renderer.fogStartEndAndBase` carries four numbers, not three: start, end,
+  // base, and a floor on visibility that ends up as the fog colour's alpha.
+  // What each does is measured, see docs/formats/shaders.md.
   Vec3f fogColor{0.69f, 0.72f, 0.77f};
   float fogStart = 0.0f;
-  float fogEnd = 0.0f;  // 0 = no fog
+  float fogEnd = 0.0f;   // 0 = no fog
+  float fogBase = 0.0f;  // the near ramp's slope
+  float fogFloor = 1.0f; // the floor that ramp cannot go below
 
   // Lightmanager.* from Sky.con — stored only, for now.
   Vec3f ambientColor{0.9f, 0.9f, 0.9f};

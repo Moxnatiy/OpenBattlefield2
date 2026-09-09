@@ -2078,8 +2078,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
                 level->terrain.terrainSunColor.x, level->terrain.terrainSunColor.y,
                 level->terrain.terrainSunColor.z, level->terrain.terrainSkyColor.x,
                 level->terrain.terrainSkyColor.y, level->terrain.terrainSkyColor.z);
-    std::printf("  fog: %.0f..%.0f, colour %.2f/%.2f/%.2f\n", level->terrain.fogStart,
-                level->terrain.fogEnd, level->terrain.fogColor.x, level->terrain.fogColor.y,
+    std::printf("  fog: %.0f..%.0f, base %.2f, floor %.2f, colour %.2f/%.2f/%.2f\n",
+                level->terrain.fogStart, level->terrain.fogEnd, level->terrain.fogBase,
+                level->terrain.fogFloor, level->terrain.fogColor.x, level->terrain.fogColor.y,
                 level->terrain.fogColor.z);
 
     const float extent = level->halfExtent() * level->primary.scale.x;
@@ -2304,7 +2305,8 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     renderer->setFog(obf2::gfx::MeshRenderer::Fog{
         obf2::gfx::Color{level->terrain.fogColor.x, level->terrain.fogColor.y,
                          level->terrain.fogColor.z, 1.0f},
-        level->terrain.fogStart, fogEnd});
+        level->terrain.fogStart, fogEnd, level->terrain.fogBase,
+        level->terrain.fogFloor});
     renderer->setTerrainLighting(
         obf2::gfx::Color{level->terrain.terrainSunColor.x, level->terrain.terrainSunColor.y,
                          level->terrain.terrainSunColor.z, 1.0f},
