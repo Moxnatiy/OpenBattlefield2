@@ -2249,6 +2249,19 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
                          level->terrain.terrainSunColor.z, 1.0f},
         obf2::gfx::Color{level->terrain.terrainSkyColor.x, level->terrain.terrainSkyColor.y,
                          level->terrain.terrainSkyColor.z, 1.0f});
+    const obf2::level::Lighting& lighting = level->lighting;
+    renderer->setStaticLighting(
+        obf2::gfx::Color{lighting.staticSunColor.x, lighting.staticSunColor.y,
+                         lighting.staticSunColor.z, 1.0f},
+        obf2::gfx::Color{lighting.staticSkyColor.x, lighting.staticSkyColor.y,
+                         lighting.staticSkyColor.z, 1.0f},
+        lighting.sunDirection,
+        obf2::gfx::Color{lighting.singlePointColor.x, lighting.singlePointColor.y,
+                         lighting.singlePointColor.z, 1.0f});
+    std::printf("  static lighting: sun %.2f/%.2f/%.2f, sky %.2f/%.2f/%.2f, from %.2f/%.2f/%.2f\n",
+                lighting.staticSunColor.x, lighting.staticSunColor.y, lighting.staticSunColor.z,
+                lighting.staticSkyColor.x, lighting.staticSkyColor.y, lighting.staticSkyColor.z,
+                lighting.sunDirection.x, lighting.sunDirection.y, lighting.sunDirection.z);
   }
 
   int texturesLoaded = 0, texturesMissing = 0;

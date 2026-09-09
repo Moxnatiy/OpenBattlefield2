@@ -44,19 +44,37 @@ struct VertexOut {
     float4 sunColor;
     float4 skyColor;
     float4 material;
+    float4 sunDirection;
+    float4 pointColor;
 };
 
 struct Uniforms {
     float4x4 modelViewProjection;
     float4 fogColor;   // rgb — the fog's colour
     float4 fogParams;  // x: start, y: end (0 = no fog), z: light map mode, w: detail tiling
-    float4 sunColor;   // TerrainSunColor
-    float4 skyColor;   // TerrainSkyColor
+    // The sun's and the sky's colours for whichever surface is being drawn:
+    // TerrainSunColor/TerrainSkyColor for the terrain, `Lightmanager.staticSunColor`
+    // and `staticSkyColor` for everything else. Which one is meant is decided by
+    // the same fogParams.z that picks the branch below, and the CPU pushes the
+    // right pair per range.
+    float4 sunColor;
+    float4 skyColor;
     // x: multiply the detail map in (a mesh material with a Detail channel);
     // y: take the alpha from the texture rather than 1 (the road pass);
     // z: the sky dome — unlit, and projected with a w of 10 (see below).
     float4 material;
+    // `Lightmanager.sunDirection` — the way the light travels, so the vector
+    // towards the sun is its negative. w unused.
+    float4 sunDirection;
+    // `Lightmanager.singlePointColor`, added whole. rgb.
+    float4 pointColor;
 };
+
+// The order of the fields above is the order of `VertexUniforms` below, and the
+// two are one buffer: swap two of them and the shader reads a light direction
+// where a material flag should be. There is no compiler to catch that — the
+// symptom is a picture, and the last time it was a black sky over red walls.
+
 
 vertex VertexOut vertex_main(VertexIn in [[stage_in]],
                              constant Uniforms& uniforms [[buffer(0)]]) {
@@ -82,6 +100,8 @@ vertex VertexOut vertex_main(VertexIn in [[stage_in]],
     out.sunColor = uniforms.sunColor;
     out.skyColor = uniforms.skyColor;
     out.material = uniforms.material;
+    out.sunDirection = uniforms.sunDirection;
+    out.pointColor = uniforms.pointColor;
     return out;
 }
 
@@ -120,12 +140,46 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
         (void)detail;
         (void)detailSampler;
     } else {
+        // Everything that is not terrain, lit the way the game lights a static
+        // mesh. We have no tangent frame and read no normal maps, which picks
+        // the shader's own vertex path — `Shaders_client.zip:RaShaderSTM.fx:209`
+        // for the terms and :524 for how they are put together, with
+        // `getLightmap` returning (1,1,1) where there is no baked light map
+        // (RaShaderSTM.fx:353):
+        //
+        //   invDot    = 1 - saturate(dot(N * 0.2, L))
+        //   bumpedSky = skyNormal.z * StaticSkyColor * invDot
+        //   sun       = saturate(dot(N, L)) * Lights[0].color
+        //   diffuse   = sun * lightmap.g + bumpedSky
+        //   FinalColor.rgb *= 2 * diffuse
+        //
+        // `skyNormal` is `vec3(0.78,0.52,0.65)` (RaShaderSTM.fx:34) and it is a
+        // **tangent-space** constant, not a world direction: the pixel path
+        // dots it against the normal map's sample, which with no map is
+        // (0,0,1), leaving just its z. The vertex path takes that z directly.
+        // Dotting it against a world normal instead — which is the mistake we
+        // made first — turns every wall facing away from it black.
+        //
+        // The 0.2 makes `invDot` a shallow ramp from 1.0 in shadow to 0.8 in
+        // full sun, so the shaded side keeps an ambient floor rather than
+        // falling to nothing. The doubling at the end is the game's, and it is
+        // most of why its meshes are as bright as they are.
+        //
+        // `Lights[0].color` is bound by the engine; we pair it with
+        // `Lightmanager.staticSunColor`, which is the triple that goes with
+        // `staticSkyColor` in the same block and is set per level beside it.
+        //
+        // Missing: the baked light map. Every level ships one per object
+        // (`lightmaps/Objects/LightmapAtlas*.dds` and a `.tai` of the atlas
+        // offsets), so until it is read nothing shadows anything.
+        const float kSkyNormalZ = 0.65;
         float3 normal = normalize(in.normal);
-        float3 lightDirection = normalize(float3(0.4, 0.9, 0.35));
-        // Half-Lambert lighting: the shadow side does not go black, and the
-        // geometry's silhouette stays fully visible.
-        float lambert = dot(normal, lightDirection) * 0.5 + 0.5;
-        light = float3(0.35 + 0.65 * lambert);
+        float3 toSun = normalize(-in.sunDirection.xyz);
+        float nDotL = dot(normal, toSun);
+        float invDot = 1.0 - saturate(nDotL * 0.2);
+        float3 sun = saturate(nDotL) * in.sunColor.rgb;
+        float3 sky = kSkyNormalZ * in.skyColor.rgb * invDot;
+        light = 2.0 * (sun + sky + in.pointColor.rgb);
     }
 
     // `SkyDome.fx` samples the sky texture and returns it — the dome carries
@@ -250,6 +304,7 @@ SDL_GPUTextureFormat toGpuFormat(texture::Format format) {
 }
 
 // A mirror of Uniforms from the vertex shader: the matrix plus the frame's constants.
+// A mirror of `Uniforms` in the shader above, field for field and in order.
 struct VertexUniforms {
   float modelViewProjection[16]{};
   float fogColor[4]{};
@@ -257,6 +312,8 @@ struct VertexUniforms {
   float sunColor[4]{};
   float skyColor[4]{};
   float material[4]{};  // x: multiply the detail map in, y: alpha from the texture
+  float sunDirection[4]{};
+  float pointColor[4]{};
 };
 
 }  // namespace
@@ -737,12 +794,12 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
   uniforms.fogColor[3] = 1.0f;
   uniforms.fogParams[0] = fog_.start;
   uniforms.fogParams[1] = fog_.end;
-  uniforms.sunColor[0] = terrainSun_.r;
-  uniforms.sunColor[1] = terrainSun_.g;
-  uniforms.sunColor[2] = terrainSun_.b;
-  uniforms.skyColor[0] = terrainSky_.r;
-  uniforms.skyColor[1] = terrainSky_.g;
-  uniforms.skyColor[2] = terrainSky_.b;
+  uniforms.sunDirection[0] = sunDirection_.x;
+  uniforms.sunDirection[1] = sunDirection_.y;
+  uniforms.sunDirection[2] = sunDirection_.z;
+  uniforms.pointColor[0] = pointColor_.r;
+  uniforms.pointColor[1] = pointColor_.g;
+  uniforms.pointColor[2] = pointColor_.b;
 
   // Three passes over the same list, each through its own pipeline: the sky is
   // the background, then everything solid, then the roads as a skin on the
@@ -796,7 +853,18 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
 
         // The lighting mode changes from range to range, so the uniform is pushed
         // before every draw call.
-        uniforms.fogParams[2] = range.lightmap != nullptr ? 1.0f : 0.0f;
+        // Which branch of the shader draws this range — and with it, which pair
+      // of light colours it means by sunColor/skyColor.
+      const bool terrain = range.lightmap != nullptr;
+      uniforms.fogParams[2] = terrain ? 1.0f : 0.0f;
+      const Color& sun = terrain ? terrainSun_ : staticSun_;
+      const Color& sky = terrain ? terrainSky_ : staticSky_;
+      uniforms.sunColor[0] = sun.r;
+      uniforms.sunColor[1] = sun.g;
+      uniforms.sunColor[2] = sun.b;
+      uniforms.skyColor[0] = sky.r;
+      uniforms.skyColor[1] = sky.g;
+      uniforms.skyColor[2] = sky.b;
         // How many times the detail repeats over a patch. With no texture the
         // tiling is zero and the sampling lands in the white placeholder.
         uniforms.fogParams[3] = range.detail != nullptr ? detailTiling_ : 0.0f;

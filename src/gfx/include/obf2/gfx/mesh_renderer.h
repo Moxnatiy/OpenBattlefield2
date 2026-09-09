@@ -102,6 +102,16 @@ class MeshRenderer {
     terrainSky_ = sky;
   }
 
+  // How the level lights everything that is not terrain: the `Lightmanager.*`
+  // block of its Sky.con. `direction` is the way the sun's light travels, as
+  // the data gives it — negative Y on every level.
+  void setStaticLighting(Color sun, Color sky, Vec3f direction, Color point) {
+    staticSun_ = sun;
+    staticSky_ = sky;
+    sunDirection_ = direction;
+    pointColor_ = point;
+  }
+
   void renderScene(const Frame& frame, const std::vector<DrawItem>& items,
                    const Mat4& viewProjection, Color clearColor);
 
@@ -133,6 +143,10 @@ class MeshRenderer {
   Fog fog_;
   Color terrainSun_{1.0f, 1.0f, 1.0f, 1.0f};
   Color terrainSky_{0.6f, 0.7f, 0.9f, 1.0f};
+  Color staticSun_{0.8f, 0.8f, 0.8f, 1.0f};
+  Color staticSky_{0.3f, 0.35f, 0.4f, 1.0f};
+  Vec3f sunDirection_{-0.26f, -0.80f, -0.54f};
+  Color pointColor_{0.0f, 0.0f, 0.0f, 1.0f};
   float detailTiling_ = 16.0f;
   int drawn_ = 0;
   int culled_ = 0;

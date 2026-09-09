@@ -227,13 +227,60 @@ class LevelBuilder {
     if (path == "lightmanager.ambientcolor") {
       if (const auto color = command.argVec3(0)) {
         level_.terrain.ambientColor = Vec3f{color->x, color->y, color->z};
+        level_.lighting.ambientColor = level_.terrain.ambientColor;
       }
       return;
     }
     if (path == "lightmanager.suncolor") {
       if (const auto color = command.argVec3(0)) {
         level_.terrain.sunColor = Vec3f{color->x, color->y, color->z};
+        level_.lighting.sunColor = level_.terrain.sunColor;
       }
+      return;
+    }
+
+    // --- Sky.con, the `Lightmanager.*` block ---
+    if (path == "lightmanager.staticsuncolor" || path == "lightmanager.staticskycolor" ||
+        path == "lightmanager.staticspecularcolor" || path == "lightmanager.sundirection" ||
+        path == "lightmanager.singlepointcolor" || path == "lightmanager.treeambientcolor" ||
+        path == "lightmanager.treesuncolor" || path == "lightmanager.treeskycolor" ||
+        path == "lightmanager.effectsuncolor" || path == "lightmanager.effectshadowcolor" ||
+        path == "lightmanager.skycolor" || path == "lightmanager.sunspeccolor") {
+      const auto color = command.argVec3(0);
+      if (!color) return;
+      const Vec3f value{color->x, color->y, color->z};
+      Lighting& lighting = level_.lighting;
+      if (path == "lightmanager.staticsuncolor") lighting.staticSunColor = value;
+      else if (path == "lightmanager.staticskycolor") lighting.staticSkyColor = value;
+      else if (path == "lightmanager.staticspecularcolor") lighting.staticSpecularColor = value;
+      else if (path == "lightmanager.sundirection") lighting.sunDirection = value;
+      else if (path == "lightmanager.singlepointcolor") lighting.singlePointColor = value;
+      else if (path == "lightmanager.treeambientcolor") lighting.treeAmbientColor = value;
+      else if (path == "lightmanager.treesuncolor") lighting.treeSunColor = value;
+      else if (path == "lightmanager.treeskycolor") lighting.treeSkyColor = value;
+      else if (path == "lightmanager.effectsuncolor") lighting.effectSunColor = value;
+      else if (path == "lightmanager.effectshadowcolor") lighting.effectShadowColor = value;
+      else if (path == "lightmanager.skycolor") lighting.skyColor = value;
+      else if (path == "lightmanager.sunspeccolor") lighting.sunSpecColor = value;
+      return;
+    }
+    if (path == "lightmanager.enablesun") {
+      level_.lighting.enableSun = command.argInt(0).value_or(1) != 0;
+      return;
+    }
+    if (path == "lightmanager.hemilerpbias") {
+      level_.lighting.hemiLerpBias = command.argFloat(0).value_or(0.0f);
+      return;
+    }
+    if (path == "lightmanager.defaulteffectlightaffectionfactor") {
+      level_.lighting.defaultEffectLightAffectionFactor = command.argFloat(0).value_or(1.0f);
+      return;
+    }
+    if (path == "hemimapmanager.setbasehemimap") {
+      // <path> <centre x/y/z> <size> <height>
+      level_.lighting.baseHemiMap = std::string(command.argStr(0));
+      level_.lighting.hemiMapSize = command.argFloat(2).value_or(0.0f);
+      level_.lighting.hemiMapHeight = command.argFloat(3).value_or(0.0f);
       return;
     }
 

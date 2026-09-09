@@ -58,6 +58,50 @@ struct TerrainInfo {
   Vec3f terrainSkyColor{0.6f, 0.7f, 0.9f};
 };
 
+// The `Lightmanager.*` block of a level's Sky.con — how the level is lit.
+// All twenty-one commands are here; every one of the game's 13 levels sets
+// every one of them (rule 3). Which of them the renderer uses is said beside
+// each field.
+struct Lighting {
+  // What static meshes are lit by (`RaShaderSTM.fx:382`): the sun's colour, the
+  // sky's, and the direction the sun's light travels — negative Y on every
+  // level, since it comes down.
+  Vec3f staticSunColor{0.8f, 0.8f, 0.8f};
+  Vec3f staticSkyColor{0.3f, 0.35f, 0.4f};
+  Vec3f staticSpecularColor{0.4f, 0.38f, 0.32f};  // read; no specular yet
+  Vec3f sunDirection{-0.26f, -0.80f, -0.54f};
+  // The shader adds this whole, gated by the light map's red channel. Zero on
+  // most levels, 0.30 grey on some.
+  Vec3f singlePointColor{0.0f, 0.0f, 0.0f};
+  bool enableSun = true;
+
+  // Vegetation has lighting of its own (`RaShaderTrunkOG.fx`, `RaShaderLeaf.fx`).
+  // Read; not used yet.
+  Vec3f treeAmbientColor{0.2f, 0.25f, 0.3f};
+  Vec3f treeSunColor{0.7f, 0.6f, 0.5f};
+  Vec3f treeSkyColor{0.0f, 0.0f, 0.0f};
+
+  // Effects (particles, explosions). Read; not used yet.
+  Vec3f effectSunColor{0.9f, 0.88f, 0.86f};
+  Vec3f effectShadowColor{0.15f, 0.22f, 0.3f};
+  float defaultEffectLightAffectionFactor = 1.0f;
+
+  // The general ambient and sun, and the specular tint of the sun. The
+  // renderer's own passes use the `static*` triple instead.
+  Vec3f skyColor{0.4f, 0.55f, 0.7f};
+  Vec3f ambientColor{0.6f, 0.7f, 0.8f};
+  Vec3f sunColor{0.7f, 0.7f, 0.7f};
+  Vec3f sunSpecColor{0.45f, 0.4f, 0.35f};
+
+  // The hemisphere map: a top-down map of the ground's colour that the engine
+  // tints objects near the ground with. `hemiMapManager.setBaseHemiMap <path>
+  // <centre> <size> <height>`. Read; not used yet.
+  float hemiLerpBias = 0.0f;
+  std::string baseHemiMap;
+  float hemiMapSize = 0.0f;
+  float hemiMapHeight = 0.0f;
+};
+
 // The `Skydome.*` block of a level's Sky.con. All fourteen commands are here
 // even though only three are drawn yet (rule 3): every one of the game's 13
 // levels sets all of them, and leaving a field out is how a format quietly
@@ -132,6 +176,7 @@ struct Level {
   std::string name;
   TerrainInfo terrain;
   Sky sky;
+  Lighting lighting;
   HeightmapInfo primary;
   std::vector<StaticObject> objects;
   std::vector<Road> roads;
