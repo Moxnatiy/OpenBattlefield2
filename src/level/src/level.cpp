@@ -314,11 +314,26 @@ class LevelBuilder {
       roadTemplateName_ = std::string(command.argStr(0));
       return;
     }
+    if (path == "roadtemplate.setisprimarytexture") {
+      // Which of the two the next SetTextureFile is. The template writes the
+      // primary first and the secondary after it.
+      roadPrimary_ = command.argInt(0).value_or(1) != 0;
+      return;
+    }
+    if (path == "roadtemplate.setblendfactor" && !roadTemplateName_.empty()) {
+      level_.roadTextures[roadTemplateName_].blendFactor =
+          command.argFloat(0).value_or(1.0f);
+      return;
+    }
     if (path == "roadtemplatetexture.settexturefile" && !roadTemplateName_.empty()) {
-      // A template's first texture is the main one; the rest are blend layers.
-      if (level_.roadTextures.find(roadTemplateName_) == level_.roadTextures.end()) {
-        level_.roadTextures.emplace(roadTemplateName_, std::string(command.argStr(0)) + ".dds");
+      // Windows separators in the data, forward ones in the archives.
+      std::string file(command.argStr(0));
+      for (char& c : file) {
+        if (c == '\\') c = '/';
       }
+      file += ".dds";
+      Level::RoadTemplate& road = level_.roadTextures[roadTemplateName_];
+      (roadPrimary_ ? road.primary : road.secondary) = std::move(file);
       return;
     }
 
@@ -407,6 +422,8 @@ class LevelBuilder {
   bool pendingCluster_ = false;
   bool pendingRoad_ = false;
   std::string roadTemplateName_;
+  // `RoadTemplate.SetIsPrimaryTexture` applies to the SetTextureFile after it.
+  bool roadPrimary_ = true;
   int clusterX_ = 0;
   int clusterY_ = 0;
 };
@@ -502,10 +519,13 @@ std::optional<Level> loadLevel(FileSystem& files, std::string_view levelName, st
     if (!bytes) continue;
     if (auto geometry = loadRoadMesh(*bytes)) {
       road.geometry = std::move(*geometry);
-      // The texture is taken by the template's name from CompiledRoads.con.
+      // The textures come by the template's name from CompiledRoads.con.
+      // Both of them: the shader mixes the markings over the tiling surface.
       const auto texture = level.roadTextures.find(road.templateName);
       if (texture != level.roadTextures.end() && !road.geometry.ranges.empty()) {
-        road.geometry.ranges[0].maps.push_back(texture->second);
+        road.geometry.ranges[0].maps.push_back(texture->second.primary);
+        road.geometry.ranges[0].maps.push_back(texture->second.secondary);
+        road.blendFactor = texture->second.blendFactor;
       }
     }
   }
@@ -554,6 +574,12 @@ std::optional<mesh::RenderMesh> loadRoadMesh(std::span<const std::byte> bytes,
     vertex.normal = {0.0f, 1.0f, 0.0f};
     vertex.uv[0] = readFloat(at + 12);
     vertex.uv[1] = readFloat(at + 16);
+    // The second UV set and the edge alpha, which we used to read past. The
+    // tiling surface is sampled with the second set and the alpha is what
+    // fades a road's edge into the terrain (`Road.fx:61`, `Road.fx:80`).
+    vertex.uv2[0] = readFloat(at + 20);
+    vertex.uv2[1] = readFloat(at + 24);
+    vertex.alpha = readFloat(at + 28);
   }
 
   const std::size_t indexOffset = kHeaderBytes + vertexBytes;

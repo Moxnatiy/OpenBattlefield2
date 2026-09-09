@@ -403,3 +403,43 @@ its own: the instance is lifted by `kRoadLift`, the pipeline keeps the
 depth test and drops the depth write, and the colour is blended by the
 texture's alpha. A placement says only `DrawItem::road`; what that means
 is the renderer's business.
+
+## A road is two textures and an edge fade
+
+The depth state was only half of it. `Road.fx:73`:
+
+```hlsl
+float4 tex0 = tex2D(sampler0, indata.Tex0);
+float4 tex1 = tex2D(sampler1, indata.Tex1);
+outcolor.rgb = lerp(tex1.rgb, tex0.rgb, saturate(fBlendFactor));
+outcolor.a   = tex0.a;
+outcolor.a  *= indata.Alpha;
+```
+
+Two textures, each on its own UV set, mixed by a factor — and a per-vertex
+alpha on top. All three come straight out of the game's data, from the
+road template in `objects/roads/splines/*.con`:
+
+```
+RoadTemplate.SetBlendFactor 0.85
+RoadTemplate.SetIsPrimaryTexture 1
+RoadTemplateTexture.SetTextureFile "objects\roads\textures\road_desert_2lane_512_2"
+RoadTemplate.SetIsPrimaryTexture 0
+RoadTemplateTexture.SetTextureFile "objects\roads\textures\tarmac_layer1_lowtiling"
+```
+
+The primary carries the markings, the secondary is the tiling surface
+under them. `SetIsPrimaryTexture` applies to the `SetTextureFile` after
+it, so the order in the file is primary then secondary.
+
+We drew the primary alone, on one UV set, and read past the rest of the
+vertex — the road mesh's 32 bytes are position, `u/v`, `u1/v1` and the
+alpha, and we were taking only the first pair. So roads had no surface
+under their markings and their edges ended square instead of fading into
+the terrain. Both are read now.
+
+Which of the two goes to `sampler0` is the one inference left here: the
+data writes primary first and `Road.fx` samples `detail0: TEXLAYER0` with
+`CLAMP` across and `WRAP` along, which is what a marking strip wants and
+not what a tiling surface wants. `RendDX9.dll` can settle it —
+`BlendFactor` is a string in it.

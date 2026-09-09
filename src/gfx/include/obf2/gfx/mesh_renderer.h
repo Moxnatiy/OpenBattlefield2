@@ -92,6 +92,9 @@ class MeshRenderer {
     // centimetre, blended by its texture's alpha and does not write depth.
     // Drawn like everything else it fights the terrain for the same pixels.
     bool road = false;
+    // How hard a road's markings sit over the tiling surface under them
+    // (`RoadTemplate.SetBlendFactor`). Only read when `road`.
+    float roadBlendFactor = 1.0f;
     // The sky dome. Drawn first, unlit, unfogged and with no depth at all: it
     // is the background everything else is painted over. The caller places it
     // around the camera.

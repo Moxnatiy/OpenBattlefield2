@@ -152,6 +152,9 @@ struct Sky {
 //   then   u32 index count and the indices themselves, 16 bits each
 struct Road {
   std::string templateName;
+  // How hard the markings are mixed over the tiling surface, from the
+  // template's `SetBlendFactor`.
+  float blendFactor = 1.0f;
   std::string meshPath;
   Vec3f position;
   mesh::RenderMesh geometry;
@@ -185,8 +188,25 @@ struct Level {
   HeightmapInfo primary;
   std::vector<StaticObject> objects;
   std::vector<Road> roads;
-  // A road template's name -> the texture's path (from RoadTemplateTexture).
-  std::unordered_map<std::string, std::string> roadTextures;
+  // A road template's name -> how the game paints it. A template names **two**
+  // textures and a factor to mix them by:
+  //
+  //   RoadTemplate.SetBlendFactor 0.85
+  //   RoadTemplate.SetIsPrimaryTexture 1
+  //   RoadTemplateTexture.SetTextureFile "…/road_desert_2lane_512_2"
+  //   RoadTemplate.SetIsPrimaryTexture 0
+  //   RoadTemplateTexture.SetTextureFile "…/tarmac_layer1_lowtiling"
+  //
+  // and the shader mixes them exactly that way (`Road.fx:77`,
+  // `lerp(tex1.rgb, tex0.rgb, saturate(fBlendFactor))`): the primary carries
+  // the markings on its own UV set, the secondary is the tiling surface under
+  // them on a second set.
+  struct RoadTemplate {
+    std::string primary;    // the markings, sampled with the mesh's uv
+    std::string secondary;  // the tiling surface, sampled with uv2
+    float blendFactor = 1.0f;
+  };
+  std::unordered_map<std::string, RoadTemplate> roadTextures;
 
   // Heights in world units, size*size of them, rows running north to south.
   std::vector<float> heights;

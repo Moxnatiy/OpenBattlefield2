@@ -93,6 +93,10 @@ struct Vertex {
   // surface like the base map's but laid out for the level's atlas. Zero when
   // the mesh has no such set.
   float uv3[2]{};
+  // A road's per-vertex alpha, which is how its edges fade into the terrain
+  // (`Shaders_client.zip:Road.fx:80`, `outcolor.a *= indata.Alpha`). One
+  // everywhere else.
+  float alpha = 1.0f;
 };
 
 // A range of indices sharing one material — one draw call.

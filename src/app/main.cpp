@@ -1758,6 +1758,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       int mesh = -1;
       obf2::Mat4 transform;
       bool road = false;
+      float roadBlendFactor = 1.0f;
       // Which page of the level's light map atlas this placement is baked into,
       // and its window in it. -1 means the object has no baked light map.
       int lightmapAtlas = -1;
@@ -1832,6 +1833,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     for (auto& road : level->roads) {
       if (road.geometry.indices.empty()) continue;
       scene.add(std::move(road.geometry), obf2::translation(road.position), true);
+      scene.instances.back().roadBlendFactor = road.blendFactor;
       ++roadsPlaced;
     }
     std::printf("  roads in the scene: %d\n", roadsPlaced);
@@ -3458,6 +3460,7 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     obf2::gfx::MeshRenderer::DrawItem item{&gpuMeshes[static_cast<std::size_t>(meshIndex)],
                                            instance.transform};
     item.road = instance.road;
+    item.roadBlendFactor = instance.roadBlendFactor;
     if (instance.lightmapAtlas >= 0 &&
         static_cast<std::size_t>(instance.lightmapAtlas) < lightmapPages.size()) {
       item.lightmap = lightmapPages[static_cast<std::size_t>(instance.lightmapAtlas)];

@@ -26,6 +26,7 @@ struct VertexIn {
     float2 uv       [[attribute(2)]];
     float2 uv2      [[attribute(3)]];
     float2 uv3      [[attribute(4)]];
+    float  alpha    [[attribute(5)]];
 };
 
 struct VertexOut {
@@ -37,6 +38,8 @@ struct VertexOut {
     float2 uv2;
     // TEXCOORD2: the unwrap the baked light map is sampled with.
     float2 uv3;
+    // A road's edge fade, carried per vertex; 1 on everything else.
+    float vertexAlpha;
     float viewDepth;
     // The frame's parameters travel to the fragment shader through varyings
     // rather than in a uniform buffer of their own: in the fragment stage they
@@ -51,6 +54,7 @@ struct VertexOut {
     float4 pointColor;
     float4 lightmapOffset;
     float4 fogShape;
+    float4 roadParams;
 };
 
 struct Uniforms {
@@ -82,6 +86,9 @@ struct Uniforms {
     // x: the fog's `base`, the slope of its near ramp. Its floor rides in
     // `fogColor.w`, which is where the engine keeps it too.
     float4 fogShape;
+    // x: a road's blend factor, how hard its markings sit over the tiling
+    // surface under them (`RoadTemplate.SetBlendFactor`).
+    float4 roadParams;
 };
 
 // The order of the fields above is the order of `VertexUniforms` below, and the
@@ -107,6 +114,7 @@ vertex VertexOut vertex_main(VertexIn in [[stage_in]],
     out.uv = in.uv;
     out.uv2 = in.uv2;
     out.uv3 = in.uv3;
+    out.vertexAlpha = in.alpha;
     // For a perspective projection w in clip space equals the distance along the
     // view — exactly what the fog needs.
     out.viewDepth = out.position.w;
@@ -119,6 +127,7 @@ vertex VertexOut vertex_main(VertexIn in [[stage_in]],
     out.pointColor = uniforms.pointColor;
     out.lightmapOffset = uniforms.lightmapOffset;
     out.fogShape = uniforms.fogShape;
+    out.roadParams = uniforms.roadParams;
     return out;
 }
 
@@ -142,6 +151,25 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
     // Transparency, while without it the alpha is thrown away and the detail's
     // becomes gloss instead (`RaShaderSTM.fx:282`).
     if (in.material.w > 0.5 && albedo.a < 127.0 / 255.0) discard_fragment();
+
+    // A road is two textures, not one. The template names both and a factor to
+    // mix them by, and the shader mixes them exactly that way
+    // (`Shaders_client.zip:Road.fx:73`):
+    //
+    //     float4 tex0 = tex2D(sampler0, indata.Tex0);   // the markings
+    //     float4 tex1 = tex2D(sampler1, indata.Tex1);   // the tiling surface
+    //     outcolor.rgb = lerp(tex1.rgb, tex0.rgb, saturate(fBlendFactor));
+    //     outcolor.a   = tex0.a;
+    //     outcolor.a  *= indata.Alpha;
+    //
+    // Each has its own UV set — the markings on the mesh's first, the surface
+    // on its second — and the per-vertex alpha is what fades a road's edge
+    // into the terrain. We drew the markings alone on one set and let the edges
+    // end square.
+    if (in.material.y > 0.5) {
+        float4 surface = detail.sample(detailSampler, in.uv2);
+        albedo.rgb = mix(surface.rgb, albedo.rgb, saturate(in.roadParams.x));
+    }
 
     // A material whose technique names a `Detail` channel is the base
     // **multiplied by** the detail, and the detail is sampled with the tiling
@@ -282,7 +310,7 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
     // Roads blend into the terrain by the alpha of their own texture
     // (`Shaders_client.zip:Road.fx:78`, `outcolor.a = tex0.a`); everything else
     // is opaque.
-    return float4(color, in.material.y > 0.5 ? albedo.a : 1.0);
+    return float4(color, in.material.y > 0.5 ? albedo.a * in.vertexAlpha : 1.0);
 }
 )MSL";
 
@@ -383,12 +411,13 @@ struct VertexUniforms {
   float sunDirection[4]{};
   float pointColor[4]{};
   float lightmapOffset[4]{};
-  float fogShape[4]{};  // x: the fog's base
+  float fogShape[4]{};   // x: the fog's base
+  float roadParams[4]{}; // x: a road's blend factor
 };
 
 }  // namespace
 
-static_assert(sizeof(mesh::Vertex) == 48, "the vertex layout must match the shader");
+static_assert(sizeof(mesh::Vertex) == 52, "the vertex layout must match the shader");
 
 SDL_GPUTexture* MeshRenderer::uploadSharedTexture(const texture::Texture& source) {
   SDL_GPUTexture* uploaded = uploadTexture(source);
@@ -426,12 +455,13 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
 
   const SDL_GPUVertexBufferDescription bufferDescription{
       0, static_cast<Uint32>(sizeof(mesh::Vertex)), SDL_GPU_VERTEXINPUTRATE_VERTEX, 0};
-  const SDL_GPUVertexAttribute attributes[5] = {
+  const SDL_GPUVertexAttribute attributes[6] = {
       {0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offsetof(mesh::Vertex, position)},
       {1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offsetof(mesh::Vertex, normal)},
       {2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(mesh::Vertex, uv)},
       {3, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(mesh::Vertex, uv2)},
       {4, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(mesh::Vertex, uv3)},
+      {5, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT, offsetof(mesh::Vertex, alpha)},
   };
 
   SDL_GPUColorTargetDescription colorTarget{};
@@ -443,7 +473,7 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   info.vertex_input_state.vertex_buffer_descriptions = &bufferDescription;
   info.vertex_input_state.num_vertex_buffers = 1;
   info.vertex_input_state.vertex_attributes = attributes;
-  info.vertex_input_state.num_vertex_attributes = 5;
+  info.vertex_input_state.num_vertex_attributes = 6;
   info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
   // Vertex winding in BF2 is counter-clockwise: across all 1635 meshes in the
   // game (2.2 M triangles) the geometric normal agrees with the vertex normals
@@ -770,6 +800,14 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
       range.lightmap = load(1);
       range.detail = load(2);
     } else {
+      // A road's material has no technique — the two maps are the template's
+      // primary and secondary, in that order.
+      if (source_range.technique.empty() && source_range.maps.size() == 2) {
+        range.texture = load(0);
+        range.detail = load(1);
+        gpuMesh.ranges.push_back(range);
+        continue;
+      }
       const mesh::MaterialLayout layout = mesh::materialLayout(source_range.technique);
       // With no technique at all (31 materials in the game) slot 0 is still the
       // base colour: every one of them carries a single `_c` map.
@@ -920,6 +958,7 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
       const Mat4 modelViewProjection = viewProjection * transform;
       std::memcpy(uniforms.modelViewProjection, modelViewProjection.m, sizeof(Mat4));
       uniforms.material[1] = item.road ? 1.0f : 0.0f;
+      uniforms.roadParams[0] = item.roadBlendFactor;
       const bool bakedItem = item.lightmap != nullptr && item.mesh->hasLightmapUv;
       if (bakedItem) {
         std::memcpy(uniforms.lightmapOffset, item.lightmapOffset,
