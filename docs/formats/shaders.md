@@ -227,11 +227,66 @@ Sky.con — `staticSunColor`, `staticSkyColor`, `sunDirection`,
 `obf2::level::Lighting`; the tree, effect and hemisphere-map values sit
 there unused.
 
-Not done: the baked light map. Every level ships one per object,
-`lightmaps/Objects/LightmapAtlas*.dds` with a `.tai` of the atlas offsets.
-Its three channels are what the formula above multiplies by — `.g` gates
-the sun, `.b` the sky, `.r` the point colour — so until it is read nothing
-shadows anything.
+With a baked light map the shader keeps the same terms and gates them by
+its channels (`RaShaderSTM.fx:358`, the `_LIGHTMAP_` branch):
+
+```hlsl
+vec3 bumpedSky = lightmap.b * indata.InvDotAndLightAtt.rgb;
+vec3 bumpedDiff = diffuse + bumpedSky;
+diffuse = lerp(bumpedSky, bumpedDiff, lightmap.g);
+diffuse += lightmap.r * SinglePointColor;
+```
+
+That lerp is just `bumpedSky + sun * lightmap.g`, so `.g` gates the sun,
+`.b` the sky and `.r` the point colour. Without a map all three are 1 and
+the two branches are the same expression — which is why the renderer has
+only one.
+
+**Done**, and the format needed no reverse engineering at all: see below.
+
+## The object light map atlas is a self-describing text file
+
+`Levels/<name>/lightmaps/Objects/LightmapAtlas.tai` documents its own
+format in its header:
+
+```
+# <filename>		<atlas filename>, <atlas idx>, <woffset>, <hoffset>, <width>, <height>
+```
+
+and an entry looks like this:
+
+```
+levels/strike_at_karkand/lightmaps/objects/house_high_06=00=-226=166=59.dds
+        levels/strike_at_karkand/lightmaps/objects/LightmapAtlas0.dds, 0, 0, 0, 0.5, 0.5
+```
+
+The left-hand name is what ties a baked map to a **placement**: the
+template's name, two digits, and the object's world position. Everything
+about it was measured against Strike at Karkand's own data rather than
+assumed:
+
+* the position has its fraction **cut off, not rounded**. Of the 1336
+  placed objects, truncation matches every one of the 823 that has an
+  entry; rounding disagrees on 1115 positions and matches none of them;
+* the two digits are geometry and lod. The file holds `00`, `01`, `02`,
+  `03` for the lods of geometry 0 (823, 521, 406 and 65 entries) and
+  `10`..`12` for a second geometry. We draw lod 0, so we ask for `00`;
+* the 513 objects with no entry have none at any lod: they are the
+  vegetation and the thin props, which the game lights with its own tree
+  shaders instead.
+
+`woffset`/`hoffset` are the offset and `width`/`height` the scale, which
+is the reverse of the order the shader wants them in — `LightMapOffset` is
+xy scale, zw offset (`RaShaderSTM.fx:216`).
+
+Two consequences for the renderer. The light map is sampled with
+**TEXCOORD2**, a third UV set the vertex now carries. And it belongs to
+the *placement*, not the geometry: the same building stands on a level
+thirty times and each copy has its own window into the atlas, so the mesh
+is shared and the light map is not.
+
+`obf2::level::ObjectLightmaps` reads the file and
+`tests/test_lightmap_atlas.cpp` holds four of its entries verbatim.
 
 ## Alpha test: leaves, fences, grates
 

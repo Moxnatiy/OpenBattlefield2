@@ -25,6 +25,7 @@ struct VertexIn {
     float3 normal   [[attribute(1)]];
     float2 uv       [[attribute(2)]];
     float2 uv2      [[attribute(3)]];
+    float2 uv3      [[attribute(4)]];
 };
 
 struct VertexOut {
@@ -34,6 +35,8 @@ struct VertexOut {
     // The detail map has a tiling UV set of its own
     // (`Shaders_client.zip:RaShaderSTM.fx:224`), not the base map's unwrap.
     float2 uv2;
+    // TEXCOORD2: the unwrap the baked light map is sampled with.
+    float2 uv3;
     float viewDepth;
     // The frame's parameters travel to the fragment shader through varyings
     // rather than in a uniform buffer of their own: in the fragment stage they
@@ -46,6 +49,7 @@ struct VertexOut {
     float4 material;
     float4 sunDirection;
     float4 pointColor;
+    float4 lightmapOffset;
 };
 
 struct Uniforms {
@@ -69,6 +73,11 @@ struct Uniforms {
     float4 sunDirection;
     // `Lightmanager.singlePointColor`, added whole. rgb.
     float4 pointColor;
+    // The object's window into the level's light map atlas: xy scale, zw
+    // offset, exactly as the game's `LightMapOffset`
+    // (`Shaders_client.zip:RaShaderSTM.fx:216`). All zero means this object has
+    // no baked light map — the vegetation and the thin props have none.
+    float4 lightmapOffset;
 };
 
 // The order of the fields above is the order of `VertexUniforms` below, and the
@@ -93,6 +102,7 @@ vertex VertexOut vertex_main(VertexIn in [[stage_in]],
     out.normal = in.normal;
     out.uv = in.uv;
     out.uv2 = in.uv2;
+    out.uv3 = in.uv3;
     // For a perspective projection w in clip space equals the distance along the
     // view — exactly what the fog needs.
     out.viewDepth = out.position.w;
@@ -103,6 +113,7 @@ vertex VertexOut vertex_main(VertexIn in [[stage_in]],
     out.material = uniforms.material;
     out.sunDirection = uniforms.sunDirection;
     out.pointColor = uniforms.pointColor;
+    out.lightmapOffset = uniforms.lightmapOffset;
     return out;
 }
 
@@ -185,14 +196,32 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
         // Missing: the baked light map. Every level ships one per object
         // (`lightmaps/Objects/LightmapAtlas*.dds` and a `.tai` of the atlas
         // offsets), so until it is read nothing shadows anything.
+        //
+        // With a baked light map the shader takes the same terms and gates them
+        // by its channels (`RaShaderSTM.fx:358`, the `_LIGHTMAP_` branch):
+        //
+        //   bumpedSky  = lightmap.b * InvDotAndLightAtt
+        //   diffuse    = lerp(bumpedSky, sun + bumpedSky, lightmap.g)
+        //              + lightmap.r * SinglePointColor
+        //
+        // and that lerp is just `bumpedSky + sun * lightmap.g`. So .g gates the
+        // sun, .b the sky and .r the point colour. Without a map all three are
+        // 1 and the two branches are the same expression, which is why there is
+        // only one below.
         const float kSkyNormalZ = 0.65;
+        float3 lightmapValue = float3(1.0);
+        if (in.lightmapOffset.x > 0.0) {
+            lightmapValue = lightmap.sample(lightSampler,
+                                            in.uv3 * in.lightmapOffset.xy +
+                                                in.lightmapOffset.zw).rgb;
+        }
         float3 normal = normalize(in.normal);
         float3 toSun = normalize(-in.sunDirection.xyz);
         float nDotL = dot(normal, toSun);
         float invDot = 1.0 - saturate(nDotL * 0.2);
-        float3 sun = saturate(nDotL) * in.sunColor.rgb;
-        float3 sky = kSkyNormalZ * in.skyColor.rgb * invDot;
-        light = 2.0 * (sun + sky + in.pointColor.rgb);
+        float3 sun = saturate(nDotL) * in.sunColor.rgb * lightmapValue.g;
+        float3 sky = kSkyNormalZ * in.skyColor.rgb * invDot * lightmapValue.b;
+        light = 2.0 * (sun + sky + in.pointColor.rgb * lightmapValue.r);
     }
 
     // `SkyDome.fx` samples the sky texture and returns it — the dome carries
@@ -327,15 +356,23 @@ struct VertexUniforms {
   float material[4]{};  // x: multiply the detail map in, y: alpha from the texture
   float sunDirection[4]{};
   float pointColor[4]{};
+  float lightmapOffset[4]{};
 };
 
 }  // namespace
 
-static_assert(sizeof(mesh::Vertex) == 40, "the vertex layout must match the shader");
+static_assert(sizeof(mesh::Vertex) == 48, "the vertex layout must match the shader");
+
+SDL_GPUTexture* MeshRenderer::uploadSharedTexture(const texture::Texture& source) {
+  SDL_GPUTexture* uploaded = uploadTexture(source);
+  if (uploaded != nullptr) sharedTextures_.push_back(uploaded);
+  return uploaded;
+}
 
 MeshRenderer::~MeshRenderer() {
   if (device_ == nullptr) return;
   SDL_GPUDevice* gpu = device_->gpu();
+  for (SDL_GPUTexture* texture : sharedTextures_) SDL_ReleaseGPUTexture(gpu, texture);
   if (placeholder_ != nullptr) SDL_ReleaseGPUTexture(gpu, placeholder_);
   if (overlayPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, overlayPipeline_);
   if (roadPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, roadPipeline_);
@@ -362,11 +399,12 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
 
   const SDL_GPUVertexBufferDescription bufferDescription{
       0, static_cast<Uint32>(sizeof(mesh::Vertex)), SDL_GPU_VERTEXINPUTRATE_VERTEX, 0};
-  const SDL_GPUVertexAttribute attributes[4] = {
+  const SDL_GPUVertexAttribute attributes[5] = {
       {0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offsetof(mesh::Vertex, position)},
       {1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offsetof(mesh::Vertex, normal)},
       {2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(mesh::Vertex, uv)},
       {3, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(mesh::Vertex, uv2)},
+      {4, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(mesh::Vertex, uv3)},
   };
 
   SDL_GPUColorTargetDescription colorTarget{};
@@ -378,7 +416,7 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   info.vertex_input_state.vertex_buffer_descriptions = &bufferDescription;
   info.vertex_input_state.num_vertex_buffers = 1;
   info.vertex_input_state.vertex_attributes = attributes;
-  info.vertex_input_state.num_vertex_attributes = 4;
+  info.vertex_input_state.num_vertex_attributes = 5;
   info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
   // Vertex winding in BF2 is counter-clockwise: across all 1635 meshes in the
   // game (2.2 M triangles) the geometric normal agrees with the vertex normals
@@ -853,6 +891,7 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
       const Mat4 modelViewProjection = viewProjection * transform;
       std::memcpy(uniforms.modelViewProjection, modelViewProjection.m, sizeof(Mat4));
       uniforms.material[1] = item.road ? 1.0f : 0.0f;
+      std::memcpy(uniforms.lightmapOffset, item.lightmapOffset, sizeof(uniforms.lightmapOffset));
       uniforms.material[2] = item.sky ? 1.0f : 0.0f;
       // No fog on the sky: the dome's texture already holds the horizon the fog
       // fades into. `SkyDome.fx` computes none either.
@@ -861,9 +900,16 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
       for (const GpuMesh::Range& range : item.mesh->ranges) {
         if (range.indexCount == 0) continue;
 
+        // Slot 1 is the light map. For the terrain it belongs to the range —
+        // one patch, one map. For a placed object it belongs to the **item**:
+        // the same building stands on a level thirty times and each copy has
+        // its own window into the level's atlas, so the geometry is shared and
+        // the light map is not.
+        SDL_GPUTexture* lightmapTexture =
+            item.lightmap != nullptr ? item.lightmap : range.lightmap;
         const SDL_GPUTextureSamplerBinding bindings[3] = {
             {range.texture != nullptr ? range.texture : placeholder_, sampler_},
-            {range.lightmap != nullptr ? range.lightmap : placeholder_, sampler_},
+            {lightmapTexture != nullptr ? lightmapTexture : placeholder_, sampler_},
             {range.detail != nullptr ? range.detail : placeholder_, sampler_},
         };
         SDL_BindGPUFragmentSamplers(pass, 0, bindings, 3);

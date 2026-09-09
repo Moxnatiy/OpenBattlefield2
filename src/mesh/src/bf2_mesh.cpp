@@ -261,8 +261,10 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
   // (`Shaders_client.zip:RaShaderSTM.fx:224`), the second is the light map.
   // We take the zeroth and the first; a mesh with only one set reuses it, which
   // is what a material with no detail channel wants anyway.
-  bool hasPosition = false, hasNormal = false, hasUv = false, hasUv2 = false, hasPart = false;
-  std::size_t positionFloat = 0, normalFloat = 0, uvFloat = 0, uv2Float = 0, partFloat = 0;
+  bool hasPosition = false, hasNormal = false, hasUv = false, hasUv2 = false, hasUv3 = false;
+  bool hasPart = false;
+  std::size_t positionFloat = 0, normalFloat = 0, uvFloat = 0, uv2Float = 0, uv3Float = 0;
+  std::size_t partFloat = 0;
   std::size_t weightFloat = 0;
   bool hasWeight = false;
   for (const VertexAttribute& attribute : mesh.attributes) {
@@ -280,6 +282,9 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
         break;
       case 0x105:
         if (!hasUv2) { uv2Float = index; hasUv2 = true; }
+        break;
+      case 0x205:
+        if (!hasUv3) { uv3Float = index; hasUv3 = true; }
         break;
       default: break;
     }
@@ -338,6 +343,10 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
     } else {
       vertex.uv2[0] = vertex.uv[0];
       vertex.uv2[1] = vertex.uv[1];
+    }
+    if (hasUv3 && base + uv3Float + 1 < mesh.vertexData.size()) {
+      vertex.uv3[0] = mesh.vertexData[base + uv3Float];
+      vertex.uv3[1] = mesh.vertexData[base + uv3Float + 1];
     }
   }
 

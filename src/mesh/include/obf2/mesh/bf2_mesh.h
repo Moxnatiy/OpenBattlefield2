@@ -89,6 +89,10 @@ struct Vertex {
   // TEXCOORD1: the tiling set the detail map is sampled with. When the mesh has
   // only one set this is a copy of `uv`.
   float uv2[2]{};
+  // TEXCOORD2: the unwrap the baked light map is sampled with, unique per
+  // surface like the base map's but laid out for the level's atlas. Zero when
+  // the mesh has no such set.
+  float uv3[2]{};
 };
 
 // A range of indices sharing one material — one draw call.

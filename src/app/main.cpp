@@ -37,6 +37,7 @@
 #include "obf2/gfx/mesh_renderer.h"
 #include "obf2/level/gameplay.h"
 #include "obf2/level/level.h"
+#include "obf2/level/lightmap_atlas.h"
 #include "obf2/server/game_client.h"
 #include "obf2/server/physics.h"
 #include "obf2/server/soldier_move.h"
@@ -1731,6 +1732,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       int mesh = -1;
       obf2::Mat4 transform;
       bool road = false;
+      // Which page of the level's light map atlas this placement is baked into,
+      // and its window in it. -1 means the object has no baked light map.
+      int lightmapAtlas = -1;
+      float lightmapOffset[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     };
 
     std::vector<obf2::mesh::RenderMesh> meshes;
@@ -1740,13 +1745,20 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
 
     void add(obf2::mesh::RenderMesh&& geometry, const obf2::Mat4& transform, bool road = false) {
       meshes.push_back(std::move(geometry));
-      instances.push_back(Instance{static_cast<int>(meshes.size()) - 1, transform, road});
+      Instance instance;
+      instance.mesh = static_cast<int>(meshes.size()) - 1;
+      instance.transform = transform;
+      instance.road = road;
+      instances.push_back(instance);
     }
   } scene;
 
   // The sky dome, kept apart from the scene: everything in the scene has a
   // fixed place, and the dome's place is wherever the camera is.
   std::optional<obf2::mesh::RenderMesh> skyDome;
+
+  // The level's baked object light maps, keyed by template name and position.
+  obf2::level::ObjectLightmaps objectLightmaps;
 
   std::optional<obf2::level::Level> level;
   obf2::game::Registry registry;
@@ -1778,6 +1790,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
                 level->terrain.seaLevel);
     std::printf("  static objects: %zu, roads: %zu\n", level->objects.size(),
                 level->roads.size());
+    // The level's baked light maps for placed objects. Read once here; every
+    // placement below asks it for its own window.
+    objectLightmaps = obf2::level::ObjectLightmaps::load(files, args.levelName);
 
     auto patches = obf2::level::buildTerrainPatches(*level, files);
     std::printf("  terrain patches: %zu of %d (the rest under water, no colour map)\n", patches.size(),
@@ -1973,6 +1988,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     std::unordered_map<std::string, int> meshIndexByTemplate;
     std::map<std::string, int> missing;
     int placed = 0;
+    int lightmapped = 0;
 
     for (const auto& object : placement) {
       // The placement is the longest part of loading. While it goes on, the server
@@ -2001,12 +2017,28 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
                                                              object.rotation.z);
         }
       }
-      scene.instances.push_back(Scene::Instance{found->second, transform, false});
+      Scene::Instance instance;
+      instance.mesh = found->second;
+      instance.transform = transform;
+      // The baked light map is keyed by the template's name and the placement's
+      // own position, so it is looked up here rather than with the geometry:
+      // the mesh is shared between copies and the light map is not.
+      if (const auto* baked = objectLightmaps.find(object.templateName, object.position)) {
+        instance.lightmapAtlas = baked->atlas;
+        instance.lightmapOffset[0] = baked->scaleU;
+        instance.lightmapOffset[1] = baked->scaleV;
+        instance.lightmapOffset[2] = baked->offsetU;
+        instance.lightmapOffset[3] = baked->offsetV;
+        ++lightmapped;
+      }
+      scene.instances.push_back(instance);
       ++placed;
     }
 
     std::printf("  unique geometry: %zu, placed: %d, without geometry: %zu templates\n",
                 scene.meshes.size() - patches.size(), placed, missing.size());
+    std::printf("  baked light maps: %d of %d objects, %d atlas pages\n", lightmapped, placed,
+                objectLightmaps.atlasCount());
     int shown = 0;
     for (const auto& [name, count] : missing) {
       if (shown++ >= 5) break;
@@ -3331,6 +3363,31 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     triangles += static_cast<long long>(scene.meshes[i].indices.size() / 3);
   }
 
+  // The atlas pages, uploaded once. Only the pages some object actually points
+  // at are loaded; a level has up to 21 and a small map uses few of them.
+  std::vector<SDL_GPUTexture*> lightmapPages(
+      static_cast<std::size_t>(std::max(objectLightmaps.atlasCount(), 0)), nullptr);
+  {
+    std::vector<bool> wanted(lightmapPages.size(), false);
+    for (const Scene::Instance& instance : scene.instances) {
+      if (instance.lightmapAtlas >= 0 &&
+          static_cast<std::size_t>(instance.lightmapAtlas) < wanted.size()) {
+        wanted[static_cast<std::size_t>(instance.lightmapAtlas)] = true;
+      }
+    }
+    int loaded = 0;
+    for (std::size_t i = 0; i < lightmapPages.size(); ++i) {
+      if (!wanted[i]) continue;
+      if (auto decoded = resolveTexture(objectLightmaps.atlasPath(static_cast<int>(i)))) {
+        lightmapPages[i] = renderer->uploadSharedTexture(*decoded);
+        if (lightmapPages[i] != nullptr) ++loaded;
+      }
+    }
+    if (!lightmapPages.empty()) {
+      std::printf("  light map atlas pages loaded: %d of %zu\n", loaded, lightmapPages.size());
+    }
+  }
+
   obf2::gfx::GpuMesh skyMesh;
   bool skyReady = false;
   if (skyDome) {
@@ -3370,6 +3427,13 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     obf2::gfx::MeshRenderer::DrawItem item{&gpuMeshes[static_cast<std::size_t>(meshIndex)],
                                            instance.transform};
     item.road = instance.road;
+    if (instance.lightmapAtlas >= 0 &&
+        static_cast<std::size_t>(instance.lightmapAtlas) < lightmapPages.size()) {
+      item.lightmap = lightmapPages[static_cast<std::size_t>(instance.lightmapAtlas)];
+      if (item.lightmap != nullptr) {
+        std::memcpy(item.lightmapOffset, instance.lightmapOffset, sizeof(item.lightmapOffset));
+      }
+    }
     items.push_back(item);
     drawnTriangles += static_cast<long long>(scene.meshes[static_cast<std::size_t>(meshIndex)]
                                                  .indices.size() / 3);

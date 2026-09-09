@@ -65,6 +65,11 @@ class MeshRenderer {
                                 std::string* error = nullptr);
   void release(GpuMesh& gpuMesh);
 
+  // A texture that belongs to no one mesh — a page of the level's light map
+  // atlas, which many placements share. The renderer keeps it and frees it with
+  // itself; nullptr when the upload failed.
+  SDL_GPUTexture* uploadSharedTexture(const texture::Texture& source);
+
   // A full pass: clear the colour and the depth, then draw every range.
   void render(const Frame& frame, const GpuMesh& gpuMesh, const Mat4& modelViewProjection,
               Color clearColor);
@@ -87,6 +92,12 @@ class MeshRenderer {
     // is the background everything else is painted over. The caller places it
     // around the camera.
     bool sky = false;
+    // The object's baked light map: the level's atlas page, and the window into
+    // it as `LightMapOffset` — xy scale, zw offset. Per placement, not per
+    // mesh: the same building has a different window in every copy. A zero
+    // scale means this object has none, which is normal for vegetation.
+    SDL_GPUTexture* lightmap = nullptr;
+    float lightmapOffset[4] = {0.0f, 0.0f, 0.0f, 0.0f};
   };
 
   // The fog comes from the level's data (Sky.con). fogEnd == 0 disables it.
@@ -144,6 +155,7 @@ class MeshRenderer {
   // one-pixel dark line.
   SDL_GPUSampler* overlaySampler_ = nullptr;
   SDL_GPUTexture* placeholder_ = nullptr;  // a white 1x1 for materials with no texture
+  std::vector<SDL_GPUTexture*> sharedTextures_;
   Fog fog_;
   Color terrainSun_{1.0f, 1.0f, 1.0f, 1.0f};
   Color terrainSky_{0.6f, 0.7f, 0.9f, 1.0f};
