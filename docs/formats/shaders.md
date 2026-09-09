@@ -46,24 +46,72 @@ view. The result is a **visibility** factor: the shaders write it into the
 `FOG` register (`Road.fx:66`, `outdata.Fog = saturate(calcFog(outdata.Pos.w))`)
 and the fixed-function stage blends `lerp(FogColor, color, fog)`.
 
-Two things follow that our renderer does not do:
+Two things follow: the far term is **cubic**, not linear, and the near
+term is a separate straight line clamped from below by `FogColor.w`, so
+the alpha of the fog colour is a floor on visibility rather than an
+opacity.
 
-* the far term is **cubic**, not linear. Near the camera the fog is
-  practically absent, and it thickens sharply towards the end;
-* the near term is a separate straight line clamped from below by
-  `FogColor.w`, so the alpha of the fog colour is a floor on visibility,
-  not an opacity.
+`FogRange` is **not established**: the engine packs those four numbers
+itself, and the name is nowhere in `BF2.exe` — neither as a string nor as
+a semantic, so the binding lives in the compiled effect and the code
+addresses parameters by handle. The Linux server only stores the setting
+(`dice::hfe::GameLogic::setFogStartEndAndBase(Vec4 const&)`); the packing
+is client-side. The cheap way to settle it is a measurement rather than a
+hunt: a frame dump of the original under `mtld3d` carries the uploaded
+constants, and rule 6 takes a frame-dump measurement as a source.
 
-`FogRange` is **not measured**: the four numbers are packed by the engine
-out of `Renderer.fogStartEndAndBase` (Dalian: `0.00/610.00/0.00/0.50`),
-and how exactly is not established. The Linux server has
-`dice::hfe::GameLogic::setFogStartEndAndBase(Vec4 const&)` — the name is
-transplantable into the client, and that is where to look.
+The package also ships a **second, simpler fog**, and this one we can
+feed. `Common.dfx:4`:
 
-Our own shader (`src/gfx/src/mesh_renderer.cpp`) currently blends
-linearly between `fogStart` and `fogEnd`. That number came from nowhere —
-it is a rule 6 violation, and it is why the picture does not match either
-way round.
+```hlsl
+vec4 fogDistances : fogDistances : register(vs_1_1, c93);
+
+float calcFog(float w)
+{
+    return ((fogDistances.y - w) / (fogDistances.y - fogDistances.x));
+}
+```
+
+Visibility, linear between start and end, and the caller blends
+`lerp(FogColor, color, fog)`. Written the other way round that is
+`mix(color, fogColor, (w - start) / (end - start))` — algebraically the
+same thing our renderer already did. So the fog we draw is a shipped BF2
+formula after all; what it lacked was the citation, and that is now next
+to it in `src/gfx/src/mesh_renderer.cpp`.
+
+## What "there is no fog" actually is: there is no sky
+
+The fog works. Measured on Strike at Karkand, whose
+`Renderer.fogStartEndAndBase` is `0.00/135.00/2.30/0.40` and whose
+`Renderer.fogColor` is `163/135/86`: a hillside past the fog's end comes
+out `150/124/77` on screen — 92 % of the way to the fog colour, the rest
+being the terrain's own tint under the light map.
+
+What is missing is the other half of the horizon. The level's `Sky.con`
+(Strike at Karkand, `server.zip`) ends like this:
+
+```
+run /Common/Sky/SkyDome/skydome.con
+Skydome.skyTemplate skydome
+Skydome.skyTexture common\textures\sky\karkand_cloudy
+Skydome.domeRotation 60
+Skydome.hasCloudLayer 0
+Skydome.fadeCloudsDistances 900/500
+Renderer.fogColor 163.00/135.00/86.00
+Renderer.fogStartEndAndBase 0.00/135.00/2.30/0.40
+```
+
+Not one `Skydome.*` command has a handler in our engine, so where the
+original draws a textured dome we leave the clear colour. The terrain
+fades correctly into a sandy fog and then meets a hard edge of flat
+blue — which reads exactly like "the fog is missing". The shader is
+`SkyDome.fx`; the dome is an ordinary object template, so the mesh and the
+texture are already within reach of what we load.
+
+Also not established: the third and fourth components of
+`fogStartEndAndBase`. The name accounts for three (`2.30` would be the
+base), and Dalian's `0.00/610.00/0.00/0.50` differs in both, so neither is
+a constant. They are unused by the linear form.
 
 ## Static meshes: `Base` is a tint, `Detail` is the surface
 
@@ -97,12 +145,25 @@ ranges:
 
 `nccolor.dds` is a 512×512 low-frequency tint shared by the whole of
 `vegitation/asia` — on the trunk it is nearly white. All the bark is in
-`tile_ncbark01de.dds`, the detail. We draw slot 0 alone
+`tile_ncbark01de.dds`, the detail. We drew slot 0 alone
 (`mesh_renderer.cpp`, "For ordinary meshes slot 1 is the detail map,
-which we do not use yet"), so the trunk comes out white while the needles,
-whose technique is plain `Base`, come out right.
+which we do not use yet"), so the trunk came out white while the needles,
+whose technique is plain `Base`, came out right.
 
-The same explains any other white surface on a `*Detail*` technique.
+The same explained every other white surface on a `*Detail*` technique —
+the fences and the dumpsters on Strike at Karkand among them.
+
+**Done.** `obf2::mesh::materialLayout` reads the technique into slot
+numbers, the vertex carries the tiling UV set as well as the base one, and
+the fragment shader multiplies the detail in. The slot ordering is not a
+guess: `tools/mesh_info --materials` over the whole corpus shows the crack
+map in slot 2 for `BaseDetailCrackNDetailNCrack` (125 materials) and in
+slot 3 for `BaseDetailDirtCrackNDetailNCrack` (243) — it moves by exactly
+one when `Dirt` appears before it in the name. `tests/test_material.cpp`
+holds those counts.
+
+Still not drawn: the dirt and crack channels, and the normal maps, which
+need a tangent frame we do not build.
 
 ## Roads are lifted and do not write depth
 
@@ -129,7 +190,12 @@ The DirectX9 pass of the same technique takes the other route —
 shader agrees: `Road.fx:59` also does `Pos.y += 0.01`, and its pass p0 is
 `ZEnable = TRUE, ZWriteEnable = FALSE`.
 
-We add roads to the scene as ordinary opaque meshes
-(`src/app/main.cpp:1778`), with the same depth state as everything else
-and no lift. The road surface and the terrain then land on the same depth
-and fight for it — that is the flicker.
+We added roads to the scene as ordinary opaque meshes, with the same depth
+state as everything else and no lift. The road surface and the terrain
+then landed on the same depth and fought for it — that was the flicker.
+
+**Done.** `obf2::gfx::MeshRenderer` now draws roads in a second pass of
+its own: the instance is lifted by `kRoadLift`, the pipeline keeps the
+depth test and drops the depth write, and the colour is blended by the
+texture's alpha. A placement says only `DrawItem::road`; what that means
+is the renderer's business.

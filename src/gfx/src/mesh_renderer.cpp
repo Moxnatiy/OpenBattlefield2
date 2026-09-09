@@ -120,6 +120,23 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
 
     float3 color = albedo.rgb * light;
 
+    // The game's own fog, `Shaders_client.zip:Common.dfx:4`:
+    //
+    //     float calcFog(float w) {
+    //         return (fogDistances.y - w) / (fogDistances.y - fogDistances.x);
+    //     }
+    //
+    // It returns visibility, and the caller blends `lerp(FogColor, color, fog)`;
+    // written the other way round that is exactly the mix below. `w` is the
+    // clip-space w, which for a perspective projection is the distance along the
+    // view — our `viewDepth`. Start and end come from the level's
+    // `Renderer.fogStartEndAndBase` (Karkand: 0.00/135.00/2.30/0.40).
+    //
+    // The RaShader family — meshes, roads, terrain — uses a second, cubic form
+    // (`RaCommon.fx:54`) whose four `FogRange` numbers the engine packs itself.
+    // How it packs them is **not established**, so we keep to the form whose
+    // inputs we have. See docs/formats/shaders.md.
+    //
     // fogParams.y == 0 means the level has no fog.
     if (in.fogParams.y > 0.0) {
         float t = saturate((in.viewDepth - in.fogParams.x) /
