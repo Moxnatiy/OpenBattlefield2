@@ -1,0 +1,55 @@
+The frame dump writes the vertex shader constants, once per frame.
+
+The dump names the shaders and the textures but not the numbers they are
+fed, and several things we need are frame constants the engine uploads —
+the fog above all. BF2 ships its shaders as source (`Shaders_client.zip`),
+so what `FogRange` is *used* for is readable (`RaCommon.fx:54`), but what
+it *is* is packed by the engine, and the name is nowhere in `BF2.exe` —
+neither as a string nor as a semantic, so the binding lives in the
+compiled effect and the code addresses parameters by handle. A frame-dump
+measurement is a source under rule 6; a guess is not.
+
+One line per non-zero constant row, on the first draw of each dumped
+frame: the fog does not change within a frame, and printing it per draw
+would bury an 850-call log.
+
+To read the result, take a dump on two levels whose fog differs —
+`Renderer.fogStartEndAndBase` is 0/135 on Strike at Karkand and 0/610 on
+Dalian Plant — and the row that moves with them is the one.
+
+Applies on top of `tools/mtld3d_frame_dump_geom.patch`, to
+`reference/mtld3d`, before `tools/mtld3d_build.sh`.
+
+--- a/windows/d3d9/src/device/frame_dump.rs
++++ b/windows/d3d9/src/device/frame_dump.rs
+@@ -675,5 +675,30 @@
+                 c[78]
+             );
+         }
++
++        // [openbf2] The frame's vertex constants, once per dumped frame.
++        //
++        // Everything the engine uploads per frame rather than per draw lands
++        // here, and none of it is in the game's data files. The fog is the
++        // reason this exists: BF2 ships its shaders as source, so what
++        // `FogRange` is *used* for is readable (`RaCommon.fx:54`), but what it
++        // *is* is packed by the engine and its name is nowhere in `BF2.exe` —
++        // neither as a string nor as a semantic.
++        //
++        // On the first draw rather than at frame start: at frame start the
++        // effect has not set its parameters yet.
++        if seq == 0 {
++            let vs = self.shader_bindings().vs_constants_copy();
++            for (row, value) in vs.iter().enumerate() {
++                if value.iter().all(|component| *component == 0.0) {
++                    continue;
++                }
++                info!(
++                    target: LOG_TARGET,
++                    "[dump] vsc c{row}: {:.6} {:.6} {:.6} {:.6}",
++                    value[0], value[1], value[2], value[3]
++                );
++            }
++        }
+     }
+ }

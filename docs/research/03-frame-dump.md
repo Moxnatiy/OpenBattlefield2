@@ -34,6 +34,30 @@ A line looks like this:
        geom=[-385.5,-139.5 150.0x44.0]
 ```
 
+## The frame's own constants
+
+`tools/mtld3d_frame_dump_constants.patch` adds one more thing the dump did
+not carry: the **vertex shader constants**, printed once per dumped frame
+on its first draw.
+
+Everything the engine uploads per frame rather than per draw lands there,
+and none of it is in the game's data files. The fog is why the patch
+exists. BF2 ships its shaders as source, so what `FogRange` is *used* for
+is readable (`Shaders_client.zip:RaCommon.fx:54`), but what it *is* is
+packed by the engine — and the name is nowhere in `BF2.exe`, neither as a
+string nor as a semantic, so the binding lives in the compiled effect and
+the code addresses parameters by handle.
+
+```
+[dump] vsc c93: 0.000000 135.000000 0.000000 0.000000
+```
+
+To read it, take a dump on two levels whose fog differs —
+`Renderer.fogStartEndAndBase` is `0/135` on Strike at Karkand and `0/610`
+on Dalian Plant — and the row that moves with them is the one. Two levels
+rather than one on purpose: a single frame would let almost any row be
+read as a fog range.
+
 ## Two things that are visible at once
 
 **The coordinates are centred.** Zero sits in the middle of the screen, so
