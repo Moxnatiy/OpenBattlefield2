@@ -51,13 +51,19 @@ term is a separate straight line clamped from below by `FogColor.w`, so
 the alpha of the fog colour is a floor on visibility rather than an
 opacity.
 
-`FogRange` is **measured**, not guessed. Its name is nowhere in `BF2.exe`
-— neither as a string nor as a semantic, so the binding lives in the
-compiled effect and the code addresses parameters by handle — but the
-engine has to upload the four numbers, and a frame dump of the original
-under `mtld3d` catches them on the way (rule 6 takes a frame-dump
-measurement as a source; `tools/mtld3d_frame_dump_constants.patch` adds
-the constants to the dump).
+`FogRange` is **measured**: the engine uploads four floats and a frame dump
+of the original under `mtld3d` catches them on the way (rule 6 takes a
+frame-dump measurement as a source; `tools/mtld3d_frame_dump_constants.patch`
+adds the constants to the dump).
+
+It was measured rather than reversed because I could not find the name in
+`BF2.exe` and concluded the binding must live in the compiled effect. That
+conclusion was wrong, and wrong in the way rule 12 warns about: **the
+renderer is not in `BF2.exe` at all**. It is in `RendDX9.dll`, which holds
+`FogRange`, `FogColor`, `StaticSkyColor`, `LightMapOffset` and
+`treeSkyColor` as plain strings. The measurement stands; the reason given
+for stopping at it did not. See
+[../research/12-renddx9.md](../research/12-renddx9.md).
 
 Two levels settle it, because one cannot. Mashtuur City
 (`fogStartEndAndBase 30/200/1.40/0.40`) uploads
