@@ -146,9 +146,12 @@ texture and the light buffer, without the near per-material detail.
 
 Left here:
 
-* the **near detail texture** per terrain material, which needs the
-  material system — and that is in `terraindata.raw`, the compiled blob the
-  game loads and we do not read (docs/research/12-renddx9.md);
+* the **near detail texture** per terrain material. No longer blocked: the
+  six materials are in `terraindata.raw`'s header, which
+  `tools/terrain_raw.py` reads (docs/formats/terraindata.md), and the maps
+  that say which material owns which texel are the level's own
+  `Detailmaps/txCCxRR_1.dds` and `_2.dds`. The blob's per-patch payload is
+  geometry, not materials, so nothing else in it has to be read first;
 * `terrain.farTopTilingHi` against `farTopTilingLow`: the engine picks by a
   flag at `+0x35e` (`RendDX9.dll`, 0x100d9c30) and that flag is this
   setting;

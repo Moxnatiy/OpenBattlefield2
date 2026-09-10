@@ -137,6 +137,33 @@ patch change LOD without popping.
 So a patch's block is: where it sits, its height range, a vector and a float,
 its morph deltas with their bounds, and one raw surface.
 
-Left to establish: which surface that is — the chart map the shader selects
-its six materials with is the one we came for — and the eight secondary
-terrains at the end, before the closing `0xffffffff`.
+### Which surface, and why it changes the plan
+
+The lock is on `patch + 0x5c` (`0x1010d293`, `MOV ECX,[ESI + 0x5c]` right
+before the call), and `TerrainPatch::init` (`FUN_1019fa10`, 0x1019fa10) shows
+what a patch's textures are and which of them come from **files**:
+
+| field | what | where it comes from |
+|---|---|---|
+| `+0x148` | the tile's name, `"%02ix%02i"` | built from the column and the row — this is the `00x00` of `tx00x00.dds` |
+| `+0x4c` | the colour map | `<colormapBaseName><name>.dds`, or created and filled |
+| `+0x50` | the light map | `<lightmapBaseName><name>.dds`, else filled white |
+| `+0x40`, `+0x44` | the two chart maps, `"%s_%i"` | `<detailmapBaseName><name>_1.dds` and `_2.dds`, else filled `0xffff0000` and `0xff000000` |
+| `+0x48` | the low-detail component map | filled `0xff0000` when absent |
+| `+0x5c` | **the surface the blob holds** | not loaded from any file |
+
+So the per-patch payload in `terraindata.raw` is **geometry, not materials**:
+the heights, beside the morph deltas that let a patch change LOD. Everything
+with a texture in it — the colour maps, the light maps, the chart maps that
+say which of the six materials owns which texel — is in the `.dds` files
+beside the blob, which we already read.
+
+That changes what this file is for. We do not need the rest of it to texture
+the ground close up: the six materials are in the header we already parse,
+the chart maps are `Detailmaps/txCCxRR_1.dds` and `_2.dds`, and the
+low-detail texture is the level's own. What the blob would still buy us is
+the terrain's *geometry* the way the game builds it — the morph deltas, and
+heights that need no `.raw` beside them.
+
+Left: the eight secondary terrains at the end, before the closing
+`0xffffffff`, and the exact format of the height surface.
