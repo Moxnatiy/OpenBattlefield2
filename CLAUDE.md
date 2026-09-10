@@ -285,6 +285,7 @@ constant's value is needed, and no good where control flow is needed.
 | `tools/translate_comments.py` | move comments over to English line by line | refuses to write on a mismatch |
 
 **Game data:** `tools/hud_audit.py`, `hud_commands.py`, `hud_coverage.py`,
+`hud_atlas.py` (names a frame dump's interface calls by the art they sample),
 `hud_states.py`, `hud_fields.py`, `con_objects.py`, `meme_read.py`,
 `meme_dump.py`, `meme_types.py`, `extract_command_descriptions.py`.
 

@@ -251,3 +251,54 @@ There is **no** 536x47 node in the HUD's data at all — checked by searching
 every `HudSetup/*.con`. So that bar is drawn by something other than
 `hudBuilder`, and by what exactly is not established yet. We do not have it
 at all.
+
+## Naming what the original drew, instead of guessing at it
+
+Matching rectangle against rectangle is what made the interface expensive: two
+icons of the same size a few pixels apart are indistinguishable, so every
+disagreement had to be argued about rather than looked up. The dump carries the
+answer already, and we were not reading it.
+
+**The interface does not sample its pictures from files.** Everything under
+`Menu/HUD/Texture/` is packed into two atlas pages — `Menu/Atlas/
+MemeAtlas_010.dds` and `_020.dds`, 2048×2048 — and `Menu/Atlas/MemeAtlas.tai`
+is the index: 986 lines, one per original file, each with the page and the
+rectangle inside it in UV units. It is the same `.tai` format the object light
+maps use, so we already had a reader for the idea.
+
+Which page a call samples follows from the dump's own texture line. Over every
+`.dds` in the game the pair (DXT3, 2048, 2048) belongs to `MemeAtlas_020` and
+to nothing else, so `s0=TextureId(67)/0x33545844/2048x2048` **is** that page;
+the DXT5 one beside it is `_010`.
+
+And the call's vertices say which picture. The interface's vertex is eleven
+floats, stride 44:
+
+```
+x  y  z   r g b a   u0 v0   u1 v1
+```
+
+so the atlas coordinate is at 7 and 8, and the colour at 3..6 is the node's
+tint — `setNodeColor`, which the game multiplies the art by. Look the
+coordinate up in the index and the call has a name:
+
+```
+draw 235   14.5  94.5  150 x 44   Ingame/Weapons/Icons/Hud/USRIF_MP5_A3.tga  150x44
+draw 240  173.5 142.5   58 x 17   Ingame/Weapons/Icons/Hud/sasgr_fn2000_mini.tga  58x17
+draw 233    9.5  72.5  246 x 69   Ingame/Respawn/kit_selected.tga  246x69
+```
+
+The entry's own size is checked against the call's, and where they disagree the
+name is refused rather than printed: the corner then belongs to another quad of
+the same call — the interface batches a frame, its icon and its caption into one
+draw. `tools/hud_atlas.py` does all of this.
+
+On the spawn screen of a joined server (48 two-dimensional calls) that names 8
+outright, refuses 13 as first-quad-only, and leaves the rest to the font pages —
+text is not in the atlas and never will be.
+
+**What is left to name the other 13**: the geom patch already prints each
+quad's screen rectangle, and printing its UV rectangle beside it is the same
+loop. Then every quad of a batch gets its own name and the whole screen is a
+list of file names — which is what our own `--hud-rects` prints for our side.
+Comparing two lists of names needs no tolerance and no argument.
