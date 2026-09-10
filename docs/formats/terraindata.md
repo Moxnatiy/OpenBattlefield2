@@ -86,9 +86,20 @@ with `vComponentsel` against a chart map, and a level's `Detailmaps/txCCxRR_1.dd
 and `_2.dds` are the two maps that say which material owns which texel.
 
 One oddity worth recording rather than smoothing over: Karkand's blob says
-`farTopTilingLow 24` while its Terrain.con says 4. The blob is what the game
-loads, so the blob wins; the `.con` was evidently saved from a different
-state of the editor.
+`farTopTilingLow 24` while its Terrain.con says 4. The field order is not the
+thing in doubt — Dalian Plant settles that, its `.con` saying `farTopTilingHi
+10` and `farTopTilingLow 12` where the blob has 10 then 12, in that order. So
+on Karkand the two files were saved from different states of the editor, and
+the blob is what the game loads.
+
+That the two agree at all is not luck: **the same function writes both**.
+`TerrainEditable::saveAll` (`RendDX9.dll`, `FUN_1010d9d0`, 0x1010d9d0) writes
+the level's `Terrain.con` — the `if v_arg1 == BF2Editor` / `terrain.create
+TerrainEditable` … `else` / `terrain.create Terrain` / `terrain.load
+<path>/terraindata.raw` / `endIf` we have been reading is generated text, one
+`operator<<` per line — and then calls the blob writer above. The two
+branches of every level's Terrain.con and the blob beside it are two
+spellings of one editor state.
 
 ## Not read yet
 
