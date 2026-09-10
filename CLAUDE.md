@@ -214,6 +214,29 @@ The sign that you are working around instead of reversing: the comment you
 are about to write wants to say "looks like", "picked", "so it stops
 jittering".
 
+### 13. What the original draws is measured on the original
+
+The game's own data says what **exists** — a node, a texture, a variable. It
+does not say what the engine does with it, and the two are not the same
+question. So a claim about what is drawn comes from a frame dump of the running
+game or from the binary, and from nothing else. Not from the `.con` plus
+reasoning, however sound the reasoning.
+
+And the measurement's own limits are part of the measurement. Three wrong
+answers in one day came from this and nothing else:
+
+* the sprint icons were called surplus on our side, because the dump's per-quad
+  list stopped at sixteen rectangles and a kit row is eighteen;
+* the pale band under the horizon was blamed on the terrain we do not draw,
+  when it was our own repeating sampler — half of the sky texture's last row
+  and half of its first;
+* the terrain material's third float was read as a distance in metres until
+  `Terrain::load` said it is a tiling.
+
+Every one of them was a short measurement finished off with a plausible story.
+Before writing the answer, ask what the tool could not see: a cut-off, a filter,
+a default. That is where all three were hiding.
+
 ## Sources of truth
 
 ### The main rule: we reverse `BF2.exe`, and we do it through Ghidra
