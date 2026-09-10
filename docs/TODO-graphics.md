@@ -139,9 +139,35 @@ several: `ViewDistance`, `ViewDistanceFadeScale`, `ViewDistanceHeightScale`,
 and `Overgrowth.viewDistance` / `viewDistanceScale` for the undergrowth
 (strings in `RendDX9.dll`).
 
-This is what the fog looks like it is: our far plane is the fog's end, and
-the original's is its view distance. The sky dome's depth state had to be
-changed because of exactly that (docs/formats/shaders.md).
+**Half done.** The level says how far it lets anyone see, in its own
+Init.con:
+
+```
+GameLogic.MaximumLevelViewDistance 140
+```
+
+and it is **not** the fog's end, which is what our far plane used to be.
+The two are close on some levels and apart on others — every level in the
+game, read out of its Init.con against its Sky.con:
+
+| level | view | fog ends |
+|---|---|---|
+| Strike at Karkand | 140 | 135 |
+| Mashtuur City | 200 | 200 |
+| Gulf of Oman | 400 | **450** |
+| Songhua Stalemate | 250 | **300** |
+| Taraba Quarry | 575 | 535 |
+| Dalian Plant | 610 | 610 |
+| Operation Blue Pearl | 90 | — |
+
+On Gulf of Oman the fog's end would draw fifty metres of world the game
+never shows. The far plane is now `MaximumLevelViewDistance` times the
+player's `setViewDistanceScale`, and the fog is left to do its own job.
+
+Left: the rest of the family — `ViewDistanceFadeScale`,
+`ViewDistanceHeightScale`, `ViewDistanceHeight2Scale`,
+`ViewDistanceStreamingScale`, `Overgrowth.viewDistance` — and what the
+slider's own range is, which is not established.
 
 Measure: the horizon sits at the same distance in both, and the sky dome
 needs no special case.

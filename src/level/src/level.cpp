@@ -68,6 +68,10 @@ class LevelBuilder {
       return;
     }
     //   gameLogic.setTeamName 1 "CH"
+    if (path == "gamelogic.maximumlevelviewdistance") {
+      level_.maximumViewDistance = command.argFloat(0).value_or(0.0f);
+      return;
+    }
     if (path == "gamelogic.setteamname") {
       const int team = command.argInt(0).value_or(-1);
       if (team >= 0 && team <= 2) level_.teamNames[team] = std::string(command.argStr(1));

@@ -255,6 +255,19 @@ struct Level {
   // there, rather than orbiting the map.
   bool hasBeforeSpawnCamera = false;
 
+  // How far this level lets anyone see, from its own Init.con:
+  //
+  //   GameLogic.MaximumLevelViewDistance 140
+  //
+  // It is **not** the fog's end and the two must not be confused: on Strike at
+  // Karkand the view distance is 140 and the fog ends at 135, but on Gulf of
+  // Oman the view distance is 400 while the fog runs to 450, and on Songhua
+  // Stalemate 250 against 300. Every one of the game's levels sets it, from 90
+  // (Operation Blue Pearl) to 610 (Dalian Plant).
+  //
+  // The player's own `VideoSettings.setViewDistanceScale` scales it.
+  float maximumViewDistance = 0.0f;
+
   // The team names also come from the level's Init.con:
   //
   //   gameLogic.setTeamName 1 "CH"

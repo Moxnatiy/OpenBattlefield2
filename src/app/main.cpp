@@ -2085,6 +2085,8 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
                 level->terrain.terrainSunColor.x, level->terrain.terrainSunColor.y,
                 level->terrain.terrainSunColor.z, level->terrain.terrainSkyColor.x,
                 level->terrain.terrainSkyColor.y, level->terrain.terrainSkyColor.z);
+    std::printf("  view distance: %.0f (the level's own)\n",
+                static_cast<double>(level->maximumViewDistance));
     std::printf("  fog: %.0f..%.0f, base %.2f, floor %.2f, colour %.2f/%.2f/%.2f\n",
                 level->terrain.fogStart, level->terrain.fogEnd, level->terrain.fogBase,
                 level->terrain.fogFloor, level->terrain.fogColor.x, level->terrain.fogColor.y,
@@ -3789,10 +3791,20 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     const bool firstPerson = hostedServer != nullptr || remoteSoldier.has_value();
     const float nearPlane = firstPerson ? 0.1f : scene.radius * 0.002f + 0.05f;
 
-    // The far distance comes from the level's data: past the fog's end there is no
-    // visibility, so drawing further makes no sense (Dalian: fogStartEndAndBase 0/610).
+    // How far we draw is the level's own view distance, scaled by the player's
+    // setting — `GameLogic.MaximumLevelViewDistance` in the level's Init.con
+    // and `VideoSettings.setViewDistanceScale` in the profile.
+    //
+    // It is not the fog's end, which is what we used to take. The two are
+    // close on some levels and not on others: Karkand sees 140 m and fogs out
+    // at 135, but Gulf of Oman sees 400 while its fog runs to 450 — there the
+    // fog's end would have drawn 50 m of world the game never shows.
+    const float levelView = level ? level->maximumViewDistance : 0.0f;
+    const float viewDistance = levelView * engine.settings().video.viewDistanceScale;
     const float fogFar = level ? level->terrain.fogEnd : 0.0f;
-    const float farPlane = firstPerson && fogFar > 1.0f ? fogFar : scene.radius * 40.0f;
+    const float firstPersonFar = viewDistance > 1.0f ? viewDistance : fogFar;
+    const float farPlane =
+        firstPerson && firstPersonFar > 1.0f ? firstPersonFar : scene.radius * 40.0f;
 
     const obf2::Mat4 projection = obf2::perspective(1.05f, aspect, nearPlane, farPlane);
     // From above "screen up" has to be Z rather than Y (which would coincide with the
