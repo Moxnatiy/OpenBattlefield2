@@ -111,14 +111,17 @@ std::optional<TerrainRaw> readTerrainRaw(std::span<const std::byte> bytes, std::
     return std::nullopt;
   }
   for (std::uint32_t i = 0; r.ok() && i < count; ++i) {
+    // The order here is the file's, which is not the material's own order: the
+    // pair goes to +0x1c/+0x20 and the single float that follows it to +0x18
+    // (`RendDX9.dll`, 0x100ddc94).
     TerrainMaterial material;
     material.texture = r.string();
-    material.flagA = r.u8();
-    material.tilingX = r.f32();
-    material.tilingY = r.f32();
-    material.distance = r.f32();
-    material.unknown = r.f32();
-    material.flagB = r.u8();
+    material.triPlanar = r.u8() != 0;
+    material.sideTilingX = r.f32();
+    material.sideTilingY = r.f32();
+    material.topTiling = r.f32();
+    material.yOffset = r.f32();
+    material.envMap = r.u8() != 0;
     out.materials.push_back(std::move(material));
   }
 

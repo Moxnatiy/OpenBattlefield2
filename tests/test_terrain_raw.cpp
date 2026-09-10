@@ -71,12 +71,12 @@ Blob makeTerrain(std::uint32_t materialCount = 2) {
   b.u32(materialCount);
   for (std::uint32_t i = 0; i < materialCount; ++i) {
     b.string("common/terrain/textures/detail/detail_rock0" + std::to_string(i));
-    b.u8(static_cast<std::uint8_t>(i == 0 ? 1 : 0));
-    b.f32(32.0f + static_cast<float>(i));
-    b.f32(16.0f + static_cast<float>(i));
-    b.f32(50.0f);
-    b.f32(0.0f);
-    b.u8(0);
+    b.u8(static_cast<std::uint8_t>(i == 0 ? 1 : 0));  // tri-planar
+    b.f32(32.0f + static_cast<float>(i));             // side tiling x
+    b.f32(16.0f + static_cast<float>(i));             // side tiling y
+    b.f32(50.0f);                                     // top tiling
+    b.f32(0.25f);                                     // y offset
+    b.u8(static_cast<std::uint8_t>(i == 5 ? 1 : 0));  // environment map
   }
   // What follows in a real file is one block per patch; the reader stops here.
   b.u32(0xdeadbeef);
@@ -124,14 +124,17 @@ void testMaterials() {
   CHECK_EQ(raw->materials.size(), std::size_t(6));
   CHECK_EQ(raw->materials[0].texture,
            std::string("common/terrain/textures/detail/detail_rock00"));
-  CHECK_EQ(raw->materials[0].flagA, std::uint8_t(1));
-  CHECK_EQ(raw->materials[0].tilingX, 32.0f);
-  CHECK_EQ(raw->materials[0].tilingY, 16.0f);
-  CHECK_EQ(raw->materials[0].distance, 50.0f);
+  CHECK_EQ(raw->materials[0].triPlanar, true);
+  CHECK_EQ(raw->materials[0].sideTilingX, 32.0f);
+  CHECK_EQ(raw->materials[0].sideTilingY, 16.0f);
+  CHECK_EQ(raw->materials[0].topTiling, 50.0f);
+  CHECK_EQ(raw->materials[0].yOffset, 0.25f);
+  CHECK_EQ(raw->materials[0].envMap, false);
   CHECK_EQ(raw->materials[5].texture,
            std::string("common/terrain/textures/detail/detail_rock05"));
-  CHECK_EQ(raw->materials[5].tilingX, 37.0f);
-  CHECK_EQ(raw->materials[5].flagA, std::uint8_t(0));
+  CHECK_EQ(raw->materials[5].sideTilingX, 37.0f);
+  CHECK_EQ(raw->materials[5].triPlanar, false);
+  CHECK_EQ(raw->materials[5].envMap, true);
 }
 
 // A blob that ends in the middle must fail rather than hand back a half-read

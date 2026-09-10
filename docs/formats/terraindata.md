@@ -53,11 +53,11 @@ vec3   terrainWaterColor
 u32    6                    the terrain's materials, six of them
 6 x {
     str  texture            "common\terrain\textures\detail\detail_rock04"
-    u8   flag
-    f32  tiling x, tiling y
-    f32  distance           how far it is used to
-    f32  (zero on both levels read)
-    u8   flag
+    u8   tri-planar         draws this material from three directions
+    f32  side tiling x, y   the x and z planes
+    f32  top tiling         the y plane — the one flat ground uses
+    f32  y offset           slides the side planes up the texture
+    u8   environment map    reflects the level's env map off this material
 }
 ... one block per patch, then up to eight secondary terrains, then 0xffffffff
 ```
@@ -72,18 +72,66 @@ which is how we know the walk is right rather than plausible.
 Strike at Karkand:
 
 ```
-[0] detail_rock04    tiling 32/16  distance 50
-[1] detail_grass05   tiling  2/2   distance 64
-[2] detail_gravel    tiling  3/2   distance 64
-[3] detail_tarmac02  tiling  2/2   distance 42
-[4] detail_stones03  tiling  2/2   distance 64
-[5] detail_cobble2   tiling  2/2   distance 64
+[0] detail_rock04    side 32/16  top 50  tri-planar
+[1] detail_grass05   side  2/2   top 64
+[2] detail_gravel    side  3/2   top 64
+[3] detail_tarmac02  side  2/2   top 42
+[4] detail_stones03  side  2/2   top 64
+[5] detail_cobble2   side  2/2   top 64
 ```
 
 Dalian Plant has its own six — `detail_daliandirt`, `detail_beachgravel`,
 `detail_grass09_v2`. Six is not a coincidence: the shader selects among them
 with `vComponentsel` against a chart map, and a level's `Detailmaps/txCCxRR_1.dds`
 and `_2.dds` are the two maps that say which material owns which texel.
+
+## What the four floats are, and what they are not
+
+They are the near counterpart of the far tilings, in the same order:
+`vNearTexTiling = (side x, side y, top, y offset)` beside
+`vFarTexTiling = (farSideTiling.x, farSideTiling.y, farTopTiling, farYOffset)`.
+
+This is not read off the shape of the numbers, it is read off the loader. The
+material is 0x2c bytes, built with defaults and then filled from the file
+(`RendDX9.dll`, the material loop of `Terrain::load`, the reads at 0x100ddc94):
+
+| offset | default | from the file | what the draw does with it |
+|---|---|---|---|
+| +0x00 | vtable | | |
+| +0x04 | 0 | the texture named in the file | `TEXLAYER3`, the detail map |
+| +0x08 | 0 | `<name>_normal` if the archive has one | not used by the SM 2.0 passes |
+| +0x0c | 0 | `<name>_side`, else +0x04 again | `TEXLAYER6` on the tri-planar pass |
+| +0x10 | 0 | `<name>_sideNormal`, else +0x08 | |
+| +0x14 | 0 | — | |
+| +0x15 | 0 | the first `u8` | non-zero picks `FullDetailMounten` |
+| +0x18 | 32.0 | the **third** float | `vNearTexTiling.z`, the y plane |
+| +0x1c | 2.0 | the first float | `vNearTexTiling.x`, the x plane |
+| +0x20 | 2.0 | the second float | `vNearTexTiling.y`, the z plane |
+| +0x24 | 0 | the fourth float | `vNearTexTiling.w`, the y offset |
+| +0x28 | 0 | the second `u8` | non-zero picks `FullDetailWithEnvMap` |
+
+The reads are out of struct order — the vec2 lands at +0x1c before the single
+float at +0x18 — which is why the third number looked like a distance in metres
+(50, 64, 42, 37) until the loader said otherwise. It is a tiling, and it is the
+one flat ground actually uses: `Hi_VS_FullDetail` takes only `vNearTexTiling.z`
+(`Shaders_client.zip:TerrainShader_Hi.fx:165`), and the side planes appear only
+in the tri-planar variant (line 326).
+
+## How the six are drawn
+
+The diffuse pass is drawn once per material, and `TerrainDiffusePassLod0`
+(`RendDX9.dll`, 0x1018caf0) sets three things per material:
+
+* `TEXLAYER2` — the chart map, chosen by **material index / 3**: materials 0..2
+  read `Detailmaps/txCCxRR_1.dds`, materials 3..5 read `_2.dds`;
+* `COMPONENTSELECTOR` — `vComponentsel`, which channel of that map owns this
+  material;
+* `NEARTEXTILING` and `TEXLAYER3` — the four floats above and the texture.
+
+The maps are R5G6B5, 256×256, no mip levels, and the six channels are a
+partition: over a patch of Karkand the six sum to 1.000 (min 0.935, max 1.032 —
+5- and 6-bit quantisation). So `chartcontrib` weights the six draws and they add
+up to exactly one ground.
 
 One oddity worth recording rather than smoothing over: Karkand's blob says
 `farTopTilingLow 24` while its Terrain.con says 4. The field order is not the

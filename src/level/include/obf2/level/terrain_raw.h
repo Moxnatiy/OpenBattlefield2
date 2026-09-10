@@ -18,14 +18,20 @@ namespace obf2::level {
 // one per colour channel. The shader picks between them with `vComponentsel`
 // (`Shaders_client.zip:TerrainShader_Hi.fx:86`) and draws the terrain once per
 // material, adding the results.
+// The four floats are the near counterpart of the level's far tilings, and in
+// the same order — `vNearTexTiling = (side x, side y, top, y offset)`. The
+// order is the loader's, not a guess: the material is filled field by field at
+// `RendDX9.dll`, 0x100ddc94, and the vec2 lands at +0x1c *before* the single
+// float at +0x18, which is why the third number reads like a distance in metres
+// and is not one (docs/formats/terraindata.md).
 struct TerrainMaterial {
-  std::string texture;      // "common\terrain\textures\detail\detail_rock04"
-  std::uint8_t flagA = 0;   // 1 on the first material of both levels read; purpose not established
-  float tilingX = 1.0f;     // how the near detail is laid on; 32/16 on rock, 2/2 on the rest
-  float tilingY = 1.0f;
-  float distance = 0.0f;    // how far it is drawn to, in metres
-  float unknown = 0.0f;     // zero on both levels read
-  std::uint8_t flagB = 0;
+  std::string texture;       // "common\terrain\textures\detail\detail_rock04"
+  bool triPlanar = false;    // +0x15: draw this one from three directions
+  float sideTilingX = 2.0f;  // +0x1c, the x plane — only the tri-planar pass uses it
+  float sideTilingY = 2.0f;  // +0x20, the z plane
+  float topTiling = 32.0f;   // +0x18, the y plane: what flat ground is textured with
+  float yOffset = 0.0f;      // +0x24, slides the side planes up the texture
+  bool envMap = false;       // +0x28: reflect the level's environment map off it
 };
 
 // What `Levels/<name>/terraindata.raw` says about the terrain, as far as we read

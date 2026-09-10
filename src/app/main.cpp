@@ -3499,10 +3499,11 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     // And the near detail: the six materials out of the compiled terrain.
     for (std::size_t i = 0; i < level->terrain.materials.size(); ++i) {
       const obf2::level::TerrainMaterial& material = level->terrain.materials[i];
-      std::printf("  terrain material %zu: %-44s tiling %g/%g, to %g m\n", i,
-                  material.texture.c_str(), static_cast<double>(material.tilingX),
-                  static_cast<double>(material.tilingY),
-                  static_cast<double>(material.distance));
+      std::printf("  terrain material %zu: %-44s top %g, side %g/%g%s\n", i,
+                  material.texture.c_str(), static_cast<double>(material.topTiling),
+                  static_cast<double>(material.sideTilingX),
+                  static_cast<double>(material.sideTilingY),
+                  material.triPlanar ? ", tri-planar" : "");
     }
   }
 

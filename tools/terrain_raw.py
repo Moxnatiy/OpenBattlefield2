@@ -32,7 +32,8 @@ The layout is not guessed. `TerrainEditable::save` writes it field by field
     vec3  terrain.GIColor
     vec3  terrainWaterColor
     u32   6                       six terrain materials, always six
-    6 x { str texture, u8, f32x2 tiling, f32 distance, f32, u8 }
+    6 x { str texture, u8 tri-planar, f32x2 side tiling, f32 top tiling,
+          f32 y offset, u8 environment map }
     then one block per patch, and up to eight secondary terrains
 
 Usage:
@@ -112,18 +113,20 @@ def read_terrain(data, hex_bytes=0):
     out["waterColor"] = r.vec3()
 
     # The terrain's materials — the reason this file matters. Each names the
-    # detail texture the ground is textured with close up, and carries its
-    # tilings and the distance it is used to.
+    # detail texture the ground is textured with close up and how it is laid on:
+    # four tilings in the same order as the far ones, side x, side y, top and a
+    # y offset. The loader fills them out of file order, +0x1c before +0x18
+    # (`RendDX9.dll`, 0x100ddc94) — see docs/formats/terraindata.md.
     out["materials"] = []
     count = r.u32()
     for _ in range(count):
         material = {
             "texture": r.string(),
-            "flagA": r.u8(),
-            "tiling": (r.f32(), r.f32()),
-            "distance": r.f32(),
-            "unknownFloat": r.f32(),
-            "flagB": r.u8(),
+            "triPlanar": r.u8(),
+            "sideTiling": (r.f32(), r.f32()),
+            "topTiling": r.f32(),
+            "yOffset": r.f32(),
+            "envMap": r.u8(),
         }
         out["materials"].append(material)
     out["afterMaterialsAt"] = r.at
@@ -174,10 +177,11 @@ def main():
     print("  terrainWaterColor    %g / %g / %g" % out["waterColor"])
     print(f"  materials            {len(out['materials'])}")
     for i, material in enumerate(out["materials"]):
-        print("    [%d] %-46s flags %d/%d  tiling %g/%g  distance %g  f %g"
-              % (i, material["texture"], material["flagA"], material["flagB"],
-                 material["tiling"][0], material["tiling"][1], material["distance"],
-                 material["unknownFloat"]))
+        print("    [%d] %-46s top %g  side %g/%g  yOffset %g%s%s"
+              % (i, material["texture"], material["topTiling"],
+                 material["sideTiling"][0], material["sideTiling"][1], material["yOffset"],
+                 "  tri-planar" if material["triPlanar"] else "",
+                 "  envmap" if material["envMap"] else ""))
     print(f"  after the materials  {out['afterMaterialsAt']:#x}")
     print(f"  next bytes           {out['afterStringsHex']}")
 
