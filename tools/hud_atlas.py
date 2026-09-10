@@ -36,6 +36,11 @@ DRAW = re.compile(r"\[dump\] draw (\d+): (.*)")
 GEOM = re.compile(r"geom=\[(-?[\d.]+),(-?[\d.]+) ([\d.]+)x([\d.]+) stride=(\d+) verts=(\d+)")
 FIRST = re.compile(r"v0=\[([^\]]+)\]")
 TEXTURE = re.compile(r"s(\d+)=TextureId\((\d+)\)/(\w+)/(\d+)x(\d+)")
+# The whole call's piece of texture, and the quads it is made of. A quad is
+# `x,y,w,h` in pixels and, since `mtld3d_frame_dump_uv.patch`, `@u,v,w,h` in
+# texture coordinates. Both are absent in dumps taken before that patch.
+WHOLE_UV = re.compile(r" uv=\[([\d.,-]*)\]")
+QUADS = re.compile(r"quads=\[([^\]]*)\]")
 
 
 def atlas_index(mod_dir):
@@ -110,7 +115,8 @@ def main():
 
     index = atlas_index(args.mod)
     print(f"# {len(index)} pictures in MemeAtlas.tai")
-    named = 0
+    named_quads = 0
+    total_quads = 0
     total = 0
     for line in last_frame(args.dump):
         found = DRAW.search(line)
@@ -135,42 +141,70 @@ def main():
 
         vertex = FIRST.search(rest)
         values = [float(t) for t in vertex.group(1).split()] if vertex else []
-        art = "?"
         tint = ""
-        if len(values) >= 9:
-            u, v = values[7], values[8]
-            if page is None:
-                art = "not an atlas page — a font or a texture of its own"
-            else:
-                match = name_for(index, u, v, args.tolerance, page)
-                if match is not None:
-                    # The entry's own size, and the call's. A picture drawn
-                    # whole matches both; where they disagree the corner belongs
-                    # to another quad of the same call — the interface batches a
-                    # frame, its icon and its caption into one — and naming it
-                    # after the first one would be a guess.
-                    art_w = round(match[3] * 2048)
-                    art_h = round(match[4] * 2048)
-                    fits = abs(art_w - w) <= 2 and abs(art_h - h) <= 2
-                    if fits:
-                        named += 1
-                        art = f"{match[1]}  {art_w}x{art_h}"
-                        if match[0] > 1e-6:
-                            art += f", corner off by {match[0]:.4f}"
-                    else:
-                        art = (f"first quad only: {match[1]} {art_w}x{art_h} "
-                               f"— the call draws {w:.0f}x{h:.0f}")
-                else:
-                    art = f"in {page}, no entry at uv {u:.4f},{v:.4f}"
+        if len(values) >= 7:
             r, g, b, a = values[3:7]
             if (r, g, b, a) != (1.0, 1.0, 1.0, 1.0):
                 tint = f"  tint {r:.2f}/{g:.2f}/{b:.2f}/{a:.2f}"
 
         textures = ", ".join(f"s{s}=#{i}" for s, i, _, _, _ in bound)
-        print("draw %4s  %7.1f %7.1f  %7.1f x %-7.1f  %-12s %s%s" %
-              (found.group(1), x + args.width / 2, y + args.height / 2, w, h, textures, art, tint))
+        header = "draw %4s  %7.1f %7.1f  %7.1f x %-7.1f  %-12s" % (
+            found.group(1), x + args.width / 2, y + args.height / 2, w, h, textures)
 
-    print(f"# {named} of {total} two-dimensional calls named")
+        if page is None:
+            print(f"{header} not an atlas page — a font or a texture of its own{tint}")
+            continue
+
+        # Every rectangle of the call, with the piece of texture it shows. A
+        # dump taken before `mtld3d_frame_dump_uv.patch` has neither, and then
+        # only the whole call's first coordinate is known.
+        pieces = []
+        quads = QUADS.search(rest)
+        if quads and "@" in quads.group(1):
+            for quad in quads.group(1).split():
+                screen, _, uv = quad.partition("@")
+                sx, sy, sw, sh = (float(f) for f in screen.split(","))
+                uu, vv, uw, vh = (float(f) for f in uv.split(","))
+                pieces.append((sx + args.width / 2, sy + args.height / 2, sw, sh, uu, vv, uw, vh))
+        else:
+            whole = WHOLE_UV.search(rest)
+            if whole and whole.group(1):
+                uu, vv, uw, vh = (float(f) for f in whole.group(1).split(","))
+                pieces.append((x + args.width / 2, y + args.height / 2, w, h, uu, vv, uw, vh))
+            elif len(values) >= 9:
+                # The oldest dumps: one corner, no extent.
+                pieces.append((x + args.width / 2, y + args.height / 2, w, h,
+                               values[7], values[8], None, None))
+
+        if not pieces:
+            print(f"{header} no texture coordinates in this dump{tint}")
+            continue
+
+        print(f"{header} {len(pieces)} quad(s){tint}")
+        for sx, sy, sw, sh, uu, vv, uw, vh in pieces:
+            total_quads += 1
+            match = name_for(index, uu, vv, args.tolerance, page)
+            if match is None:
+                print("        %7.1f %7.1f  %7.1f x %-7.1f  in %s, no entry at uv %.4f,%.4f"
+                      % (sx, sy, sw, sh, page, uu, vv))
+                continue
+            art_w = round(match[3] * 2048)
+            art_h = round(match[4] * 2048)
+            # The entry's own size against the one the call cut out. They agree
+            # for a picture shown whole; a disagreement means the coordinate
+            # landed on a neighbour in the atlas, and a name would be a guess.
+            fits = uw is None or (abs(match[3] - uw) < 0.002 and abs(match[4] - vh) < 0.002)
+            if fits:
+                named_quads += 1
+                note = "" if match[0] < 1e-6 else f", corner off by {match[0]:.4f}"
+                print("        %7.1f %7.1f  %7.1f x %-7.1f  %s  %dx%d%s"
+                      % (sx, sy, sw, sh, match[1], art_w, art_h, note))
+            else:
+                print("        %7.1f %7.1f  %7.1f x %-7.1f  uv %.4f,%.4f %.4fx%.4f — "
+                      "nearest is %s (%dx%d), which is not this size"
+                      % (sx, sy, sw, sh, uu, vv, uw, vh, match[1], art_w, art_h))
+
+    print(f"# {total} two-dimensional calls, {named_quads} of {total_quads} quads named")
 
 
 if __name__ == "__main__":

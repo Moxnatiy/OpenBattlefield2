@@ -297,8 +297,15 @@ On the spawn screen of a joined server (48 two-dimensional calls) that names 8
 outright, refuses 13 as first-quad-only, and leaves the rest to the font pages —
 text is not in the atlas and never will be.
 
-**What is left to name the other 13**: the geom patch already prints each
-quad's screen rectangle, and printing its UV rectangle beside it is the same
-loop. Then every quad of a batch gets its own name and the whole screen is a
-list of file names — which is what our own `--hud-rects` prints for our side.
-Comparing two lists of names needs no tolerance and no argument.
+**Done, and here is what it took**: `tools/mtld3d_frame_dump_uv.patch` prints
+the piece of texture every call cuts out — `uv=[u,v,w,h]` for the call and
+`x,y,w,h@u,v,w,h` for each rectangle of a batch. With it the same spawn screen
+comes out as 41 quads of which **29 are named** — the seven kit rows with their
+weapons, the flags, the frames, the invisible click areas — and the rest are
+refused honestly: text is on a font page, and where the atlas entry's size does
+not match the size the call cut out the tool says so instead of guessing.
+
+The result is docs/research/spawn-screen-named.md. Our own `--hud-rects` prints
+a node's name and its texture, so both sides are now lists of file names, and
+what is missing or extra comes out as names rather than as an argument about a
+few pixels.

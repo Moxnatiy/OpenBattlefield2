@@ -1,0 +1,106 @@
+The frame dump says which piece of a texture each quad shows.
+
+The interface of the original samples no picture from a file: everything
+under `Menu/HUD/Texture/` is packed into `Menu/Atlas/MemeAtlas_010.dds` and
+`_020.dds`, and `Menu/Atlas/MemeAtlas.tai` is the index — one line per
+original file with its page and its rectangle in UV units. So a call's
+texture coordinates **are** the name of what it drew, and the dump was
+printing only the first vertex's pair.
+
+This adds two things to the geometry line: `uv=[u,v,w,h]` for the whole call,
+and, beside every four-vertex rectangle the batch already lists, the piece of
+texture that rectangle shows — `x,y,w,h@u,v,w,h`. `tools/hud_atlas.py` looks
+them up in the atlas index and prints the file name.
+
+Where the coordinate sits is not read off the FVF: the interface draws with
+one layout only — stride 44, eleven floats, `x y z  r g b a  u0 v0  u1 v1` —
+and for any other stride the coordinate is not printed rather than guessed
+at. That the pair at 7 and 8 is the atlas coordinate is measured, not
+assumed: it lands on an entry of `MemeAtlas.tai` to four decimal places
+(docs/research/03-frame-dump.md).
+
+Applies to `reference/mtld3d` after `mtld3d_frame_dump_geom.patch`, whose
+`quads=[]` list it extends; `mtld3d_file_trigger.patch` and
+`mtld3d_frame_dump_constants.patch` are independent of both.
+
+--- a/windows/d3d9/src/device/frame_dump.rs
++++ b/windows/d3d9/src/device/frame_dump.rs
+@@ -90,9 +90,53 @@
+         }
+         out.trim().to_string()
+     };
++    // Where the first texture coordinate sits in the interface's own vertex.
++    //
++    // The interface draws with one layout and one only — stride 44, eleven
++    // floats, `x y z  r g b a  u0 v0  u1 v1` — so `u0` is at 7 and `v0` at 8.
++    // That is not read off the FVF, it is read off the dumps: every
++    // two-dimensional call of every frame we have taken carries stride 44, and
++    // the pair at 7 and 8 lands on an entry of `Menu/Atlas/MemeAtlas.tai` to
++    // four decimal places (docs/research/03-frame-dump.md). For any other
++    // stride the coordinate is not printed rather than guessed at.
++    const HUD_STRIDE: u32 = 44;
++    const U0: usize = 7;
++    let texcoord = |index: u32| -> Option<(f32, f32)> {
++        if stride != HUD_STRIDE {
++            return None;
++        }
++        let at = index as usize * stride as usize;
++        // SAFETY: `index` is below `vertices`, checked by the caller, and the
++        // two floats lie inside the vertex.
++        let u = unsafe { base.add(at + U0 * 4).cast::<f32>().read_unaligned() };
++        let v = unsafe { base.add(at + (U0 + 1) * 4).cast::<f32>().read_unaligned() };
++        if u.is_finite() && v.is_finite() { Some((u, v)) } else { None }
++    };
++    // The rectangle a range of vertices cuts out of its texture. For the
++    // interface that rectangle **is** the picture's entry in the atlas index,
++    // so it names the call: a shared bounding box in pixels does not.
++    let uv_rect = |from: u32, count: u32| -> String {
++        let (mut u0, mut v0) = (f32::MAX, f32::MAX);
++        let (mut u1, mut v1) = (f32::MIN, f32::MIN);
++        let mut any = false;
++        for i in from..(from + count) {
++            let Some((u, v)) = texcoord(i) else { return String::new() };
++            u0 = u0.min(u);
++            v0 = v0.min(v);
++            u1 = u1.max(u);
++            v1 = v1.max(v);
++            any = true;
++        }
++        if !any {
++            return String::new();
++        }
++        format!("{u0:.4},{v0:.4},{:.4},{:.4}", u1 - u0, v1 - v0)
++    };
++
+     // The game folds small icons into one call, and a shared bounding box says
+     // nothing about them. So for small batches print the rectangle of every
+-    // four vertices as well — those are the individual icons.
++    // four vertices as well — those are the individual icons — and beside each
++    // one the piece of texture it shows.
+     let mut parts = String::new();
+     if vertices % 4 == 0 && vertices <= 64 {
+         for q in 0..(vertices / 4) {
+@@ -108,14 +152,21 @@
+                 qx1 = qx1.max(x);
+                 qy1 = qy1.max(y);
+             }
++            let uv = uv_rect(q * 4, 4);
+             let _ = std::fmt::Write::write_fmt(
+                 &mut parts,
+-                format_args!(" {qx0:.1},{qy0:.1},{:.1},{:.1}", qx1 - qx0, qy1 - qy0),
++                format_args!(
++                    " {qx0:.1},{qy0:.1},{:.1},{:.1}{}{uv}",
++                    qx1 - qx0,
++                    qy1 - qy0,
++                    if uv.is_empty() { "" } else { "@" }
++                ),
+             );
+         }
+     }
++    let whole = uv_rect(0, vertices.min(4096));
+     format!(
+-        "{x0:.1},{y0:.1} {:.1}x{:.1} stride={stride} verts={vertices} quads=[{}] v0=[{}] vN=[{}]",
++        "{x0:.1},{y0:.1} {:.1}x{:.1} stride={stride} verts={vertices} uv=[{whole}] quads=[{}] v0=[{}] vN=[{}]",
+         x1 - x0,
+         y1 - y0,
+         parts.trim(),
