@@ -570,6 +570,15 @@ std::optional<Level> loadLevel(FileSystem& files, std::string_view levelName, st
     }
   }
 
+  // The terrain's near materials come from the compiled blob and from nowhere
+  // else: Terrain.con names the tiles and the tilings, but which detail texture
+  // the ground wears close up is written only into `terraindata.raw`
+  // (`TerrainEditable::save`, `RendDX9.dll`, 0x1010cd70). A level without one
+  // simply has no near detail; that is not an error for the rest of the level.
+  if (auto raw = loadTerrainRaw(files, levelName)) {
+    level.terrain.materials = std::move(raw->materials);
+  }
+
   if (!loadHeights(files, level, error)) return std::nullopt;
   return level;
 }

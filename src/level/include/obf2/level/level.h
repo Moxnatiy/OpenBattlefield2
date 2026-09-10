@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "obf2/core/math.h"
+#include "obf2/level/terrain_raw.h"
 #include "obf2/mesh/bf2_mesh.h"
 #include "obf2/vfs/filesystem.h"
 
@@ -96,6 +97,13 @@ struct TerrainInfo {
   // The values can exceed 1: they do not merely tint, they brighten.
   Vec3f terrainSunColor{1.0f, 1.0f, 1.0f};
   Vec3f terrainSkyColor{0.6f, 0.7f, 0.9f};
+
+  // The ground's near detail: six materials, each a texture with its own
+  // tiling, and the level's chart maps say which of them owns a texel. Terrain.con
+  // does not carry them at all — they live only in the compiled blob
+  // (docs/formats/terraindata.md), so this is filled from `terraindata.raw` and
+  // is empty when the level does not ship one.
+  std::vector<TerrainMaterial> materials;
 };
 
 // The `Lightmanager.*` block of a level's Sky.con — how the level is lit.

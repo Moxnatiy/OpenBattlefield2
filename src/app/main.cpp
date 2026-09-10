@@ -3496,6 +3496,14 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
                 static_cast<double>(level->terrain.farSideTiling[0]),
                 static_cast<double>(level->terrain.farSideTiling[1]),
                 static_cast<double>(level->terrain.farTopTilingHi));
+    // And the near detail: the six materials out of the compiled terrain.
+    for (std::size_t i = 0; i < level->terrain.materials.size(); ++i) {
+      const obf2::level::TerrainMaterial& material = level->terrain.materials[i];
+      std::printf("  terrain material %zu: %-44s tiling %g/%g, to %g m\n", i,
+                  material.texture.c_str(), static_cast<double>(material.tilingX),
+                  static_cast<double>(material.tilingY),
+                  static_cast<double>(material.distance));
+    }
   }
 
   obf2::gfx::GpuMesh skyMesh;
