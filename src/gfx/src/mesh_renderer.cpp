@@ -508,6 +508,24 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
         // 1 and the two branches are the same expression, which is why there is
         // only one below.
         const float kSkyNormalZ = 0.65;
+        // `SinglePointColor` belongs to the light map and to nothing else. The
+        // permutator declares it inside the `_lightmap_` literal
+        // (`Shaders_client.zip:RaShaderSTM.mfx:179`, its `GlobalParameters`),
+        // and the shader's no-light-map branch has no such term at all
+        // (`RaShaderSTM.fx:369`):
+        //
+        //   #if _LIGHTMAP_
+        //       diffuse += lightmap.r * SinglePointColor;
+        //   #else
+        //       diffuse *= lightmap.g;   // both are 1 here
+        //       diffuse += bumpedSky;    // and that is the whole of it
+        //
+        // We added it to everything, gated by a red channel that is 1 where
+        // there is no map — so on a level like Dalian Plant, whose
+        // `singlePointColor` is 0.80 grey, every object without a baked light
+        // map was given 1.6 of flat white the game never gives it. That is the
+        // "some objects glow and some are darker".
+        const float hasLightmap = in.lightmapOffset.x > 0.0 ? 1.0 : 0.0;
         if (in.lightmapOffset.x > 0.0) {
             lightmapValue = lightmap.sample(lightSampler,
                                             in.uvLightmap * in.lightmapOffset.xy +
@@ -547,13 +565,13 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
             const float3 skyTerm =
                 lightmapValue.b * dot(sampled, skyNormal) * in.skyColor.rgb;
             light = 2.0 * (skyTerm + sunTerm * lightmapValue.g +
-                           in.pointColor.rgb * lightmapValue.r);
+                           in.pointColor.rgb * lightmapValue.r * hasLightmap);
         } else {
             float nDotL = dot(normal, toSun);
             float invDot = 1.0 - saturate(nDotL * 0.2);
             float3 sun = saturate(nDotL) * in.sunColor.rgb * lightmapValue.g;
             float3 sky = kSkyNormalZ * in.skyColor.rgb * invDot * lightmapValue.b;
-            light = 2.0 * (sun + sky + in.pointColor.rgb * lightmapValue.r);
+            light = 2.0 * (sun + sky + in.pointColor.rgb * lightmapValue.r * hasLightmap);
         }
         // The specular below takes the same normal, per pixel or per vertex.
         shadingNormal = normal;
