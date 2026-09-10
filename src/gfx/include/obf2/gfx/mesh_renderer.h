@@ -170,6 +170,20 @@ class MeshRenderer {
     terrainSky_ = Color{clamp01(sky.r * 0.5f), clamp01(sky.g * 0.5f), clamp01(sky.b * 0.5f), 1.0f};
   }
 
+  // Where the eye is, in world coordinates. Only the specular needs it, and
+  // only because a highlight depends on who is looking.
+  void setCameraPosition(Vec3f position) { cameraPosition_ = position; }
+
+  // The specular highlight: `Lightmanager.staticSpecularColor` as the level
+  // writes it, and `StaticGloss`. Both were measured in a frame dump of the
+  // original — the colour reaches the pixel stage whole and the gloss is the
+  // engine's 0.2 unless a material overrides it, which we do not read yet
+  // (`GeometryTemplate.setSpecularStaticGloss`).
+  void setStaticSpecular(Color color, float gloss) {
+    staticSpecular_ = color;
+    staticGloss_ = gloss;
+  }
+
   // What a leaf is lit by: `Lightmanager.treeSunColor` and `treeAmbientColor`
   // as the level's Sky.con writes them. The engine halves the sun on the way
   // into the shader and the shader doubles it back — measured in a frame dump
@@ -231,6 +245,9 @@ class MeshRenderer {
   Color staticSky_{0.3f, 0.35f, 0.4f, 1.0f};
   Vec3f sunDirection_{-0.26f, -0.80f, -0.54f};
   Color pointColor_{0.0f, 0.0f, 0.0f, 1.0f};
+  Vec3f cameraPosition_{0.0f, 0.0f, 0.0f};
+  Color staticSpecular_{0.65f, 0.60f, 0.52f, 1.0f};
+  float staticGloss_ = 0.2f;
   Color treeSun_{0.7f, 0.6f, 0.5f, 1.0f};
   Color treeAmbient_{0.2f, 0.25f, 0.3f, 1.0f};
   float detailTiling_ = 16.0f;

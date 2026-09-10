@@ -60,6 +60,9 @@ struct VertexOut {
     float4 terrainDetail;
     float4 treeSunColor;
     float4 treeAmbientColor;
+    float4 cameraPosition;
+    float4 staticSpecular;
+    float3 worldPosition;
     // The vertex's own height. The terrain stands in world coordinates with no
     // transform, so this is the world Y the side planes are textured by.
     float localY;
@@ -126,6 +129,14 @@ struct Uniforms {
     // leaf material and 0 for everything else.
     float4 treeSunColor;
     float4 treeAmbientColor;
+    // Where the eye is, in world coordinates — the specular needs the vector to
+    // it and nothing else in the frame does. w unused.
+    float4 cameraPosition;
+    // rgb: `Lightmanager.staticSpecularColor`, which reaches the shader whole
+    // (measured: `psc c1` on Karkand is 0.65/0.60/0.52, its Sky.con value).
+    // w: `StaticGloss`, the engine's own 0.2 (`psc c2` on 678 draws of the same
+    // frame), which a material may override and we do not read that yet.
+    float4 staticSpecular;
 };
 
 // The order of the fields above is the order of `VertexUniforms` below, and the
@@ -169,6 +180,9 @@ vertex VertexOut vertex_main(VertexIn in [[stage_in]],
     out.terrainDetail = uniforms.terrainDetail;
     out.treeSunColor = uniforms.treeSunColor;
     out.treeAmbientColor = uniforms.treeAmbientColor;
+    out.cameraPosition = uniforms.cameraPosition;
+    out.staticSpecular = uniforms.staticSpecular;
+    out.worldPosition = (uniforms.model * float4(in.position, 1.0)).xyz;
     out.localY = in.position.y;
     return out;
 }
@@ -229,11 +243,23 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
     // `totalDiffuse *= detail`). Without this only the base is drawn, and on
     // surfaces whose base map is a low-frequency tint — tree trunks, fences,
     // dumpsters — the base alone is very nearly white.
+    //
+    // The detail's alpha has a second job: where a material has a detail map
+    // and is not alpha-tested, it **is** the gloss the specular is scaled by
+    // (`RaShaderSTM.fx:283`, `gloss = detail.a`) — the same channel the alpha
+    // test would otherwise have used.
+    float gloss = in.staticSpecular.w;
     if (in.material.x > 0.5) {
-        albedo *= detail.sample(detailSampler, in.uv2);
+        const float4 detailSample = detail.sample(detailSampler, in.uv2);
+        albedo *= detailSample;
+        if (in.material.w < 0.5) gloss = detailSample.a;
     }
 
     float3 light;
+    // The object's baked light map, or white where it has none. Declared here
+    // and not in the branch below: the specular is gated by its green channel
+    // too, and that is computed after the branch chain.
+    float3 lightmapValue = float3(1.0);
     if (in.fogParams.z > 1.5) {
         // The ground's light, read back out of the buffer it was drawn into —
         // for the terrain itself and for the roads lying on it. The buffer is
@@ -428,7 +454,6 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
         // 1 and the two branches are the same expression, which is why there is
         // only one below.
         const float kSkyNormalZ = 0.65;
-        float3 lightmapValue = float3(1.0);
         if (in.lightmapOffset.x > 0.0) {
             lightmapValue = lightmap.sample(lightSampler,
                                             in.uv3 * in.lightmapOffset.xy +
@@ -448,6 +473,29 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
     if (in.material.z > 0.5) light = float3(1.0);
 
     float3 color = albedo.rgb * light;
+
+    // The specular highlight, on everything the static-mesh formula lights.
+    // `RaShaderSTM.fx:394` with `compNormals = (0,0,1)` — which is the vertex
+    // normal, since that constant is the tangent frame's own z and the frame is
+    // orthonormal, so the dot product is the same computed in world
+    // coordinates and no tangent frame is needed for this path:
+    //
+    //   halfVec  = normalize(normalizedLightVec + eyeVec)
+    //   specular = pow(saturate(dot(compNormals, halfVec)), 32)
+    //   specular *= lightmap.g * gloss
+    //   FinalColor.rgb += specular * CEXP(StaticSpecularColor)
+    //
+    // The light map's green gates it the same way it gates the sun: a wall in
+    // baked shadow has no highlight either.
+    if (in.fogParams.z < 0.5 && in.treeSunColor.w < 0.5 && in.material.z < 0.5) {
+        const float3 normal = normalize(in.normal);
+        const float3 toSun = normalize(-in.sunDirection.xyz);
+        const float3 toEye = normalize(in.cameraPosition.xyz - in.worldPosition);
+        const float3 halfVec = normalize(toSun + toEye);
+        float specular = pow(saturate(dot(normal, halfVec)), 32.0);
+        specular *= lightmapValue.g * gloss;
+        color += specular * in.staticSpecular.rgb;
+    }
 
     // The game's own fog. The shape is in the shipped shader
     // (`Shaders_client.zip:RaCommon.fx:54`) and the four numbers it wants were
@@ -604,6 +652,8 @@ struct VertexUniforms {
   float terrainDetail[4]{};  // xy: the half-texel fix, z: the height scale, w: on/off
   float treeSunColor[4]{};      // w: 1 on a leaf material
   float treeAmbientColor[4]{};
+  float cameraPosition[4]{};
+  float staticSpecular[4]{};    // rgb: the colour, w: the gloss
 };
 
 }  // namespace
@@ -1151,6 +1201,13 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
   uniforms.treeSunColor[0] = treeSun_.r;
   uniforms.treeSunColor[1] = treeSun_.g;
   uniforms.treeSunColor[2] = treeSun_.b;
+  uniforms.cameraPosition[0] = cameraPosition_.x;
+  uniforms.cameraPosition[1] = cameraPosition_.y;
+  uniforms.cameraPosition[2] = cameraPosition_.z;
+  uniforms.staticSpecular[0] = staticSpecular_.r;
+  uniforms.staticSpecular[1] = staticSpecular_.g;
+  uniforms.staticSpecular[2] = staticSpecular_.b;
+  uniforms.staticSpecular[3] = staticGloss_;
   uniforms.treeAmbientColor[0] = treeAmbient_.r;
   uniforms.treeAmbientColor[1] = treeAmbient_.g;
   uniforms.treeAmbientColor[2] = treeAmbient_.b;

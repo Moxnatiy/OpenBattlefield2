@@ -2338,6 +2338,13 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         obf2::gfx::Color{level->terrain.terrainSkyColor.x, level->terrain.terrainSkyColor.y,
                          level->terrain.terrainSkyColor.z, 1.0f});
     const obf2::level::Lighting& lighting = level->lighting;
+    renderer->setStaticSpecular(
+        obf2::gfx::Color{lighting.staticSpecularColor.x, lighting.staticSpecularColor.y,
+                         lighting.staticSpecularColor.z, 1.0f},
+        // `StaticGloss` as the engine gives it, measured in a frame dump of the
+        // original (`psc c2` = 0.2 on 678 draws of one Karkand frame). No level
+        // sets it; a material can, and we do not read that yet.
+        0.2f);
     renderer->setVegetationLighting(
         obf2::gfx::Color{lighting.treeSunColor.x, lighting.treeSunColor.y, lighting.treeSunColor.z,
                          1.0f},
@@ -3984,6 +3991,8 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
         }
         toDraw = &withOthers;
       }
+      // The specular is the one thing that depends on where the eye is.
+      renderer->setCameraPosition(eye);
       renderer->renderScene(*acquired, *toDraw, projection * view,
                             obf2::gfx::Color{0.42f, 0.55f, 0.68f, 1.0f});
 

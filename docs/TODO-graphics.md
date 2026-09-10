@@ -73,14 +73,32 @@ We draw the vertex path: no tangent frame, no normal maps, no specular.
 That is the low end of the setting, and it is what our own picture should
 be compared against until the paths are told apart.
 
-Known open items on this side, in the order they cost us picture:
+Known items on this side, in the order they cost us picture:
 
-* **Specular.** `StaticSpecularColor` and `StaticGloss` reach the shader
-  (measured, `docs/formats/shaders.md`) and we drop both.
-* **Normal maps.** Every `N*` channel of a material is parsed and unused —
-  they need a tangent frame, which our `Vertex` does not carry.
-* **`SinglePointColor`.** Read, uploaded by the engine, gated by the light
+* **Specular — done.** `RaShaderSTM.fx:394`, with `compNormals = (0,0,1)`,
+  which is the tangent frame's own z: the frame is orthonormal, so the dot
+  product is the same taken against the vertex normal in world coordinates
+  and this path needs no tangent frame at all.
+
+  ```
+  halfVec  = normalize(toSun + toEye)
+  specular = pow(saturate(dot(N, halfVec)), 32) * lightmap.g * gloss
+  colour  += specular * StaticSpecularColor
+  ```
+
+  Both constants are measured rather than guessed: on Karkand `psc c1` is
+  `0.65/0.60/0.52`, the level's own `staticSpecularColor` whole, and `psc c2`
+  is `0.2` on 678 draws of one frame — `StaticGloss`. Where a material has a
+  detail map and is not alpha-tested the detail's alpha replaces that gloss
+  (`RaShaderSTM.fx:283`). Left: `GeometryTemplate.setSpecularStaticGloss`,
+  which lets an object override the gloss per material and which we do not
+  read.
+* **`SinglePointColor` — done.** Uploaded by the engine, gated by the light
   map's red channel; zero on Karkand, 0.30 grey on some levels.
+* **Normal maps.** Every `N*` channel of a material is parsed and unused —
+  they need a tangent frame, which our `Vertex` does not carry. This is the
+  big one left: it is also what turns the per-pixel path on, and with it the
+  `dot(compNormals, skyNormal)` the sky term is supposed to have.
 * **The hemi map.** `hemiMapManager.setBaseHemiMap` + `Lightmanager.hemilerpbias`,
   a top-down picture of the ground's colour. Not for static meshes —
   `RaShaderSTM.fx` never mentions it — but `RaShaderBM.fx` (vehicles) uses
