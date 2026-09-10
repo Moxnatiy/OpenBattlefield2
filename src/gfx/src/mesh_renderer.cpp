@@ -67,6 +67,12 @@ struct VertexOut {
 
 struct Uniforms {
     float4x4 modelViewProjection;
+    // The placement's own matrix. The lighting works in world coordinates and
+    // the mesh's normals are in the object's, so a rotated building would
+    // otherwise be lit as though it stood the way it was modelled — some walls
+    // bright that should be shaded, and the object next to it the other way
+    // round. Rigid placements only, so the upper 3x3 is enough for a normal.
+    float4x4 model;
     float4 fogColor;   // rgb — the fog's colour
     float4 fogParams;  // x: start, y: end (0 = no fog), z: light map mode, w: detail tiling
     // The sun's and the sky's colours for whichever surface is being drawn:
@@ -141,7 +147,7 @@ vertex VertexOut vertex_main(VertexIn in [[stage_in]],
     // ring falls outside it.
     const float w = uniforms.material.z > 0.5 ? 10.0 : 1.0;
     out.position = uniforms.modelViewProjection * float4(in.position, w);
-    out.normal = in.normal;
+    out.normal = (uniforms.model * float4(in.normal, 0.0)).xyz;
     out.uv = in.uv;
     out.uv2 = in.uv2;
     out.uv3 = in.uv3;
@@ -583,6 +589,7 @@ SDL_GPUTextureFormat toGpuFormat(texture::Format format) {
 // A mirror of `Uniforms` in the shader above, field for field and in order.
 struct VertexUniforms {
   float modelViewProjection[16]{};
+  float model[16]{};
   float fogColor[4]{};
   float fogParams[4]{};  // start, end, lightmapMode, 0
   float sunColor[4]{};
@@ -1188,6 +1195,7 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
 
       const Mat4 modelViewProjection = viewProjection * transform;
       std::memcpy(uniforms.modelViewProjection, modelViewProjection.m, sizeof(Mat4));
+      std::memcpy(uniforms.model, transform.m, sizeof(Mat4));
       uniforms.material[1] = item.road ? 1.0f : 0.0f;
       uniforms.roadParams[0] = item.roadBlendFactor;
       const bool bakedItem = item.lightmap != nullptr && item.mesh->hasLightmapUv;
