@@ -6,6 +6,7 @@
 #   BF2_SERVER=192.168.100.100 tools/bf2_run.sh   to our server
 #   BF2_RES=1024x768 tools/bf2_run.sh         another resolution
 #   BF2_PLAIN=1 tools/bf2_run.sh              through CrossOver, no sidecar
+#   BF2_CAPTURE=1 tools/bf2_run.sh            allow a Metal GPU trace (F12)
 #
 # The flags are taken not from forums but from a table in BF2.exe itself — it
 # lies there together with the explanations:
@@ -108,6 +109,16 @@ if [ -n "$BF2_SERVER" ]; then
 elif [ -n "$BF2_LEVEL" ]; then
     ARGS="$ARGS +loadLevel $BF2_LEVEL \
         +gameMode ${BF2_MODE:-gpm_cq} +maxPlayers ${BF2_PLAYERS:-16}"
+fi
+
+# A Metal GPU trace can only be armed at start-up: the capture layer inserts
+# itself when the process begins, and `MTL_CAPTURE_ENABLED=1` is what asks for
+# it. Without the variable F12 still writes the `[dump]` half and the driver
+# says "Capture layer is not inserted" about the other. It is off by default —
+# the layer costs performance in every frame, not only the captured ones.
+if [ -n "$BF2_CAPTURE" ]; then
+    MTL_CAPTURE_ENABLED=1
+    export MTL_CAPTURE_ENABLED
 fi
 
 # The frame dump does not come out here. Since v0.8.0 mtld3d's D3D9 side writes
