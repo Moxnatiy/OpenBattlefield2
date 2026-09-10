@@ -194,6 +194,24 @@ which is `staticSkyColor` (proved below). The level's Sky.con sets
 without using them; this is where they go. And a leaf takes its sway from
 the WindManager, which is `RaShaderLeaf.fx`'s `GlobalTime`/`WindSpeed`.
 
+### The engine decides vegetation by the path
+
+`StaticMeshTemplate::load` (`FUN_1011acd0`, 0x1011acd0 — the assert beside
+it names `Code\BF2\Geom\StaticMeshTemplate.cpp`) searches the name of the
+file it is about to load:
+
+```c
+this->isVegetation = name.find("vegitation") != npos;      // +0x29e
+this->isWater      = name.find("objects/water/") != npos;
+this->isRoad       = name.find("objects/roads/") != npos;
+if (this->isRoad) this->noBlend = name.find("noBlend") != npos;
+```
+
+So the directory the artists put a mesh in **is** the engine's rule, not a
+convention on top of it — the misspelling included. That settles the outer
+flag: a mesh under `objects/vegitation/` is drawn by the tree shaders, and
+one anywhere else is not. `obf2::mesh::isVegetationPath` is that line.
+
 **Not established: where the `+0x1ec` flag comes from.** The mesh's own
 material does not carry it, and that is measured rather than assumed:
 `mesh_info --leafflag` walks every material in the game, splits them by
@@ -217,11 +235,14 @@ carry it too (fences, grates), and the two unnamed shorts after the node
 index hold values like 12767488, which is a pointer left in the file. The
 object's `.tweak` says nothing about leaves either.
 
-The same function shows a **second** flag, one level up: the vegetation
-path is entered at all only when `+0x29e` of the object's settings is set
-(`FUN_100fcc70`); otherwise the material gets an ordinary key from
-`FUN_100fb550`. So the engine knows two things we do not read — "this
-object is vegetation" and "this material is its leaves". What the data does carry is
+The outer flag `+0x29e` is settled (the path test above); this inner one is
+not. What we go by instead is the state the leaf shader itself sets — alpha
+test at `AlphaRef = 127` with no culling (`RaShaderLeaf.fx:233`), which for
+us is `alphaMode == 2`. Inside the game's vegetation meshes that agrees with
+the artists' texture names wherever they can be checked: 249 of 251
+leaf-named materials are alpha-tested (`mesh_info --leafflag`). The 29
+alpha-tested materials named otherwise are leaves too, by their geometry.
+It is an inference, and `obf2::mesh::markVegetationLeaves` says so. What the data does carry is
 `ObjectTemplate.mapMaterial 0 leafCol 1007` beside
 `mapMaterial 1 wood_col 93`, and textures named `leaf_*.dds`; over the 123
 vegetation tweaks the names divide cleanly (91 leaf, 74 wood). Both are the

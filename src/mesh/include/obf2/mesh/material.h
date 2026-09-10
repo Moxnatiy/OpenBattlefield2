@@ -1,4 +1,5 @@
 #pragma once
+#include "obf2/mesh/bf2_mesh.h"
 #include <string_view>
 
 namespace obf2::mesh {
@@ -35,5 +36,38 @@ struct MaterialLayout {
 // Take a technique name apart. Unknown text stops the walk: better a short
 // layout than a wrong one.
 MaterialLayout materialLayout(std::string_view technique);
+
+// Whether the engine draws this mesh as vegetation, which is decided by its
+// **path** and nothing else. `StaticMeshTemplate::load` (`RendDX9.dll`,
+// 0x1011acd0 — the assert beside it names
+// `Code\BF2\Geom\StaticMeshTemplate.cpp`) searches the file name it is about
+// to load and keeps three flags:
+//
+//   this->isVegetation = name.find("vegitation") != npos;   // +0x29e
+//   this->isWater      = name.find("objects/water/") != npos;
+//   this->isRoad       = name.find("objects/roads/") != npos;
+//   if (isRoad) this->noBlend = name.find("noBlend") != npos;
+//
+// The misspelling is the game's own, in the paths and in the binary alike.
+// A vegetation mesh is then drawn by the tree shaders rather than the
+// static-mesh one, and its materials split into leaves and trunk.
+bool isVegetationPath(std::string_view meshPath);
+
+// Mark the ranges of a vegetation mesh that are drawn as leaves.
+//
+// Which material is the leaves is the one thing here that is **not** proved.
+// The engine keeps it as a flag on the material (`+0x1ec`, read while drawing
+// at `RendDX9.dll` 0x100fcc70) and nothing we can read says where that flag
+// comes from: it is not in the mesh's material (measured, `mesh_info
+// --leafflag`), not in the object's `.tweak`, and not in the material manager.
+//
+// What we go by instead is the state the leaf shader itself sets — alpha test
+// with `AlphaRef = 127` and no culling (`RaShaderLeaf.fx:233`), which for us is
+// `alphaMode == 2`. Where the artists' texture names allow a check, the two
+// agree: of 251 materials in the game's vegetation meshes whose base texture is
+// named after a leaf, 249 are alpha-tested; 29 more alpha-tested materials are
+// named otherwise, and those are leaves too by their geometry. It is an
+// inference, and it is written down as one.
+void markVegetationLeaves(RenderMesh& mesh, std::string_view meshPath);
 
 }  // namespace obf2::mesh

@@ -33,6 +33,9 @@ struct GpuMesh {
     // says so: 0 or 2 are the only values in the game's static meshes, and 2 is
     // what leaves, fences and grates carry.
     bool alphaTest = false;
+    // Drawn as leaves: its own shader in the original, and its own two colours
+    // (`obf2::mesh::markVegetationLeaves`).
+    bool leaf = false;
   };
 
   // Whether the geometry carried the light map's own UV set. Without it a baked
@@ -167,6 +170,15 @@ class MeshRenderer {
     terrainSky_ = Color{clamp01(sky.r * 0.5f), clamp01(sky.g * 0.5f), clamp01(sky.b * 0.5f), 1.0f};
   }
 
+  // What a leaf is lit by: `Lightmanager.treeSunColor` and `treeAmbientColor`
+  // as the level's Sky.con writes them. The engine halves the sun on the way
+  // into the shader and the shader doubles it back — measured in a frame dump
+  // of the original, docs/formats/shaders.md — so these go in whole.
+  void setVegetationLighting(Color sun, Color ambient) {
+    treeSun_ = sun;
+    treeAmbient_ = ambient;
+  }
+
   // How the level lights everything that is not terrain: the `Lightmanager.*`
   // block of its Sky.con. `direction` is the way the sun's light travels, as
   // the data gives it — negative Y on every level.
@@ -219,6 +231,8 @@ class MeshRenderer {
   Color staticSky_{0.3f, 0.35f, 0.4f, 1.0f};
   Vec3f sunDirection_{-0.26f, -0.80f, -0.54f};
   Color pointColor_{0.0f, 0.0f, 0.0f, 1.0f};
+  Color treeSun_{0.7f, 0.6f, 0.5f, 1.0f};
+  Color treeAmbient_{0.2f, 0.25f, 0.3f, 1.0f};
   float detailTiling_ = 16.0f;
   SDL_GPUTexture* terrainDetail_ = nullptr;  // owned by the caller's upload, not by us
   float terrainTiling_[4]{5.0f, 5.0f, 24.0f, 0.0f};

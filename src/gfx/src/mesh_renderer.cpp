@@ -58,6 +58,8 @@ struct VertexOut {
     float4 roadParams;
     float4 terrainTiling;
     float4 terrainDetail;
+    float4 treeSunColor;
+    float4 treeAmbientColor;
     // The vertex's own height. The terrain stands in world coordinates with no
     // transform, so this is the world Y the side planes are textured by.
     float localY;
@@ -112,6 +114,12 @@ struct Uniforms {
     // w: 1 when this patch has a low-detail component map and the level a
     // low-detail texture; 0 leaves the ground as the colour map alone.
     float4 terrainDetail;
+    // The two colours a leaf is lit by, as the level's Sky.con writes them:
+    // `Lightmanager.treeSunColor` and `treeAmbientColor`. Measured in a frame
+    // dump of the original (docs/formats/shaders.md); w of the sun is 1 for a
+    // leaf material and 0 for everything else.
+    float4 treeSunColor;
+    float4 treeAmbientColor;
 };
 
 // The order of the fields above is the order of `VertexUniforms` below, and the
@@ -153,6 +161,8 @@ vertex VertexOut vertex_main(VertexIn in [[stage_in]],
     out.roadParams = uniforms.roadParams;
     out.terrainTiling = uniforms.terrainTiling;
     out.terrainDetail = uniforms.terrainDetail;
+    out.treeSunColor = uniforms.treeSunColor;
+    out.treeAmbientColor = uniforms.treeAmbientColor;
     out.localY = in.position.y;
     return out;
 }
@@ -342,6 +352,30 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
         // texture is loaded and sits in slot 2 until there is a terrain material system.
         (void)detail;
         (void)detailSampler;
+    } else if (in.treeSunColor.w > 0.5) {
+        // A leaf. The game does not light it like a wall: it has a shader of
+        // its own and colours of its own, and both were measured out of the
+        // original (docs/formats/shaders.md, "Measured on Karkand").
+        //
+        // `RaShaderLeaf.fx:95` with the constants the engine uploads —
+        // `Lights[0].color = treeSunColor/2`, `OverGrowthAmbient =
+        // treeAmbientColor` — and the `ps_1_3` block at :207 whose `mul_x4`
+        // multiplies the vertex colour by four:
+        //
+        //   LdotN     = saturate((dot(N, -Lights[0].dir) + 0.6) / 1.4)
+        //   Color.rgb = Lights[0].color * LdotN + OverGrowthAmbient / CEXP(1)
+        //   Color     = Color * 0.5
+        //   out       = diffuseMap * CEXP(Color) * 2
+        //
+        // With `CEXP(x) = 2x` below shader model 2.0 the halvings cancel and
+        // what is left is one line. The ramp never falls below 0.43, so a leaf
+        // in shadow is dimmer and not black — and there is no sky term at all,
+        // which is what keeps trees out of the glow the static formula gives
+        // them.
+        float3 normal = normalize(in.normal);
+        float3 toSun = normalize(-in.sunDirection.xyz);
+        float lDotN = saturate((dot(normal, toSun) + 0.6) / 1.4);
+        light = in.treeSunColor.rgb * lDotN + in.treeAmbientColor.rgb;
     } else {
         // Everything that is not terrain, lit the way the game lights a static
         // mesh. We have no tangent frame and read no normal maps, which picks
@@ -561,6 +595,8 @@ struct VertexUniforms {
   float roadParams[4]{}; // x: a road's blend factor
   float terrainTiling[4]{};  // xy: the side planes, z: the top, w: the y offset
   float terrainDetail[4]{};  // xy: the half-texel fix, z: the height scale, w: on/off
+  float treeSunColor[4]{};      // w: 1 on a leaf material
+  float treeAmbientColor[4]{};
 };
 
 }  // namespace
@@ -972,6 +1008,7 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
       // the alpha-tested one — the pine's needles have it while its trunk does
       // not (`mesh_info … nc_pinebig01.staticmesh`).
       range.alphaTest = source_range.alphaMode == 2;
+      range.leaf = source_range.leaf;
     }
     gpuMesh.ranges.push_back(range);
   }
@@ -1104,6 +1141,12 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
   uniforms.roadParams[2] = static_cast<float>(frame.width);
   uniforms.roadParams[3] = static_cast<float>(frame.height);
   std::memcpy(uniforms.terrainTiling, terrainTiling_, sizeof(uniforms.terrainTiling));
+  uniforms.treeSunColor[0] = treeSun_.r;
+  uniforms.treeSunColor[1] = treeSun_.g;
+  uniforms.treeSunColor[2] = treeSun_.b;
+  uniforms.treeAmbientColor[0] = treeAmbient_.r;
+  uniforms.treeAmbientColor[1] = treeAmbient_.g;
+  uniforms.treeAmbientColor[2] = treeAmbient_.b;
   uniforms.terrainDetail[0] = terrainDetailUv_[0];
   uniforms.terrainDetail[1] = terrainDetailUv_[1];
   // `vTexScale.y`: the scale the side planes take the world height by. A
@@ -1212,6 +1255,7 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
             (terrain && terrainDetail_ != nullptr && range.detail != nullptr) ? 1.0f : 0.0f;
         uniforms.material[0] = range.detailMultiply ? 1.0f : 0.0f;
         uniforms.material[3] = range.alphaTest ? 1.0f : 0.0f;
+        uniforms.treeSunColor[3] = range.leaf ? 1.0f : 0.0f;
         SDL_PushGPUVertexUniformData(frame.commands, 0, &uniforms, sizeof(uniforms));
 
         SDL_DrawGPUIndexedPrimitives(pass, range.indexCount, 1, range.indexStart, 0, 0);

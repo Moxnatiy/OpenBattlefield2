@@ -118,6 +118,10 @@ struct DrawRange {
   // engine sets per material. Absent in skinned meshes, where it stays 0.
   std::uint32_t alphaMode = 0;
 
+  // Drawn as leaves: the game gives those their own shader and their own
+  // colours (`obf2::mesh::markVegetationLeaves`).
+  bool leaf = false;
+
   // The rig number for skinning — it matches the material's number.
   int rig = -1;
 

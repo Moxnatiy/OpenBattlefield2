@@ -51,6 +51,7 @@
 #include "obf2/net/udp.h"
 #include "obf2/server/game_server.h"
 #include "obf2/mesh/bf2_mesh.h"
+#include "obf2/mesh/material.h"
 #include "obf2/mesh/collision.h"
 #include "obf2/mesh/primitives.h"
 #include "obf2/mesh/skinning.h"
@@ -301,6 +302,10 @@ std::optional<obf2::mesh::RenderMesh> loadMesh(obf2::FileSystem& files, const st
     if (verbose) std::fprintf(stderr, "could not unpack %s: %s\n", normalized.c_str(), error.c_str());
     return std::nullopt;
   }
+
+  // Whether this mesh is vegetation is decided by its path, and by nothing
+  // else — that is the engine's own test (`obf2::mesh::isVegetationPath`).
+  obf2::mesh::markVegetationLeaves(*render, normalized);
 
   if (verbose) {
     std::printf("mesh: %s\n  version %u, geom %zu/%zu, lod %zu, vertices %zu, triangles %zu, "
@@ -2322,6 +2327,11 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         obf2::gfx::Color{level->terrain.terrainSkyColor.x, level->terrain.terrainSkyColor.y,
                          level->terrain.terrainSkyColor.z, 1.0f});
     const obf2::level::Lighting& lighting = level->lighting;
+    renderer->setVegetationLighting(
+        obf2::gfx::Color{lighting.treeSunColor.x, lighting.treeSunColor.y, lighting.treeSunColor.z,
+                         1.0f},
+        obf2::gfx::Color{lighting.treeAmbientColor.x, lighting.treeAmbientColor.y,
+                         lighting.treeAmbientColor.z, 1.0f});
     renderer->setStaticLighting(
         obf2::gfx::Color{lighting.staticSunColor.x, lighting.staticSunColor.y,
                          lighting.staticSunColor.z, 1.0f},

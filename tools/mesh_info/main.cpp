@@ -222,6 +222,11 @@ int main(int argc, char** argv) {
       std::map<std::string, int> techniques;
     };
     Side leaf, other;
+    // And the same question asked only of the meshes the engine calls
+    // vegetation: it decides that by the path (`RendDX9.dll`, 0x1011acd0,
+    // `StaticMeshTemplate::load` searches the file name for "vegitation").
+    // Inside those, is the alpha-tested material the leaves?
+    int vegLeafAlpha = 0, vegLeafPlain = 0, vegOtherAlpha = 0, vegOtherPlain = 0;
 
     auto scan = files.list();
     std::sort(scan.begin(), scan.end());
@@ -240,7 +245,13 @@ int main(int argc, char** argv) {
             const std::size_t slash = name.find_last_of('/');
             if (slash != std::string::npos) name = name.substr(slash + 1);
             for (char& c : name) c = static_cast<char>(std::tolower(c));
-            Side& side = name.rfind("leaf", 0) == 0 ? leaf : other;
+            const bool isLeafName = name.find("leaf") != std::string::npos;
+            if (path.find("vegitation") != std::string::npos) {
+              const bool tested = material.alphaMode == 2;
+              if (isLeafName) (tested ? vegLeafAlpha : vegLeafPlain)++;
+              else (tested ? vegOtherAlpha : vegOtherPlain)++;
+            }
+            Side& side = isLeafName ? leaf : other;
             ++side.count;
             ++side.alphaModes[material.alphaMode];
             ++side.u5[material.u5];
@@ -277,6 +288,13 @@ int main(int argc, char** argv) {
     };
     show("base texture named leaf*", leaf);
     show("every other material", other);
+    std::printf(
+        "\ninside a mesh whose path says vegetation (the engine's own test):\n"
+        "  named leaf*, alpha-tested:      %d\n"
+        "  named leaf*, not tested:        %d\n"
+        "  named otherwise, alpha-tested:  %d\n"
+        "  named otherwise, not tested:    %d\n",
+        vegLeafAlpha, vegLeafPlain, vegOtherAlpha, vegOtherPlain);
     return 0;
   }
 

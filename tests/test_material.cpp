@@ -97,10 +97,47 @@ void testEmptyAndOddNamesGiveNothing() {
   CHECK_EQ(stops.count, 1);
 }
 
+// The engine decides vegetation by the mesh's path and nothing else
+// (`RendDX9.dll`, 0x1011acd0). The misspelling is the game's own.
+void testVegetationIsDecidedByThePath() {
+  CHECK(isVegetationPath("objects/vegitation/middle-east/palmtree/meshes/me_palmtree01.staticmesh"));
+  CHECK(isVegetationPath("booster_client/vegitation/america/meshes/xp2_appletree.staticmesh"));
+  // Spelled the way English would, it is not the game's directory and the
+  // engine would not match it either.
+  CHECK(!isVegetationPath("objects/vegetation/tree/meshes/tree.staticmesh"));
+  CHECK(!isVegetationPath("objects/staticobjects/city/meshes/house_high_06.staticmesh"));
+  CHECK(!isVegetationPath(""));
+}
+
+void testOnlyAlphaTestedMaterialsOfAVegetationMeshAreLeaves() {
+  RenderMesh mesh;
+  mesh.ranges.resize(3);
+  mesh.ranges[0].alphaMode = 2;  // the leaves
+  mesh.ranges[1].alphaMode = 0;  // the trunk
+  mesh.ranges[2].alphaMode = 2;  // more leaves
+
+  markVegetationLeaves(mesh, "objects/vegitation/middle-east/palmtree/meshes/me_palmtree01.staticmesh");
+  CHECK(mesh.ranges[0].leaf);
+  CHECK(!mesh.ranges[1].leaf);
+  CHECK(mesh.ranges[2].leaf);
+
+  // The same materials in a building are not leaves — a fence is alpha-tested
+  // too, and it is lit like a wall.
+  RenderMesh house;
+  house.ranges.resize(2);
+  house.ranges[0].alphaMode = 2;
+  house.ranges[1].alphaMode = 0;
+  markVegetationLeaves(house, "objects/staticobjects/city/meshes/fence_01.staticmesh");
+  CHECK(!house.ranges[0].leaf);
+  CHECK(!house.ranges[1].leaf);
+}
+
 }  // namespace
 
 TEST_MAIN({
   testTechniqueOrderMatchesTheCorpus();
   testLongerTokensWinOverShorterOnes();
   testEmptyAndOddNamesGiveNothing();
+  testVegetationIsDecidedByThePath();
+  testOnlyAlphaTestedMaterialsOfAVegetationMeshAreLeaves();
 })

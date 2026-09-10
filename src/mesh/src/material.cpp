@@ -72,4 +72,21 @@ MaterialLayout materialLayout(std::string_view technique) {
   return out;
 }
 
+bool isVegetationPath(std::string_view meshPath) {
+  // The engine's own test is a plain substring search, case as it lies in the
+  // archives (`RendDX9.dll`, 0x1011acd0). Our paths come through
+  // `normalizeAssetPath`, which lower-cases them, and the game's own directory
+  // is lower-case too, so a straight search matches the same files.
+  return meshPath.find("vegitation") != std::string_view::npos;
+}
+
+void markVegetationLeaves(RenderMesh& mesh, std::string_view meshPath) {
+  if (!isVegetationPath(meshPath)) return;
+  for (DrawRange& range : mesh.ranges) {
+    // `alphaMode == 2` is what turns the alpha test on for a material, and the
+    // leaf shader is the one that asks for it (see the header).
+    range.leaf = range.alphaMode == 2;
+  }
+}
+
 }  // namespace obf2::mesh
