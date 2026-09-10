@@ -27,7 +27,7 @@ use ruffle_core::url::{ParseError, Url};
 use ruffle_core::loader::Error as NavigatorError;
 use ruffle_core::events::{KeyDescriptor, KeyLocation, LogicalKey, MouseButton, PhysicalKey, PlayerEvent, TextControlCode};
 use ruffle_core::limits::ExecutionLimit;
-use ruffle_core::tag_utils::movie_from_path;
+use ruffle_core::tag_utils::{SwfMovie, movie_from_path};
 use ruffle_core::{FloatDuration, Player, PlayerBuilder};
 use ruffle_render_wgpu::backend::{WgpuRenderBackend, create_wgpu_instance, request_adapter_and_device};
 use ruffle_render_wgpu::descriptors::Descriptors;
@@ -97,6 +97,56 @@ fn dds_to_png(body: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
+// --- files ---------------------------------------------------------------
+//
+// The menu does not lie on disk. `mainMenu.swf` and everything it pulls —
+// pictures, the other movies, the `.con` lists — live inside
+// `Menu_client.zip`, and the port reads the game's archives in place rather
+// than unpacking them (CLAUDE.md, rule 5). So the host hands us a reader and
+// we ask it for every file, instead of touching the file system.
+//
+// The path is carried inside a `file:` URL because that is the only shape
+// Ruffle resolves relative loads against. Everything under `VFS_PREFIX` is
+// ours: what follows it is the path as the game's own file manager spells it.
+
+type FileReader = extern "C" fn(path: *const c_char, out_len: *mut usize) -> *mut u8;
+type FileFree = extern "C" fn(data: *mut u8, len: usize);
+
+static HOST_FILES: Mutex<Option<(FileReader, FileFree)>> = Mutex::new(None);
+
+const VFS_PREFIX: &str = "file:///obf2-vfs/";
+
+/// Hand over the reader for the game's archives. Called once before the first
+/// movie opens; without it only files on disk can be read.
+#[unsafe(no_mangle)]
+pub extern "C" fn obf2_flash_set_file_reader(read: FileReader, free: FileFree) {
+    *HOST_FILES.lock().unwrap() = Some((read, free));
+}
+
+/// Read one file through the host. `path` is as the game spells it —
+/// `Menu/External/FlashMenu/mainMenu.swf`.
+fn host_read(path: &str) -> Option<Vec<u8>> {
+    let (read, free) = (*HOST_FILES.lock().unwrap())?;
+    let text = std::ffi::CString::new(path).ok()?;
+    let mut len: usize = 0;
+    let data = read(text.as_ptr(), &mut len);
+    if data.is_null() || len == 0 {
+        return None;
+    }
+    let copy = unsafe { std::slice::from_raw_parts(data, len) }.to_vec();
+    free(data, len);
+    Some(copy)
+}
+
+/// The path inside a URL of ours, or `None` when the URL is not ours.
+fn vfs_path(url: &str) -> Option<String> {
+    let rest = url.strip_prefix(VFS_PREFIX)?;
+    // A query or a fragment is not part of a file name.
+    let rest = rest.split(['?', '#']).next().unwrap_or(rest);
+    // The movie writes its paths with the separators and the escapes of a URL.
+    Some(rest.replace("%20", " ").replace('\\', "/"))
+}
+
 /// A response whose body we replaced.
 struct Decoded {
     url: String,
@@ -147,12 +197,18 @@ impl SuccessResponse for Decoded {
 struct GamePaths {
     inner: NullNavigatorBackend,
     mod_root: PathBuf,
+    /// The movie came out of the game's archives, so `$` leads there too and
+    /// not to a directory on disk.
+    from_archives: bool,
 }
 
 impl GamePaths {
     fn rewrite(&self, url: &str) -> String {
         let Some(rest) = url.strip_prefix('$') else { return url.to_string() };
         let rest = rest.trim_start_matches('/');
+        if self.from_archives {
+            return format!("{VFS_PREFIX}{rest}");
+        }
         match Url::from_file_path(self.mod_root.join(rest)) {
             Ok(full) => full.to_string(),
             Err(()) => url.to_string(),
@@ -175,6 +231,23 @@ impl NavigatorBackend for GamePaths {
         if rewritten != request.url() {
             request = Request::get(rewritten);
         }
+
+        // Ours: the file lives in the game's archives, and the host reads it.
+        if let Some(path) = vfs_path(request.url()) {
+            let url = request.url().to_string();
+            let body = host_read(&path);
+            return Box::pin(async move {
+                let Some(body) = body else {
+                    return Err(ErrorResponse {
+                        url: url.clone(),
+                        error: NavigatorError::FetchError(format!("not in the archives: {path}")),
+                    });
+                };
+                let body = dds_to_png(&body).unwrap_or(body);
+                Ok(Box::new(Decoded { url, body }) as Box<dyn SuccessResponse>)
+            });
+        }
+
         let inner = self.inner.fetch(request);
         Box::pin(async move {
             let response = inner.await?;
@@ -191,7 +264,12 @@ impl NavigatorBackend for GamePaths {
     }
 
     fn resolve_url(&self, url: &str) -> Result<Url, ParseError> {
-        self.inner.resolve_url(&self.rewrite(url))
+        let rewritten = self.rewrite(url);
+        // A relative path next to a movie of ours stays inside the archives.
+        if self.from_archives && Url::parse(&rewritten).is_err() {
+            return Url::parse(VFS_PREFIX)?.join(&rewritten);
+        }
+        self.inner.resolve_url(&rewritten)
     }
 
     fn spawn_future(&mut self, future: OwnedFuture<(), NavigatorError>) {
@@ -245,6 +323,44 @@ fn open(path: &str, want_width: u32, want_height: u32) -> Option<Movie> {
     start_log();
     let movie = movie_from_path(&PathBuf::from(path), None).ok()?;
 
+    // `$` in a menu path means the mod root: the movie sits four levels below
+    // it (`mods/bf2/Menu_client/External/FlashMenu`). `Url::from_file_path`
+    // needs an absolute path, and the game is usually launched with a
+    // relative one.
+    let base = PathBuf::from(path).parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let absolute = std::fs::canonicalize(&base).unwrap_or_else(|_| base.clone());
+    let mod_root = absolute
+        .parent()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+        .map(|p| p.to_path_buf())
+        .unwrap_or(absolute);
+    build(movie, base, mod_root, false, want_width, want_height)
+}
+
+/// The same, from bytes the host read out of the game's archives. `path` is
+/// how the game spells it — `Menu/External/FlashMenu/mainMenu.swf` — and it
+/// becomes the movie's URL, so everything the movie loads next to itself is
+/// asked for by that path too.
+fn open_bytes(data: &[u8], path: &str, want_width: u32, want_height: u32) -> Option<Movie> {
+    start_log();
+    let url = format!("{VFS_PREFIX}{path}");
+    let movie = SwfMovie::from_data(data, url, None, None).ok()?;
+    // The fallback navigator still wants a directory it can resolve against,
+    // even though every request of ours is answered from the archives before
+    // it gets there.
+    let here = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    build(movie, here.clone(), here, true, want_width, want_height)
+}
+
+fn build(
+    movie: SwfMovie,
+    base: PathBuf,
+    mod_root: PathBuf,
+    from_archives: bool,
+    want_width: u32,
+    want_height: u32,
+) -> Option<Movie> {
     // Zero means "take the stage's size from the movie itself".
     let width = if want_width > 0 { want_width } else { movie.width().to_pixels().round() as u32 };
     let height = if want_height > 0 { want_height } else { movie.height().to_pixels().round() as u32 };
@@ -264,22 +380,12 @@ fn open(path: &str, want_width: u32, want_height: u32) -> Option<Movie> {
     let renderer = WgpuRenderBackend::new(descriptors, target).ok()?;
 
     // The path the movie looks for its files relative to is the movie's own
-    // directory. Without it `loadMovie("images/…png")` leads nowhere.
+    // directory. Without it `loadMovie("images/…png")` leads nowhere. When the
+    // movie came out of the archives that resolution happens against its URL
+    // instead, and this navigator only stands behind as a fallback.
     let executor = NullExecutor::new();
-    let base = PathBuf::from(path).parent().map(|p| p.to_path_buf()).unwrap_or_default();
     let navigator = NullNavigatorBackend::with_base_path(&base, &executor).ok()?;
-    // `$` in a menu path means the mod root: the movie sits four levels
-    // below it (`mods/bf2/Menu_client/External/FlashMenu`).
-    // `Url::from_file_path` needs an absolute path, and the game is
-    // usually launched with a relative one.
-    let absolute = std::fs::canonicalize(&base).unwrap_or_else(|_| base.clone());
-    let mod_root = absolute
-        .parent()
-        .and_then(|p| p.parent())
-        .and_then(|p| p.parent())
-        .map(|p| p.to_path_buf())
-        .unwrap_or(absolute);
-    let navigator = GamePaths { inner: navigator, mod_root };
+    let navigator = GamePaths { inner: navigator, mod_root, from_archives };
 
     let player = PlayerBuilder::new()
         .with_renderer(renderer)
@@ -318,6 +424,32 @@ pub unsafe extern "C" fn obf2_flash_open(
         return std::ptr::null_mut();
     };
     match open(text, width, height) {
+        Some(movie) => Box::into_raw(Box::new(movie)),
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// Open a movie whose bytes the host read out of the game's archives.
+/// `path` is how the game spells it and becomes the movie's URL.
+///
+/// # Safety
+/// `data` has to point at `len` readable bytes and `path` to a valid C string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn obf2_flash_open_bytes(
+    data: *const u8,
+    len: usize,
+    path: *const c_char,
+    width: u32,
+    height: u32,
+) -> *mut Movie {
+    if data.is_null() || len == 0 || path.is_null() {
+        return std::ptr::null_mut();
+    }
+    let Ok(text) = (unsafe { CStr::from_ptr(path) }).to_str() else {
+        return std::ptr::null_mut();
+    };
+    let bytes = unsafe { std::slice::from_raw_parts(data, len) };
+    match open_bytes(bytes, text, width, height) {
         Some(movie) => Box::into_raw(Box::new(movie)),
         None => std::ptr::null_mut(),
     }

@@ -2115,6 +2115,13 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       std::printf("    %s (%.1f MB)\n", movie.path.c_str(),
                   static_cast<double>(movie.sizeBytes) / (1024.0 * 1024.0));
     }
+    // We do not decode Bink, so each movie is a black screen for a second and a
+    // half. Said out loud, because otherwise the first thing the program does
+    // is show six seconds of nothing and look hung.
+    if (settings.general.viewIntroMovie && !engine.movies().empty()) {
+      std::printf("    the movies are not decoded — %.1f s of black, Space skips one\n",
+                  1.5 * static_cast<double>(engine.movies().size()));
+    }
 
     const auto& console = engine.console();
     std::printf("  console: handlers %zu, aliases %zu, commands run %lld, "
@@ -2347,16 +2354,31 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   // The menu is the game's own movie. `--flash` only overrides which one:
   // in boot mode we open `mainMenu.swf` out of the mod, exactly what the
   // original opens (docs/functions/menu-bridge.md).
+  //
+  // It lives in `Menu_client.zip`, mounted as `Menu`, and nothing is unpacked
+  // (rule 5) — so the player is given a reader over the same file system the
+  // rest of the engine uses, and the movie is opened from bytes. Its pictures
+  // and the movies it loads next to itself come through the same reader.
+  const std::string menuMoviePath = "Menu/External/FlashMenu/mainMenu.swf";
   std::string flashPath = args.flashSwf;
-  if (flashPath.empty() && bootMode) {
-    const std::filesystem::path menu =
-        args.modDir / "Menu_client" / "External" / "FlashMenu" / "mainMenu.swf";
-    std::error_code menuError;
-    if (std::filesystem::exists(menu, menuError)) flashPath = menu.string();
-  }
-  if (!flashPath.empty()) {
+  if (!flashPath.empty() || bootMode) {
     flashBackground = findMenuBackground(files);
-    if (flashMovie.open(flashPath)) {
+    obf2::flash::Movie::setFileReader(
+        [&files](const std::string& path) { return files.read(path); });
+
+    bool opened = false;
+    if (!flashPath.empty()) {
+      opened = flashMovie.open(flashPath);
+    } else if (files.exists(menuMoviePath)) {
+      flashPath = menuMoviePath;
+      const auto movie = files.read(menuMoviePath);
+      opened = movie && flashMovie.openFromMemory(*movie, menuMoviePath);
+    } else {
+      std::printf("Flash: the menu's movie is not in the archives — %s\n",
+                  menuMoviePath.c_str());
+    }
+
+    if (opened) {
       std::printf("Flash: %s, stage %u x %u\n", flashPath.c_str(), flashMovie.width(),
                   flashMovie.height());
       flashTexture.format = obf2::texture::Format::Bgra8;
@@ -2367,7 +2389,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
           static_cast<std::uint32_t>(flashTexture.width * flashTexture.height * 4)});
       flashTexture.data.assign(static_cast<std::size_t>(flashTexture.width) * flashTexture.height * 4,
                                std::byte{0});
-    } else {
+    } else if (!flashPath.empty()) {
       std::printf("Flash: did not open — %s\n", flashPath.c_str());
     }
   }

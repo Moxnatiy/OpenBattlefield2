@@ -9,7 +9,10 @@
 // A frame arrives as an ordinary RGBA image, and we put it on screen ourselves:
 // all graphics in the port go through `obf2::gfx`, and Flash is no exception
 // here.
+#include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -24,6 +27,23 @@ class Movie {
 
   // Zero dimensions mean taking the stage's size from the movie itself.
   bool open(const std::string& path, std::uint32_t width = 0, std::uint32_t height = 0);
+
+  // The same, for a movie that lives in the game's archives rather than on
+  // disk — which is where the game keeps its own: `mainMenu.swf` is inside
+  // `Menu_client.zip`, and nothing is unpacked (CLAUDE.md, rule 5). `path` is
+  // the name the file manager knows it by, `Menu/External/FlashMenu/mainMenu.swf`,
+  // and everything the movie loads next to itself is asked for by that path
+  // too — so `setFileReader` has to be set first, or the movie opens without
+  // any of its pictures.
+  bool openFromMemory(const std::vector<std::byte>& data, const std::string& path,
+                      std::uint32_t width = 0, std::uint32_t height = 0);
+
+  // How the player reads a file out of the game's archives. Set once, before
+  // opening; `flash` knows nothing about the VFS itself, the same way `gfx`
+  // does not.
+  using FileReader = std::function<std::optional<std::vector<std::byte>>(const std::string& path)>;
+  static void setFileReader(FileReader reader);
+
   void close();
   bool isOpen() const { return handle_ != nullptr; }
 

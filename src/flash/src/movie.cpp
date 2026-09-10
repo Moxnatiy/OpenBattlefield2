@@ -1,5 +1,7 @@
 #include "obf2/flash/movie.h"
 
+#include <cstring>
+
 namespace obf2::flash {
 namespace {
 
@@ -16,7 +18,33 @@ void obf2_flash_text(void* movie, std::uint32_t codepoint);
 void obf2_flash_key(void* movie, int code, int down);
 std::size_t obf2_flash_take_command(char* buffer, std::size_t length);
 void obf2_flash_set_host_version(const char* text);
+void* obf2_flash_open_bytes(const std::uint8_t* data, std::size_t length, const char* path,
+                            std::uint32_t width, std::uint32_t height);
+void obf2_flash_set_file_reader(std::uint8_t* (*read)(const char* path, std::size_t* length),
+                                void (*release)(std::uint8_t* data, std::size_t length));
 }
+
+// The reader the host installed. A free function rather than a member: the
+// library calls it back through a C pointer, and there is one player.
+Movie::FileReader& hostReader() {
+  static Movie::FileReader reader;
+  return reader;
+}
+
+// The two halves of the C callback. The bytes are handed over as a plain
+// allocation the library gives straight back once it has copied them.
+extern "C" std::uint8_t* readThroughHost(const char* path, std::size_t* length) {
+  *length = 0;
+  if (!hostReader() || path == nullptr) return nullptr;
+  const auto bytes = hostReader()(std::string(path));
+  if (!bytes || bytes->empty()) return nullptr;
+  auto* copy = new std::uint8_t[bytes->size()];
+  std::memcpy(copy, bytes->data(), bytes->size());
+  *length = bytes->size();
+  return copy;
+}
+
+extern "C" void releaseToHost(std::uint8_t* data, std::size_t) { delete[] data; }
 
 }  // namespace
 
@@ -30,6 +58,25 @@ bool Movie::open(const std::string& path, std::uint32_t width, std::uint32_t hei
   installImageDecoder();
   obf2_flash_set_host_version("OpenBattlefield2 " OBF2_VERSION);
   handle_ = obf2_flash_open(path.c_str(), width, height);
+  if (handle_ == nullptr) return false;
+  obf2_flash_size(handle_, &width_, &height_);
+  pixels_.assign(static_cast<std::size_t>(width_) * height_ * 4, 0);
+  return true;
+}
+
+void Movie::setFileReader(FileReader reader) {
+  hostReader() = std::move(reader);
+  obf2_flash_set_file_reader(&readThroughHost, &releaseToHost);
+}
+
+bool Movie::openFromMemory(const std::vector<std::byte>& data, const std::string& path,
+                           std::uint32_t width, std::uint32_t height) {
+  close();
+  if (data.empty()) return false;
+  installImageDecoder();
+  obf2_flash_set_host_version("OpenBattlefield2 " OBF2_VERSION);
+  handle_ = obf2_flash_open_bytes(reinterpret_cast<const std::uint8_t*>(data.data()), data.size(),
+                                  path.c_str(), width, height);
   if (handle_ == nullptr) return false;
   obf2_flash_size(handle_, &width_, &height_);
   pixels_.assign(static_cast<std::size_t>(width_) * height_ * 4, 0);
