@@ -143,3 +143,89 @@ Our static-mesh path draws with `CEXP` as the identity — the 2.0 case — so
 it uses `Lightmanager.staticSkyColor` as the data gives it, and the
 buildings sit in the same exposure as the ground. Measure: the writer of
 0x1f4 and 0x204, or a frame dump of the constants the STM shader is given.
+
+## Vegetation is drawn by three shaders, and the engine picks per material
+
+Trees glow in our render because we light them the way we light a wall.
+The engine does not: it has a separate family of shaders for vegetation and
+chooses between them per material.
+
+`FUN_101174d0` (0x101174d0) registers every variant against a 32-bit key:
+
+| shader | key | what it is |
+|---|---|---|
+| `Leaf` | 0xf0000000 | `RaShaderLeaf.fx` |
+| `LeafShadowed` | 0xf0000200 | + the shadow map |
+| `Leafpointlight` | 0xf0000400 | the point-light pass |
+| `LeafpointlightShadowed` | 0xf0000600 | both |
+| `TrunkSTMBase` | 0xfa000000 | a trunk with no detail channel |
+| `TrunkSTMDetail` | 0xf9000000 | a trunk with one |
+| `TrunkSTMBaseShadowed` / `TrunkSTMDetailShadowed` | + 0x200 | the same, shadowed |
+| `Road` / `RoadDetail` / `RoadDetailNoBlend` | 0xf1/0xf2/0xf4 000000 | the editor's roads |
+| `Water` / `WaterBase` | 0xf8000000 | water |
+| `Default` | 0x01000000 | everything else |
+
+So 0x200 is "shadowed" and 0x400 "point light", and the high byte names
+the family.
+
+The choice is made while the vegetation is drawn, `FUN_100fcc70`
+(0x100fcc70), on a flag at **`+0x1ec` of the material record** (the records
+are an array of stride 0x204):
+
+```c
+if (*(char *)(material + 0x1ec) == '\0') {           // a trunk
+    key  = shadowed ? 0x200 : 0;
+    key |= (flags & 4) == 0 ? 0xfa000000 : 0xf9000000;
+    ...
+    colour = LightManager[+0x1e8]();                 // staticSkyColor
+} else {                                             // a leaf
+    colour = LightManager[+0x1c8]();                 // not the static pair
+    key = shadowed ? 0xf0000200 : 0xf0000000;
+    ...
+    colour2 = LightManager[+0x40]();
+    ... WindManager ...
+}
+```
+
+Two things follow. A leaf is lit from **different colours entirely** — the
+getters at `+0x1c8` and `+0x40`, not the `+0x1e8` the trunk path uses,
+which is `staticSkyColor` (proved below). The level's Sky.con sets
+`treeSunColor`, `treeSkyColor` and `treeAmbientColor` and we read them
+without using them; this is where they go. And a leaf takes its sway from
+the WindManager, which is `RaShaderLeaf.fx`'s `GlobalTime`/`WindSpeed`.
+
+**Not established: where the `+0x1ec` flag comes from.** The mesh's own
+material carries no such field — `alphaMode`, the `.fx` name, the technique
+and the texture list are all of it — and the object's `.tweak` says nothing
+about leaves either. What the data does carry is
+`ObjectTemplate.mapMaterial 0 leafCol 1007` beside
+`mapMaterial 1 wood_col 93`, and textures named `leaf_*.dds`; over the 123
+vegetation tweaks the names divide cleanly (91 leaf, 74 wood). Both are the
+artists' conventions, not something the engine is shown to read, so
+matching on them would be a workaround and not a port (rule 12). Measure:
+the writer of `+0x1ec`, or a frame dump of the original that shows which
+shader a leaf draw is given.
+
+## The static colours are uploaded whole
+
+`FUN_1002c2e0` (0x1002c2e0), the renderer's per-frame gather, writes the
+light manager's colours into the block the effect parameters bind to:
+
+```c
+p = LightManager[+0x1e8]();                    // staticSkyColor
+*(base + 0x1f8) = p[0];  *(base + 0x1fc) = p[1];  *(base + 0x200) = p[2];
+p = LightManager[+0x1e0]();                    // StaticSpecularColor -> base + 0x214
+p = LightManager[+0x1f0]();                    // SinglePointColor    -> base + 0x230
+```
+
+`base` is `DAT_1023ddbc`, and the offsets are the registry's plus four —
+`StaticSkyColor` is registered at 0x1f4, `StaticSpecularColor` at 0x210,
+`SinglePointColor` at 0x22c. No scaling on the way in: these three reach
+the shader as the level's data writes them. So the `_1X` pairing is not a
+halving of these fields, and our static-mesh path is right to use
+`Lightmanager.staticSkyColor` as it stands — which the frame dump already
+said about the sun (docs/formats/shaders.md).
+
+One field nearby *is* halved — `base + 0x154`, from the getter at `+0x1d0`
+— so the two conventions live side by side and each field has to be
+checked rather than assumed.
