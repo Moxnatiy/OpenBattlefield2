@@ -13,6 +13,25 @@ using namespace obf2;
 
 namespace {
 
+// The level's own loader, in the shape every one of the game's 22 levels has
+// it: the editor's branch above, the game's below. The game's runs the files in
+// this order and does **not** run StaticObjects.con — that one the caller runs
+// itself, because in the original it is reached through a `tmp.con` the game
+// writes at load time and the shipped one is empty.
+constexpr const char* kInit =
+    "if v_arg1 == BF2Editor\n"
+    "run Heightdata.con\n"
+    "run Terrain.con BF2Editor\n"
+    "run StaticObjects.con BF2Editor\n"
+    "run Sky.con BF2Editor\n"
+    "run Water.con\n"
+    "else\n"
+    "run Heightdata.con\n"
+    "run Terrain.con v_arg2\n"
+    "run Sky.con v_arg2\n"
+    "run Water.con\n"
+    "endIf\n";
+
 // A level is read from the FileSystem, so the test makes a real directory with
 // files — that also checks mounting and path resolution, not only the parsing.
 class TempLevel {
@@ -31,6 +50,62 @@ class TempLevel {
   void write(const std::string& name, const std::string& text) const {
     std::ofstream out(root_ / "Levels" / "testmap" / name, std::ios::binary);
     out << text;
+  }
+
+  // The two files every level is loaded through, and neither of them was here
+  // while we ran the editor's branch: Init.con is the chain the game follows,
+  // and the compiled terrain is what its Terrain.con asks for.
+  void writeCommon() const {
+    write("Init.con", kInit);
+    writeTerrainRaw();
+  }
+
+  // A `terraindata.raw` in the writer's order (docs/formats/terraindata.md),
+  // small but real: the reader walks every field before it reaches the ones
+  // this test looks at.
+  void writeTerrainRaw() const {
+    std::vector<char> bytes;
+    auto raw = [&bytes](const void* from, std::size_t size) {
+      const auto* at = static_cast<const char*>(from);
+      bytes.insert(bytes.end(), at, at + size);
+    };
+    auto u32 = [&raw](std::uint32_t v) { raw(&v, sizeof(v)); };
+    auto u8 = [&raw](std::uint8_t v) { raw(&v, sizeof(v)); };
+    auto f32 = [&raw](float v) { raw(&v, sizeof(v)); };
+    auto vec3 = [&f32](float x, float y, float z) { f32(x); f32(y); f32(z); };
+    auto text = [&bytes](const std::string& value) {
+      bytes.insert(bytes.end(), value.begin(), value.end());
+      bytes.push_back('\n');
+    };
+
+    u32(0x0001001a);
+    vec3(2.0f, 0.5f, 2.0f);   // primaryWorldScale
+    vec3(4.0f, 1.0f, 4.0f);   // secondaryWorldScale
+    u32(0xcdcdcdcd);          // the float the writer never initialises
+    f32(100.0f);              // highest
+    f32(0.0f);                // lowest
+    u32(4);                   // patchSize
+    u8(1);                    // subdividePatches
+    u32(1);                   // patches per side
+    u32(512);                 // patchColormapSize
+    u32(256);                 // lowDetailmapSize
+    text("Levels/testmap/Colormaps/tx");
+    text("Levels/testmap/Detailmaps/tx");
+    text("Levels/testmap/LowDetailmaps/tx");
+    text("Levels/testmap/Lightmaps/tx");
+    f32(5.0f); f32(6.0f);     // farSideTiling
+    f32(24.0f);               // farTopTilingHi
+    f32(4.0f);                // farTopTilingLow
+    f32(0.0f);                // farYOffset
+    vec3(0.75f, 0.71f, 0.57f);  // terrain.sunColor
+    vec3(0.73f, 0.64f, 0.33f);  // terrain.GIColor
+    vec3(0.34f, 0.28f, 0.16f);  // terrainWaterColor
+    u32(1);                   // one material is enough to reach the end
+    text("common/terrain/textures/detail/detail_rock04");
+    u8(1); f32(32.0f); f32(16.0f); f32(50.0f); f32(0.0f); u8(0);
+
+    std::ofstream out(root_ / "Levels" / "testmap" / "terraindata.raw", std::ios::binary);
+    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
   }
 
   void writeHeights(const std::string& name, const std::vector<std::uint16_t>& values) const {
@@ -94,6 +169,7 @@ constexpr const char* kStaticObjects =
 
 static void testLoadLevel() {
   TempLevel temp;
+  temp.writeCommon();
   temp.write("Heightdata.con", kHeightdata);
   temp.write("Terrain.con", kTerrain);
   temp.write("StaticObjects.con", kStaticObjects);
@@ -124,9 +200,22 @@ static void testLoadLevel() {
   CHECK(level->primary.scale.y > 0.49f && level->primary.scale.y < 0.51f);
   CHECK(level->terrain.seaLevel > 10.4f && level->terrain.seaLevel < 10.6f);
 
-  // Terrain.con is read by the editor branch.
+  // Terrain.con is read by the game's branch, so none of this comes from the
+  // `.con` at all — `terrain.load` sends the reader to the compiled blob and
+  // every one of these fields is out of it.
   CHECK_EQ(level->terrain.patchSize, 4);
   CHECK_EQ(level->terrain.colormapBase, std::string("Levels/testmap/Colormaps/tx"));
+  CHECK_EQ(level->terrain.lightmapBase, std::string("Levels/testmap/Lightmaps/tx"));
+  CHECK_EQ(level->terrain.lowDetailmapSize, 256);
+  CHECK_EQ(level->terrain.farSideTiling[1], 6.0f);
+  CHECK_EQ(level->terrain.farTopTilingHi, 24.0f);
+  CHECK_EQ(level->terrain.materials.size(), std::size_t(1));
+  CHECK(level->terrain.materials[0].triPlanar);
+  CHECK_EQ(level->terrain.materials[0].topTiling, 50.0f);
+  // And the pair the light map is multiplied by, which the blob carries and
+  // Sky.con would overwrite if the level had one.
+  CHECK(level->terrain.terrainSunColor.x > 0.74f && level->terrain.terrainSunColor.x < 0.76f);
+  CHECK(level->terrain.terrainSkyColor.z > 0.32f && level->terrain.terrainSkyColor.z < 0.34f);
 
   CHECK(level->terrain.waterColor.y > 0.49f && level->terrain.waterColor.y < 0.51f);
 
@@ -139,6 +228,7 @@ static void testLoadLevel() {
 
 static void testStaticObjects() {
   TempLevel temp;
+  temp.writeCommon();
   temp.write("Heightdata.con", kHeightdata);
   temp.write("Terrain.con", kTerrain);
   temp.write("StaticObjects.con", kStaticObjects);
@@ -162,6 +252,7 @@ static void testStaticObjects() {
 
 static void testTerrainCentredOnOrigin() {
   TempLevel temp;
+  temp.writeCommon();
   temp.write("Heightdata.con", kHeightdata);
   temp.write("Terrain.con", kTerrain);
   temp.write("StaticObjects.con", "");
@@ -182,6 +273,7 @@ static void testTerrainCentredOnOrigin() {
 
 static void testPatchesSkipMissingColormaps() {
   TempLevel temp;
+  temp.writeCommon();
   temp.write("Heightdata.con", kHeightdata);
   temp.write("Terrain.con", kTerrain);
   temp.write("StaticObjects.con", "");
@@ -219,6 +311,7 @@ static void testPatchesSkipMissingColormaps() {
 
 static void testWaterPlane() {
   TempLevel temp;
+  temp.writeCommon();
   temp.write("Heightdata.con", kHeightdata);
   temp.write("Terrain.con", kTerrain);
   temp.write("StaticObjects.con", "");
@@ -243,6 +336,7 @@ static void testWaterPlane() {
 
 static void testMissingHeightmapIsReported() {
   TempLevel temp;
+  temp.writeCommon();
   temp.write("Heightdata.con", kHeightdata);
   temp.write("Terrain.con", kTerrain);
   temp.write("StaticObjects.con", "");
@@ -261,6 +355,7 @@ static void testMissingHeightmapIsReported() {
 // normalised on the way in.
 static void testSkydomeBlock() {
   TempLevel temp;
+  temp.writeCommon();
   temp.write("Heightdata.con", kHeightdata);
   temp.write("Terrain.con", kTerrain);
   temp.write("StaticObjects.con", "");

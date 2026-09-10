@@ -118,6 +118,60 @@ static void testVarsAndIf() {
   CHECK_EQ(r.commands[1].lowerPath, std::string("objecttemplate.editoronly"));
 }
 
+// `else` — the other half of the condition, and the one a level's Terrain.con
+// turns on: the editor's branch above it, the game's below.
+static void testElse() {
+  MemoryFiles files;
+  // A shortened Terrain.con of Strike at Karkand, with a nested `if` inside the
+  // taken branch to check that the nesting is not confused by the `else`.
+  files.files["a.con"] =
+      "if v_arg1 == BF2Editor\n"
+      "terrain.create TerrainEditable\n"
+      "terrain.patchSize 128\n"
+      "else\n"
+      "terrain.create Terrain\n"
+      "if v_arg1 != BF2Editor\n"
+      "terrain.load Levels/Strike_at_Karkand/terraindata.raw\n"
+      "else\n"
+      "terrain.wrong 1\n"
+      "endIf\n"
+      "endIf\n";
+
+  auto commandsFor = [&files](const std::vector<std::string>& args) {
+    Result r;
+    Interpreter interp(
+        files, [&](const Command& c) { r.commands.push_back(c); },
+        [&](const Diagnostic& d) { r.diagnostics.push_back(d); });
+    interp.runFile("a.con", args);
+    return r;
+  };
+
+  // The game: only the branch below the `else`, and only its taken half.
+  const Result game = commandsFor({});
+  CHECK_EQ(game.diagnostics.size(), std::size_t(0));
+  CHECK_EQ(game.commands.size(), std::size_t(2));
+  CHECK_EQ(game.commands[0].argStr(0), std::string_view("Terrain"));
+  CHECK_EQ(game.commands[1].lowerPath, std::string("terrain.load"));
+
+  // The editor: only the branch above it. Running both is what happened before
+  // `else` existed here, and it left the terrain created twice.
+  const Result editor = commandsFor({"BF2Editor"});
+  CHECK_EQ(editor.diagnostics.size(), std::size_t(0));
+  CHECK_EQ(editor.commands.size(), std::size_t(2));
+  CHECK_EQ(editor.commands[0].argStr(0), std::string_view("TerrainEditable"));
+  CHECK_EQ(editor.commands[1].lowerPath, std::string("terrain.patchsize"));
+
+  // An `else` with no `if` of its own is a diagnostic, not a silent skip.
+  files.files["b.con"] = "else\nterrain.create Terrain\n";
+  Result stray;
+  Interpreter interp(
+      files, [&](const Command& c) { stray.commands.push_back(c); },
+      [&](const Diagnostic& d) { stray.diagnostics.push_back(d); });
+  interp.runFile("b.con");
+  CHECK_EQ(stray.diagnostics.size(), std::size_t(1));
+  CHECK_EQ(stray.commands.size(), std::size_t(1));
+}
+
 static void testIncludeAndRun() {
   MemoryFiles files;
   files.files["weapons/handheld/ammokit/ammokit.con"] =
@@ -164,6 +218,7 @@ TEST_MAIN({
   testBasicCommands();
   testBlockComments();
   testVarsAndIf();
+  testElse();
   testIncludeAndRun();
   testErrors();
   testIncludeCycle();

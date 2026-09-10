@@ -160,9 +160,19 @@ bool Interpreter::execute(std::string_view text, std::string_view normalizedPath
   };
 
   int remDepth = 0;               // beginRem/endRem nesting
-  std::vector<bool> ifStack;      // true = the branch is executed
+  // One entry per open `if`: whether the lines being read now are executed, and
+  // whether any branch of this `if` has been taken already — `else` needs the
+  // second to decide, and it is not the same as the first once it has flipped.
+  struct IfFrame {
+    bool active = false;
+    bool taken = false;
+  };
+  std::vector<IfFrame> ifStack;
   auto skipping = [&ifStack] {
-    return std::find(ifStack.begin(), ifStack.end(), false) != ifStack.end();
+    for (const IfFrame& frame : ifStack) {
+      if (!frame.active) return true;
+    }
+    return false;
   };
 
   bool ok = true;
@@ -205,7 +215,21 @@ bool Interpreter::execute(std::string_view text, std::string_view normalizedPath
       } else {
         diagnose(normalizedPath, lineNo, "empty expression in if");
       }
-      ifStack.push_back(value);
+      ifStack.push_back(IfFrame{value, value});
+      continue;
+    }
+    // The other half of the same condition. Without it a false `if` swallowed
+    // its `else` as well, and a true one ran both branches — 110 `else`s in the
+    // game's data, and the one that matters most is a level's Terrain.con,
+    // where the two branches are the editor's terrain and the game's.
+    if (keyword == "else") {
+      if (!ifStack.empty()) {
+        IfFrame& frame = ifStack.back();
+        frame.active = !frame.taken;
+        frame.taken = true;
+      } else {
+        diagnose(normalizedPath, lineNo, "else without if");
+      }
       continue;
     }
     if (keyword == "endif") {

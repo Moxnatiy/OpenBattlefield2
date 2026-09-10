@@ -48,10 +48,27 @@ std::string skyTexturePath(std::string_view raw) {
 // Object.* to the last Object.create.
 class LevelBuilder {
  public:
-  explicit LevelBuilder(Level& level) : level_(level) {}
+  LevelBuilder(Level& level, const FileSystem& files) : level_(level), files_(files) {}
 
   void operator()(const con::Command& command) {
     const std::string& path = command.lowerPath;
+
+    // --- Terrain.con, the branch the game takes ---
+    // `terrain.load Levels/<name>/terraindata.raw`. Everything the editor's
+    // branch says in twenty lines of `terrain.*` is in that blob, written from
+    // the same state by the same function (`TerrainEditable::save`,
+    // `RendDX9.dll`, 0x1010cd70) — and where the two disagree the blob is what
+    // the game reads, which on Karkand is `farTopTilingLow`: 4 in the `.con`
+    // and 24 in the blob.
+    //
+    // It is read here, and not after the level's files have all been run, so
+    // that it lands where the engine lands it: Init.con runs Terrain.con before
+    // Sky.con, and Sky.con's `terrain.sunColor` then has the last word over the
+    // pair the blob carries.
+    if (path == "terrain.load") {
+      loadCompiledTerrain(command.argStr(0));
+      return;
+    }
 
     // --- Heightdata.con ---
     // `heightmapcluster.addHeightmap Heightmap 0 0` — the zeroth argument is the
@@ -458,7 +475,37 @@ class LevelBuilder {
  private:
   bool isPrimary() const { return pendingCluster_ && clusterX_ == 0 && clusterY_ == 0; }
 
+  // The compiled terrain, by the path the `.con` names. Every field of the
+  // `terrain.*` block is in it — docs/formats/terraindata.md — and the six near
+  // materials are in it and in nothing else.
+  void loadCompiledTerrain(std::string_view path) {
+    const auto bytes = files_.read(normalizeAssetPath(path));
+    if (!bytes) return;
+    auto raw = readTerrainRaw(*bytes);
+    if (!raw) return;
+
+    TerrainInfo& terrain = level_.terrain;
+    terrain.patchSize = raw->patchSize;
+    terrain.patchColormapSize = raw->patchColormapSize;
+    terrain.lowDetailmapSize = raw->lowDetailmapSize;
+    terrain.colormapBase = raw->colormapBase;
+    terrain.detailmapBase = raw->detailmapBase;
+    terrain.lowDetailmapBase = raw->lowDetailmapBase;
+    terrain.lightmapBase = raw->lightmapBase;
+    terrain.farSideTiling[0] = raw->farSideTiling[0];
+    terrain.farSideTiling[1] = raw->farSideTiling[1];
+    terrain.farTopTilingHi = raw->farTopTilingHi;
+    terrain.farTopTilingLow = raw->farTopTilingLow;
+    terrain.farYOffset = raw->farYOffset;
+    terrain.subdivideScale = raw->primaryWorldScale;
+    // The pair Sky.con sets again a moment later, under its own names.
+    terrain.terrainSunColor = raw->sunColor;
+    terrain.terrainSkyColor = raw->giColor;
+    terrain.materials = std::move(raw->materials);
+  }
+
   Level& level_;
+  const FileSystem& files_;
   bool pendingCluster_ = false;
   bool pendingRoad_ = false;
   std::string roadTemplateName_;
@@ -530,25 +577,33 @@ std::optional<Level> loadLevel(FileSystem& files, std::string_view levelName, st
   level.name = std::string(levelName);
 
   const std::string base = "Levels/" + std::string(levelName);
-  LevelBuilder builder(level);
+  LevelBuilder builder(level, files);
   con::Interpreter interpreter(files, [&](const con::Command& command) { builder(command); });
 
-  // The order is as in the level's Init.con. The BF2Editor argument enables the
-  // editor branch — the one that reads the source .raw instead of the compiled blob.
-  const std::vector<std::string> editorArgs{"BF2Editor"};
+  // Init.con with no arguments is the game's own load, and it is the whole of
+  // it: its `else` branch runs Heightdata, Terrain, Sky, CompiledRoads, the
+  // overgrowth and its collision, the ambient objects and Water, in that order.
+  // We used to run those files ourselves with a `BF2Editor` argument, which
+  // took the editor's branch everywhere — the terrain out of the editor's loose
+  // maps rather than the compiled blob, the light colours under their editor
+  // names, and 350 `run` lines loading object templates we already have.
   interpreter.runFile(base + "/Init.con");
-  interpreter.runFile(base + "/Heightdata.con");
-  interpreter.runFile(base + "/Terrain.con", editorArgs);
-  interpreter.runFile(base + "/StaticObjects.con", editorArgs);
-  interpreter.runFile(base + "/Water.con");
-  interpreter.runFile(base + "/Sky.con", editorArgs);
-  interpreter.runFile(base + "/CompiledRoads.con", editorArgs);
-  // Vegetation with collision: real instances with exact matrices.
-  // The original draws it with a separate system, but the models and places are the same.
-  interpreter.runFile(base + "/Overgrowth/OvergrowthCollision.con", editorArgs);
+
+  // The one file the chain does not name. In the original it is reached through
+  // `run tmp.con`, and `tmp.con` in the archives is zero bytes — the game writes
+  // that list itself at load time, so ours is the file the editor saved.
+  interpreter.runFile(base + "/StaticObjects.con");
 
   // The road templates: they hold the textures, and they live in the game's
   // objects rather than in the level.
+  //
+  // This is the one place the editor's argument is still passed, and it has to
+  // be: every one of the eighty files under `Roads/Splines` is a single
+  // `if v_arg1 == BF2Editor` around its whole body, so with no argument they
+  // define nothing at all and the roads come out white. Where the game reads
+  // them from instead is not established — a road's compiled geometry
+  // (CompiledRoads.con) names the template and carries no texture.
+  const std::vector<std::string> editorArgs{"BF2Editor"};
   for (const std::string& path : files.list("objects/roads/splines")) {
     if (assetExtension(path) == "con") interpreter.runFile(path, editorArgs);
   }
@@ -568,15 +623,6 @@ std::optional<Level> loadLevel(FileSystem& files, std::string_view levelName, st
         road.blendFactor = texture->second.blendFactor;
       }
     }
-  }
-
-  // The terrain's near materials come from the compiled blob and from nowhere
-  // else: Terrain.con names the tiles and the tilings, but which detail texture
-  // the ground wears close up is written only into `terraindata.raw`
-  // (`TerrainEditable::save`, `RendDX9.dll`, 0x1010cd70). A level without one
-  // simply has no near detail; that is not an error for the rest of the level.
-  if (auto raw = loadTerrainRaw(files, levelName)) {
-    level.terrain.materials = std::move(raw->materials);
   }
 
   if (!loadHeights(files, level, error)) return std::nullopt;

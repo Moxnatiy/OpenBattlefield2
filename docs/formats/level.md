@@ -21,24 +21,57 @@ The sizes work out without a single assumption: `1025 * 1025 * 2` is
 exactly the file's size. A scale of `2/0.00640869/2` means 2 world units
 between nodes and a maximum height of `65535 * 0.00640869 ≈ 420`.
 
-## The main decision: take the editor branch
+## The branch: the game's, with no argument
 
-A level's `Init.con` has two branches:
+A level's `Init.con` has two branches, and so does its `Terrain.con` and its
+`Sky.con`:
 
 ```
 if v_arg1 == BF2Editor
-  run Heightdata.con          ← the source .raw, format described by the data
-  ...
+  ... twenty lines of terrain.* and the source height maps
 else
   terrain.load Levels/<name>/terraindata.raw   ← a compiled blob
 endIf
 ```
 
-The game branch reads the **compiled** `terraindata.raw`, which would need
-reversing to parse. The editor branch reads the source height maps, whose
-format is fully determined by `Heightdata.con` itself. So the engine runs
-the level's `.con` with the argument `BF2Editor` — and gets the same data
-with no reverse engineering at all.
+We took the editor's branch for a long time, because the compiled blob would
+have had to be reversed and the editor's files are described by the data
+itself. The blob **is** reversed now (docs/formats/terraindata.md), so we
+run every level the way the game runs it: `Init.con` with no argument, and
+its `else` branch calls Heightdata, Terrain, Sky, CompiledRoads, the
+overgrowth, the ambient objects and Water in order.
+
+What that changed, beyond being the same path the original takes:
+
+* the terrain's six near materials, which exist **only** in the blob and are
+  what the ground is textured with close up;
+* `farTopTilingLow` on Karkand — 4 in the `.con` and 24 in the blob, and the
+  blob is what the game reads;
+* the editor's 350 `run` lines at the top of StaticObjects.con, which loaded
+  object templates we already have (we read every `.con` in the archives), and
+  `DefaultEnvMap`, an editor-only object with no geometry that we placed on
+  eleven of the game's levels;
+* the ambient objects — birds and their effects — which the game's branch
+  loads and the editor's does not.
+
+Two places still take the editor's argument, and each is written down where
+it is passed:
+
+* **`StaticObjects.con` is run by us, not by the chain.** The game reaches it
+  through `run tmp.con`, and `tmp.con` in the archives is zero bytes: the game
+  writes that list itself at load time.
+* **`Roads/Splines/*.con`** — all eighty files are a single
+  `if v_arg1 == BF2Editor` around their whole body, so with no argument a road
+  has no texture at all. Where the game reads road templates from instead is
+  not established.
+
+The switch was verified frame by frame: Strike at Karkand and Dalian Plant
+render **pixel for pixel** what they rendered from the editor's branch.
+
+Getting there needed a fix in the interpreter, and it is the reason this took
+so long to notice: `else` was not implemented. A false `if` swallowed its
+`else` branch as well, and a true one ran both. The game's data has 534 `if`s
+and 110 `else`s.
 
 ## The addHeightmap argument trap
 

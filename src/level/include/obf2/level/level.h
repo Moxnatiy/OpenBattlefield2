@@ -6,10 +6,13 @@
 // StaticObjects.con the object placement. So no reversing is needed here at all,
 // the interpreter we already have is enough.
 //
-// One subtlety: a level's Init.con has two branches. The game one reads the
-// compiled terraindata.raw, the editor one the source .raw height maps. We take
-// the editor branch (`v_arg1 = BF2Editor`), because its format is fully
-// described by data, while the compiled blob would have to be reversed.
+// One subtlety: a level's Init.con has two branches, and we take the game's —
+// the same one the game takes, with no argument. It reads the compiled
+// `terraindata.raw` (docs/formats/terraindata.md) where the editor's branch
+// would read the source `.raw` height maps and set the `terrain.*` block by
+// hand. We took the editor's for a long time because the blob had not been
+// reversed; it has been now, and it is the only place the terrain's six near
+// materials exist.
 #include <cstdint>
 #include <filesystem>
 #include <optional>

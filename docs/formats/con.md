@@ -33,7 +33,7 @@ ObjectTemplate.fire.projectileStartPosition 0.06/-0.12/0
 | `rem ...` | comment to the end of the line |
 | `beginRem` / `endRem` | block comment, **nesting works** |
 | `var v_name = value` | a file-local variable |
-| `if a == b` / `endIf` | the corpus has only `==` and `!=`, only compared against `v_arg1`; `else` never occurs |
+| `if a == b` / `else` / `endIf` | the corpus has only `==` and `!=`, only compared against `v_arg1`. 534 `if`s across the game's 9375 `.con` and `.tweak` files, and **110 `else`s** — this table used to say `else` never occurs, which is how it went unimplemented; a level's Terrain.con is one of them |
 | `include <file>` | execute a file in the same context |
 | `run <file> [args]` | the same, but the arguments become `v_arg1`, `v_arg2`, … |
 
