@@ -3140,13 +3140,30 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     if (!args.levelName.empty()) {
       hudContext.mapTexture = "Levels/" + args.levelName + "/Hud/Minimap/ingameMap.tga";
     }
-    // The game shows not the whole level picture but a square around the combat area.
-    // The rule was taken from the original's frame dump: the square's side is 1.2 of
-    // the area's larger side, and its centre is the area's centre. For Dalian_plant 16
-    // that gives u 0.2694..0.7430 and v up to 0.7677, while the original has 0.2703,
-    // 0.7431 and 0.7678 — a match to the third decimal.
+    // The game shows not the whole level picture but a square around the combat area,
+    // centred on the area's centre. Its side is the area's **larger side plus a fixed
+    // margin**, and the margin is a fraction of the picture and not of the area:
+    //
+    //   side = max(width, height) + world * 0.078125
+    //
+    // 0.078125 is 40 texels of the 512-wide map picture on each side. Measured from
+    // frame dumps of the original on two levels whose terrains differ in size, and it
+    // is the difference in size that separates this rule from the "times 1.2" we used
+    // before:
+    //
+    //   Strike at Karkand, world 1024, area 640.4 tall -> side 720.4, v span 0.70349
+    //                                                     the original: 0.7035
+    //   Dalian Plant,      world 2048, area 808 tall   -> side 968,   u span 0.47266
+    //                                                     the original: 0.4728
+    //
+    // Times 1.2 gives Karkand 0.7505, which is half the map out. Where the address of
+    // the constant is in the binary is not known — it is a measurement, not a read.
+    //
+    // The square may hang off the picture; the renderer cuts it there rather than
+    // sliding it back, and narrows the rectangle on screen to match.
     //
     // The picture is oriented so that z grows upwards: v = (1024 - z) / 2048.
+    constexpr float kMapMargin = 40.0f / 512.0f;
     const auto hudGameplay =
         level ? obf2::level::loadGameplayObjects(files, level->name, "gpm_cq", 16)
               : std::optional<obf2::level::GameplayObjects>{};
@@ -3155,7 +3172,7 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       hudGameplay->combatArea.bounds(minX, maxX, minZ, maxZ);
       const float world = static_cast<float>(level ? level->primary.size - 1 : 1024) *
                           (level ? level->primary.scale.x : 2.0f);
-      const float half = std::max(maxX - minX, maxZ - minZ) * 0.5f * 1.2f;
+      const float half = (std::max(maxX - minX, maxZ - minZ) + world * kMapMargin) * 0.5f;
       const float centerX = (minX + maxX) * 0.5f;
       const float centerZ = (minZ + maxZ) * 0.5f;
       const auto toU = [&](float x) { return (x + world * 0.5f) / world; };

@@ -278,11 +278,49 @@ std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& fon
       // The thumbnail in combat is round, while the big one on the spawn screen is
       // square. The game shows not the whole level picture but a square around the
       // combat area — the bounds arrive in the context.
-      auto geometry = node.mapView == MapView::Mini
-                          ? disc(rect, screen, context.mapTexture, context.mapU0, context.mapV0,
-                                 context.mapU1, context.mapV1)
-                          : quad(rect, screen, context.mapTexture, context.mapU0, context.mapU1,
-                                 context.mapV0, context.mapV1);
+      //
+      // The square can hang off the picture's edge, and then the original **cuts
+      // it off** rather than sliding it back in or stretching the edge: the part
+      // outside the picture is simply not drawn, and the rectangle on screen
+      // narrows by as much. On Strike at Karkand the square starts at u −0.0888,
+      // and the original's map is 447.9 wide instead of 512 and begins at 342.6
+      // instead of 278 — 64 pixels off the left, which is exactly that fraction
+      // (docs/research/spawn-screen-named.md). Stretching the edge instead is what
+      // gave us the smear down the map's left side.
+      float u0 = context.mapU0, u1 = context.mapU1;
+      float v0 = context.mapV0, v1 = context.mapV1;
+      ScreenRect view = rect;
+      const float uWhole = u1 - u0;
+      const float vWhole = v1 - v0;
+      // Only the square map is cut: a round one would stop being round, and the
+      // combat thumbnail is zoomed in far enough that its square never leaves the
+      // picture.
+      if (node.mapView != MapView::Mini && uWhole > 0.0f && vWhole > 0.0f) {
+        const float cu0 = std::max(0.0f, u0), cu1 = std::min(1.0f, u1);
+        const float cv0 = std::max(0.0f, v0), cv1 = std::min(1.0f, v1);
+        if (cu1 > cu0 && cv1 > cv0) {
+          view.x = rect.x + rect.width * (cu0 - u0) / uWhole;
+          view.width = rect.width * (cu1 - cu0) / uWhole;
+          view.y = rect.y + rect.height * (cv0 - v0) / vWhole;
+          view.height = rect.height * (cv1 - cv0) / vWhole;
+          u0 = cu0;
+          u1 = cu1;
+          v0 = cv0;
+          v1 = cv1;
+        }
+        // The map, like a bar, is built without Direct3D 9's half-pixel
+        // adjustment, so the whole square sits half a pixel down and to the right
+        // of where a picture with the same rectangle would. The original's map
+        // node is 278,27 512x512 and its picture lands at 278.5,27.5 — the same
+        // size, only moved. (A bar keeps its bottom right corner and shrinks; the
+        // map does not.)
+        view.x += kBarInset;
+        view.y += kBarInset;
+      }
+      auto geometry =
+          node.mapView == MapView::Mini
+              ? disc(rect, screen, context.mapTexture, u0, v0, u1, v1)
+              : quad(view, screen, context.mapTexture, u0, u1, v0, v1);
       pieces.push_back(DrawPiece{std::move(geometry), context.mapTexture, &node, node.color});
     }
 
