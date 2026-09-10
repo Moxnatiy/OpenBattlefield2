@@ -16,9 +16,11 @@ struct VertexIn {
     float3 normal   [[attribute(1)]];
     float2 uv       [[attribute(2)]];
     float2 uv2      [[attribute(3)]];
-    float2 uv3      [[attribute(4)]];
+    float2 uvLightmap [[attribute(4)]];
     float  alpha    [[attribute(5)]];
     float3 tangent  [[attribute(6)]];
+    float2 uvDirt   [[attribute(7)]];
+    float2 uvCrack  [[attribute(8)]];
 };
 
 struct VertexOut {
@@ -107,14 +109,16 @@ std::unique_ptr<TerrainLightBuffer> TerrainLightBuffer::create(Device& device,
 
   const SDL_GPUVertexBufferDescription bufferDescription{
       0, static_cast<Uint32>(sizeof(mesh::Vertex)), SDL_GPU_VERTEXINPUTRATE_VERTEX, 0};
-  const SDL_GPUVertexAttribute attributes[7] = {
+  const SDL_GPUVertexAttribute attributes[9] = {
       {0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offsetof(mesh::Vertex, position)},
       {1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offsetof(mesh::Vertex, normal)},
       {2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(mesh::Vertex, uv)},
       {3, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(mesh::Vertex, uv2)},
-      {4, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(mesh::Vertex, uv3)},
+      {4, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(mesh::Vertex, uvLightmap)},
       {5, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT, offsetof(mesh::Vertex, alpha)},
       {6, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offsetof(mesh::Vertex, tangent)},
+      {7, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(mesh::Vertex, uvDirt)},
+      {8, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(mesh::Vertex, uvCrack)},
   };
 
   SDL_GPUColorTargetDescription colorTarget{};
@@ -126,7 +130,7 @@ std::unique_ptr<TerrainLightBuffer> TerrainLightBuffer::create(Device& device,
   info.vertex_input_state.vertex_buffer_descriptions = &bufferDescription;
   info.vertex_input_state.num_vertex_buffers = 1;
   info.vertex_input_state.vertex_attributes = attributes;
-  info.vertex_input_state.num_vertex_attributes = 7;
+  info.vertex_input_state.num_vertex_attributes = 9;
   info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
   info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_BACK;
   info.rasterizer_state.front_face = SDL_GPU_FRONTFACE_CLOCKWISE;

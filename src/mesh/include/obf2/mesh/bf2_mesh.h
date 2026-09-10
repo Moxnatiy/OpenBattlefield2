@@ -95,10 +95,16 @@ struct Vertex {
   // TEXCOORD1: the tiling set the detail map is sampled with. When the mesh has
   // only one set this is a copy of `uv`.
   float uv2[2]{};
-  // TEXCOORD2: the unwrap the baked light map is sampled with, unique per
-  // surface like the base map's but laid out for the level's atlas. Zero when
-  // the mesh has no such set.
-  float uv3[2]{};
+  // The dirt and the crack channels have unwraps of their own. Which set each
+  // one takes is the technique's own order — the same enumeration that decides
+  // the texture slots, so `BaseDetailDirtNDetail` reads the base from set 0,
+  // the detail from 1 and the dirt from 2 (`obf2::mesh::materialLayout`).
+  float uvDirt[2]{};
+  float uvCrack[2]{};
+  // The unwrap the baked light map is sampled with, unique per surface like the
+  // base map's but laid out for the level's atlas. It is the mesh's **last**
+  // set. Zero when the mesh has no such set.
+  float uvLightmap[2]{};
   // A road's per-vertex alpha, which is how its edges fade into the terrain
   // (`Shaders_client.zip:Road.fx:80`, `outcolor.a *= indata.Alpha`). One
   // everywhere else.
@@ -165,7 +171,7 @@ struct RenderMesh {
   std::vector<Rig> rigs;
 
   // Whether the mesh really carried TEXCOORD2, the set a baked light map is
-  // sampled with. When it did not, `Vertex::uv3` is all zeroes and sampling by
+  // sampled with. When it did not, `Vertex::uvLightmap` is all zeroes and sampling by
   // it would put the whole object on one texel — which is how a building turns
   // solid black. The level's atlas may still have an entry for the placement,
   // so the mesh has to say.

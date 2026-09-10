@@ -42,6 +42,10 @@ struct GpuMesh {
     // materials.
     SDL_GPUTexture* normalMap = nullptr;
     bool normalOnDetailUv = true;
+    // The grime the base colour is multiplied by, and the cracks lerped over
+    // it. 1368 of the game's materials name a Dirt channel, 368 a Crack.
+    SDL_GPUTexture* dirt = nullptr;
+    SDL_GPUTexture* crack = nullptr;
   };
 
   // Whether the geometry carried the light map's own UV set. Without it a baked

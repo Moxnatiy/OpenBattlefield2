@@ -135,10 +135,12 @@ void printOne(obf2::FileSystem& files, const std::string& path, std::size_t geom
               render->bounds.max.y, render->bounds.max.z);
   for (std::size_t i = 0; i < render->ranges.size() && i < 4; ++i) {
     const auto& range = render->ranges[i];
-    std::printf("    [%zu] %s / %s, alphaMode %u, %u indices, %zu textures%s\n", i,
+    std::printf("    [%zu] %s / %s, alphaMode %u, %u indices, %zu textures\n", i,
                 range.fxFile.c_str(), range.technique.c_str(), range.alphaMode, range.indexCount,
-                range.maps.size(),
-                range.maps.empty() ? "" : (" -> " + range.maps.front()).c_str());
+                range.maps.size());
+    for (std::size_t slot = 0; slot < range.maps.size(); ++slot) {
+      std::printf("         slot %zu: %s\n", slot, range.maps[slot].c_str());
+    }
   }
 }
 

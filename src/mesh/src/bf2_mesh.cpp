@@ -267,6 +267,8 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
   bool hasPart = false;
   std::uint16_t lightmapUsage = 0;
   std::size_t positionFloat = 0, normalFloat = 0, uvFloat = 0, uv2Float = 0, uv3Float = 0;
+  std::size_t dirtFloat = 0, crackFloat = 0;
+  bool hasDirtUv = false, hasCrackUv = false;
   std::size_t partFloat = 0;
   std::size_t weightFloat = 0;
   bool hasWeight = false;
@@ -298,6 +300,10 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
       const std::uint16_t set = static_cast<std::uint16_t>(attribute.usage >> 8);
       if (set == 0 && !hasUv) { uvFloat = index; hasUv = true; }
       if (set == 1 && !hasUv2) { uv2Float = index; hasUv2 = true; }
+      // Sets 2 and 3 are where a dirt and a crack channel read their own
+      // unwraps; a material without them simply never looks here.
+      if (set == 2 && !hasDirtUv) { dirtFloat = index; hasDirtUv = true; }
+      if (set == 3 && !hasCrackUv) { crackFloat = index; hasCrackUv = true; }
       if (attribute.usage >= lightmapUsage) {
         lightmapUsage = attribute.usage;
         uv3Float = index;
@@ -381,8 +387,22 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
       vertex.uv2[1] = vertex.uv[1];
     }
     if (hasUv3 && base + uv3Float + 1 < mesh.vertexData.size()) {
-      vertex.uv3[0] = mesh.vertexData[base + uv3Float];
-      vertex.uv3[1] = mesh.vertexData[base + uv3Float + 1];
+      vertex.uvLightmap[0] = mesh.vertexData[base + uv3Float];
+      vertex.uvLightmap[1] = mesh.vertexData[base + uv3Float + 1];
+    }
+    if (hasDirtUv && base + dirtFloat + 1 < mesh.vertexData.size()) {
+      vertex.uvDirt[0] = mesh.vertexData[base + dirtFloat];
+      vertex.uvDirt[1] = mesh.vertexData[base + dirtFloat + 1];
+    } else {
+      vertex.uvDirt[0] = vertex.uv[0];
+      vertex.uvDirt[1] = vertex.uv[1];
+    }
+    if (hasCrackUv && base + crackFloat + 1 < mesh.vertexData.size()) {
+      vertex.uvCrack[0] = mesh.vertexData[base + crackFloat];
+      vertex.uvCrack[1] = mesh.vertexData[base + crackFloat + 1];
+    } else {
+      vertex.uvCrack[0] = vertex.uv[0];
+      vertex.uvCrack[1] = vertex.uv[1];
     }
   }
 
@@ -391,8 +411,8 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
   if (hasUv3 && lightmapUsage > 5) {
     out.hasLightmapUv = true;
     for (const Vertex& vertex : out.vertices) {
-      if (vertex.uv3[0] < -0.001f || vertex.uv3[0] > 1.001f || vertex.uv3[1] < -0.001f ||
-          vertex.uv3[1] > 1.001f) {
+      if (vertex.uvLightmap[0] < -0.001f || vertex.uvLightmap[0] > 1.001f ||
+          vertex.uvLightmap[1] < -0.001f || vertex.uvLightmap[1] > 1.001f) {
         out.hasLightmapUv = false;
         break;
       }

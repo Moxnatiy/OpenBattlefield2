@@ -26,9 +26,11 @@ struct VertexIn {
     float3 normal   [[attribute(1)]];
     float2 uv       [[attribute(2)]];
     float2 uv2      [[attribute(3)]];
-    float2 uv3      [[attribute(4)]];
+    float2 uvLightmap [[attribute(4)]];
     float  alpha    [[attribute(5)]];
     float3 tangent  [[attribute(6)]];
+    float2 uvDirt   [[attribute(7)]];
+    float2 uvCrack  [[attribute(8)]];
 };
 
 struct VertexOut {
@@ -38,8 +40,11 @@ struct VertexOut {
     // The detail map has a tiling UV set of its own
     // (`Shaders_client.zip:RaShaderSTM.fx:224`), not the base map's unwrap.
     float2 uv2;
-    // TEXCOORD2: the unwrap the baked light map is sampled with.
-    float2 uv3;
+    // The unwrap the baked light map is sampled with.
+    float2 uvLightmap;
+    // The dirt and the crack channels' own unwraps.
+    float2 uvDirt;
+    float2 uvCrack;
     // A road's edge fade, carried per vertex; 1 on everything else.
     float vertexAlpha;
     float viewDepth;
@@ -166,7 +171,9 @@ vertex VertexOut vertex_main(VertexIn in [[stage_in]],
     out.normal = (uniforms.model * float4(in.normal, 0.0)).xyz;
     out.uv = in.uv;
     out.uv2 = in.uv2;
-    out.uv3 = in.uv3;
+    out.uvLightmap = in.uvLightmap;
+    out.uvDirt = in.uvDirt;
+    out.uvCrack = in.uvCrack;
     out.vertexAlpha = in.alpha;
     // For a perspective projection w in clip space equals the distance along the
     // view — exactly what the fog needs.
@@ -209,12 +216,16 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
                               texture2d<float> terrainLight [[texture(3)]],
                               texture2d<float> terrainDetailMap [[texture(4)]],
                               texture2d<float> normalMap [[texture(5)]],
+                              texture2d<float> dirtMap [[texture(6)]],
+                              texture2d<float> crackMap [[texture(7)]],
                               sampler baseSampler [[sampler(0)]],
                               sampler lightSampler [[sampler(1)]],
                               sampler detailSampler [[sampler(2)]],
                               sampler terrainLightSampler [[sampler(3)]],
                               sampler terrainDetailSampler [[sampler(4)]],
-                              sampler normalSampler [[sampler(5)]]) {
+                              sampler normalSampler [[sampler(5)]],
+                              sampler dirtSampler [[sampler(6)]],
+                              sampler crackSampler [[sampler(7)]]) {
     float4 albedo = baseColor.sample(baseSampler, in.uv);
 
     // Leaves, fences, grates: the shape is cut out of the base map's alpha.
@@ -270,6 +281,27 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
         const float4 detailSample = detail.sample(detailSampler, in.uv2);
         albedo *= detailSample;
         if (in.material.w < 0.5) gloss = detailSample.a;
+    }
+
+    // The two channels after the detail, in the order `getCompositeDiffuse`
+    // applies them (`Shaders_client.zip:RaShaderSTM.fx:293`):
+    //
+    //   #if _DIRT_   totalDiffuse.rgb *= tex2D(DirtMapSampler, …).rgb;
+    //   #if _CRACK_  totalDiffuse.rgb = lerp(totalDiffuse.rgb, crack.rgb, crack.a);
+    //
+    // The dirt is a **multiply**, and dropping it is why our pylons and fuel
+    // tanks came out pale against the buildings around them: a grimy surface
+    // was being lit as though it were clean. 1368 of the game's materials name
+    // a Dirt channel and 368 a Crack.
+    //
+    // Each reads its own unwrap — the set the technique's order gives it, the
+    // same enumeration that decides the texture slots.
+    if (in.fogShape.z > 0.5) {
+        albedo.rgb *= dirtMap.sample(dirtSampler, in.uvDirt).rgb;
+    }
+    if (in.fogShape.w > 0.5) {
+        const float4 crack = crackMap.sample(crackSampler, in.uvCrack);
+        albedo.rgb = mix(albedo.rgb, crack.rgb, crack.a);
     }
 
     float3 light;
@@ -478,7 +510,7 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
         const float kSkyNormalZ = 0.65;
         if (in.lightmapOffset.x > 0.0) {
             lightmapValue = lightmap.sample(lightSampler,
-                                            in.uv3 * in.lightmapOffset.xy +
+                                            in.uvLightmap * in.lightmapOffset.xy +
                                                 in.lightmapOffset.zw).rgb;
         }
         float3 normal = normalize(in.normal);
@@ -675,7 +707,7 @@ SDL_GPUShader* createShader(SDL_GPUDevice* gpu, SDL_GPUShaderStage stage, const 
   info.format = SDL_GPU_SHADERFORMAT_MSL;
   info.stage = stage;
   info.num_uniform_buffers = isVertex ? 1 : 0;
-  info.num_samplers = isVertex ? 0 : 6;  // colour, light map, detail, the ground's light and its texture, the normal map
+  info.num_samplers = isVertex ? 0 : 8;  // colour, light map, detail, the ground's light and its texture, normal, dirt, crack
   return SDL_CreateGPUShader(gpu, &info);
 }
 
@@ -717,7 +749,7 @@ struct VertexUniforms {
 
 }  // namespace
 
-static_assert(sizeof(mesh::Vertex) == 64, "the vertex layout must match the shader");
+static_assert(sizeof(mesh::Vertex) == 80, "the vertex layout must match the shader");
 
 SDL_GPUTexture* MeshRenderer::uploadSharedTexture(const texture::Texture& source) {
   SDL_GPUTexture* uploaded = uploadTexture(source);
@@ -756,14 +788,16 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
 
   const SDL_GPUVertexBufferDescription bufferDescription{
       0, static_cast<Uint32>(sizeof(mesh::Vertex)), SDL_GPU_VERTEXINPUTRATE_VERTEX, 0};
-  const SDL_GPUVertexAttribute attributes[7] = {
+  const SDL_GPUVertexAttribute attributes[9] = {
       {0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offsetof(mesh::Vertex, position)},
       {1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offsetof(mesh::Vertex, normal)},
       {2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(mesh::Vertex, uv)},
       {3, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(mesh::Vertex, uv2)},
-      {4, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(mesh::Vertex, uv3)},
+      {4, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(mesh::Vertex, uvLightmap)},
       {5, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT, offsetof(mesh::Vertex, alpha)},
       {6, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offsetof(mesh::Vertex, tangent)},
+      {7, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(mesh::Vertex, uvDirt)},
+      {8, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(mesh::Vertex, uvCrack)},
   };
 
   SDL_GPUColorTargetDescription colorTarget{};
@@ -775,7 +809,7 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   info.vertex_input_state.vertex_buffer_descriptions = &bufferDescription;
   info.vertex_input_state.num_vertex_buffers = 1;
   info.vertex_input_state.vertex_attributes = attributes;
-  info.vertex_input_state.num_vertex_attributes = 7;
+  info.vertex_input_state.num_vertex_attributes = 9;
   info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
   // Vertex winding in BF2 is counter-clockwise: across all 1635 meshes in the
   // game (2.2 M triangles) the geometric normal agrees with the vertex normals
@@ -1122,6 +1156,8 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
       // (`Shaders_client.zip:RaShaderSTM.fx:316`, getCompositeNormals). A
       // material names at most one of the two — `BaseDetailNDetail` is 4191 of
       // the game's materials and `NBase` appears in none of the top ten.
+      range.dirt = load(layout.dirt);
+      range.crack = load(layout.crack);
       if (layout.normalDetail >= 0) {
         range.normalMap = load(layout.normalDetail);
         range.normalOnDetailUv = true;
@@ -1400,7 +1436,7 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
         // anyway.
         const bool baked = item.lightmap != nullptr && item.mesh->hasLightmapUv;
         SDL_GPUTexture* lightmapTexture = baked ? item.lightmap : range.lightmap;
-        const SDL_GPUTextureSamplerBinding bindings[6] = {
+        const SDL_GPUTextureSamplerBinding bindings[8] = {
             {range.texture != nullptr ? range.texture : placeholder_, sampler_},
             {lightmapTexture != nullptr ? lightmapTexture : placeholder_, sampler_},
             {range.detail != nullptr ? range.detail : placeholder_, sampler_},
@@ -1409,8 +1445,10 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
             {terrainDetail_ != nullptr ? terrainDetail_ : placeholder_, sampler_},
             {range.normalMap != nullptr ? range.normalMap : placeholder_,
              normalSampler_ != nullptr ? normalSampler_ : sampler_},
+            {range.dirt != nullptr ? range.dirt : placeholder_, sampler_},
+            {range.crack != nullptr ? range.crack : placeholder_, sampler_},
         };
-        SDL_BindGPUFragmentSamplers(pass, 0, bindings, 6);
+        SDL_BindGPUFragmentSamplers(pass, 0, bindings, 8);
 
         // The lighting mode changes from range to range, so the uniform is pushed
         // before every draw call.
@@ -1443,6 +1481,8 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
         uniforms.treeSunColor[3] = range.leaf ? 1.0f : 0.0f;
         uniforms.fogShape[1] =
             range.normalMap == nullptr ? 0.0f : (range.normalOnDetailUv ? 2.0f : 1.0f);
+        uniforms.fogShape[2] = range.dirt != nullptr ? 1.0f : 0.0f;
+        uniforms.fogShape[3] = range.crack != nullptr ? 1.0f : 0.0f;
         SDL_PushGPUVertexUniformData(frame.commands, 0, &uniforms, sizeof(uniforms));
 
         SDL_DrawGPUIndexedPrimitives(pass, range.indexCount, 1, range.indexStart, 0, 0);
