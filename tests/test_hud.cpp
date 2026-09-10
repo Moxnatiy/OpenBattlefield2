@@ -213,7 +213,7 @@ static void testBarNodeHasDirectionBeforeRect() {
   CHECK_EQ(builder.nodes().size(), std::size_t(1));
   if (builder.nodes().empty()) return;
   const hud::Node& node = builder.nodes()[0];
-  CHECK_EQ(node.barDirection, 2);
+  CHECK_EQ(node.barKind, 2);
   CHECK(std::abs(node.x - 643.0f) < 0.01f);
   CHECK(std::abs(node.y - 180.0f) < 0.01f);
   CHECK(std::abs(node.width - 108.0f) < 0.01f);

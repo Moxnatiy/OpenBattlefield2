@@ -94,6 +94,16 @@ class LevelBuilder {
       if (team >= 0 && team <= 2) level_.teamNames[team] = std::string(command.argStr(1));
       return;
     }
+    //   gameLogic.setKit 2 0 "US_Specops" "us_light_soldier"
+    if (path == "gamelogic.setkit") {
+      const int team = command.argInt(0).value_or(-1);
+      const int slot = command.argInt(1).value_or(-1);
+      if (team >= 0 && team <= 2 && slot >= 0 && slot < Level::kKitsPerTeam) {
+        level_.kits[team][slot] = std::string(command.argStr(2));
+        level_.kitSoldiers[team][slot] = std::string(command.argStr(3));
+      }
+      return;
+    }
     // The spawn screen's camera is set by the level itself:
     //   gameLogic.setBeforeSpawnCamera -50/185/-285 -16/-3/0
     // Both triples are written as one slash-separated word — the position and

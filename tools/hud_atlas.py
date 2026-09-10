@@ -32,6 +32,20 @@ import re
 import sys
 import zipfile
 
+# The dump prints the vertices the game handed to Direct3D 9, and D3D9 puts a
+# pixel's centre at an integer coordinate, so a rectangle covering pixels 10..255
+# is written 9.5..255.5. Metal — and every API after D3D9 — puts the centre at
+# integer + 0.5, so the same rectangle is written 10.0..256.0. mtld3d's own vertex
+# shader adds exactly that half pixel back for pre-transformed geometry
+# (`dxso/ff.rs`, the XYZRHW branch: "+ 1.0 / vp.x", "- 1.0 / vp.y").
+#
+# So the dump's numbers are half a pixel below what lands on screen, and half a
+# pixel below what our renderer writes for the same node. We add it here, and the
+# two sides then agree exactly. Reading the raw numbers instead made every one of
+# our rectangles look shifted by +0.5, +0.5 against the original — a difference
+# that never existed.
+HALF_PIXEL = 0.5
+
 DRAW = re.compile(r"\[dump\] draw (\d+): (.*)")
 GEOM = re.compile(r"geom=\[(-?[\d.]+),(-?[\d.]+) ([\d.]+)x([\d.]+) stride=(\d+) verts=(\d+)")
 FIRST = re.compile(r"v0=\[([^\]]+)\]")
@@ -185,6 +199,8 @@ def main():
         if not geom:
             continue
         x, y, w, h = (float(v) for v in geom.groups()[:4])
+        x += HALF_PIXEL
+        y += HALF_PIXEL
         # The interface lies within the screen; everything else is the world.
         if not (2 < w < args.width + 10 and 2 < h < args.height + 10):
             continue
@@ -222,6 +238,8 @@ def main():
             for quad in quads.group(1).split():
                 screen, _, uv = quad.partition("@")
                 sx, sy, sw, sh = (float(f) for f in screen.split(","))
+                sx += HALF_PIXEL
+                sy += HALF_PIXEL
                 uu, vv, uw, vh = (float(f) for f in uv.split(","))
                 pieces.append((sx + args.width / 2, sy + args.height / 2, sw, sh, uu, vv, uw, vh))
         else:

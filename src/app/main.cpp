@@ -26,6 +26,7 @@
 #include "obf2/font/text.h"
 #include "obf2/hud/bottom_left.h"
 #include "obf2/hud/ingame.h"
+#include "obf2/hud/kit_list.h"
 #include "obf2/hud/map_node.h"
 #include "obf2/meme/graph.h"
 #include "obf2/hud/render.h"
@@ -2828,9 +2829,10 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     //
     // The nodes Kit0..Kit6 in HudElementsSpawn.con show nothing by themselves: each
     // hangs on its own variable, and the contents arrive as variables too —
-    // KitName<N>String (the caption's key) and KitIcon<N>Path (the icon).
-    // The list itself is in `obf2/hud/spawn.h`.
-    const auto& kKits = obf2::hud::spawnKits();
+    // KitName<N>String (the caption's key) and KitIcon<N>Path (the icon). The rows
+    // themselves come from the level and from the kits' templates
+    // (`obf2/hud/kit_list.h`); they are filled in by `applySpawnState` below,
+    // because the list belongs to the side and the side can change.
 
     // --- the spawn screen's backend --------------------------------
     //
@@ -3093,19 +3095,45 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       for (int slot = 0; slot < 7; ++slot) {
         hudVariables["PlayerKitIcon" + std::to_string(slot) + "SelectShow"] = slot == selectedKit;
       }
+
+      // --- the seven kit rows -----------------------------------------
+      //
+      // Everything a row shows the engine pours into these variables every frame
+      // out of the kit's own ObjectTemplate — `HudInformationLayer`, 0x468510
+      // (docs/functions/hud-kits.md). The kit of a row is named by the level:
+      // `gameLogic.setKit <team> <row> <kit> <soldier>`, so the list changes with
+      // the side and is rebuilt here along with the rest of the screen's state.
+      for (int slot = 0; slot < obf2::level::Level::kKitsPerTeam; ++slot) {
+        const std::string index = std::to_string(slot);
+        const std::string& kitName =
+            level ? level->kits[selectedTeam][slot] : std::string{};
+        const obf2::hud::KitRow row = obf2::hud::buildKitRow(registry, kitName);
+        // `Kit<N>Show` is `KitsShow` for every row the kit manager answers for —
+        // the engine writes the layer's own flag into the row's flag at the end of
+        // each pass (0x468510). A row the level named no kit for stays off.
+        hudVariables["Kit" + index + "Show"] = !membersTab && !row.kitTemplate.empty();
+        hudStrings["KitName" + index + "String"] = row.nameKey;
+        hudStrings["KitIcon" + index + "Path"] = row.icon;
+        hudStrings["KitWeaponIcon" + index + "Path"] = row.weaponIcon;
+        hudStrings["KitAltWeaponIcon" + index + "Path"] = row.altWeaponIcon;
+        hudValues["Kit" + index + "SprintAbility"] = row.sprintAbility;
+        // The unlock's picture is shown either way; the arrow says whether the
+        // player owns it, and it is the arrow that swaps the greyed-out picture
+        // and the padlock for the live one. We have no profile and no unlocks, so
+        // the arrow is off — which is what the original drew for the profile the
+        // dump was taken with.
+        hudVariables["KitUnlock" + index + "Show"] = row.unlock;
+        hudVariables["KitUnlockArrow" + index + "Show"] = false;
+        hudValues["Kit" + index + "UnlockBlinkAlpha"] = 0.0f;
+        for (std::size_t icon = 0; icon < obf2::hud::kMaxAbilityIcons; ++icon) {
+          const std::string at = index + "AbilityIcon" + std::to_string(icon);
+          const bool has = icon < row.abilityIcons.size();
+          hudVariables["Kit" + at + "Show"] = has;
+          hudStrings["Kit" + at + "PathString"] = has ? row.abilityIcons[icon] : std::string{};
+        }
+      }
     };
     applySpawnState();
-    for (int slot = 0; slot < static_cast<int>(std::size(kKits)); ++slot) {
-      const std::string index = std::to_string(slot);
-      // Source not found: in the game Kit<N>Show is turned on by the kit logic
-      // according to which kits are available. We turn on all seven. Debt.
-      hudVariables["Kit" + index + "Show"] = true;
-      hudStrings["KitName" + index + "String"] = kKits[slot].nameKey;
-      hudStrings["KitIcon" + index + "Path"] = kKits[slot].icon;
-      hudStrings["KitWeaponIcon" + index + "Path"] =
-          std::string("Ingame/Weapons/Icons/Hud/Selection/") + kKits[slot].weapon;
-      // The chosen one's highlight is set by applySpawnState.
-    }
 
     // The level's map picture is not set by the HUD: BF2.exe has a template for it
     // `Levels/%s/Hud/Minimap/ingameMap.tga`.

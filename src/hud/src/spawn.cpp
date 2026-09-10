@@ -22,21 +22,4 @@ std::string controlPointIcon(std::string_view teamName) {
   return "Ingame/Flags/Icons/Minimap/" + faction + "/miniMap_CP.tga";
 }
 
-const std::vector<KitSlot>& spawnKits() {
-  static const std::vector<KitSlot> kits = {
-      {"HUD_TEXT_MENU_SPAWN_KIT_SPECIALFORCES", "Ingame/Kits/Icons/kit_Specops.tga",
-       "USRIF_M4.tga"},
-      {"HUD_TEXT_MENU_SPAWN_KIT_SNIPER", "Ingame/Kits/Icons/kit_Sniper.tga", "USRIF_M24.tga"},
-      {"HUD_TEXT_MENU_SPAWN_KIT_ASSAULT", "Ingame/Kits/Icons/kit_Light_Assault.tga",
-       "USRIF_M203.tga"},
-      {"HUD_TEXT_MENU_SPAWN_KIT_SUPPORT", "Ingame/Kits/Icons/kit_Heavy_Assault.tga",
-       "USLMG_M249SAW.tga"},
-      {"HUD_TEXT_MENU_SPAWN_KIT_ENGINEER", "Ingame/Kits/Icons/kit_Engineer.tga",
-       "USRIF_Remington11-87.tga"},
-      {"HUD_TEXT_MENU_SPAWN_KIT_MEDIC", "Ingame/Kits/Icons/kit_Medic.tga", "USRIF_M16a2.tga"},
-      {"HUD_TEXT_MENU_SPAWN_KIT_ANTITANK", "Ingame/Kits/Icons/kit_ATAA.tga", "USRIF_MP5_A3.tga"},
-  };
-  return kits;
-}
-
 }  // namespace obf2::hud

@@ -12,7 +12,6 @@
 // same logic lived in two places.
 #include <string>
 #include <string_view>
-#include <vector>
 
 namespace obf2::hud {
 
@@ -34,17 +33,5 @@ std::string teamFlagIcon(std::string_view teamName);
 // `Neutral` (0x925b28) — so an empty name gives exactly that.
 std::string controlPointIcon(std::string_view teamName);
 
-// One kit in the spawn screen's column.
-struct KitSlot {
-  const char* nameKey;  // the caption's localisation key
-  const char* icon;     // the kit's icon
-  const char* weapon;   // the weapon's icon in the panel
-};
-
-// The seven kits in the order the spawn screen shows them.
-// The captions are keys from `HudElementsSpawn.con`; the weapons come from
-// `Kits/*/*.con`, where exactly one template per kit has an icon in
-// `Weapons/Icons/Hud/Selection`.
-const std::vector<KitSlot>& spawnKits();
 
 }  // namespace obf2::hud

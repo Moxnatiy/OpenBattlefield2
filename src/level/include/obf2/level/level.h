@@ -291,6 +291,23 @@ struct Level {
   // Mec, US, Neutral, and the set of team names across all 22 levels is exactly
   // CH, EU, MEC, US. Index 0 is the neutral side.
   std::string teamNames[3];
+
+  // The seven kits of each side, in the order the spawn screen shows them. The
+  // level names them itself:
+  //
+  //   gameLogic.setKit 2 0 "US_Specops" "us_light_soldier"
+  //
+  // — team, row, the kit's ObjectTemplate, the soldier's. The row is the index,
+  // so the order is the level's and not ours; across the game's levels it is
+  // always Specops, Sniper, Assault, Support, Engineer, Medic, AT, the same
+  // order in which `Kits/ai/Objects.ai` creates its seven `kitTemplate`s. The
+  // spawn screen asks for exactly this list — `HudInformationLayer`'s kit rows
+  // walk seven indices and ask the kit manager for (team, index) (`BF2.exe`,
+  // 0x468510, the loop that stops when its running field offset passes 0xe7).
+  static constexpr int kKitsPerTeam = 7;
+  std::string kits[3][kKitsPerTeam];
+  std::string kitSoldiers[3][kKitsPerTeam];
+
   Vec3f beforeSpawnCameraPos;
   Vec3f beforeSpawnCameraRot;
 

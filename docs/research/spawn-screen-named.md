@@ -69,13 +69,18 @@ comes out as a list of names rather than as an argument about a few pixels.
 paired by the art each draws, not by where it lands, so what comes out is a
 list of names.
 
-**Everything that pairs is off by exactly the same half pixel.** The original
-puts its rectangles at 9.5, 25.5, 14.5, 94.5; we put ours at 10, 26, 15, 95 —
-`+0.5, +0.5` on every one of them, the kit backgrounds, the frames, the kit
-icon, all six weapon pictures. That is the pre-transformed vertex's own rule:
-a `XYZRHW` vertex addresses the corner of a pixel, so a picture that is to
-cover pixel 10 starts at 9.5. One offset, applied where our rectangles are
-built, moves the whole interface onto the original's grid.
+**The half pixel everything seemed to be off by was the tool's own.** The dump
+prints the vertices the game handed to Direct3D 9, and D3D9 puts a pixel's
+centre at an integer, so a rectangle covering pixels 10..255 is written
+9.5..255.5. Metal puts the centre at integer + 0.5, so the same rectangle is
+written 10.0..256.0 — and mtld3d's own vertex shader adds that half pixel back
+for pre-transformed geometry (`dxso/ff.rs`, the `XYZRHW` branch: `+ 1.0 / vp.x`,
+`- 1.0 / vp.y`). The original's 9.5 and our 10.0 are the **same pixels**.
+
+An earlier reading of this comparison called it a difference and proposed one
+offset "to move the whole interface onto the original's grid". That offset would
+have moved our interface half a pixel off it. `tools/hud_atlas.py` now adds the
+half pixel itself, and the two sides come out at `+0.0, +0.0`.
 
 **The original draws these and we draw them nowhere.** With the per-quad limit
 raised the same screen comes out as 156 quads, 110 of them named, and the list
@@ -115,10 +120,18 @@ what is in it — `Menu/HUD/HudSetup/SpawnInterface/HudElementsSpawn.con`, the
 | `Kit0AbilityIcon0..4` | 234, 216, 198, 180, 162 at 114, 15x15 | `Kit0AbilityIconNShow`, texture `Kit0AbilityIconNPathString` |
 
 So the secondary weapon, the padlock and the five equipment icons are all
-**there in the data** and we do not draw them because their variables are not
+**there in the data** and we did not draw them because their variables were not
 set: `KitUnlock0Show`, `KitUnlockArrow0Show`, `Kit0AbilityIconNShow` and the
 paths beside them. That is the answer to who governs an element — a variable
 per element, written by the game every frame.
+
+**They are set now.** Who writes them, and out of what, is reversed in
+docs/functions/hud-kits.md (`HudInformationLayer`, 0x468510) and built in
+`src/hud/src/kit_list.cpp`. Laid beside this dump, every rectangle of the left
+column now pairs at `+0.0, +0.0` — the seven backgrounds, the kit icons, the
+seven weapon pictures, the seven unlock pictures, the padlocks, the sprint icons
+and bars, and every equipment icon. What is still missing from that side of the
+screen is only the panel behind it, `GeneralIcons/full.dds`.
 
 An earlier reading of this comparison called the sprint icon and its bar
 surplus on our side. That was wrong, and the fault was the dump's: its per-quad

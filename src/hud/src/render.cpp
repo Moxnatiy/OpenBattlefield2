@@ -211,6 +211,9 @@ ScreenRect nodeRect(const Node& node, const Screen& screen, const Context* conte
 
 namespace {
 
+// See the bar branch below: half a screen pixel, from Direct3D 9's own convention.
+inline constexpr float kBarInset = 0.5f;
+
 std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& font,
                                          const std::string& fontAtlas, const Screen& screen,
                                          const Context& context) {
@@ -228,19 +231,43 @@ std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& fon
     }
     value = value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value);
 
+    // The fill snaps to whole steps of `setBarNodeSnap` HUD units, and
+    // `setBarNodeSnapDir 1` rounds a part-step up. Measured on the kit rows of the
+    // original: a 59-wide bar with a step of 20 has three steps, and the two
+    // values the game's kits produce (0.8 and 0.4) come out as three thirds and
+    // two thirds of the bar. See `Node::barSnap`.
+    if (node.barSnap > 0.0f && node.width > 0.0f) {
+      const float steps = std::ceil(node.width / node.barSnap);
+      if (steps >= 1.0f) {
+        const float filled = node.barSnapDir == 1 ? std::ceil(value * steps)
+                                                  : std::floor(value * steps);
+        value = filled / steps;
+      }
+    }
+
     const std::string& texture = node.barTextureFull.empty() ? node.texture : node.barTextureFull;
     if (!texture.empty() && value > 0.0f) {
-      // Direction 3 in the data means a bar that grows right to left (the right
-      // half of the screen is the enemy team).
+      // The fill grows from the left, and it clips the picture with it: in the
+      // frame dump of the original the kit's sprint bar starts at the node's left
+      // edge and takes the leftmost 39 of the picture's 59 columns
+      // (docs/research/spawn-screen-named.md). That bar is `createBarNode ... 3`,
+      // so the number after the node's name is not the direction of growth —
+      // what it is has not been established, and there is no dump of the battle
+      // HUD to measure the map's `flags_Captured_Right.tga` bars against.
+      // A bar sits half a pixel inside its own rectangle. Every other node of the
+      // original carries Direct3D 9's half-pixel adjustment in its vertices — a
+      // picture at 190 is written 189.5 — and a bar's vertices do not, so the
+      // fill ends where the rectangle ends but starts half a pixel further in.
+      // Measured on the kit rows at 800x600: the faded backing comes out
+      // 190.0,101.0 59x5 and the bar over it 190.5,101.5 58.5x4.5. It is a screen
+      // pixel and not a HUD unit, because the adjustment it comes from is one;
+      // there is only the one dump, so that has not been checked at a second size.
       ScreenRect part = rect;
-      float uMin = 0.0f, uMax = value;
-      if (node.barDirection == 3) {
-        part.x = rect.x + rect.width * (1.0f - value);
-        uMin = 1.0f - value;
-        uMax = 1.0f;
-      }
-      part.width = rect.width * value;
-      pieces.push_back(DrawPiece{quad(part, screen, texture, uMin, uMax), texture, &node, node.color});
+      part.x += kBarInset;
+      part.y += kBarInset;
+      part.height -= kBarInset;
+      part.width = (rect.width - kBarInset) * value;
+      pieces.push_back(DrawPiece{quad(part, screen, texture, 0.0f, value), texture, &node, node.color});
     }
     return pieces;
   }

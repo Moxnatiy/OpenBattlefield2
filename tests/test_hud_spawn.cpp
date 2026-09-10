@@ -52,24 +52,9 @@ static void testDalianOrder() {
   CHECK_EQ(hud::armyLabelKey(teamNames[1]), std::string("HUD_TEXT_MENU_SPAWN_ARMY_CHINA"));
 }
 
-// Seven kits in the screen's order, each with all three fields.
-static void testKitList() {
-  CHECK_EQ(hud::spawnKits().size(), std::size_t(7));
-  CHECK_EQ(std::string(hud::spawnKits().front().nameKey),
-           std::string("HUD_TEXT_MENU_SPAWN_KIT_SPECIALFORCES"));
-  CHECK_EQ(std::string(hud::spawnKits().back().nameKey),
-           std::string("HUD_TEXT_MENU_SPAWN_KIT_ANTITANK"));
-  for (const hud::KitSlot& kit : hud::spawnKits()) {
-    CHECK(kit.nameKey != nullptr && *kit.nameKey != '\0');
-    CHECK(kit.icon != nullptr && *kit.icon != '\0');
-    CHECK(kit.weapon != nullptr && *kit.weapon != '\0');
-  }
-}
-
 TEST_MAIN({
   testArmyLabelKeys();
   testTeamFlagIcon();
   testControlPointIcon();
   testDalianOrder();
-  testKitList();
 })

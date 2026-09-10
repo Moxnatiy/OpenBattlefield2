@@ -143,9 +143,14 @@ struct Node {
 
   std::string altCommand;      // setButtonNodeAltConCmd — the right button's action
   std::string valueVariable;   // setBarNodeValueVariable — the bar's fill
-  // A bar has an extra parameter of its own before the rectangle — the growth
-  // direction — and two textures: empty (0) and full (1).
-  int barDirection = 0;
+  // A bar has an extra number of its own before the rectangle, and two textures:
+  // empty (0) and full (1). What the number means is **not established**. It was
+  // read as the growth direction until the frame dump said otherwise: the kit's
+  // sprint bar is a `3` and it grows from the left like a `2`. The data pairs it
+  // with the artwork — the map's `EnemyCPs` is a `3` with
+  // `flags_Captured_Right.tga` and a mirrored `setBarNodeBorder` — but there is no
+  // dump of the battle HUD to check that against, so nothing is read out of it.
+  int barKind = 0;
   std::string barTextureEmpty;
   std::string barTextureFull;
   // `setNodePosVariable <axis> <variable>`: **the first argument is the axis**
@@ -170,7 +175,15 @@ struct Node {
   std::string font;              // setListNodeFont / setTextNodeFont
   Color borderColor;             // setPictureNodeBorderColor
   float borderSize = 0.0f;       // setCompassNodeBorder / setBarNodeBorder
-  bool snap = false;             // setBarNodeSnap
+  // setBarNodeSnap — the width of one step of a bar's fill, in HUD units, not a
+  // flag. The data uses three values: 1 (24 bars), 4 (24) and 20 (the seven kit
+  // rows). A bar 59 wide with a step of 20 therefore has three steps, and that is
+  // what the original draws: on Strike at Karkand the sprint bar of a kit whose
+  // `sprintStaminaDissipationFactor` is 0.2 comes out 58.5 px wide and of one
+  // whose factor is 0.6 comes out 39.0 — exactly two thirds (the frame dump,
+  // docs/research/spawn-screen-named.md). Snapping to twentieths is ruled out by
+  // the same measurement: 39/58.5 is not a multiple of 1/20.
+  float barSnap = 0.0f;          // setBarNodeSnap
   // The objects a marker points at, and its caption node.
   std::vector<std::string> markerObjects;
   std::string lockTextNode;

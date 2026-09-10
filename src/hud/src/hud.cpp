@@ -12,8 +12,8 @@ bool readRect(const con::Command& command, Node& node, int skip = 0) {
   if (command.args.size() < 2) return false;
   node.group = command.args[0];
   node.name = command.args[1];
-  // A bar has one more argument before the rectangle — the growth direction —
-  // so the coordinates are shifted by one position.
+  // A bar has one more argument before the rectangle — a number whose meaning is
+  // not established (`Node::barKind`) — so the coordinates are shifted by one.
   node.x = command.argFloat(2 + skip).value_or(0.0f);
   node.y = command.argFloat(3 + skip).value_or(0.0f);
   node.width = command.argFloat(4 + skip).value_or(0.0f);
@@ -155,7 +155,7 @@ void Builder::feed(const con::Command& command) {
   // game's data (tools/hud_audit.py):
   //
   //   createPictureNode  <group> <name> <x> <y> <w> <h>
-  //   createBarNode      <group> <name> <direction> <x> <y> <w> <h>
+  //   createBarNode      <group> <name> <kind> <x> <y> <w> <h>
   //   createCompassNode  <group> <name> <kind> <x> <y> <w> <h> <flag> <flag>
   //   createOccupiedNode <group> <name> <?> <x> <y> <w> <h>
   //   createSliderNode   <group> <name> <min> <max> <value> <step>   — no rectangle
@@ -175,7 +175,7 @@ void Builder::feed(const con::Command& command) {
     const bool shifted = type == NodeType::Bar || type == NodeType::Compass ||
                          type == NodeType::Occupied;
     const int skip = shifted ? 1 : 0;
-    if (type == NodeType::Bar) node.barDirection = command.argInt(2).value_or(0);
+    if (type == NodeType::Bar) node.barKind = command.argInt(2).value_or(0);
     // createListNode <parent> <name> <x> <y> <w> <h> <row height> <?>
     if (type == NodeType::List) node.listRowHeight = command.argFloat(6).value_or(0.0f);
     // A slider and the map carry no rectangle: a slider has its bounds and step there.
@@ -703,7 +703,7 @@ void Builder::feed(const con::Command& command) {
     return;
   }
   if (method == "setbarnodesnap") {
-    node->snap = command.argBool(0).value_or(false);
+    node->barSnap = command.argFloat(0).value_or(0.0f);
     return;
   }
   if (method == "setlistnodefont" || method == "settextnodefont" ||
