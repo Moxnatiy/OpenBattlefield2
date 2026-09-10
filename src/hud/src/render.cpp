@@ -214,6 +214,18 @@ namespace {
 // See the bar branch below: half a screen pixel, from Direct3D 9's own convention.
 inline constexpr float kBarInset = 0.5f;
 
+// The square map's own frame. Measured on the original's spawn screen: the map's
+// draw call carries three strips of `full.dds` — 446.9x4 along the top of the
+// node, 4x508 down its right and 442.9x4 along its bottom — and the call's tint
+// is 0.48/0.47/0.39 at full alpha. Neither the thickness nor the colour is in the
+// game's data; the map node is created with no border command at all.
+inline constexpr float kMapFrameThickness = 4.0f;
+inline constexpr Color kMapFrameColor{0.48f, 0.47f, 0.39f, 1.0f};
+// `full.tga` is the game's solid fill: a picture the interface stretches wherever
+// it wants a plain rectangle. It is what the map's frame is made of, and what the
+// spawn screen's invisible rectangles are made of too.
+inline constexpr std::string_view kSolidFill = "Ingame/GeneralIcons/full.tga";
+
 std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& font,
                                          const std::string& fontAtlas, const Screen& screen,
                                          const Context& context) {
@@ -322,6 +334,53 @@ std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& fon
               ? disc(rect, screen, context.mapTexture, u0, v0, u1, v1)
               : quad(view, screen, context.mapTexture, u0, u1, v0, v1);
       pieces.push_back(DrawPiece{std::move(geometry), context.mapTexture, &node, node.color});
+
+      // The square map draws its own frame, and the frame is the engine's, not the
+      // data's: `createMapNode` in `HudElementsMap.con` sets no border of any kind,
+      // and the strips arrive inside the map's own draw call. In the dump of the
+      // original they are `full.dds` — the game's solid fill — four units thick
+      // along the top, the right and the bottom of the node's rectangle, in the
+      // colour that call is tinted with. The left one is missing there because the
+      // whole node was cut on the left; drawing all four and letting the cut take
+      // the left one is the same thing.
+      //
+      // Only the square map. The round one in combat has a frame of its own in the
+      // data (`MapFrame`), and there is no dump of the battle HUD to check whether
+      // the engine adds these strips there too.
+      if (node.mapView != MapView::Mini) {
+        const float thickness = kMapFrameThickness * (static_cast<float>(screen.height) /
+                                                      kReferenceHeight);
+        const std::string fill(kSolidFill);
+        const float top = rect.y;
+        const float bottom = rect.y + rect.height;
+        const float left = rect.x;
+        const float right = rect.x + rect.width;
+        // The strips sit on the **node's** rectangle, not on the cut one: the top
+        // runs the whole width, the right and the left between the top and the
+        // bottom, the bottom between the two sides. That is how the original's
+        // three come out — its right strip starts at 31 and ends at 539, its
+        // bottom stops at 786 where the right one begins.
+        const ScreenRect strips[4] = {
+            {left, top, rect.width, thickness},
+            {left + thickness, bottom - thickness, rect.width - 2.0f * thickness, thickness},
+            {right - thickness, top + thickness, thickness, rect.height - thickness},
+            {left, top + thickness, thickness, rect.height - thickness},
+        };
+        // What the cut took off the map it takes off the frame too. That is why the
+        // original's spawn screen has no left strip on Karkand: it lies at 278,
+        // inside the 64 pixels the cut removed.
+        const float visibleLeft = view.x - kBarInset;
+        const float visibleRight = visibleLeft + view.width;
+        for (const ScreenRect& strip : strips) {
+          ScreenRect cut = strip;
+          const float x0 = std::max(cut.x, visibleLeft);
+          const float x1 = std::min(cut.x + cut.width, visibleRight);
+          cut.x = x0;
+          cut.width = x1 - x0;
+          if (cut.width <= 0.0f || cut.height <= 0.0f) continue;
+          pieces.push_back(DrawPiece{quad(cut, screen, fill), fill, &node, kMapFrameColor});
+        }
+      }
     }
 
     // The capture points' markers. The data has no separate nodes for them — the
