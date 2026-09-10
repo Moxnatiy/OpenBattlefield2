@@ -15,7 +15,7 @@ rather than guesses.
 
 | where | size | the art |
 |---|---|---|
-| -0.5, 4.5 | 505x600 | `Ingame/GeneralIcons/full.dds` — the panel behind everything |
+| 0.0, 5.0 | 505x600 | `Ingame/GeneralIcons/full.dds` at **alpha 0** — a rectangle that draws nothing |
 | 9.5, 25.5 | 246x50 | `Ingame/Respawn/team1_kit.tga` — the header of the kit list |
 | 15.5, 30.5 | 18x12 | `Ingame/Flags/Icons/Hud/Score/US/scoreBoard_Flag.tga` |
 | 103.5, 31.5 | 18x12 | `Ingame/Flags/Icons/Hud/Score/Mec/scoreBoard_Flag.tga` |
@@ -88,7 +88,7 @@ is no longer about a few pixels:
 
 | where | size | the art | in the left panel |
 |---|---|---|---|
-| -0.5, 4.5 | 505x600 | `GeneralIcons/full.dds` | the panel behind everything |
+| 0.0, 5.0 | 505x600 | `GeneralIcons/full.dds` | **alpha 0** — it draws nothing |
 | 15.5, 30.5 | 18x12 | `Score/US/scoreBoard_Flag.tga` | the header's flags |
 | 103.5, 31.5 | 18x12 | `Score/Mec/scoreBoard_Flag.tga` | |
 | 173.5, 76.5 + 66n | 58x17 | seven `*_mini.tga` | each kit's **secondary** weapon |
@@ -130,11 +130,41 @@ docs/functions/hud-kits.md (`HudInformationLayer`, 0x468510) and built in
 `src/hud/src/kit_list.cpp`. Laid beside this dump, every rectangle of the left
 column now pairs at `+0.0, +0.0` — the seven backgrounds, the kit icons, the
 seven weapon pictures, the seven unlock pictures, the padlocks, the sprint icons
-and bars, and every equipment icon. What is still missing from that side of the
-screen is only the panel behind it, `GeneralIcons/full.dds`.
+and bars, and every equipment icon. Nothing visible is left missing on that side
+of the screen.
+
+The one entry still in the missing list there, `GeneralIcons/full.dds` 505x600,
+is drawn with the tint `1.00/0.00/0.00/0.00` — **alpha zero**. `full.dds` is the
+game's solid fill, and the interface uses it wherever it wants a plain rectangle;
+this one is invisible. An earlier reading of this table called it "the panel
+behind everything" because the dump named the picture and the size and the table
+did not carry the tint. It does now.
 
 An earlier reading of this comparison called the sprint icon and its bar
 surplus on our side. That was wrong, and the fault was the dump's: its per-quad
 list stopped at sixteen rectangles, and a kit row is eighteen — so the whole
 row came through as one bounding box and its small pieces were never listed.
 The limit is now 128 rectangles.
+
+## What is still missing, measured
+
+Everything below is from the same dump and is still absent on our side. The left
+column is done; the rest of the screen is the map and what stands on it.
+
+| the art | where | what it is |
+|---|---|---|
+| the map's own picture | 342.6, 27.5 447.9x512, `TextureId(671)` DXT1 512x512, uv 0..0.6154 by 0.1817..0.7035 | the level's `ingameMap`, cropped — **our crop and our rectangle differ**, and the difference shows as a smear down the map's left edge |
+| a 512x512 A8R8G8B8 target | 278.0, 27.0 511.5x511.5, alpha 0.8, drawn over the picture | what it holds is not established |
+| the map's frame | three `full.dds` strips — 446.9x4 at the top, 4x508 at the right, 442.9x4 at the bottom | tint 0.48/0.47/0.39 |
+| `minimap_cpbase` | 575.5, 428.5 32x32 | the side's base; a different icon from a capture point's |
+| `mini_jeep`, `mini_tank`, `mini_apc`, `mini_smgsmall`, `mini_armourdefsmall` | 16x16 over the map | the level's vehicles and spawners |
+| `radar`, `bridge`, `airdef`, `uavtrailer` | 19x19 over the map | the level's assets |
+| `spawn_unselected` | 521.5, 356.5 82x4 and 521.5, 360.5 16x16 | a spawn point with a plate under it |
+| `pointerMinimap.tga` | 25x25 wherever the mouse is | the cursor, which we do not draw at all |
+| `GeneralIcons/empty.dds` | 9.5, 26.5 170x25 | the tab strip's click area; ours is two of 85 |
+
+The map is the large one of these. Ours stretches the level picture across the
+whole 512x512 node with a crop computed from the combat area; the original draws
+a narrower rectangle, 447.9 wide, at the node's right, with a crop that starts at
+u 0. The rule behind that is **not measured**: the crop we do have was fitted on
+Dalian Plant, and Karkand does not follow it.
