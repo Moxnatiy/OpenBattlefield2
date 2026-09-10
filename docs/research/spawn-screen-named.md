@@ -77,27 +77,51 @@ a `XYZRHW` vertex addresses the corner of a pixel, so a picture that is to
 cover pixel 10 starts at 9.5. One offset, applied where our rectangles are
 built, moves the whole interface onto the original's grid.
 
-**The original draws these and we draw them nowhere:**
+**The original draws these and we draw them nowhere.** With the per-quad limit
+raised the same screen comes out as 156 quads, 110 of them named, and the list
+is no longer about a few pixels:
 
-| where | size | the art |
+| where | size | the art | in the left panel |
+|---|---|---|---|
+| -0.5, 4.5 | 505x600 | `GeneralIcons/full.dds` | the panel behind everything |
+| 15.5, 30.5 | 18x12 | `Score/US/scoreBoard_Flag.tga` | the header's flags |
+| 103.5, 31.5 | 18x12 | `Score/Mec/scoreBoard_Flag.tga` | |
+| 173.5, 76.5 + 66n | 58x17 | seven `*_mini.tga` | each kit's **secondary** weapon |
+| 233.5, 77.5 + 66n | 15x15 | `Respawn/lockicon.tga` and `iconframe.tga` | the padlock on a locked kit |
+| 233.5 / 215.5, 113.5 + 66n | 15x15 | `handgrenade`, `c4`, `claymore`, `kevlarvest`, `smokegrenade` | what the kit carries |
+| 9.5, 26.5 | 170x25 | `GeneralIcons/empty.dds` | the tab strip's click area; ours is 85 wide |
+| 589.0, 525.8 | 25x25 | `GeneralIcons/pointerMinimap.tga` | |
+
+And on the map, which we draw bare: `minimap_cpbase`, `mini_jeep`, `mini_tank`,
+`mini_apc`, `mini_smgsmall`, `mini_armourdefsmall`, `radar`, `bridge`,
+`airdef`, `uavtrailer` — the assets and vehicles of the level, each 16x16 or
+19x19 over the map.
+
+**A kit row is more than we build**, and the level's own data says exactly
+what is in it — `Menu/HUD/HudSetup/SpawnInterface/HudElementsSpawn.con`, the
+`Kit0Info` group:
+
+| node | where | what shows it |
 |---|---|---|
-| -0.5, 4.5 | 505x600 | `GeneralIcons/full.dds` — the panel behind the screen |
-| 9.5, 25.5 | 246x50 | `Respawn/team1_kit.tga` — ours draws `team2_kit`, which is the team the server gave us and not a fault |
-| 15.5, 30.5 | 18x12 | `Flags/.../Score/US/scoreBoard_Flag.tga` |
-| 103.5, 31.5 | 18x12 | `Flags/.../Score/Mec/scoreBoard_Flag.tga` |
-| 173.5, 76.5 … 472.5 | 58x17 | seven `*_mini.tga` — every kit row's **secondary** weapon |
-| 589.0, 525.8 | 25x25 | `GeneralIcons/pointerMinimap.tga` |
-| 9.5, 26.5 | 170x25 | `GeneralIcons/empty.dds` — the tab strip's click area is 170 wide; ours is 85 |
+| `Kit0BackgroundIcon` | 10 73 246 69 | always |
+| `Kit0KitSquare` / `Kit0MiniIcon` | 15 78 15x15 | `NOT PlayerKitIcon0SelectShow` |
+| `Kit0KitSquareSelected` / `Kit0MiniIconSelected` / `Kit0SelectIcon` | the same place | `PlayerKitIcon0SelectShow` |
+| `Kit0WeaponIcon` | 15 95 150 44 | texture from `KitWeaponIcon0Path` |
+| `Kit0AltWeaponIcon` | 174 77 58 17 | `KitUnlock0Show` **and** `KitUnlockArrow0Show`, texture `KitAltWeaponIcon0Path` |
+| `Kit0LockAltWeaponIcon` | 174 77 58 17 | `KitUnlock0Show` and **NOT** `KitUnlockArrow0Show` |
+| `Kit0LockSquare` + `Kit0Lock` | 234 78 15x15 | the same pair — `iconframe.tga` and `lockicon.tga` |
+| `Kit0SprintAbilityIcon` | 177 101 13 5 | always |
+| `Kit0SprintAbilityFaded` + the bar `Kit0SprintAbility` | 190 101 59 5 | the bar's value is `Kit0SprintAbility`, snap 20 |
+| `Kit0AbilityIcon0..4` | 234, 216, 198, 180, 162 at 114, 15x15 | `Kit0AbilityIconNShow`, texture `Kit0AbilityIconNPathString` |
 
-**We draw these and the original's dump has nothing at those places:**
+So the secondary weapon, the padlock and the five equipment icons are all
+**there in the data** and we do not draw them because their variables are not
+set: `KitUnlock0Show`, `KitUnlockArrow0Show`, `Kit0AbilityIconNShow` and the
+paths beside them. That is the answer to who governs an element — a variable
+per element, written by the game every frame.
 
-* `Player/Icons/Hud/sprintIcon.tga` 13x5 at x=177 and
-  `Respawn/sprintAbilityBar_full.tga` 59x5 at x=190 — in **every** kit row,
-  fourteen rectangles. The original's frame has no call anywhere near them.
-* `Respawn/kit_selected.tga` over the whole 246x69 of row 0. The original
-  draws its selection as **246x64 at y=77.5** — a different rectangle, and the
-  atlas lookup refuses to name it for exactly that reason.
-
-The kit rows 1..6 look unpaired too, but that is the dump's grain rather than a
-difference: the original batches two rows into one 246x130 call, so its
-per-quad list has one rectangle where ours has two.
+An earlier reading of this comparison called the sprint icon and its bar
+surplus on our side. That was wrong, and the fault was the dump's: its per-quad
+list stopped at sixteen rectangles, and a kit row is eighteen — so the whole
+row came through as one bounding box and its small pieces were never listed.
+The limit is now 128 rectangles.
