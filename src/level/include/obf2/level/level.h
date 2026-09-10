@@ -39,7 +39,27 @@ struct TerrainInfo {
   std::string colormapBase;
   std::string lightmapBase;
   std::string detailmapBase;
+  std::string lowDetailmapBase;
   float seaLevel = 0.0f;
+
+  // The rest of the `terrain.*` block of Terrain.con. All of it, because it is
+  // one block and going back for a field at a time is what rule 3 is about.
+  //
+  // The sizes are the tiles' own, in texels; the tilings say how many times the
+  // level's single low-detail texture repeats over one patch. The engine hands
+  // the three of them to the shader as one vector
+  // (`RendDX9.dll`, 0x100d9c30, the FARTEXTILING push):
+  //
+  //   vFarTexTiling = (farSideTiling.x, farSideTiling.y, farTopTiling, farYOffset)
+  //
+  // and the top tiling has two values, of which the video setting picks one.
+  int patchColormapSize = 512;
+  int lowDetailmapSize = 512;
+  float farSideTiling[2]{5.0f, 5.0f};  // the two side planes
+  float farTopTilingHi = 24.0f;      // the top plane, high terrain quality
+  float farTopTilingLow = 4.0f;      // the same at low quality
+  float farYOffset = 0.0f;           // slides the side planes up the texture
+  Vec3f subdivideScale{2.0f, 1.0f, 2.0f};  // terrain.primaryWorldScale, kept whole
   Vec3f waterColor{0.10f, 0.13f, 0.16f};  // renderer.waterColor from Water.con
 
   // Fog. `Renderer.fogColor` is 0..255, not 0..1, and
@@ -283,8 +303,22 @@ struct TerrainPatch {
   mesh::RenderMesh geometry;
   std::string colormap;  // the path to this patch's .dds
   std::string lightmap;  // the same patch's baked lighting, if present
-  std::string detailmap; // detail: fine structure seen close up
+  // How much of the level's low-detail texture shows through here — the game
+  // calls it `lowComponent` and samples it with the patch's own UV
+  // (`Shaders_client.zip:TerrainShader_Shared.fx:177`, sampler5Clamp). Red is
+  // the top plane's share and blue the mountain sides'.
+  std::string lowDetailmap;
+  // `Detailmaps/txCCxRR_1.dds`: which terrain material owns which texel. Read
+  // but not used — it needs the material system, which needs `terraindata.raw`.
+  std::string detailmap;
 };
+
+// The one texture every patch tiles for its close-up structure, and where it
+// comes from: `Levels/<name>/lowdetailtexture.dds`, with the game's own
+// fallback when a level ships none (`RendDX9.dll`, 0x1010b380, which builds the
+// name as `GLGameLevelPath + "/lowDetailTexture.dds"` and falls back to
+// `common/terrain/textures/Default.dds`).
+std::string lowDetailTexturePath(const Level& level, const FileSystem& files);
 
 // Patches with no colour map in the game are entirely under water — the game
 // does not draw them either. So they are skipped, and the water plane covers the sea.

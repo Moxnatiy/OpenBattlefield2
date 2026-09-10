@@ -586,3 +586,66 @@ vec4 t1 = tex2D(sampler1, indata.Tex1*0.1);
 The editor's `Road.fx` does not. A level ships compiled roads
 (`Roads/*_compiled.mesh`), so the tenth applies: without it the asphalt
 under the markings is a stripe pattern instead of a surface.
+
+## The ground's structure: one texture, tiled from three directions
+
+A colour map holds about two texels to the metre, so on its own the ground
+is a blur from standing height. The game fixes that with one texture per
+level — `Levels/<name>/lowdetailtexture.dds` — tiled over the terrain from
+three directions and mixed by the surface's normal.
+
+The coordinates come out of the vertex shader
+(`Shaders_client.zip:TerrainShader_Shared.fx:244`, and the same lines in
+`TerrainShader_Hi.fx:154`):
+
+```hlsl
+vec3 tex = vec3(indata.Pos0.y * vTexScale.z, wPos.y * vTexScale.y, indata.Pos0.x * vTexScale.x);
+vec2 xPlaneTexCord = tex.xy;
+vec2 yPlaneTexCord = tex.zx;
+vec2 zPlaneTexCord = tex.zy;
+
+outdata.Tex0b = yPlaneTexCord * vFarTexTiling.z;
+outdata.Tex2a = xPlaneTexCord.xy * vFarTexTiling.xy;   outdata.Tex2a.y += vFarTexTiling.w;
+outdata.Tex2b = zPlaneTexCord.xy * vFarTexTiling.xy;   outdata.Tex2b.y += vFarTexTiling.w;
+outdata.BlendValueAndWater.xyz = saturate(abs(indata.Normal) - vBlendMod);
+```
+
+and the mixing out of the pixel shader (`TerrainShader_Shared.fx:177`):
+
+```hlsl
+scalar mounten = (xplaneLowDetailmap.y * BlendValue.x) +
+                 (yplaneLowDetailmap.x * BlendValue.y) +
+                 (zplaneLowDetailmap.y * BlendValue.z);
+vec4 outColor = colormap * light * 2 * lerp(0.5, yplaneLowDetailmap.z, lowComponent.x)
+                                     * lerp(0.5, mounten, lowComponent.z);
+return lerp(outColor*4, terrainWaterColor, BlendValueAndWater.w);
+```
+
+Three channels of **one** image: `.z` of the top plane, `.y` of the sides,
+`.x` of the top for the mountain mix. `lowComponent` is the patch's own
+`LowDetailmaps/txCCxRR.dds` and says how much of it shows — red for the
+top, blue for the mountain sides. With both at zero the whole thing is
+`4 · 0.5 · 0.5 = 1` and the ground is the colour map alone.
+
+`yPlaneTexCord` is the patch's own UV in [0,1]: the line above it builds
+the colour map's coordinates out of the same pair, and a colour map covers
+exactly one patch.
+
+Where the four constants come from:
+
+| constant | value | source |
+|---|---|---|
+| `vFarTexTiling.xy` | `terrain.farSideTiling` (5/5 on Karkand) | Terrain.con |
+| `vFarTexTiling.z` | `terrain.farTopTilingHi` (24) or `farTopTilingLow` (4) | Terrain.con; the video setting picks, and `RendDX9.dll` 0x100d9c30 reads the field at `+0x330` or `+0x32c` by a flag at `+0x35e` |
+| `vFarTexTiling.w` | `terrain.farYOffset` (0) | Terrain.con |
+| `vTexScale.y` | **-0.00615148** | a constant in the engine, `RendDX9.dll` 0x100d9c30: TEXSCALE is pushed as `(255/n, -0.00615148, 255/n, 0)` |
+| `vBlendMod` | `float3(0.2, 0.5, 0.2)` | the shader's own default, `TerrainShader.fx:75` — no `BLENDMOD` string exists in `RendDX9.dll`, so nothing overwrites it |
+| `vDetailTex` | `((n-1)/n, 1/(2n))` | `RendDX9.dll` 0x100d9c30 — the half-texel correction for a per-patch map of `n` texels (`terrain.lowDetailmapSize`, 512) |
+
+**Done.** `MeshRenderer::setTerrainDetail` takes the level's texture and its
+tilings; the patch's `lowComponent` rides in the range's third slot, where
+the chart map used to sit unused.
+
+**Not done.** The *near* detail — `dsampler3Wrap` in `Hi_PS_FullDetail` — is
+a texture per terrain material, and the materials live in `terraindata.raw`
+(docs/research/12-renddx9.md). That is the last piece of the ground.

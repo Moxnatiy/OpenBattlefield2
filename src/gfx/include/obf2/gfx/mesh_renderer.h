@@ -126,6 +126,21 @@ class MeshRenderer {
   // How many times the detail texture repeats over a terrain patch.
   void setDetailTiling(float tiles) { detailTiling_ = tiles; }
 
+  // The ground's own structure. The colour map has about two texels to the
+  // metre, so the game tiles one texture per level over the terrain from three
+  // directions — `Levels/<name>/lowdetailtexture.dds`
+  // (`Shaders_client.zip:TerrainShader_Shared.fx:244`). Every patch also
+  // carries a map of how much of it shows where, and that one rides in the
+  // range's third slot.
+  //
+  // `sideTiling` and `topTiling` are `terrain.farSideTiling` and
+  // `farTopTilingHi` from Terrain.con, `yOffset` is `terrain.farYOffset`, and
+  // `componentSize` is `terrain.lowDetailmapSize` — the per-patch map's own
+  // size, which the half-texel correction needs. A null texture leaves the
+  // ground as the colour map alone.
+  void setTerrainDetail(SDL_GPUTexture* lowDetail, const float sideTiling[2], float topTiling,
+                        float yOffset, int componentSize);
+
   // The two colours the terrain's baked light map is multiplied by, as the
   // level's Sky.con writes them: `terrain.sunColor` and `terrain.GIColor`.
   //
@@ -205,6 +220,9 @@ class MeshRenderer {
   Vec3f sunDirection_{-0.26f, -0.80f, -0.54f};
   Color pointColor_{0.0f, 0.0f, 0.0f, 1.0f};
   float detailTiling_ = 16.0f;
+  SDL_GPUTexture* terrainDetail_ = nullptr;  // owned by the caller's upload, not by us
+  float terrainTiling_[4]{5.0f, 5.0f, 24.0f, 0.0f};
+  float terrainDetailUv_[2]{1.0f, 0.0f};
   int drawn_ = 0;
   int culled_ = 0;
 };

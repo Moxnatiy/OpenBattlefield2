@@ -301,6 +301,40 @@ class LevelBuilder {
       level_.terrain.detailmapBase = std::string(command.argStr(0));
       return;
     }
+    if (path == "terrain.lowdetailmapbasename") {
+      level_.terrain.lowDetailmapBase = std::string(command.argStr(0));
+      return;
+    }
+    if (path == "terrain.patchcolormapsize") {
+      level_.terrain.patchColormapSize = command.argInt(0).value_or(512);
+      return;
+    }
+    if (path == "terrain.lowdetailmapsize") {
+      level_.terrain.lowDetailmapSize = command.argInt(0).value_or(512);
+      return;
+    }
+    if (path == "terrain.farsidetiling") {
+      parseSlashList(command.argStr(0), level_.terrain.farSideTiling, 2);
+      return;
+    }
+    if (path == "terrain.fartoptilinghi") {
+      level_.terrain.farTopTilingHi = command.argFloat(0).value_or(24.0f);
+      return;
+    }
+    if (path == "terrain.fartoptilinglow") {
+      level_.terrain.farTopTilingLow = command.argFloat(0).value_or(4.0f);
+      return;
+    }
+    if (path == "terrain.faryoffset") {
+      level_.terrain.farYOffset = command.argFloat(0).value_or(0.0f);
+      return;
+    }
+    if (path == "terrain.primaryworldscale") {
+      if (const auto scale = command.argVec3(0)) {
+        level_.terrain.subdivideScale = Vec3f{scale->x, scale->y, scale->z};
+      }
+      return;
+    }
 
     // --- Water.con ---
     if (path == "renderer.watercolor") {
@@ -618,6 +652,19 @@ std::optional<mesh::RenderMesh> loadRoadMesh(std::span<const std::byte> bytes,
   return out;
 }
 
+std::string lowDetailTexturePath(const Level& level, const FileSystem& files) {
+  // The engine builds the name from the level's own directory and falls back to
+  // one texture shipped with the game (`RendDX9.dll`, 0x1010b380):
+  //
+  //   GLGameLevelPath + "/lowDetailTexture.dds"
+  //   "common/terrain/textures/Default.dds"    when the level has none
+  const std::string own = "Levels/" + level.name + "/lowdetailtexture.dds";
+  if (files.exists(own)) return own;
+  const std::string fallback = "common/terrain/textures/Default.dds";
+  if (files.exists(fallback)) return fallback;
+  return {};
+}
+
 std::vector<TerrainPatch> buildTerrainPatches(const Level& level, const FileSystem& files) {
   std::vector<TerrainPatch> patches;
   const int size = level.primary.size;
@@ -697,8 +744,17 @@ std::vector<TerrainPatch> buildTerrainPatches(const Level& level, const FileSyst
         if (files.exists(candidate)) patch.lightmap = candidate;
       }
 
-      // The detail map: the colour map has only ~2 texels per metre, so close up
-      // the terrain looks blurred without it.
+      // How much of the level's low-detail texture shows through on this patch.
+      // The colour map has only ~2 texels per metre, so without the tiling
+      // texture the ground is a blur close up; this map says where it shows.
+      if (!level.terrain.lowDetailmapBase.empty()) {
+        const std::string candidate = level.terrain.lowDetailmapBase + name;
+        if (files.exists(candidate)) patch.lowDetailmap = candidate;
+      }
+
+      // The chart map: which terrain material owns which texel. Read and not
+      // used — the near detail textures it selects come with the material
+      // system, which lives in `terraindata.raw`.
       if (!level.terrain.detailmapBase.empty()) {
         char detailName[64];
         std::snprintf(detailName, sizeof(detailName), "%02dx%02d_1.dds", column, row);
@@ -714,7 +770,10 @@ std::vector<TerrainPatch> buildTerrainPatches(const Level& level, const FileSyst
         range.maps.push_back(patch.lightmap);
         range.lightmapInSecondSlot = true;
       }
-      if (!patch.detailmap.empty()) range.maps.push_back(patch.detailmap);
+      // The third slot is the patch's `lowComponent`: the renderer needs it in
+      // the same draw call as the colour map, and the level's low-detail
+      // texture is one for the whole terrain and goes to the renderer directly.
+      if (!patch.lowDetailmap.empty()) range.maps.push_back(patch.lowDetailmap);
       patch.geometry.ranges.push_back(std::move(range));
 
       patches.push_back(std::move(patch));

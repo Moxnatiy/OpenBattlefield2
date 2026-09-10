@@ -56,6 +56,11 @@ struct VertexOut {
     float4 lightmapOffset;
     float4 fogShape;
     float4 roadParams;
+    float4 terrainTiling;
+    float4 terrainDetail;
+    // The vertex's own height. The terrain stands in world coordinates with no
+    // transform, so this is the world Y the side planes are textured by.
+    float localY;
 };
 
 struct Uniforms {
@@ -94,6 +99,19 @@ struct Uniforms {
     // clip position (`Shaders_client.zip:RoadCompiled.fx:127`) — and a fragment
     // shader in Metal is handed that position in pixels, not normalised.
     float4 roadParams;
+    // How many times the level's low-detail texture repeats over one patch:
+    // xy on the two side planes, z on the top, w slides the sides up the
+    // texture. The engine pushes exactly this vector
+    // (`Shaders_client.zip:TerrainShader.fx:67`, FARTEXTILING; the values are
+    // `terrain.farSideTiling`, `farTopTilingHi`, `farYOffset` from Terrain.con).
+    float4 terrainTiling;
+    // x, y: the half-texel correction the patch's own UV needs before it
+    // addresses a per-patch map — the engine's DETAILTEX, `((n-1)/n, 1/(2n))`
+    // for a map of n texels (`RendDX9.dll`, 0x100d9c30).
+    // z: `vTexScale.y`, the scale the side planes take the world height by.
+    // w: 1 when this patch has a low-detail component map and the level a
+    // low-detail texture; 0 leaves the ground as the colour map alone.
+    float4 terrainDetail;
 };
 
 // The order of the fields above is the order of `VertexUniforms` below, and the
@@ -133,6 +151,9 @@ vertex VertexOut vertex_main(VertexIn in [[stage_in]],
     out.lightmapOffset = uniforms.lightmapOffset;
     out.fogShape = uniforms.fogShape;
     out.roadParams = uniforms.roadParams;
+    out.terrainTiling = uniforms.terrainTiling;
+    out.terrainDetail = uniforms.terrainDetail;
+    out.localY = in.position.y;
     return out;
 }
 
@@ -141,10 +162,12 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
                               texture2d<float> lightmap [[texture(1)]],
                               texture2d<float> detail [[texture(2)]],
                               texture2d<float> terrainLight [[texture(3)]],
+                              texture2d<float> terrainDetailMap [[texture(4)]],
                               sampler baseSampler [[sampler(0)]],
                               sampler lightSampler [[sampler(1)]],
                               sampler detailSampler [[sampler(2)]],
-                              sampler terrainLightSampler [[sampler(3)]]) {
+                              sampler terrainLightSampler [[sampler(3)]],
+                              sampler terrainDetailSampler [[sampler(4)]]) {
     float4 albedo = baseColor.sample(baseSampler, in.uv);
 
     // Leaves, fences, grates: the shape is cut out of the base map's alpha.
@@ -223,11 +246,59 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
         float4 accum = terrainLight.sample(terrainLightSampler, screenUv);
         light = 4.0 * accum.a * in.sunColor.rgb + 2.0 * accum.rgb;
 
-        // What is left out of the terrain's line is `detailout`, the tiling
-        // detail textures, which need the terrain material system we do not
-        // have. Its neutral value is one: the game builds it so
-        // (`TerrainShader_Hi.fx:90`, `lerp(0.5, …) * 4 * lerp(0.5, …)`), and
-        // where a level's masks are zero it is exactly one.
+        // And `detailout`: the ground's own structure, which the colour map
+        // does not have — it holds about two texels to the metre. The game
+        // tiles one texture per level over the terrain from three directions
+        // and mixes them by the surface's normal
+        // (`Shaders_client.zip:TerrainShader_Shared.fx:244` for the
+        // coordinates, :177 for the mixing):
+        //
+        //   tex = (Pos0.y*vTexScale.z, wPos.y*vTexScale.y, Pos0.x*vTexScale.x)
+        //   xPlaneTexCord = tex.xy;  yPlaneTexCord = tex.zx;  zPlaneTexCord = tex.zy
+        //   Tex0b = yPlaneTexCord * vFarTexTiling.z
+        //   Tex2a = xPlaneTexCord * vFarTexTiling.xy;  Tex2a.y += vFarTexTiling.w
+        //   Tex2b = zPlaneTexCord * vFarTexTiling.xy;  Tex2b.y += vFarTexTiling.w
+        //   BlendValue = saturate(abs(Normal) - vBlendMod), divided by its own sum
+        //
+        //   mounten  = xplane.y*Blend.x + yplane.x*Blend.y + zplane.y*Blend.z
+        //   outColor = colormap * light * 2
+        //            * lerp(0.5, yplane.z, lowComponent.x)
+        //            * lerp(0.5, mounten,  lowComponent.z) ... * 4
+        //
+        // `yPlaneTexCord` is the patch's own UV in [0,1]: the line above it
+        // builds the colour map's coordinates out of the same pair, and a
+        // colour map covers exactly one patch. `vBlendMod` is not something the
+        // engine sets — the shader declares it with its value
+        // (`TerrainShader.fx:75`, `float3(0.2, 0.5, 0.2)`) and no `BLENDMOD`
+        // string exists in `RendDX9.dll` to overwrite it.
+        //
+        // The three channels are not three textures: the game reads `.z` of the
+        // top plane and `.y` of the sides out of one image, and `.x` of the top
+        // for the mountain mix.
+        if (in.terrainDetail.w > 0.5) {
+            const float2 patchUv = in.uv;
+            const float height = in.localY * in.terrainDetail.z;
+            const float2 yUv = patchUv * in.terrainTiling.z;
+            const float2 xUv = float2(patchUv.y, height) * in.terrainTiling.xy +
+                               float2(0.0, in.terrainTiling.w);
+            const float2 zUv = float2(patchUv.x, height) * in.terrainTiling.xy +
+                               float2(0.0, in.terrainTiling.w);
+            const float4 yPlane = terrainDetailMap.sample(terrainDetailSampler, yUv);
+            const float4 xPlane = terrainDetailMap.sample(terrainDetailSampler, xUv);
+            const float4 zPlane = terrainDetailMap.sample(terrainDetailSampler, zUv);
+
+            float3 blend = saturate(abs(normalize(in.normal)) - float3(0.2, 0.5, 0.2));
+            blend /= max(blend.x + blend.y + blend.z, 0.0001);
+            const float mounten =
+                xPlane.y * blend.x + yPlane.x * blend.y + zPlane.y * blend.z;
+
+            // How much of it shows here: the patch's own `lowComponent` map,
+            // sampled with the same UV and the engine's half-texel correction.
+            const float4 lowComponent = detail.sample(
+                detailSampler, patchUv * in.terrainDetail.x + in.terrainDetail.y);
+            albedo.rgb *= 4.0 * mix(0.5, yPlane.z, lowComponent.x) *
+                          mix(0.5, mounten, lowComponent.z);
+        }
     } else if (in.fogParams.z > 0.5) {
         // Terrain. The game draws it in several passes: one fills an
         // accumulation buffer from the tile's baked light map, and the colour
@@ -457,7 +528,7 @@ SDL_GPUShader* createShader(SDL_GPUDevice* gpu, SDL_GPUShaderStage stage, const 
   info.format = SDL_GPU_SHADERFORMAT_MSL;
   info.stage = stage;
   info.num_uniform_buffers = isVertex ? 1 : 0;
-  info.num_samplers = isVertex ? 0 : 4;  // colour, light map, detail, the ground's light
+  info.num_samplers = isVertex ? 0 : 5;  // colour, light map, detail, the ground's light and its texture
   return SDL_CreateGPUShader(gpu, &info);
 }
 
@@ -488,6 +559,8 @@ struct VertexUniforms {
   float lightmapOffset[4]{};
   float fogShape[4]{};   // x: the fog's base
   float roadParams[4]{}; // x: a road's blend factor
+  float terrainTiling[4]{};  // xy: the side planes, z: the top, w: the y offset
+  float terrainDetail[4]{};  // xy: the half-texel fix, z: the height scale, w: on/off
 };
 
 }  // namespace
@@ -960,6 +1033,21 @@ void MeshRenderer::render(const Frame& frame, const GpuMesh& gpuMesh,
   renderScene(frame, {item}, modelViewProjection, clearColor);
 }
 
+void MeshRenderer::setTerrainDetail(SDL_GPUTexture* lowDetail, const float sideTiling[2],
+                                    float topTiling, float yOffset, int componentSize) {
+  terrainDetail_ = lowDetail;
+  terrainTiling_[0] = sideTiling[0];
+  terrainTiling_[1] = sideTiling[1];
+  terrainTiling_[2] = topTiling;
+  terrainTiling_[3] = yOffset;
+  // The half-texel correction the engine gives a per-patch map, from the same
+  // push that sets DETAILTEX (`RendDX9.dll`, 0x100d9c30): a UV in [0,1] lands
+  // on texel centres as `uv * (n-1)/n + 1/(2n)`.
+  const float n = componentSize > 0 ? static_cast<float>(componentSize) : 1.0f;
+  terrainDetailUv_[0] = (n - 1.0f) / n;
+  terrainDetailUv_[1] = 1.0f / (2.0f * n);
+}
+
 void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& items,
                                const Mat4& viewProjection, Color clearColor) {
   // First the ground's light, into a buffer of its own — the game's own order:
@@ -1015,6 +1103,13 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
   // screen position, and Metal hands the fragment shader that position in pixels.
   uniforms.roadParams[2] = static_cast<float>(frame.width);
   uniforms.roadParams[3] = static_cast<float>(frame.height);
+  std::memcpy(uniforms.terrainTiling, terrainTiling_, sizeof(uniforms.terrainTiling));
+  uniforms.terrainDetail[0] = terrainDetailUv_[0];
+  uniforms.terrainDetail[1] = terrainDetailUv_[1];
+  // `vTexScale.y`: the scale the side planes take the world height by. A
+  // constant in the engine, not a level's number — `RendDX9.dll`, 0x100d9c30,
+  // pushes TEXSCALE as (255/n, -0.00615148, 255/n, 0).
+  uniforms.terrainDetail[2] = -0.00615148f;
 
   // Three passes over the same list, each through its own pipeline: the sky is
   // the background, then everything solid, then the roads as a skin on the
@@ -1079,14 +1174,15 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
         // anyway.
         const bool baked = item.lightmap != nullptr && item.mesh->hasLightmapUv;
         SDL_GPUTexture* lightmapTexture = baked ? item.lightmap : range.lightmap;
-        const SDL_GPUTextureSamplerBinding bindings[4] = {
+        const SDL_GPUTextureSamplerBinding bindings[5] = {
             {range.texture != nullptr ? range.texture : placeholder_, sampler_},
             {lightmapTexture != nullptr ? lightmapTexture : placeholder_, sampler_},
             {range.detail != nullptr ? range.detail : placeholder_, sampler_},
             {groundLight != nullptr ? groundLight : placeholder_,
              groundLight != nullptr ? terrainLight_->readSampler() : sampler_},
+            {terrainDetail_ != nullptr ? terrainDetail_ : placeholder_, sampler_},
         };
-        SDL_BindGPUFragmentSamplers(pass, 0, bindings, 4);
+        SDL_BindGPUFragmentSamplers(pass, 0, bindings, 5);
 
         // The lighting mode changes from range to range, so the uniform is pushed
         // before every draw call.
@@ -1110,6 +1206,10 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
         // How many times the detail repeats over a patch. With no texture the
         // tiling is zero and the sampling lands in the white placeholder.
         uniforms.fogParams[3] = range.detail != nullptr ? detailTiling_ : 0.0f;
+        // The ground's structure needs both halves: the level's texture and
+        // this patch's map of where it shows.
+        uniforms.terrainDetail[3] =
+            (terrain && terrainDetail_ != nullptr && range.detail != nullptr) ? 1.0f : 0.0f;
         uniforms.material[0] = range.detailMultiply ? 1.0f : 0.0f;
         uniforms.material[3] = range.alphaTest ? 1.0f : 0.0f;
         SDL_PushGPUVertexUniformData(frame.commands, 0, &uniforms, sizeof(uniforms));

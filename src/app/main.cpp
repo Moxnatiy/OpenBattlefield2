@@ -3443,6 +3443,27 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     }
   }
 
+  // The ground's own structure: one texture for the whole level, tiled over the
+  // terrain from three directions. Where it shows is a map per patch, and that
+  // one travels with the patch's geometry.
+  if (level) {
+    const std::string lowDetail = obf2::level::lowDetailTexturePath(*level, files);
+    SDL_GPUTexture* uploaded = nullptr;
+    if (!lowDetail.empty()) {
+      if (auto decoded = resolveTexture(lowDetail)) {
+        uploaded = renderer->uploadSharedTexture(*decoded);
+      }
+    }
+    renderer->setTerrainDetail(uploaded, level->terrain.farSideTiling,
+                               level->terrain.farTopTilingHi, level->terrain.farYOffset,
+                               level->terrain.lowDetailmapSize);
+    std::printf("  terrain detail: %s, tiling %.0f/%.0f side, %.0f top\n",
+                uploaded != nullptr ? lowDetail.c_str() : "none",
+                static_cast<double>(level->terrain.farSideTiling[0]),
+                static_cast<double>(level->terrain.farSideTiling[1]),
+                static_cast<double>(level->terrain.farTopTilingHi));
+  }
+
   obf2::gfx::GpuMesh skyMesh;
   bool skyReady = false;
   if (skyDome) {
