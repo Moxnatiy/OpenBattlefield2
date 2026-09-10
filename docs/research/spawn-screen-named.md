@@ -61,3 +61,43 @@ Our own `--hud-rects` prints, for every node it draws, the node's name **and
 its texture**. The original's side now prints the same thing. So the interface
 is compared by pairing two lists of file names, and what is missing or extra
 comes out as a list of names rather than as an argument about a few pixels.
+
+## Paired with our own
+
+`tools/hud_atlas.py <dump> --ours ours.txt`, where `ours.txt` is
+`openbf2 --hosted --level strike_at_karkand --hud-rects`. The two sides are
+paired by the art each draws, not by where it lands, so what comes out is a
+list of names.
+
+**Everything that pairs is off by exactly the same half pixel.** The original
+puts its rectangles at 9.5, 25.5, 14.5, 94.5; we put ours at 10, 26, 15, 95 —
+`+0.5, +0.5` on every one of them, the kit backgrounds, the frames, the kit
+icon, all six weapon pictures. That is the pre-transformed vertex's own rule:
+a `XYZRHW` vertex addresses the corner of a pixel, so a picture that is to
+cover pixel 10 starts at 9.5. One offset, applied where our rectangles are
+built, moves the whole interface onto the original's grid.
+
+**The original draws these and we draw them nowhere:**
+
+| where | size | the art |
+|---|---|---|
+| -0.5, 4.5 | 505x600 | `GeneralIcons/full.dds` — the panel behind the screen |
+| 9.5, 25.5 | 246x50 | `Respawn/team1_kit.tga` — ours draws `team2_kit`, which is the team the server gave us and not a fault |
+| 15.5, 30.5 | 18x12 | `Flags/.../Score/US/scoreBoard_Flag.tga` |
+| 103.5, 31.5 | 18x12 | `Flags/.../Score/Mec/scoreBoard_Flag.tga` |
+| 173.5, 76.5 … 472.5 | 58x17 | seven `*_mini.tga` — every kit row's **secondary** weapon |
+| 589.0, 525.8 | 25x25 | `GeneralIcons/pointerMinimap.tga` |
+| 9.5, 26.5 | 170x25 | `GeneralIcons/empty.dds` — the tab strip's click area is 170 wide; ours is 85 |
+
+**We draw these and the original's dump has nothing at those places:**
+
+* `Player/Icons/Hud/sprintIcon.tga` 13x5 at x=177 and
+  `Respawn/sprintAbilityBar_full.tga` 59x5 at x=190 — in **every** kit row,
+  fourteen rectangles. The original's frame has no call anywhere near them.
+* `Respawn/kit_selected.tga` over the whole 246x69 of row 0. The original
+  draws its selection as **246x64 at y=77.5** — a different rectangle, and the
+  atlas lookup refuses to name it for exactly that reason.
+
+The kit rows 1..6 look unpaired too, but that is the dump's grain rather than a
+difference: the original batches two rows into one 246x130 call, so its
+per-quad list has one rectangle where ours has two.

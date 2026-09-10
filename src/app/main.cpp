@@ -3432,7 +3432,29 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
                                               hudFont.atlasPath, hudScreen, spawnContext)) {
         built.push_back(std::move(piece));
       }
-      reportRects("SpawnMenu", built);
+      // `--hud-rects` for the spawn screen, written out here rather than
+      // through `reportRects`. That one is a lambda of the level-loading block,
+      // and this rebuild is called from the frame loop — after the block has
+      // exited, so a call into it reads a closure that is no longer there
+      // (CLAUDE.md, the first of the rakes). What this loop touches instead —
+      // `args`, `hudScreen`, and its own `built` — all outlive the frame.
+      if (args.hudRects) {
+        for (const obf2::hud::DrawPiece& piece : built) {
+          if (piece.node == nullptr || piece.geometry.vertices.empty()) continue;
+          float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+          for (const auto& vertex : piece.geometry.vertices) {
+            const float px = (vertex.position.x + 1.0f) * 0.5f * hudScreen.width;
+            const float py = (1.0f - vertex.position.y) * 0.5f * hudScreen.height;
+            x0 = std::min(x0, px);
+            y0 = std::min(y0, py);
+            x1 = std::max(x1, px);
+            y1 = std::max(y1, py);
+          }
+          std::printf("RECT %-14s %-30s %7.1f %7.1f %7.1f %7.1f %-46s [%s]\n", "SpawnMenu",
+                      piece.node->name.c_str(), x0, y0, x1 - x0, y1 - y0, piece.texture.c_str(),
+                      piece.node->showVariable.c_str());
+        }
+      }
       ingameHud.setMapView(obf2::hud::MapView::Mini);
       // The map's rectangle was just moved — let the combat frame put its own back,
       // the one the animation computed.

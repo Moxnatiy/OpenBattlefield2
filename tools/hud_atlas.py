@@ -96,6 +96,61 @@ ATLAS_BY_FORMAT = {
 }
 
 
+def read_ours(path):
+    """Our own `--hud-rects` lines, the last rebuild of the spawn screen.
+
+    A rebuild starts again at the first node, so the last run of the list is
+    the state the frame ended in.
+    """
+    rows = []
+    for line in open(path, encoding="utf-8", errors="replace"):
+        if not line.startswith("RECT SpawnMenu"):
+            continue
+        f = line.split(None, 7)
+        texture = f[7].split()[0] if len(f) > 7 else ""
+        rows.append((float(f[3]), float(f[4]), float(f[5]), float(f[6]), texture, f[2]))
+    if not rows:
+        return rows
+    first = rows[0][5]
+    starts = [i for i, r in enumerate(rows) if r[5] == first]
+    return rows[starts[-1]:]
+
+
+def art_key(path):
+    """The file name without its directory or extension — the two sides spell
+    the same picture differently (`Menu/HUD/Texture/Ingame/...` against
+    `Ingame/...`, `.tga` against `.dds`), and the name itself is unique."""
+    return path.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+
+
+def pair(theirs, ours):
+    """The two sides by the art each draws: matched, missing, surplus."""
+    print("\n# paired by the art, theirs %d named quads against ours %d rectangles" %
+          (len(theirs), len(ours)))
+    taken = set()
+    missing = []
+    print("\n# the same picture, and where each side puts it")
+    for x, y, w, h, name in theirs:
+        key = art_key(name)
+        candidates = [(i, o) for i, o in enumerate(ours) if art_key(o[4]) == key and i not in taken]
+        if not candidates:
+            missing.append((x, y, w, h, name))
+            continue
+        i, o = min(candidates, key=lambda p: abs(p[1][0] - x) + abs(p[1][1] - y))
+        taken.add(i)
+        print("  %-28s theirs %6.1f,%6.1f %5.1fx%-5.1f  ours %6.1f,%6.1f %5.1fx%-5.1f  "
+              "off by %+.1f,%+.1f  %s" %
+              (key, x, y, w, h, o[0], o[1], o[2], o[3], o[0] - x, o[1] - y, o[5]))
+    print("\n# the original draws these and we draw them nowhere")
+    for x, y, w, h, name in missing:
+        print("  %-28s %6.1f,%6.1f %5.1fx%-5.1f" % (art_key(name), x, y, w, h))
+    print("\n# we draw these and the original's named quads have no such picture")
+    for i, o in enumerate(ours):
+        if i in taken or "fonts/" in o[4].lower():
+            continue
+        print("  %-28s %6.1f,%6.1f %5.1fx%-5.1f  %s" % (art_key(o[4]), o[0], o[1], o[2], o[3], o[5]))
+
+
 def last_frame(path):
     lines = open(path, "rb").read().decode("latin-1").splitlines()
     starts = [i for i, l in enumerate(lines) if "[dump] frame start" in l]
@@ -111,9 +166,12 @@ def main():
     parser.add_argument("--height", type=float, default=600.0)
     parser.add_argument("--tolerance", type=float, default=0.004,
                         help="how far a texture coordinate may sit from an entry's corner")
+    parser.add_argument("--ours", help="our own `--hud-rects` output, to pair the two sides by art")
     args = parser.parse_args()
 
     index = atlas_index(args.mod)
+    ours = read_ours(args.ours) if args.ours else None
+    named_rows = []
     print(f"# {len(index)} pictures in MemeAtlas.tai")
     named_quads = 0
     total_quads = 0
@@ -196,6 +254,7 @@ def main():
             fits = uw is None or (abs(match[3] - uw) < 0.002 and abs(match[4] - vh) < 0.002)
             if fits:
                 named_quads += 1
+                named_rows.append((sx, sy, sw, sh, match[1]))
                 note = "" if match[0] < 1e-6 else f", corner off by {match[0]:.4f}"
                 print("        %7.1f %7.1f  %7.1f x %-7.1f  %s  %dx%d%s"
                       % (sx, sy, sw, sh, match[1], art_w, art_h, note))
@@ -205,6 +264,8 @@ def main():
                       % (sx, sy, sw, sh, uu, vv, uw, vh, match[1], art_w, art_h))
 
     print(f"# {total} two-dimensional calls, {named_quads} of {total_quads} quads named")
+    if ours is not None:
+        pair(named_rows, ours)
 
 
 if __name__ == "__main__":
