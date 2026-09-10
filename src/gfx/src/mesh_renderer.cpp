@@ -64,6 +64,11 @@ struct VertexOut {
     float4 roadParams;
     float4 terrainTiling;
     float4 terrainDetail;
+    // The near detail, which is per patch and not per level: x says this range
+    // carries the two chart maps, yz are the half-texel scale and bias their
+    // sampling needs — the same pair `DETAILTEX` gets in the original
+    // (`RendDX9.dll`, 0x100d9c30, the DETAILTEX push).
+    float4 terrainNear;
     float4 treeSunColor;
     float4 treeAmbientColor;
     float4 cameraPosition;
@@ -133,6 +138,15 @@ struct Uniforms {
     // w: 1 when this patch has a low-detail component map and the level a
     // low-detail texture; 0 leaves the ground as the colour map alone.
     float4 terrainDetail;
+    // x: 1 when this range carries the patch's two chart maps and the level's
+    // six materials are loaded — the near detail is drawn only then.
+    // y, z: the same half-texel pair for the chart maps, which are their own
+    // size and not the component map's.
+    // w: 1 when the patch has a second chart map. Four of Karkand's sixteen
+    // patches have none — their ground is one of the first three materials
+    // everywhere, and those three already sum to one (measured over
+    // `tx03x03_1.dds`).
+    float4 terrainNear;
     // The two colours a leaf is lit by, as the level's Sky.con writes them:
     // `Lightmanager.treeSunColor` and `treeAmbientColor`. Measured in a frame
     // dump of the original (docs/formats/shaders.md); w of the sun is 1 for a
@@ -153,6 +167,19 @@ struct Uniforms {
 // two are one buffer: swap two of them and the shader reads a light direction
 // where a material flag should be. There is no compiler to catch that — the
 // symptom is a picture, and the last time it was a black sky over red walls.
+
+// The level's six terrain materials, and the only thing the fragment stage has
+// a constant buffer of its own for. They belong here rather than among the
+// varyings above because they are six of each: the fragment stage's inputs are
+// a scarce resource and a level's materials do not change from vertex to vertex.
+struct TerrainMaterials {
+    // xy: the side planes' tilings, z: the top plane's, w: the y offset — the
+    // near counterpart of `terrainTiling`, and in the same order.
+    float4 tiling[6];
+    // x: 1 when the material is drawn from three directions, 0 from above only.
+    // y: 1 when its texture is loaded.
+    float4 flags[6];
+};
 
 
 vertex VertexOut vertex_main(VertexIn in [[stage_in]],
@@ -190,6 +217,7 @@ vertex VertexOut vertex_main(VertexIn in [[stage_in]],
     out.roadParams = uniforms.roadParams;
     out.terrainTiling = uniforms.terrainTiling;
     out.terrainDetail = uniforms.terrainDetail;
+    out.terrainNear = uniforms.terrainNear;
     out.treeSunColor = uniforms.treeSunColor;
     out.treeAmbientColor = uniforms.treeAmbientColor;
     out.cameraPosition = uniforms.cameraPosition;
@@ -218,6 +246,11 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
                               texture2d<float> normalMap [[texture(5)]],
                               texture2d<float> dirtMap [[texture(6)]],
                               texture2d<float> crackMap [[texture(7)]],
+                              // The patch's chart maps, and the level's six
+                              // terrain materials behind them.
+                              texture2d<float> chartMapA [[texture(8)]],
+                              texture2d<float> chartMapB [[texture(9)]],
+                              array<texture2d<float>, 6> materialMaps [[texture(10)]],
                               sampler baseSampler [[sampler(0)]],
                               sampler lightSampler [[sampler(1)]],
                               sampler detailSampler [[sampler(2)]],
@@ -225,7 +258,11 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
                               sampler terrainDetailSampler [[sampler(4)]],
                               sampler normalSampler [[sampler(5)]],
                               sampler dirtSampler [[sampler(6)]],
-                              sampler crackSampler [[sampler(7)]]) {
+                              sampler crackSampler [[sampler(7)]],
+                              sampler chartSamplerA [[sampler(8)]],
+                              sampler chartSamplerB [[sampler(9)]],
+                              array<sampler, 6> materialSamplers [[sampler(10)]],
+                              constant TerrainMaterials& terrainMaterials [[buffer(0)]]) {
     float4 albedo = baseColor.sample(baseSampler, in.uv);
 
     // Leaves, fences, grates: the shape is cut out of the base map's alpha.
@@ -394,6 +431,74 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
                 detailSampler, patchUv * in.terrainDetail.x + in.terrainDetail.y);
             albedo.rgb *= 4.0 * mix(0.5, yPlane.z, lowComponent.x) *
                           mix(0.5, mounten, lowComponent.z);
+
+            // And the near half of the same line. `Hi_PS_FullDetailMounten`
+            // (`Shaders_client.zip:TerrainShader_Hi.fx:265`) puts the two
+            // together:
+            //
+            //   bothDetailmap = detailmap * lowDetailmap;
+            //   detailout = lerp(2*bothDetailmap, lowDetailmap, BlendValueAndFade.w)
+            //
+            // where `lowDetailmap` is what the block above just built and
+            // `detailmap` is the terrain material's own texture, tiled far
+            // harder. Which material owns this texel is the patch's chart maps:
+            // three channels in `_1.dds` and three in `_2.dds`, and the six add
+            // up to one. The game draws the patch once per material with
+            // `vComponentsel` selecting a channel and adds the results
+            // (`RendDX9.dll`, 0x1018caf0); one pass over the six weights is the
+            // same sum with one draw.
+            //
+            // `BlendValueAndFade.w` is the geo-morph interpolation — how far
+            // the vertex has slid toward its lower LOD. We do not morph the
+            // terrain at all, so it is 0 here, the near end of the game's own
+            // lerp. What that costs is nothing at distance: the detail textures
+            // are centred on mid-grey, so their mip levels average to 0.5 and
+            // `2 * 0.5 = 1` leaves the far ground exactly as the block above
+            // left it. Not measured: the two morph distances, which the engine
+            // computes from a LOD object we have not reversed (0x100d9c30, the
+            // NEARFARMORPHLIMITS push).
+            if (in.terrainNear.x > 0.5) {
+                const float2 chartUv = patchUv * in.terrainNear.y + in.terrainNear.z;
+                const float3 chartA = chartMapA.sample(chartSamplerA, chartUv).rgb;
+                const float3 chartB = in.terrainNear.w > 0.5
+                                          ? chartMapB.sample(chartSamplerB, chartUv).rgb
+                                          : float3(0.0);
+                const float weight[6] = {chartA.r, chartA.g, chartA.b,
+                                         chartB.r, chartB.g, chartB.b};
+                float3 nearDetail = float3(0.0);
+                for (int i = 0; i < 6; ++i) {
+                    const float4 tiling = terrainMaterials.tiling[i];
+                    // Mid-grey where a level names a texture we could not read:
+                    // that is what the detail textures are centred on, so the
+                    // share of the ground that material owns is left as the low
+                    // detail alone rather than darkened.
+                    float3 sampled = float3(0.5);
+                    if (terrainMaterials.flags[i].y > 0.5) {
+                        sampled = materialMaps[i]
+                                      .sample(materialSamplers[i], patchUv * tiling.z)
+                                      .rgb;
+                    }
+                    // A tri-planar material is the one the rock uses: the same
+                    // texture from three directions, mixed by the same normal
+                    // blend as the low detail above (:255). It reads a `_side`
+                    // texture on the x and z planes where the level ships one,
+                    // and none of the game's detail textures does.
+                    if (terrainMaterials.flags[i].x > 0.5 &&
+                        terrainMaterials.flags[i].y > 0.5) {
+                        const float2 xPlaneUv = float2(patchUv.y, height) * tiling.xy +
+                                                float2(0.0, tiling.w);
+                        const float2 zPlaneUv = float2(patchUv.x, height) * tiling.xy +
+                                                float2(0.0, tiling.w);
+                        const float3 onX =
+                            materialMaps[i].sample(materialSamplers[i], xPlaneUv).rgb;
+                        const float3 onZ =
+                            materialMaps[i].sample(materialSamplers[i], zPlaneUv).rgb;
+                        sampled = onX * blend.x + sampled * blend.y + onZ * blend.z;
+                    }
+                    nearDetail += weight[i] * sampled;
+                }
+                albedo.rgb *= 2.0 * nearDetail;
+            }
         }
     } else if (in.fogParams.z > 0.5) {
         // Terrain. The game draws it in several passes: one fills an
@@ -724,8 +829,13 @@ SDL_GPUShader* createShader(SDL_GPUDevice* gpu, SDL_GPUShaderStage stage, const 
   info.entrypoint = entrypoint;
   info.format = SDL_GPU_SHADERFORMAT_MSL;
   info.stage = stage;
-  info.num_uniform_buffers = isVertex ? 1 : 0;
-  info.num_samplers = isVertex ? 0 : 8;  // colour, light map, detail, the ground's light and its texture, normal, dirt, crack
+  // The fragment stage has a buffer of its own for the terrain's materials:
+  // six tilings and six flags would cost twelve varyings otherwise, and the
+  // stage's inputs are nearly spent.
+  info.num_uniform_buffers = 1;
+  // Colour, light map, detail, the ground's light and its texture, normal,
+  // dirt, crack, the patch's two chart maps, and the six terrain materials.
+  info.num_samplers = isVertex ? 0 : 16;
   return SDL_CreateGPUShader(gpu, &info);
 }
 
@@ -759,10 +869,18 @@ struct VertexUniforms {
   float roadParams[4]{}; // x: a road's blend factor
   float terrainTiling[4]{};  // xy: the side planes, z: the top, w: the y offset
   float terrainDetail[4]{};  // xy: the half-texel fix, z: the height scale, w: on/off
+  float terrainNear[4]{};    // x: this patch has chart maps, yz: their half-texel fix
   float treeSunColor[4]{};      // w: 1 on a leaf material
   float treeAmbientColor[4]{};
   float cameraPosition[4]{};
   float staticSpecular[4]{};    // rgb: the colour, w: the gloss
+};
+
+// A mirror of `TerrainMaterials` in the shader — the fragment stage's own
+// constant buffer, pushed once a frame because a level's six do not change.
+struct FragmentUniforms {
+  float tiling[MeshRenderer::kTerrainMaterials][4]{};
+  float flags[MeshRenderer::kTerrainMaterials][4]{};
 };
 
 }  // namespace
@@ -1151,9 +1269,15 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
     };
 
     if (source_range.lightmapInSecondSlot) {
+      // The terrain's own slots, in the order `level::buildTerrainPatches`
+      // fills them: the colour map, the baked light, the low-detail component
+      // map and the two chart maps. The positions are fixed and a patch that
+      // ships none of a given map leaves an empty path there.
       range.texture = load(0);
       range.lightmap = load(1);
       range.detail = load(2);
+      range.chartA = load(3);
+      range.chartB = load(4);
     } else {
       // A road's material has no technique — the two maps are the template's
       // primary and secondary, in that order.
@@ -1314,6 +1438,19 @@ void MeshRenderer::setTerrainDetail(SDL_GPUTexture* lowDetail, const float sideT
   terrainDetailUv_[1] = 1.0f / (2.0f * n);
 }
 
+void MeshRenderer::setTerrainMaterials(const TerrainMaterial materials[kTerrainMaterials],
+                                       int chartSize) {
+  terrainMaterialsReady_ = false;
+  for (int i = 0; i < kTerrainMaterials; ++i) {
+    terrainMaterials_[i] = materials[i];
+    if (materials[i].texture != nullptr) terrainMaterialsReady_ = true;
+  }
+  // The same correction the component map gets, with the chart maps' own size.
+  const float n = chartSize > 0 ? static_cast<float>(chartSize) : 1.0f;
+  terrainChartUv_[0] = (n - 1.0f) / n;
+  terrainChartUv_[1] = 1.0f / (2.0f * n);
+}
+
 void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& items,
                                const Mat4& viewProjection, Color clearColor) {
   // First the ground's light, into a buffer of its own — the game's own order:
@@ -1389,6 +1526,29 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
   // constant in the engine, not a level's number — `RendDX9.dll`, 0x100d9c30,
   // pushes TEXSCALE as (255/n, -0.00615148, 255/n, 0).
   uniforms.terrainDetail[2] = -0.00615148f;
+  uniforms.terrainNear[1] = terrainChartUv_[0];
+  uniforms.terrainNear[2] = terrainChartUv_[1];
+
+  // The level's six terrain materials: the fragment stage's own constant
+  // buffer, and the same for every draw of the frame.
+  FragmentUniforms materialUniforms;
+  for (int i = 0; i < kTerrainMaterials; ++i) {
+    const TerrainMaterial& material = terrainMaterials_[i];
+    materialUniforms.tiling[i][0] = material.sideTiling[0];
+    materialUniforms.tiling[i][1] = material.sideTiling[1];
+    materialUniforms.tiling[i][2] = material.topTiling;
+    materialUniforms.tiling[i][3] = material.yOffset;
+    materialUniforms.flags[i][0] = material.triPlanar ? 1.0f : 0.0f;
+    materialUniforms.flags[i][1] = material.texture != nullptr ? 1.0f : 0.0f;
+  }
+  SDL_PushGPUFragmentUniformData(frame.commands, 0, &materialUniforms, sizeof(materialUniforms));
+
+  // The six textures themselves. Where one is missing the placeholder is bound
+  // to keep the slot filled and the shader reads mid-grey instead of it.
+  auto material = [&](int index) {
+    SDL_GPUTexture* texture = terrainMaterials_[index].texture;
+    return texture != nullptr ? texture : placeholder_;
+  };
 
   // Three passes over the same list, each through its own pipeline: the sky is
   // the background, then everything solid, then the roads as a skin on the
@@ -1454,7 +1614,7 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
         // anyway.
         const bool baked = item.lightmap != nullptr && item.mesh->hasLightmapUv;
         SDL_GPUTexture* lightmapTexture = baked ? item.lightmap : range.lightmap;
-        const SDL_GPUTextureSamplerBinding bindings[8] = {
+        const SDL_GPUTextureSamplerBinding bindings[16] = {
             {range.texture != nullptr ? range.texture : placeholder_, sampler_},
             {lightmapTexture != nullptr ? lightmapTexture : placeholder_, sampler_},
             {range.detail != nullptr ? range.detail : placeholder_, sampler_},
@@ -1465,8 +1625,12 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
              normalSampler_ != nullptr ? normalSampler_ : sampler_},
             {range.dirt != nullptr ? range.dirt : placeholder_, sampler_},
             {range.crack != nullptr ? range.crack : placeholder_, sampler_},
+            {range.chartA != nullptr ? range.chartA : placeholder_, sampler_},
+            {range.chartB != nullptr ? range.chartB : placeholder_, sampler_},
+            {material(0), sampler_}, {material(1), sampler_}, {material(2), sampler_},
+            {material(3), sampler_}, {material(4), sampler_}, {material(5), sampler_},
         };
-        SDL_BindGPUFragmentSamplers(pass, 0, bindings, 8);
+        SDL_BindGPUFragmentSamplers(pass, 0, bindings, 16);
 
         // The lighting mode changes from range to range, so the uniform is pushed
         // before every draw call.
@@ -1494,6 +1658,12 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
         // this patch's map of where it shows.
         uniforms.terrainDetail[3] =
             (terrain && terrainDetail_ != nullptr && range.detail != nullptr) ? 1.0f : 0.0f;
+        // The near detail needs both of this patch's chart maps and the level's
+        // materials. A patch whose ground is one material ships no `_2.dds`, so
+        // the second map missing is normal and its three weights are zero.
+        uniforms.terrainNear[0] =
+            (terrain && terrainMaterialsReady_ && range.chartA != nullptr) ? 1.0f : 0.0f;
+        uniforms.terrainNear[3] = range.chartB != nullptr ? 1.0f : 0.0f;
         uniforms.material[0] = range.detailMultiply ? 1.0f : 0.0f;
         uniforms.material[3] = range.alphaTest ? 1.0f : 0.0f;
         uniforms.treeSunColor[3] = range.leaf ? 1.0f : 0.0f;

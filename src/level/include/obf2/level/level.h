@@ -329,9 +329,11 @@ struct TerrainPatch {
   // (`Shaders_client.zip:TerrainShader_Shared.fx:177`, sampler5Clamp). Red is
   // the top plane's share and blue the mountain sides'.
   std::string lowDetailmap;
-  // `Detailmaps/txCCxRR_1.dds`: which terrain material owns which texel. Read
-  // but not used — it needs the material system, which needs `terraindata.raw`.
+  // `Detailmaps/txCCxRR_1.dds` and `_2.dds`: which of the level's six terrain
+  // materials owns which texel here. Three channels each, and the six sum to
+  // one. A patch that uses only the first three ships no `_2`.
   std::string detailmap;
+  std::string detailmap2;
 };
 
 // The one texture every patch tiles for its close-up structure, and where it

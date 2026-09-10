@@ -1791,6 +1791,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
 
   // The level's baked object light maps, keyed by template name and position.
   obf2::level::ObjectLightmaps objectLightmaps;
+  // One of the terrain's chart maps, kept for its size alone: the near detail's
+  // half-texel correction needs it, and the patches themselves are handed to
+  // the scene as they are built.
+  std::string firstChartMap;
 
   std::optional<obf2::level::Level> level;
   obf2::game::Registry registry;
@@ -1830,7 +1834,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     std::printf("  terrain patches: %zu of %d (the rest under water, no colour map)\n", patches.size(),
                 ((level->primary.size - 1) / level->terrain.patchSize) *
                     ((level->primary.size - 1) / level->terrain.patchSize));
-    for (auto& patch : patches) scene.add(std::move(patch.geometry), obf2::Mat4::identity());
+    for (auto& patch : patches) {
+      if (firstChartMap.empty()) firstChartMap = patch.detailmap;
+      scene.add(std::move(patch.geometry), obf2::Mat4::identity());
+    }
 
     // Roads: their vertices lie relative to the start point, so we place them by
     // the absolute position from the .con.
@@ -3496,15 +3503,43 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
                 static_cast<double>(level->terrain.farSideTiling[0]),
                 static_cast<double>(level->terrain.farSideTiling[1]),
                 static_cast<double>(level->terrain.farTopTilingHi));
-    // And the near detail: the six materials out of the compiled terrain.
-    for (std::size_t i = 0; i < level->terrain.materials.size(); ++i) {
+    // And the near detail: the six materials out of the compiled terrain, and
+    // the chart maps that say which of them owns which texel of a patch.
+    obf2::gfx::MeshRenderer::TerrainMaterial materials[
+        obf2::gfx::MeshRenderer::kTerrainMaterials];
+    const std::size_t count =
+        std::min(level->terrain.materials.size(),
+                 static_cast<std::size_t>(obf2::gfx::MeshRenderer::kTerrainMaterials));
+    for (std::size_t i = 0; i < count; ++i) {
       const obf2::level::TerrainMaterial& material = level->terrain.materials[i];
-      std::printf("  terrain material %zu: %-44s top %g, side %g/%g%s\n", i,
+      // The file names the texture without an extension, and the archives hold
+      // it as `.dds` like every other texture in the game.
+      if (auto decoded = resolveTexture(material.texture + ".dds")) {
+        materials[i].texture = renderer->uploadSharedTexture(*decoded);
+      }
+      materials[i].sideTiling[0] = material.sideTilingX;
+      materials[i].sideTiling[1] = material.sideTilingY;
+      materials[i].topTiling = material.topTiling;
+      materials[i].yOffset = material.yOffset;
+      materials[i].triPlanar = material.triPlanar;
+      std::printf("  terrain material %zu: %-44s top %g, side %g/%g%s%s\n", i,
                   material.texture.c_str(), static_cast<double>(material.topTiling),
                   static_cast<double>(material.sideTilingX),
                   static_cast<double>(material.sideTilingY),
-                  material.triPlanar ? ", tri-planar" : "");
+                  material.triPlanar ? ", tri-planar" : "",
+                  materials[i].texture != nullptr ? "" : ", not loaded");
     }
+    // The chart maps' size for the half-texel correction, taken from the first
+    // patch that has one — the engine takes it the same way (`RendDX9.dll`,
+    // 0x100d9c30) rather than from `terrain.detailmapSize`, which on Karkand
+    // says 512 where the files are 256.
+    int chartSize = 0;
+    if (!firstChartMap.empty()) {
+      if (auto decoded = resolveTexture(firstChartMap)) {
+        chartSize = static_cast<int>(decoded->width);
+      }
+    }
+    renderer->setTerrainMaterials(materials, chartSize);
   }
 
   obf2::gfx::GpuMesh skyMesh;

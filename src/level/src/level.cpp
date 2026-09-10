@@ -765,28 +765,34 @@ std::vector<TerrainPatch> buildTerrainPatches(const Level& level, const FileSyst
         if (files.exists(candidate)) patch.lowDetailmap = candidate;
       }
 
-      // The chart map: which terrain material owns which texel. Read and not
-      // used — the near detail textures it selects come with the material
-      // system, which lives in `terraindata.raw`.
+      // The chart maps: which of the level's six terrain materials owns which
+      // texel of this patch. Three channels each, and the six add up to one.
+      // A patch whose ground is one of the first three everywhere ships no
+      // `_2` — four of Karkand's sixteen do not.
       if (!level.terrain.detailmapBase.empty()) {
         char detailName[64];
         std::snprintf(detailName, sizeof(detailName), "%02dx%02d_1.dds", column, row);
-        const std::string candidate = level.terrain.detailmapBase + detailName;
+        std::string candidate = level.terrain.detailmapBase + detailName;
         if (files.exists(candidate)) patch.detailmap = candidate;
+        std::snprintf(detailName, sizeof(detailName), "%02dx%02d_2.dds", column, row);
+        candidate = level.terrain.detailmapBase + detailName;
+        if (files.exists(candidate)) patch.detailmap2 = candidate;
       }
 
+      // The terrain's slots are ours and not the game's material system, so
+      // they are fixed rather than packed: colour, baked light, the patch's
+      // `lowComponent`, and the two chart maps. A patch missing one of them
+      // leaves an empty path in its place — shifting the rest up would put a
+      // chart map where the renderer looks for the light.
       mesh::DrawRange range;
       range.indexStart = 0;
       range.indexCount = static_cast<std::uint32_t>(patch.geometry.indices.size());
+      range.lightmapInSecondSlot = true;
       range.maps.push_back(patch.colormap);
-      if (!patch.lightmap.empty()) {
-        range.maps.push_back(patch.lightmap);
-        range.lightmapInSecondSlot = true;
-      }
-      // The third slot is the patch's `lowComponent`: the renderer needs it in
-      // the same draw call as the colour map, and the level's low-detail
-      // texture is one for the whole terrain and goes to the renderer directly.
-      if (!patch.lowDetailmap.empty()) range.maps.push_back(patch.lowDetailmap);
+      range.maps.push_back(patch.lightmap);
+      range.maps.push_back(patch.lowDetailmap);
+      range.maps.push_back(patch.detailmap);
+      range.maps.push_back(patch.detailmap2);
       patch.geometry.ranges.push_back(std::move(range));
 
       patches.push_back(std::move(patch));

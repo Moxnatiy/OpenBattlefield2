@@ -142,16 +142,28 @@ detail plane, the mid path drops to `ps_1_4` and folds two lerps into one,
 the low path draws the colour map with one detail texture.
 
 We draw something between the two: the game's low-detail tri-planar
-texture and the light buffer, without the near per-material detail.
+texture, the light buffer and — since the materials are read — the near
+per-material detail.
+
+**The near detail is done.** The level's six materials come out of
+`terraindata.raw` (docs/formats/terraindata.md), the patch's own
+`Detailmaps/txCCxRR_1.dds` and `_2.dds` weight them three channels each, and
+the fragment shader takes the six in one pass where the game draws the patch
+six times. Measured on Karkand's starting camera, the near street: the mean
+brightness falls from 56.1 to 49.0 — the cobbles are darker than the mid-grey
+that stood there — and its variation rises from 14.1 to 19.7, which is the
+structure appearing. The far hills of Dalian move by 0.9%, because a detail
+texture's mip levels average to the mid-grey they are centred on.
 
 Left here:
 
-* the **near detail texture** per terrain material. No longer blocked: the
-  six materials are in `terraindata.raw`'s header, which
-  `tools/terrain_raw.py` reads (docs/formats/terraindata.md), and the maps
-  that say which material owns which texel are the level's own
-  `Detailmaps/txCCxRR_1.dds` and `_2.dds`. The blob's per-patch payload is
-  geometry, not materials, so nothing else in it has to be read first;
+* the near↔far blend. The game lerps between the near detail and the low one
+  by `BlendValueAndFade.w`, the geo-morph interpolation, and we do not morph
+  the terrain, so ours sits at the near end. What that would need is the two
+  morph distances: `interpVal = saturate(d² · x − y)` with the pair pushed as
+  NEARFARMORPHLIMITS (`RendDX9.dll`, 0x100d9c30) out of a LOD object whose
+  base distance — the one field its constructor at 0x100e41b0 leaves unset —
+  is **not measured**;
 * `terrain.farTopTilingHi` against `farTopTilingLow`: the engine picks by a
   flag at `+0x35e` (`RendDX9.dll`, 0x100d9c30) and that flag is this
   setting;

@@ -46,6 +46,11 @@ struct GpuMesh {
     // it. 1368 of the game's materials name a Dirt channel, 368 a Crack.
     SDL_GPUTexture* dirt = nullptr;
     SDL_GPUTexture* crack = nullptr;
+    // A terrain patch's two chart maps — `Detailmaps/txCCxRR_1.dds` and
+    // `_2.dds`. Three channels each, six in all, and they say which of the
+    // level's six terrain materials owns which texel of this patch.
+    SDL_GPUTexture* chartA = nullptr;
+    SDL_GPUTexture* chartB = nullptr;
   };
 
   // Whether the geometry carried the light map's own UV set. Without it a baked
@@ -157,6 +162,34 @@ class MeshRenderer {
   // ground as the colour map alone.
   void setTerrainDetail(SDL_GPUTexture* lowDetail, const float sideTiling[2], float topTiling,
                         float yOffset, int componentSize);
+
+  // The ground close up. Six materials per level, each a texture tiled far
+  // harder than the low-detail one, and a patch's chart maps weight them: the
+  // game draws the terrain once per material with `vComponentsel` picking a
+  // channel, and the six weights sum to one
+  // (`Shaders_client.zip:TerrainShader_Hi.fx:87`, and measured over Karkand's
+  // maps — docs/formats/terraindata.md). We take the six in one pass instead,
+  // which is the same sum.
+  //
+  // Where they come from and what the four tilings mean: `terraindata.raw`,
+  // the material table of docs/formats/terraindata.md. A material marked
+  // tri-planar is drawn from three directions like the low detail, and the
+  // rest only from above.
+  struct TerrainMaterial {
+    SDL_GPUTexture* texture = nullptr;
+    float sideTiling[2] = {2.0f, 2.0f};
+    float topTiling = 32.0f;
+    float yOffset = 0.0f;
+    bool triPlanar = false;
+  };
+  //
+  // `chartSize` is the chart maps' own size in texels, for the half-texel
+  // correction. It is not `terrain.detailmapSize` from the level's `.con`: the
+  // engine asks the loaded texture (`RendDX9.dll`, 0x100d9c30, the DETAILTEX
+  // push walks the patches until one has a map and takes its width), and on
+  // Karkand the two disagree — the `.con` says 512 and the files are 256.
+  static constexpr int kTerrainMaterials = 6;
+  void setTerrainMaterials(const TerrainMaterial materials[kTerrainMaterials], int chartSize);
 
   // The two colours the terrain's baked light map is multiplied by, as the
   // level's Sky.con writes them: `terrain.sunColor` and `terrain.GIColor`.
@@ -270,6 +303,9 @@ class MeshRenderer {
   SDL_GPUTexture* terrainDetail_ = nullptr;  // owned by the caller's upload, not by us
   float terrainTiling_[4]{5.0f, 5.0f, 24.0f, 0.0f};
   float terrainDetailUv_[2]{1.0f, 0.0f};
+  TerrainMaterial terrainMaterials_[kTerrainMaterials];
+  bool terrainMaterialsReady_ = false;
+  float terrainChartUv_[2]{1.0f, 0.0f};
   int drawn_ = 0;
   int culled_ = 0;
 };
