@@ -9,11 +9,21 @@ neither as a string nor as a semantic, so the binding lives in the
 compiled effect and the code addresses parameters by handle. A frame-dump
 measurement is a source under rule 6; a guess is not.
 
-One line per non-zero constant row, on every fortieth draw of a dumped
-frame. Per frame would be enough for a frame constant, but the first draw
-of a frame turned out to be a shadow or interface pass whose constants
-hold no fog at all — a handful of snapshots across the frame catches the
-passes that do, without burying an 850-call log.
+One line per non-zero constant row of **both** stages, on every fortieth
+draw of a dumped frame. Per frame would be enough for a frame constant,
+but the first draw of a frame turned out to be a shadow or interface pass
+whose constants hold no fog at all — a handful of snapshots across the
+frame catches the passes that do, without burying an 850-call log.
+
+The pixel stage is there because the terrain's sun and sky arrive as pixel
+constants and the vertex ones cannot answer for them:
+`psc c0 = 0.1875 0.1775 0.1425` on Karkand is `terrain.sunColor` quartered.
+
+`OPENBF2_DUMP_CONSTANTS` changes the period — a number, or `all` for every
+draw, or `off`. Every draw is what a question about one surface needs
+(which colours a leaf is given, say), and a frame of 600 draws then costs
+some twelve thousand lines: right for one press, ruinous as a default.
+`tools/bf2_run.sh` passes it as `BF2_CONSTANTS`.
 
 To read the result, take a dump on two levels whose fog differs —
 `Renderer.fogStartEndAndBase` is 0/135 on Strike at Karkand and 0/610 on
@@ -24,7 +34,7 @@ Applies on top of `tools/mtld3d_frame_dump_geom.patch`, to
 
 --- a/windows/d3d9/src/device/frame_dump.rs
 +++ b/windows/d3d9/src/device/frame_dump.rs
-@@ -357,5 +357,34 @@
+@@ -357,5 +480,71 @@ impl DeviceInner {
                  c[78]
              );
          }
@@ -38,13 +48,23 @@ Applies on top of `tools/mtld3d_frame_dump_geom.patch`, to
 +        // *is* is packed by the engine and its name is nowhere in `BF2.exe` —
 +        // neither as a string nor as a semantic.
 +        //
-+        // Every fortieth draw, not just the first. A frame constant would need
-+        // only one snapshot, but the first draw of a frame turned out to be a
-+        // shadow or interface pass whose constants hold no fog at all; a
-+        // handful across the frame catches the passes that do without burying
-+        // an 850-call log. Not at frame start either — there the effect has not
-+        // set its parameters yet.
-+        if seq % 40 == 0 {
++        // Every fortieth draw by default, not just the first. A frame constant
++        // would need only one snapshot, but the first draw of a frame turned
++        // out to be a shadow or interface pass whose constants hold no fog at
++        // all; a handful across the frame catches the passes that do without
++        // burying an 850-call log. Not at frame start either — there the effect
++        // has not set its parameters yet.
++        //
++        // `OPENBF2_DUMP_CONSTANTS` changes the period: a number, or `all` for
++        // every draw. Every draw is what a question about one surface needs —
++        // which colours a leaf is given, say — and a frame of 600 draws then
++        // costs some twelve thousand lines, which is fine for one press and
++        // ruinous as a default.
++        //
++        // Both stages: the terrain's sun and sky reach the shader as pixel
++        // constants, and the vertex ones alone cannot answer for them.
++        let period = openbf2_constant_period();
++        if period != 0 && seq % period == 0 {
 +            let vs = self.shader_bindings().vs_constants_copy();
 +            for (row, value) in vs.iter().enumerate() {
 +                if value.iter().all(|component| *component == 0.0) {
@@ -56,6 +76,33 @@ Applies on top of `tools/mtld3d_frame_dump_geom.patch`, to
 +                    value[0], value[1], value[2], value[3]
 +                );
 +            }
++            let ps = self.shader_bindings().ps_constants_copy();
++            for (row, value) in ps.iter().enumerate() {
++                if value.iter().all(|component| *component == 0.0) {
++                    continue;
++                }
++                info!(
++                    target: LOG_TARGET,
++                    "[dump] draw {seq} psc c{row}: {:.6} {:.6} {:.6} {:.6}",
++                    value[0], value[1], value[2], value[3]
++                );
++            }
 +        }
      }
  }
++
++/// [openbf2] How often the dump writes a draw's shader constants: the value of
++/// `OPENBF2_DUMP_CONSTANTS`, which is a period, or `all` for every draw, or
++/// `off`. Read once — the variable is set before the game starts.
++fn openbf2_constant_period() -> u32 {
++    use std::sync::OnceLock;
++    static PERIOD: OnceLock<u32> = OnceLock::new();
++    *PERIOD.get_or_init(|| match std::env::var("OPENBF2_DUMP_CONSTANTS") {
++        Ok(text) => match text.trim().to_ascii_lowercase().as_str() {
++            "all" | "every" | "1" => 1,
++            "off" | "none" | "0" => 0,
++            other => other.parse::<u32>().unwrap_or(40),
++        },
++        Err(_) => 40,
++    })
++}
