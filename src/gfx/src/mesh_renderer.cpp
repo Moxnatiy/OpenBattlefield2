@@ -1259,13 +1259,36 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
     range.indexStart = source_range.indexStart;
     range.indexCount = source_range.indexCount;
 
+    // One texture on the GPU per path, however many meshes name it. A level's
+    // buildings share their walls, its vehicles share their dirt, and the
+    // interface asks for the same images every time it is rebuilt — before this
+    // each of those was decoded, copied and uploaded again, and each copy stayed
+    // in video memory until the mesh went away.
+    //
+    // The exception is the Flash movie, whose one texture is a different picture
+    // every frame.
     auto load = [&](int slot) -> SDL_GPUTexture* {
       if (slot < 0 || !resolve) return nullptr;
       if (static_cast<std::size_t>(slot) >= source_range.maps.size()) return nullptr;
-      const auto decoded = resolve(source_range.maps[static_cast<std::size_t>(slot)]);
-      if (!decoded) return nullptr;
+      const std::string& name = source_range.maps[static_cast<std::size_t>(slot)];
+      const bool shareable = name != "#flash";
+      if (shareable) {
+        const auto found = textureByPath_.find(name);
+        if (found != textureByPath_.end()) return found->second;
+      }
+      const auto decoded = resolve(name);
+      if (!decoded) {
+        if (shareable) textureByPath_.emplace(name, nullptr);
+        return nullptr;
+      }
       SDL_GPUTexture* uploaded = uploadTexture(*decoded);
-      if (uploaded != nullptr) gpuMesh.ownedTextures.push_back(uploaded);
+      if (uploaded == nullptr) return nullptr;
+      if (shareable) {
+        textureByPath_.emplace(name, uploaded);
+        sharedTextures_.push_back(uploaded);  // the renderer owns it, not the mesh
+      } else {
+        gpuMesh.ownedTextures.push_back(uploaded);
+      }
       return uploaded;
     };
 

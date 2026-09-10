@@ -13,10 +13,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <map>
+#include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "obf2/core/math.h"
+#include "obf2/core/parallel.h"
 #include "obf2/core/path.h"
 #include "obf2/core/platform.h"
 #include "obf2/engine/engine.h"
@@ -356,10 +359,28 @@ obf2::game::Registry buildRegistry(obf2::FileSystem& files) {
   std::sort(configs.begin(), configs.end());
   configs.erase(std::unique(configs.begin(), configs.end()), configs.end());
 
-  for (const auto& path : configs) {
-    obf2::con::Interpreter interpreter(
-        files, [&](const obf2::con::Command& command) { registry.feed(command); });
-    interpreter.runFile(path);
+  // Reading the files is the expensive half — unpacking each out of its archive
+  // and taking it apart — and every file is read on its own, so that half is
+  // done on every core. Feeding the registry is not: a `.tweak` changes the
+  // template a `.con` created, so the commands go in one at a time and in the
+  // order the sorted list gives, whatever order the threads finished in.
+  //
+  // A chunk at a time rather than all at once: the whole corpus is millions of
+  // commands and holding them would cost more memory than the level.
+  constexpr std::size_t kChunk = 512;
+  std::vector<std::vector<obf2::con::Command>> parsed(kChunk);
+  for (std::size_t start = 0; start < configs.size(); start += kChunk) {
+    const std::size_t count = std::min(kChunk, configs.size() - start);
+    obf2::parallelFor(count, [&](std::size_t i) {
+      std::vector<obf2::con::Command>& into = parsed[i];
+      into.clear();
+      obf2::con::Interpreter interpreter(
+          files, [&into](const obf2::con::Command& command) { into.push_back(command); });
+      interpreter.runFile(configs[start + i]);
+    });
+    for (std::size_t i = 0; i < count; ++i) {
+      for (const obf2::con::Command& command : parsed[i]) registry.feed(command);
+    }
   }
   return registry;
 }
@@ -1863,8 +1884,11 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     }
 
     if (remote != nullptr) remote->keepAlive();
+    std::printf("  loading: the level's own files took %.2f s\n", secondsSince(started));
+    const auto registryStarted = std::chrono::steady_clock::now();
     registry = buildRegistry(files);
-    std::printf("  registry: %zu templates (%.1f s)\n", registry.size(), secondsSince(started));
+    std::printf("  registry: %zu templates (%.2f s)\n", registry.size(),
+                secondsSince(registryStarted));
     if (remote != nullptr) remote->keepAlive();
 
     // --- a single-player game = a local server plus a client ---
@@ -2029,21 +2053,39 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     std::map<std::string, int> missing;
     int placed = 0;
     int lightmapped = 0;
+    const auto placementStarted = std::chrono::steady_clock::now();
+
+    // The geometry first, and on every core. A level places two thousand
+    // objects out of three hundred templates, and assembling one — unpacking
+    // its meshes from the archives, flattening its tree, moving its parts — is
+    // the same work whichever thread does it and looks at nothing another
+    // thread writes. The order of the built meshes is the order the names come
+    // in, so the scene is the same as when this was a loop.
+    {
+      std::vector<std::string> names;
+      for (const auto& object : placement) {
+        if (meshIndexByTemplate.emplace(object.templateName, -1).second) {
+          names.push_back(object.templateName);
+        }
+      }
+      std::vector<std::optional<obf2::mesh::RenderMesh>> built(names.size());
+      obf2::parallelFor(names.size(), [&](std::size_t i) {
+        built[i] = buildObjectMesh(files, registry, names[i], args, false);
+      });
+      for (std::size_t i = 0; i < names.size(); ++i) {
+        if (!built[i]) continue;
+        scene.meshes.push_back(std::move(*built[i]));
+        meshIndexByTemplate[names[i]] = static_cast<int>(scene.meshes.size()) - 1;
+      }
+      if (remote != nullptr) remote->keepAlive();
+    }
 
     for (const auto& object : placement) {
       // The placement is the longest part of loading. While it goes on, the server
       // has to hear that we are alive.
       if (remote != nullptr) remote->keepAlive();
-      auto found = meshIndexByTemplate.find(object.templateName);
-      if (found == meshIndexByTemplate.end()) {
-        auto built = buildObjectMesh(files, registry, object.templateName, args, false);
-        int index = -1;
-        if (built) {
-          scene.meshes.push_back(std::move(*built));
-          index = static_cast<int>(scene.meshes.size()) - 1;
-        }
-        found = meshIndexByTemplate.emplace(object.templateName, index).first;
-      }
+      const auto found = meshIndexByTemplate.find(object.templateName);
+      if (found == meshIndexByTemplate.end()) continue;
       if (found->second < 0) {
         ++missing[object.templateName];
         continue;
@@ -2078,8 +2120,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       ++placed;
     }
 
-    std::printf("  unique geometry: %zu, placed: %d, without geometry: %zu templates\n",
-                scene.meshes.size() - patches.size(), placed, missing.size());
+    std::printf("  unique geometry: %zu, placed: %d, without geometry: %zu templates (%.2f s)\n",
+                scene.meshes.size() - patches.size(), placed, missing.size(),
+                secondsSince(placementStarted));
     std::printf("  baked light maps: %d of %d objects, %d atlas pages\n", lightmapped, placed,
                 objectLightmaps.atlasCount());
     int shown = 0;
@@ -2379,6 +2422,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
 
   int texturesLoaded = 0, texturesMissing = 0;
   std::unordered_map<std::string, std::optional<obf2::texture::Texture>> textureCache;
+  // The cache is filled from several threads before the upload — see
+  // `cacheTexture` below. The lock is held only around the map itself, never
+  // around the unpacking and the decoding, which is the part worth spreading.
+  std::mutex textureCacheMutex;
 
 #if OBF2_HAVE_FLASH
   // The menu's movie. A frame from it is handed to the resolver under the name
@@ -2449,28 +2496,18 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     }
   };
 #endif
-  auto resolveTexture =
-      [&](const std::string& mapName) -> std::optional<obf2::texture::Texture> {
-    // Names starting with '#' are not files but colours: the game sometimes gives a
-    // colour as a number (renderer.waterColor), and we also need fills for screens
-    // with no image.
-    if (level && mapName == obf2::level::kWaterColorMap) {
-      const obf2::Vec3f color = level->terrain.waterColor;
-      return obf2::texture::solidColor(color.x, color.y, color.z);
-    }
-#if OBF2_HAVE_FLASH
-    if (mapName == "#flash" && flashMovie.isOpen()) return flashTexture;
-#endif
-    if (mapName.size() == 7 && mapName[0] == '#') {
-      const auto channel = [&](std::size_t offset) {
-        return static_cast<float>(std::stoi(mapName.substr(offset, 2), nullptr, 16)) / 255.0f;
-      };
-      return obf2::texture::solidColor(channel(1), channel(3), channel(5));
-    }
-
-    const std::string path = obf2::normalizeAssetPath(mapName);
-    if (const auto cached = textureCache.find(path); cached != textureCache.end()) {
-      return cached->second;
+  // The half of `resolveTexture` that touches files, kept apart so that it can
+  // be called from several threads at once — filling the cache before the
+  // upload is the one place where that pays. It hands back a pointer into the
+  // cache, which an unordered_map keeps valid however much it grows, so a
+  // texture that is only being cached is never copied.
+  auto cacheTexture =
+      [&](const std::string& path) -> const std::optional<obf2::texture::Texture>* {
+    {
+      const std::lock_guard<std::mutex> lock(textureCacheMutex);
+      if (const auto cached = textureCache.find(path); cached != textureCache.end()) {
+        return &cached->second;
+      }
     }
 
     auto bytes = files.read(path);
@@ -2491,25 +2528,52 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     if (!bytes && !swapped.empty()) {
       bytes = files.read(obf2::joinAssetPath("menu/hud/texture", swapped));
     }
-    if (!bytes) {
-      ++texturesMissing;
-      textureCache.emplace(path, std::nullopt);
-      return std::nullopt;
+
+    std::optional<obf2::texture::Texture> decoded;
+    std::string textureError;
+    if (bytes) decoded = obf2::texture::loadImage(*bytes, &textureError);
+
+    const std::lock_guard<std::mutex> lock(textureCacheMutex);
+    // Two threads may have asked for the same texture at once; the first one in
+    // wins and the second's copy is dropped.
+    const auto [where, inserted] = textureCache.emplace(path, std::move(decoded));
+    if (inserted) {
+      if (where->second) {
+        ++texturesLoaded;
+      } else {
+        ++texturesMissing;
+        if (bytes && texturesMissing <= 6) {
+          std::printf("    the texture does not read: %s (%s)\n", path.c_str(),
+                      textureError.c_str());
+        }
+      }
+    }
+    return &where->second;
+  };
+
+  auto resolveTexture =
+      [&](const std::string& mapName) -> std::optional<obf2::texture::Texture> {
+    // Names starting with '#' are not files but colours: the game sometimes gives a
+    // colour as a number (renderer.waterColor), and we also need fills for screens
+    // with no image.
+    if (level && mapName == obf2::level::kWaterColorMap) {
+      const obf2::Vec3f color = level->terrain.waterColor;
+      return obf2::texture::solidColor(color.x, color.y, color.z);
+    }
+#if OBF2_HAVE_FLASH
+    if (mapName == "#flash" && flashMovie.isOpen()) return flashTexture;
+#endif
+    if (mapName.size() == 7 && mapName[0] == '#') {
+      const auto channel = [&](std::size_t offset) {
+        return static_cast<float>(std::stoi(mapName.substr(offset, 2), nullptr, 16)) / 255.0f;
+      };
+      return obf2::texture::solidColor(channel(1), channel(3), channel(5));
     }
 
-    std::string textureError;
-    auto decoded = obf2::texture::loadImage(*bytes, &textureError);
-    if (!decoded) {
-      ++texturesMissing;
-      if (texturesMissing <= 6) {
-        std::printf("    the texture does not read: %s (%s)\n", path.c_str(), textureError.c_str());
-      }
-    } else {
-      ++texturesLoaded;
-    }
-    textureCache.emplace(path, decoded);
-    return decoded;
+    const auto* cached = cacheTexture(obf2::normalizeAssetPath(mapName));
+    return cached != nullptr ? *cached : std::nullopt;
   };
+
 
   // --- the in-game HUD ---------------------------------------------
   //
@@ -3450,6 +3514,29 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   std::vector<obf2::gfx::GpuMesh> gpuMeshes(scene.meshes.size());
   std::vector<bool> uploadedOk(scene.meshes.size(), false);
 
+  const auto uploadStarted = std::chrono::steady_clock::now();
+
+  // Every texture the scene names, unpacked and decoded before the upload
+  // begins. The upload itself has to stay on this thread — SDL's GPU device is
+  // not shared — but the work in front of it is inflate and a DXT header per
+  // file, and that is what the other cores are for. Afterwards the loop below
+  // finds all of them in the cache.
+  {
+    std::vector<std::string> wanted;
+    std::unordered_set<std::string> seen;
+    for (const obf2::mesh::RenderMesh& mesh : scene.meshes) {
+      for (const obf2::mesh::DrawRange& range : mesh.ranges) {
+        for (const std::string& map : range.maps) {
+          // The `#` names are colours rather than files, and the cache is not
+          // where they come from.
+          if (map.empty() || map.front() == '#') continue;
+          if (seen.insert(map).second) wanted.push_back(obf2::normalizeAssetPath(map));
+        }
+      }
+    }
+    obf2::parallelFor(wanted.size(), [&](std::size_t i) { cacheTexture(wanted[i]); });
+  }
+
   long long triangles = 0;
   for (std::size_t i = 0; i < scene.meshes.size(); ++i) {
     auto uploaded = renderer->upload(scene.meshes[i], resolveTexture, &error);
@@ -3618,9 +3705,9 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   }
 
   std::printf("in the GPU: %zu unique meshes (%lld triangles), %zu instances "
-              "(%lld triangles per frame)\n  textures %d, not found %d\n",
+              "(%lld triangles per frame)\n  textures %d, not found %d (%.2f s)\n",
               gpuMeshes.size(), triangles, items.size(), drawnTriangles, texturesLoaded,
-              texturesMissing);
+              texturesMissing, secondsSince(uploadStarted));
 
   // --- the loop ---------------------------------------------------------
 

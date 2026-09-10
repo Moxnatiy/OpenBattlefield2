@@ -307,7 +307,7 @@ third_party/    vendored single-file libraries: miniz, stb
 
 | module | what it does |
 |---|---|
-| `core` | platform, paths (`normalizeAssetPath`), maths |
+| `core` | platform, paths (`normalizeAssetPath`), maths, `parallelFor` for the loading phases |
 | `vfs` | the game's archives, mounted the way `fileManager` does |
 | `con` | lexer and interpreter for the `.con` language |
 | `texture` | `.dds` |

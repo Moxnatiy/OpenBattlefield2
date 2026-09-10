@@ -2,6 +2,7 @@
 
 #include <cstring>
 #include <fstream>
+#include <mutex>
 #include <unordered_map>
 
 #include "miniz.h"
@@ -13,13 +14,47 @@ namespace obf2 {
 
 // --- ZipArchive --------------------------------------------------------------
 
-struct ZipArchive::Impl {
+// One miniz reader over the archive. Extracting seeks the file it was opened
+// with and keeps its state inside `mz_zip_archive`, so two threads cannot share
+// one — each takes a reader of its own out of the pool below and puts it back.
+struct ZipReader {
   mz_zip_archive zip{};
   bool opened = false;
+
+  ~ZipReader() {
+    if (opened) mz_zip_reader_end(&zip);
+  }
+};
+
+struct ZipArchive::Impl {
+  std::filesystem::path file;
   std::unordered_map<std::string, mz_uint> index;  // normalised path -> entry number
 
-  ~Impl() {
-    if (opened) mz_zip_reader_end(&zip);
+  // The idle readers. One is enough while the loading is serial; a level loaded
+  // over eight threads ends up with eight, each an open file handle and a few
+  // kilobytes of miniz state.
+  mutable std::mutex mutex;
+  mutable std::vector<std::unique_ptr<ZipReader>> idle;
+
+  std::unique_ptr<ZipReader> take() const {
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      if (!idle.empty()) {
+        auto reader = std::move(idle.back());
+        idle.pop_back();
+        return reader;
+      }
+    }
+    auto reader = std::make_unique<ZipReader>();
+    if (!mz_zip_reader_init_file(&reader->zip, file.string().c_str(), 0)) return nullptr;
+    reader->opened = true;
+    return reader;
+  }
+
+  void give(std::unique_ptr<ZipReader> reader) const {
+    if (!reader) return;
+    std::lock_guard<std::mutex> lock(mutex);
+    idle.push_back(std::move(reader));
   }
 };
 
@@ -31,21 +66,23 @@ ZipArchive& ZipArchive::operator=(ZipArchive&&) noexcept = default;
 std::unique_ptr<ZipArchive> ZipArchive::open(const fs::path& file, std::string* error) {
   auto archive = std::unique_ptr<ZipArchive>(new ZipArchive());
   archive->file_ = file;
+  archive->impl_->file = file;
 
-  if (!mz_zip_reader_init_file(&archive->impl_->zip, file.string().c_str(), 0)) {
+  auto reader = archive->impl_->take();
+  if (!reader) {
     if (error) *error = "could not open the archive: " + file.string();
     return nullptr;
   }
-  archive->impl_->opened = true;
 
-  const mz_uint count = mz_zip_reader_get_num_files(&archive->impl_->zip);
+  const mz_uint count = mz_zip_reader_get_num_files(&reader->zip);
   archive->impl_->index.reserve(count);
   for (mz_uint i = 0; i < count; ++i) {
-    if (mz_zip_reader_is_file_a_directory(&archive->impl_->zip, i)) continue;
+    if (mz_zip_reader_is_file_a_directory(&reader->zip, i)) continue;
     mz_zip_archive_file_stat stat;
-    if (!mz_zip_reader_file_stat(&archive->impl_->zip, i, &stat)) continue;
+    if (!mz_zip_reader_file_stat(&reader->zip, i, &stat)) continue;
     archive->impl_->index.emplace(normalizeAssetPath(stat.m_filename), i);
   }
+  archive->impl_->give(std::move(reader));
   return archive;
 }
 
@@ -57,8 +94,16 @@ std::optional<std::vector<std::byte>> ZipArchive::read(std::string_view normaliz
   const auto it = impl_->index.find(std::string(normalizedPath));
   if (it == impl_->index.end()) return std::nullopt;
 
+  // The index is written once, on open, and only read after that; the reader is
+  // this thread's alone until it is given back. So several threads may unpack
+  // from one archive at once, which is the whole point — inflating a level's
+  // meshes and textures is most of what loading is.
+  auto reader = impl_->take();
+  if (!reader) return std::nullopt;
+
   std::size_t size = 0;
-  void* data = mz_zip_reader_extract_to_heap(&impl_->zip, it->second, &size, 0);
+  void* data = mz_zip_reader_extract_to_heap(&reader->zip, it->second, &size, 0);
+  impl_->give(std::move(reader));
   if (data == nullptr) return std::nullopt;
 
   std::vector<std::byte> out(size);
@@ -157,7 +202,26 @@ std::optional<std::vector<std::byte>> FileSystem::read(std::string_view path) co
   return std::nullopt;
 }
 
-bool FileSystem::exists(std::string_view path) const { return read(path).has_value(); }
+bool FileSystem::exists(std::string_view path) const {
+  // Asking whether a file is there must not unpack it. It used to call `read`,
+  // and a level asks this of every patch's colour map, light map and two chart
+  // maps before it reads any of them — 64 megabytes of inflate to answer 64
+  // yes-or-no questions.
+  const std::string normalized = normalizeAssetPath(path);
+  for (auto it = mounts_.rbegin(); it != mounts_.rend(); ++it) {
+    const auto key = stripMountPoint(it->mountPoint, normalized);
+    if (!key) continue;
+    if (it->archive) {
+      if (it->archive->contains(*key)) return true;
+      continue;
+    }
+    for (const auto& [indexed, real] : it->diskIndex) {
+      std::error_code ec;
+      if (indexed == *key && fs::is_regular_file(real, ec)) return true;
+    }
+  }
+  return false;
+}
 
 std::optional<std::string> FileSystem::loadText(std::string_view normalizedPath) {
   auto data = read(normalizedPath);

@@ -6,6 +6,7 @@ function(obf2_add_test name)
 endfunction()
 
 obf2_add_test(test_path obf2_core)
+obf2_add_test(test_parallel obf2_core)
 obf2_add_test(test_con obf2_con)
 obf2_add_test(test_mesh obf2_mesh)
 obf2_add_test(test_material obf2_mesh)

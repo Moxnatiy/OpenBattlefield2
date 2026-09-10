@@ -3,6 +3,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "obf2/core/math.h"
@@ -286,6 +287,10 @@ class MeshRenderer {
   // which is where they were before.
   std::unique_ptr<TerrainLightBuffer> terrainLight_;
   std::vector<SDL_GPUTexture*> sharedTextures_;
+  // Path -> the one copy of it on the GPU. A null value is a texture that could
+  // not be read, remembered so it is not looked for again. Everything in here
+  // is owned by `sharedTextures_` and lives as long as the renderer.
+  std::unordered_map<std::string, SDL_GPUTexture*> textureByPath_;
   Fog fog_;
   // Already scaled the way the engine stores them — see setTerrainLighting.
   Color terrainSun_{0.25f, 0.25f, 0.25f, 1.0f};
