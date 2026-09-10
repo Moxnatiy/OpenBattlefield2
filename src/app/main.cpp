@@ -2313,8 +2313,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     return 1;
   }
   {
+    // In pixels, not in points: on a Retina display the two differ by two, and
+    // what we draw into is the pixels.
     int windowWidth = 0, windowHeight = 0;
-    SDL_GetWindowSize(device->window(), &windowWidth, &windowHeight);
+    SDL_GetWindowSizeInPixels(device->window(), &windowWidth, &windowHeight);
     std::printf("GPU backend: %s | window %dx%d (asked for %dx%d)\n",
                 std::string(device->driver()).c_str(), windowWidth, windowHeight, args.width,
                 args.height);

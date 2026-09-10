@@ -27,6 +27,12 @@ std::unique_ptr<Device> Device::create(const WindowDesc& desc, std::string* erro
 
   SDL_WindowFlags flags = 0;
   if (desc.resizable) flags |= SDL_WINDOW_RESIZABLE;
+  // Draw at the display's real pixels rather than at its points. On a Retina
+  // screen that is twice the resolution in each direction for the same window,
+  // and it costs nothing to ask for: everything we draw is in normalised
+  // coordinates or in world units, and the HUD is laid out against the
+  // drawable's size rather than the window's.
+  flags |= SDL_WINDOW_HIGH_PIXEL_DENSITY;
 
   // We ask for what was requested, but no more than the screen leaves — and
   // **keeping the aspect**. That matters: the game is made for 4:3, and if the
