@@ -84,6 +84,31 @@ So the editor's terrain really is a different renderer, not the same one
 with a different loader — the editor also loads its own
 `BF2Editor/Content/Terrain/Grid` overlays there.
 
+### Checked: the game never runs the editor's branch
+
+`GameLogic::loadLevel` (`BF2.exe`, `FUN_004ed750`, 0x004ed750 — the assert
+beside it names `Code\BF2\Game\GameLogic\GameLogic.cpp`) builds the path
+`<level>/Init.con` and runs it one of two ways:
+
+```c
+if (isEditor() == 0) {
+    run(path, "", "", "", "", "", "", "", "");          // eight empty arguments
+} else {
+    run(path, "BF2Editor", "", "", "", "", "", "", "");  // v_arg1 = BF2Editor
+}
+```
+
+`isEditor()` is `FUN_00440530` (0x00440530), a plain read of the byte at
+0x009a4382, and the only thing that writes it is `FUN_00440540`, called from
+the command-line parser at 0x0040ae8e after a switch is matched. So in an
+ordinary run of the game the byte is zero, `v_arg1` is **empty**, and the
+level takes its `else` branch — `terrain.create Terrain` and
+`terrain.load .../terraindata.raw`. The editor's branch is the editor's.
+
+That is the answer to "are we sure the game does not use BF2Editor": it does
+not, and it is not a matter of inference — the call site passes the string
+only under that flag.
+
 **We run the editor's branch**, because the game's takes a single compiled
 blob, `terraindata.raw`, which we have not reversed; the editor's names
 the loose files we can already read (`HeightmapPrimary.raw`, `Colormaps/`,
