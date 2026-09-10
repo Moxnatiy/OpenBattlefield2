@@ -1307,10 +1307,12 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
         range.normalMap = load(layout.normalBase);
         range.normalOnDetailUv = false;
       }
-      // 0 and 2 are the only values the game's static meshes carry, and 2 is
-      // the alpha-tested one — the pine's needles have it while its trunk does
-      // not (`mesh_info … nc_pinebig01.staticmesh`).
-      range.alphaTest = source_range.alphaMode == 2;
+      // Cut out by the texture's alpha. A static mesh says so in `alphaMode` —
+      // the pine's needles have 2 where its trunk has 0 — and the other kinds
+      // say it in the technique's name instead, which is why the washing on
+      // Karkand's lines hung there as an opaque sheet
+      // (`obf2::mesh::materialAlphaTest`).
+      range.alphaTest = mesh::materialAlphaTest(source_range.technique, source_range.alphaMode);
       range.leaf = source_range.leaf;
     }
     gpuMesh.ranges.push_back(range);

@@ -348,6 +348,62 @@ int main(int argc, char** argv) {
     return 0;
   }
 
+  // Where a surface's transparency is written. A static mesh says it in
+  // `alphaMode` — 2 is the alpha-tested one, the leaves and the grates. The
+  // other two kinds do not use that field at all: they name a technique of
+  // `SkinnedMesh.fx` or `BundledMesh.fx` and the technique's own name says it,
+  // `Alpha_Test` or `Alpha`. The washing on Karkand's lines is one of those, and
+  // it hung there as an opaque sheet until this mode was written.
+  //
+  // Prints, for every mesh kind: the `.fx` file, the technique and the
+  // alphaMode, with a mesh that uses each so the claim can be checked by hand.
+  if (what == "--alpha") {
+    struct Row {
+      int count = 0;
+      std::string example;
+    };
+    std::map<std::string, Row> rows;
+
+    auto scan = files.list();
+    std::sort(scan.begin(), scan.end());
+    scan.erase(std::unique(scan.begin(), scan.end()), scan.end());
+
+    for (const auto& path : scan) {
+      const std::string_view extension = obf2::assetExtension(path);
+      obf2::mesh::Kind kind = obf2::mesh::Kind::Static;
+      if (extension == "staticmesh") kind = obf2::mesh::Kind::Static;
+      else if (extension == "bundledmesh") kind = obf2::mesh::Kind::Bundled;
+      else if (extension == "skinnedmesh") kind = obf2::mesh::Kind::Skinned;
+      else continue;
+
+      const auto bytes = files.read(path);
+      if (!bytes) continue;
+      const auto mesh = obf2::mesh::load(*bytes, kind);
+      if (!mesh) continue;
+      for (const auto& geometry : mesh->geometries) {
+        for (const auto& lod : geometry.lods) {
+          for (const auto& material : lod.materials) {
+            const std::string key = std::string(extension) + "  " + material.fxFile + "  " +
+                                    material.technique + "  alphaMode " +
+                                    std::to_string(material.alphaMode);
+            Row& row = rows[key];
+            ++row.count;
+            if (row.example.empty()) row.example = path;
+          }
+        }
+      }
+    }
+
+    std::vector<std::pair<std::string, Row>> sorted(rows.begin(), rows.end());
+    std::sort(sorted.begin(), sorted.end(),
+              [](auto& a, auto& b) { return a.second.count > b.second.count; });
+    std::puts("kind, fx, technique, alphaMode over every mesh in the mod:");
+    for (const auto& [key, row] : sorted) {
+      std::printf("  %6d  %-66s %s\n", row.count, key.c_str(), row.example.c_str());
+    }
+    return 0;
+  }
+
   // Reconnaissance: which techniques occur and what lies in each texture slot.
   // Needed to work out which slot to take for the base colour.
   if (what == "--materials") {

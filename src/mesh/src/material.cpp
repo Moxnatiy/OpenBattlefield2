@@ -72,6 +72,29 @@ MaterialLayout materialLayout(std::string_view technique) {
   return out;
 }
 
+namespace {
+
+// A case-insensitive search: the technique names in the meshes are written the
+// artists' way — `Alpha_Test`, `alpha_test1Alpha_Test` — and the case varies.
+bool containsNoCase(std::string_view text, std::string_view token) {
+  if (token.size() > text.size()) return false;
+  for (std::size_t at = 0; at + token.size() <= text.size(); ++at) {
+    if (startsWithNoCase(text.substr(at), token)) return true;
+  }
+  return false;
+}
+
+}  // namespace
+
+bool materialAlphaTest(std::string_view technique, int alphaMode) {
+  return alphaMode == 2 || containsNoCase(technique, "alpha_test");
+}
+
+bool materialAlphaBlend(std::string_view technique, int alphaMode) {
+  if (materialAlphaTest(technique, alphaMode)) return false;
+  return alphaMode == 1 || containsNoCase(technique, "alpha");
+}
+
 bool isVegetationPath(std::string_view meshPath) {
   // The engine's own test is a plain substring search, case as it lies in the
   // archives (`RendDX9.dll`, 0x1011acd0). Our paths come through

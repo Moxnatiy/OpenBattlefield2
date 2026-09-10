@@ -37,6 +37,29 @@ struct MaterialLayout {
 // layout than a wrong one.
 MaterialLayout materialLayout(std::string_view technique);
 
+// Whether the surface is cut out by its texture's alpha.
+//
+// A static mesh says so in `alphaMode`: 2 is the alpha-tested one, and its
+// technique names only channels (`BaseDetailNDetail`), never the state. The
+// other two kinds say it in the technique's own name instead — `Alpha_Test`,
+// `Alpha_TestColormapGloss`, `AnimatedUVAlpha_TestColormapGloss` — and a
+// skinned mesh leaves `alphaMode` at 0 while doing it.
+//
+// That is not a guess about names: over every mesh in the game
+// (`mesh_info --alpha`) each of the 45 bundled materials whose technique carries
+// `Alpha_Test` also carries `alphaMode 2`, so on that kind the two always agree.
+// The six that disagree are the washing on Strike at Karkand's lines
+// (`objects/common/cloth_line/meshes/cloth_line.skinnedmesh`, `SkinnedMesh.fx`,
+// technique `Alpha_Test`, `alphaMode 0`) — and its texture's alpha is exactly
+// binary, 37.6% at zero and 62.4% at 255, so it is a cutout and nothing else.
+bool materialAlphaTest(std::string_view technique, int alphaMode);
+
+// Whether the surface is blended rather than cut out: `alphaMode` 1, or a
+// technique that carries `Alpha` without `Alpha_Test` — glass, canopies, the
+// 144 `Alpha` materials of the game's bundled meshes. Read, and not drawn
+// differently yet: we have no blended pass for the world.
+bool materialAlphaBlend(std::string_view technique, int alphaMode);
+
 // Whether the engine draws this mesh as vegetation, which is decided by its
 // **path** and nothing else. `StaticMeshTemplate::load` (`RendDX9.dll`,
 // 0x1011acd0 — the assert beside it names

@@ -132,9 +132,44 @@ void testOnlyAlphaTestedMaterialsOfAVegetationMeshAreLeaves() {
   CHECK(!house.ranges[1].leaf);
 }
 
+// Where transparency is written differs by mesh kind, and the corpus behind
+// each of these lines is in `materialAlphaTest`'s comment.
+static void testAlphaComesFromEitherTheModeOrTheName() {
+  // A static mesh: the mode says it, the technique names only channels.
+  CHECK(!materialAlphaTest("BaseDetailNDetail", 0));
+  CHECK(!materialAlphaBlend("BaseDetailNDetail", 0));
+  CHECK(materialAlphaTest("Base", 2));
+  CHECK(materialAlphaTest("BaseDetailNDetail", 2));
+  // A material with no technique at all still has its mode.
+  CHECK(materialAlphaTest("", 2));
+
+  // The washing on Karkand's lines: a skinned mesh whose mode is 0 and whose
+  // technique is the whole answer. This is the one that was drawn as a plate.
+  CHECK(materialAlphaTest("Alpha_Test", 0));
+  CHECK(!materialAlphaBlend("Alpha_Test", 0));
+  // Case and neighbouring tokens must not matter.
+  CHECK(materialAlphaTest("tangent_alpha_test1Alpha_Test", 0));
+  CHECK(materialAlphaTest("Alpha_TestColormapGloss", 2));
+  CHECK(materialAlphaTest("AnimatedUVAlpha_TestColormapGloss", 2));
+
+  // Blended: glass and canopies. Read, not drawn differently yet.
+  CHECK(materialAlphaBlend("Alpha", 1));
+  CHECK(materialAlphaBlend("AlphaEnvMap", 1));
+  CHECK(materialAlphaBlend("AlphaNoHemiLight", 1));
+  CHECK(materialAlphaBlend("Alpha_One", 1));  // the glow meshes
+  CHECK(!materialAlphaTest("Alpha", 1));
+
+  // And the ordinary opaque ones.
+  CHECK(!materialAlphaTest("ColormapGloss", 0));
+  CHECK(!materialAlphaBlend("ColormapGloss", 0));
+  CHECK(!materialAlphaTest("EnvMapColormapGloss", 0));
+  CHECK(!materialAlphaBlend("", 0));
+}
+
 }  // namespace
 
 TEST_MAIN({
+  testAlphaComesFromEitherTheModeOrTheName();
   testTechniqueOrderMatchesTheCorpus();
   testLongerTokensWinOverShorterOnes();
   testEmptyAndOddNamesGiveNothing();

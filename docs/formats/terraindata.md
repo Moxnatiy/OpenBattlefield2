@@ -200,6 +200,42 @@ what a patch's textures are and which of them come from **files**:
 | `+0x48` | the low-detail component map | filled `0xff0000` when absent |
 | `+0x5c` | **the surface the blob holds** | not loaded from any file |
 
+### The eight secondary terrains, and the white band at the horizon
+
+After the patches the writer walks eight more (`RendDX9.dll`, 0x1010cd70, the
+loop over `terrain + 0x1e2`), and only the ones that exist:
+
+```c
+for (i = 0; i < 8; ++i) {
+    if (!st[i]) continue;
+    writeU32(st[0x84]);
+    writeFloat(st[0x68]); writeFloat(st[0x6c]);   // its height range
+    writeVec3(st + 0x70); writeFloat(st[0x7c]);
+    writeRaw(lock(...));                          // one raw surface
+    writeRaw(lock(...));                          // and a second
+}
+writeU32(0xffffffff);                             // the end of the file
+```
+
+**Two** surfaces, where a patch has one. A patch's single surface is its
+heights and everything with colour in it sits in `.dds` files beside the blob —
+but a level ships no `.dds` at all for its surroundings, and the surrounding
+terrain's shader wants a colour map: `outColor = lowDetailmap * colormap * 4`
+(`Shaders_client.zip:TerrainShader_Shared.fx:510`, `Shared_PS_STNormal`). So the
+second surface is where that colour map has to be. Not confirmed: reaching it
+means walking past every patch block, whose morph-delta array and surface are
+sized by the patch, and that walk is not written yet.
+
+This is the whole of the white band we draw at the horizon. The eight
+surrounding height maps are plain files the level ships
+(`HeightmapSecondary_*.raw`, 257×257 and 8-bit, declared in Heightdata.con with
+their own scale), and we load none of them: `heightmapcluster.setClusterSize 3`
+says the world is 3×3 of them and we keep the middle one. With nothing drawn
+past the level's own 1024 metres, what shows there is the sky dome below its
+horizon line — measured, not guessed: with the frame's clear colour set to
+magenta not one pixel of the band changed, and the band's own colour is
+(209, 195, 164), neither the clear colour nor the fog's (163, 135, 86).
+
 So the per-patch payload in `terraindata.raw` is **geometry, not materials**:
 the heights, beside the morph deltas that let a patch change LOD. Everything
 with a texture in it — the colour maps, the light maps, the chart maps that
