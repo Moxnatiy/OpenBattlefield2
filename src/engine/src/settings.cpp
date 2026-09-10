@@ -42,32 +42,49 @@ void Settings::bind(Console& console) {
     if (const auto fullScreen = c.argInt(3)) video.fullScreen = *fullScreen != 0;
   });
 
-  // Quality levels: in the game these are integers 0..3 (low/medium/high/very high).
-  console.bind("renderer.setTerrainQuality", [this](const con::Command& c) {
+  // Quality levels: in the game these are integers 0..3 (low/medium/high/very
+  // high), and the object they hang off is `VideoSettings` — that is the name
+  // `BF2.exe` registers (`setTerrainQuality` at 0x00413d29, an `int`
+  // argument) and the one a profile's `VideoSettings.setResolution` is written
+  // with. We had bound them to `renderer.*`, which is in neither binary; the
+  // `game.set*` aliases further down did the work by accident. Both names are
+  // bound now. What each of the ten changes in the original is
+  // docs/TODO-graphics.md.
+  console.bind("VideoSettings.setTerrainQuality", [this](const con::Command& c) {
     video.terrainQuality = c.argInt(0).value_or(video.terrainQuality);
   });
-  console.bind("renderer.setEffectsQuality", [this](const con::Command& c) {
+  console.bind("VideoSettings.setEffectsQuality", [this](const con::Command& c) {
     video.effectsQuality = c.argInt(0).value_or(video.effectsQuality);
   });
-  console.bind("renderer.setGeometryQuality", [this](const con::Command& c) {
+  console.bind("VideoSettings.setGeometryQuality", [this](const con::Command& c) {
     video.geometryQuality = c.argInt(0).value_or(video.geometryQuality);
   });
-  console.bind("renderer.setTextureQuality", [this](const con::Command& c) {
+  console.bind("VideoSettings.setTextureQuality", [this](const con::Command& c) {
     video.textureQuality = c.argInt(0).value_or(video.textureQuality);
   });
-  console.bind("renderer.setLightingQuality", [this](const con::Command& c) {
+  console.bind("VideoSettings.setLightingQuality", [this](const con::Command& c) {
     video.lightingQuality = c.argInt(0).value_or(video.lightingQuality);
   });
-  console.bind("renderer.setDynamicShadowsQuality", [this](const con::Command& c) {
+  console.bind("VideoSettings.setDynamicShadowsQuality", [this](const con::Command& c) {
     video.dynamicShadowsQuality = c.argInt(0).value_or(video.dynamicShadowsQuality);
   });
-  console.bind("renderer.setDynamicLightingQuality", [this](const con::Command& c) {
+  console.bind("VideoSettings.setDynamicLightingQuality", [this](const con::Command& c) {
     video.dynamicLightingQuality = c.argInt(0).value_or(video.dynamicLightingQuality);
   });
-  console.bind("renderer.setAntialiasing", [this](const con::Command& c) {
+  console.bind("VideoSettings.setAntialiasing", [this](const con::Command& c) {
     video.antialiasing = c.argInt(0).value_or(video.antialiasing);
   });
-  console.bind("renderer.setResolution", [this](const con::Command& c) {
+  // The two the struct did not carry at all. Texture filtering becomes the
+  // `FILTER_*` defines the engine pastes into every sampler declaration
+  // (`RendDX9.dll` holds the text: `#define FILTER_STM_DIFF_MIN %s`), and the
+  // view distance is a **float** scale, not a level.
+  console.bind("VideoSettings.setTextureFilteringQuality", [this](const con::Command& c) {
+    video.textureFilteringQuality = c.argInt(0).value_or(video.textureFilteringQuality);
+  });
+  console.bind("VideoSettings.setViewDistanceScale", [this](const con::Command& c) {
+    video.viewDistanceScale = c.argFloat(0).value_or(video.viewDistanceScale);
+  });
+  console.bind("VideoSettings.setResolution", [this](const con::Command& c) {
     // The format "1280x1024@60" — we take only the size.
     const std::string_view value = c.argStr(0);
     const std::size_t cross = value.find('x');

@@ -91,10 +91,12 @@ static void testSettingsFromRealFileShape() {
        "renderer.setFullScreen 1\n"
        "renderer.fieldOfView 1.2\n"
        "renderer.globalLodRadius 2\n"
-       "renderer.setTerrainQuality 3\n"
-       "renderer.setEffectsQuality 1\n"
-       "renderer.setDynamicShadowsQuality 0\n"
-       "renderer.setResolution 1280x1024@60\n"
+       "VideoSettings.setTerrainQuality 3\n"
+       "VideoSettings.setEffectsQuality 1\n"
+       "VideoSettings.setDynamicShadowsQuality 0\n"
+       "VideoSettings.setTextureFilteringQuality 3\n"
+       "VideoSettings.setViewDistanceScale 0.75\n"
+       "VideoSettings.setResolution 1280x1024@60\n"
        "game.setPlayerName \"ARNE\"\n"
        "game.setConnection 2\n"
        "game.setMinimapTransparency 20\n"
@@ -109,6 +111,10 @@ static void testSettingsFromRealFileShape() {
   CHECK_EQ(settings.video.dynamicShadowsQuality, 0);
   CHECK_EQ(settings.video.width, 1280);
   CHECK_EQ(settings.video.height, 1024);
+  // The object is `VideoSettings`, which is what BF2.exe registers
+  // (0x00413d29) — not `renderer`, which is in neither binary.
+  CHECK_EQ(settings.video.textureFilteringQuality, 3);
+  CHECK(settings.video.viewDistanceScale > 0.74f && settings.video.viewDistanceScale < 0.76f);
 
   CHECK_EQ(settings.general.playerName, std::string("ARNE"));
   CHECK_EQ(settings.general.connectionType, 2);

@@ -28,6 +28,13 @@ struct VideoSettings {
   int dynamicShadowsQuality = 2;
   int dynamicLightingQuality = 2;
   int antialiasing = 0;
+  // Not a level but the filter itself: the engine turns it into the `FILTER_*`
+  // defines of every sampler in the shaders.
+  int textureFilteringQuality = 2;
+  // A float, and the only one of the ten that is: the engine keeps a family of
+  // view distances scaled by it (`ViewDistance`, `ViewDistanceFadeScale`,
+  // `ViewDistanceHeightScale`, … — strings in `RendDX9.dll`).
+  float viewDistanceScale = 1.0f;
 };
 
 struct GeneralSettings {

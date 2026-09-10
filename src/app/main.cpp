@@ -2114,6 +2114,17 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     std::printf("\n  player: \"%s\", fullscreen: %d, field of view: %.2f\n",
                 settings.general.playerName.c_str(), settings.video.fullScreen ? 1 : 0,
                 settings.video.fieldOfView);
+    // The ten the options screen has. Printed because they were bound to a
+    // name the game never writes and nobody noticed for months
+    // (docs/TODO-graphics.md).
+    const obf2::engine::VideoSettings& v = settings.video;
+    std::printf("  quality: terrain %d, effects %d, geometry %d, texture %d, lighting %d\n"
+                "           dynamic shadows %d, dynamic lights %d, antialiasing %d,"
+                " filtering %d, view distance %.2f\n",
+                v.terrainQuality, v.effectsQuality, v.geometryQuality, v.textureQuality,
+                v.lightingQuality, v.dynamicShadowsQuality, v.dynamicLightingQuality,
+                v.antialiasing, v.textureFilteringQuality,
+                static_cast<double>(v.viewDistanceScale));
     std::printf("  show the intro: %d, movies found: %zu\n",
                 settings.general.viewIntroMovie ? 1 : 0, engine.movies().size());
     for (const auto& movie : engine.movies()) {
