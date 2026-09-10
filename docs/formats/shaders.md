@@ -369,6 +369,37 @@ in. With `_ALPHATEST_` the shader keeps `totalDiffuse.a` and only scales
 it by Transparency; without it the alpha is discarded and the detail's
 becomes gloss instead (`RaShaderSTM.fx:282`).
 
+## The sky's horizon, and which samplers clamp
+
+The sky dome is one mesh around the camera, and the level's own sky texture is
+stretched over it from the zenith (`v = 0`) down to a ring at the dome's `y = 0`
+(`v = 1`), with a skirt hanging from that ring to `y = -500` at `v = 0.9998`
+(`mesh_info --heightuv common/sky/skydome/meshes/skydome.staticmesh`). The
+artists painted the texture's last row the level's own fog colour — Karkand's
+bottom texel row is (164, 134, 87) against `Renderer.fogColor 163/135/86` — so
+that the world, which is entirely fog by the time it reaches the view distance,
+meets a sky of the same colour and no seam shows.
+
+We had a pale band under the horizon instead, and it was ours: the skirt is at
+`v = 1` and our sampler repeated, so the filter took half of the texture's last
+row and half of its first — the white at the zenith. Half of (164, 134, 87) and
+(255, 255, 246) is (210, 194, 166); the band measured (209, 195, 164).
+
+The game clamps, and says which samplers do:
+
+| sampler | what | in the shader |
+|---|---|---|
+| `samplerClamp` | the sky dome's texture | `SkyDome.fx:22`, CLAMP on both axes |
+| `sampler0Clamp` | a patch's colour map | `TerrainShader_Hi.fx:79` |
+| `sampler1Clamp` | the light accumulation buffer | `:81` |
+| `sampler2Clamp` | a patch's chart map | `:86` |
+| `sampler5Clamp` | its low-detail component map | `:91` |
+| `sampler4Wrap`, `dsampler3Wrap` | the low-detail texture and the six terrain materials | `:92`, `:88` — these are the ones meant to tile |
+
+The rule behind the table is the obvious one: a texture that covers its surface
+exactly once is clamped, a texture that tiles repeats. It is the same rake the
+HUD stepped on once already (CLAUDE.md, "A world sampler in the interface").
+
 ## Roads are lifted and do not write depth
 
 `RoadCompiled.fx:95`, in the vertex shader:

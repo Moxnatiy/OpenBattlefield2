@@ -903,6 +903,7 @@ MeshRenderer::~MeshRenderer() {
   if (skyPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, skyPipeline_);
   if (sampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, sampler_);
   if (normalSampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, normalSampler_);
+  if (clampSampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, clampSampler_);
   if (overlaySampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, overlaySampler_);
   if (pipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, pipeline_);
 }
@@ -1380,6 +1381,7 @@ void MeshRenderer::setTextureFiltering(int quality) {
   SDL_GPUDevice* gpu = device_->gpu();
   if (sampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, sampler_);
   if (normalSampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, normalSampler_);
+  if (clampSampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, clampSampler_);
 
   // What this setting does is write a preamble for the shader compiler, and
   // `EffectManager` writes it in full (`RendDX9.dll`, `FUN_10034010`,
@@ -1423,6 +1425,27 @@ void MeshRenderer::setTextureFiltering(int quality) {
   normal.mipmap_mode =
       quality <= 1 ? SDL_GPU_SAMPLERMIPMAPMODE_NEAREST : SDL_GPU_SAMPLERMIPMAPMODE_LINEAR;
   normalSampler_ = SDL_CreateGPUSampler(gpu, &normal);
+
+  // And the one that does not repeat. A texture that covers its surface once
+  // must be clamped, or the filter reaches across the edge and brings back the
+  // opposite one — which is how the sky came to have a pale band under the
+  // horizon: the dome's texture ends at v = 1 in the fog's own colour, and with
+  // a repeating sampler the skirt below the ring blended that last row with the
+  // first, the white at the zenith. Half of (164,134,87) and (255,255,246) is
+  // (210,194,166); the band measured (209,195,164).
+  //
+  // The game declares it for exactly these: the dome
+  // (`Shaders_client.zip:SkyDome.fx:22`, `samplerClamp`, CLAMP on both axes)
+  // and the terrain's per-patch maps — `sampler0Clamp` the colour map,
+  // `sampler1Clamp` the light, `sampler2Clamp` the chart maps and
+  // `sampler5Clamp` the low-detail component (`TerrainShader_Hi.fx:79`ff).
+  // What stays repeating is what is meant to tile: the level's low-detail
+  // texture and the six terrain materials (`sampler4Wrap`, `dsampler3Wrap`).
+  SDL_GPUSamplerCreateInfo clamp = info;
+  clamp.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+  clamp.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+  clamp.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+  clampSampler_ = SDL_CreateGPUSampler(gpu, &clamp);
 }
 
 void MeshRenderer::setTerrainDetail(SDL_GPUTexture* lowDetail, const float sideTiling[2],
@@ -1616,10 +1639,16 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
         // anyway.
         const bool baked = item.lightmap != nullptr && item.mesh->hasLightmapUv;
         SDL_GPUTexture* lightmapTexture = baked ? item.lightmap : range.lightmap;
+        // A terrain patch's maps and the sky dome's texture each cover their
+        // surface exactly once, so they are the ones that must not repeat.
+        // Everything else is meant to tile.
+        const bool onceOver = item.sky || range.lightmap != nullptr;
+        SDL_GPUSampler* const edge =
+            onceOver && clampSampler_ != nullptr ? clampSampler_ : sampler_;
         const SDL_GPUTextureSamplerBinding bindings[16] = {
-            {range.texture != nullptr ? range.texture : placeholder_, sampler_},
-            {lightmapTexture != nullptr ? lightmapTexture : placeholder_, sampler_},
-            {range.detail != nullptr ? range.detail : placeholder_, sampler_},
+            {range.texture != nullptr ? range.texture : placeholder_, edge},
+            {lightmapTexture != nullptr ? lightmapTexture : placeholder_, edge},
+            {range.detail != nullptr ? range.detail : placeholder_, edge},
             {groundLight != nullptr ? groundLight : placeholder_,
              groundLight != nullptr ? terrainLight_->readSampler() : sampler_},
             {terrainDetail_ != nullptr ? terrainDetail_ : placeholder_, sampler_},
@@ -1627,8 +1656,8 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
              normalSampler_ != nullptr ? normalSampler_ : sampler_},
             {range.dirt != nullptr ? range.dirt : placeholder_, sampler_},
             {range.crack != nullptr ? range.crack : placeholder_, sampler_},
-            {range.chartA != nullptr ? range.chartA : placeholder_, sampler_},
-            {range.chartB != nullptr ? range.chartB : placeholder_, sampler_},
+            {range.chartA != nullptr ? range.chartA : placeholder_, edge},
+            {range.chartB != nullptr ? range.chartB : placeholder_, edge},
             {material(0), sampler_}, {material(1), sampler_}, {material(2), sampler_},
             {material(3), sampler_}, {material(4), sampler_}, {material(5), sampler_},
         };

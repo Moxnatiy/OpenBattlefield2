@@ -348,6 +348,49 @@ int main(int argc, char** argv) {
     return 0;
   }
 
+  // How a mesh's height maps to its first unwrap: `mesh_info <mod> --heightuv
+  // <path>`. Written for the sky dome, whose texture is a band from the zenith
+  // down to a horizon the artists painted the fog's own colour — so where the
+  // dome's own y stops being sky and starts being the skirt below the horizon
+  // is a question about the mesh and not about the shader.
+  if (what == "--heightuv") {
+    if (argc < 4) {
+      std::fputs("usage: mesh_info <modDir> --heightuv <path.staticmesh>\n", stderr);
+      return 2;
+    }
+    const std::string path = obf2::normalizeAssetPath(argv[3]);
+    const auto bytes = files.read(path);
+    if (!bytes) {
+      std::fprintf(stderr, "not found: %s\n", path.c_str());
+      return 1;
+    }
+    const auto mesh = obf2::mesh::load(*bytes, obf2::mesh::Kind::Static);
+    if (!mesh) {
+      std::fputs("could not read the mesh\n", stderr);
+      return 1;
+    }
+    const auto render = obf2::mesh::extract(*mesh);
+    if (!render) {
+      std::fputs("could not unpack the mesh\n", stderr);
+      return 1;
+    }
+    std::vector<std::pair<float, float>> pairs;
+    for (const auto& vertex : render->vertices) {
+      pairs.emplace_back(vertex.position.y, vertex.uv[1]);
+    }
+    std::sort(pairs.begin(), pairs.end(), [](auto& a, auto& b) { return a.first > b.first; });
+    if (pairs.empty()) return 0;
+    std::printf("%zu vertices, y from %.1f to %.1f\n", pairs.size(), pairs.front().first,
+                pairs.back().first);
+    float lastY = 1e30f;
+    for (const auto& [y, v] : pairs) {
+      if (std::abs(y - lastY) < 0.5f) continue;
+      lastY = y;
+      std::printf("   y %9.2f   v %.4f\n", static_cast<double>(y), static_cast<double>(v));
+    }
+    return 0;
+  }
+
   // Where a surface's transparency is written. A static mesh says it in
   // `alphaMode` — 2 is the alpha-tested one, the leaves and the grates. The
   // other two kinds do not use that field at all: they name a technique of

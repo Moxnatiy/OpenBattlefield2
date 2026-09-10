@@ -303,6 +303,9 @@ class MeshRenderer {
   SDL_GPUTexture* terrainDetail_ = nullptr;  // owned by the caller's upload, not by us
   float terrainTiling_[4]{5.0f, 5.0f, 24.0f, 0.0f};
   float terrainDetailUv_[2]{1.0f, 0.0f};
+  // The sampler for everything that covers its surface exactly once — see
+  // `setTextureFiltering`, where it is built beside the repeating one.
+  SDL_GPUSampler* clampSampler_ = nullptr;
   TerrainMaterial terrainMaterials_[kTerrainMaterials];
   bool terrainMaterialsReady_ = false;
   float terrainChartUv_[2]{1.0f, 0.0f};

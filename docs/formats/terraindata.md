@@ -200,7 +200,7 @@ what a patch's textures are and which of them come from **files**:
 | `+0x48` | the low-detail component map | filled `0xff0000` when absent |
 | `+0x5c` | **the surface the blob holds** | not loaded from any file |
 
-### The eight secondary terrains, and the white band at the horizon
+### The eight secondary terrains
 
 After the patches the writer walks eight more (`RendDX9.dll`, 0x1010cd70, the
 loop over `terrain + 0x1e2`), and only the ones that exist:
@@ -226,15 +226,18 @@ second surface is where that colour map has to be. Not confirmed: reaching it
 means walking past every patch block, whose morph-delta array and surface are
 sized by the patch, and that walk is not written yet.
 
-This is the whole of the white band we draw at the horizon. The eight
-surrounding height maps are plain files the level ships
-(`HeightmapSecondary_*.raw`, 257×257 and 8-bit, declared in Heightdata.con with
-their own scale), and we load none of them: `heightmapcluster.setClusterSize 3`
-says the world is 3×3 of them and we keep the middle one. With nothing drawn
-past the level's own 1024 metres, what shows there is the sky dome below its
-horizon line — measured, not guessed: with the frame's clear colour set to
-magenta not one pixel of the band changed, and the band's own colour is
-(209, 195, 164), neither the clear colour nor the fog's (163, 135, 86).
+The eight surrounding height maps themselves need none of this: they are plain
+files the level ships (`HeightmapSecondary_*.raw`, 257×257 and 8-bit, declared
+in Heightdata.con with their own scale, `heightmapcluster.setClusterSize 3`),
+and we load none of them — we keep the middle map and draw nothing past the
+level's own 1024 metres. What is missing is the colour they are drawn with.
+
+This was first written down here as the cause of the white band at the horizon,
+and that was wrong: the band was the sky dome's own texture, sampled by a
+repeating sampler where the game clamps (docs/formats/shaders.md, "The sky's
+horizon"). The surroundings are still missing, but every camera inside a level
+is far enough from them that the fog is total, so what they would add to the
+picture is not established.
 
 So the per-patch payload in `terraindata.raw` is **geometry, not materials**:
 the heights, beside the morph deltas that let a patch change LOD. Everything
