@@ -734,6 +734,7 @@ MeshRenderer::~MeshRenderer() {
   if (roadPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, roadPipeline_);
   if (skyPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, skyPipeline_);
   if (sampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, sampler_);
+  if (normalSampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, normalSampler_);
   if (overlaySampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, overlaySampler_);
   if (pipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, pipeline_);
 }
@@ -895,17 +896,9 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   SDL_ReleaseGPUShader(gpu, overlayFragment);
   if (renderer->overlayPipeline_ == nullptr) return fail("interface pipeline");
 
-  SDL_GPUSamplerCreateInfo samplerInfo{};
-  samplerInfo.min_filter = SDL_GPU_FILTER_LINEAR;
-  samplerInfo.mag_filter = SDL_GPU_FILTER_LINEAR;
-  samplerInfo.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_LINEAR;
-  // BF2's textures are made to repeat: detail and road surfaces tile dozens of
-  // times over one object.
-  samplerInfo.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
-  samplerInfo.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
-  samplerInfo.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
-  samplerInfo.max_lod = 1000.0f;
-  renderer->sampler_ = SDL_CreateGPUSampler(gpu, &samplerInfo);
+  // The world's samplers come from the texture-filtering setting; the level the
+  // profile carries by default is medium.
+  renderer->setTextureFiltering(2);
   if (renderer->sampler_ == nullptr) return fail("sampler");
 
   // The interface is another matter: every node is its own picture stretched
@@ -915,12 +908,15 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   // the plates' outline — especially when the window is not exactly 800x600 and
   // the edge does not land on a whole pixel. Mips are unnecessary too: the
   // interface is never minified.
-  samplerInfo.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
-  samplerInfo.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
-  samplerInfo.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
-  samplerInfo.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
-  samplerInfo.max_lod = 0.0f;
-  renderer->overlaySampler_ = SDL_CreateGPUSampler(gpu, &samplerInfo);
+  SDL_GPUSamplerCreateInfo overlaySamplerInfo{};
+  overlaySamplerInfo.min_filter = SDL_GPU_FILTER_LINEAR;
+  overlaySamplerInfo.mag_filter = SDL_GPU_FILTER_LINEAR;
+  overlaySamplerInfo.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+  overlaySamplerInfo.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+  overlaySamplerInfo.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+  overlaySamplerInfo.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
+  overlaySamplerInfo.max_lod = 0.0f;
+  renderer->overlaySampler_ = SDL_CreateGPUSampler(gpu, &overlaySamplerInfo);
   if (renderer->overlaySampler_ == nullptr) return fail("interface sampler");
 
   // A placeholder for materials whose texture is missing or unreadable: better a
@@ -1199,6 +1195,56 @@ void MeshRenderer::render(const Frame& frame, const GpuMesh& gpuMesh,
   renderScene(frame, {item}, modelViewProjection, clearColor);
 }
 
+void MeshRenderer::setTextureFiltering(int quality) {
+  if (device_ == nullptr) return;
+  SDL_GPUDevice* gpu = device_->gpu();
+  if (sampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, sampler_);
+  if (normalSampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, normalSampler_);
+
+  // What this setting does is write a preamble for the shader compiler, and
+  // `EffectManager` writes it in full (`RendDX9.dll`, `FUN_10034010`,
+  // 0x10034010; the assert beside it names
+  // `Code\\BF2\\RendDX9\\Ra\\EffectManager.cpp`):
+  //
+  //   1  FILTER_STM_NORM_MIP POINT,  FILTER_BM_NORM_MIP POINT,
+  //      every diffuse filter LINEAR
+  //   2  FILTER_STM_NORM_MIP LINEAR, FILTER_BM_NORM_MIP POINT,
+  //      every diffuse filter LINEAR
+  //   3  both normal mips LINEAR, and the diffuse filters ANISOTROPIC where the
+  //      device can (min and mag are asked separately), with
+  //
+  //          maxAnisotropy = min(device, 2)   on a static mesh
+  //          maxAnisotropy = min(device, 4)   on a bundled one
+  //
+  //   anything else is the engine's own "Undefined texture filter quality."
+  //
+  // So the highest setting is anisotropic **2** on the world's meshes, not the
+  // 16 a modern driver would offer.
+  const bool anisotropic = quality >= 3;
+
+  SDL_GPUSamplerCreateInfo info{};
+  info.min_filter = SDL_GPU_FILTER_LINEAR;
+  info.mag_filter = SDL_GPU_FILTER_LINEAR;
+  info.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_LINEAR;
+  // BF2's textures are made to repeat: detail and road surfaces tile dozens of
+  // times over one object.
+  info.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
+  info.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
+  info.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
+  info.max_lod = 1000.0f;
+  info.enable_anisotropy = anisotropic;
+  info.max_anisotropy = 2.0f;
+  sampler_ = SDL_CreateGPUSampler(gpu, &info);
+
+  // The normal map's own mip filter is the one thing the lower two levels
+  // differ in: point at 1, linear at 2 and 3.
+  SDL_GPUSamplerCreateInfo normal = info;
+  normal.enable_anisotropy = false;
+  normal.mipmap_mode =
+      quality <= 1 ? SDL_GPU_SAMPLERMIPMAPMODE_NEAREST : SDL_GPU_SAMPLERMIPMAPMODE_LINEAR;
+  normalSampler_ = SDL_CreateGPUSampler(gpu, &normal);
+}
+
 void MeshRenderer::setTerrainDetail(SDL_GPUTexture* lowDetail, const float sideTiling[2],
                                     float topTiling, float yOffset, int componentSize) {
   terrainDetail_ = lowDetail;
@@ -1361,7 +1407,8 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
             {groundLight != nullptr ? groundLight : placeholder_,
              groundLight != nullptr ? terrainLight_->readSampler() : sampler_},
             {terrainDetail_ != nullptr ? terrainDetail_ : placeholder_, sampler_},
-            {range.normalMap != nullptr ? range.normalMap : placeholder_, sampler_},
+            {range.normalMap != nullptr ? range.normalMap : placeholder_,
+             normalSampler_ != nullptr ? normalSampler_ : sampler_},
         };
         SDL_BindGPUFragmentSamplers(pass, 0, bindings, 6);
 

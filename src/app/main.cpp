@@ -2340,6 +2340,8 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         obf2::gfx::Color{level->terrain.terrainSkyColor.x, level->terrain.terrainSkyColor.y,
                          level->terrain.terrainSkyColor.z, 1.0f});
     const obf2::level::Lighting& lighting = level->lighting;
+    // The world's samplers follow the profile's texture-filtering level.
+    renderer->setTextureFiltering(engine.settings().video.textureFilteringQuality);
     renderer->setStaticSpecular(
         obf2::gfx::Color{lighting.staticSpecularColor.x, lighting.staticSpecularColor.y,
                          lighting.staticSpecularColor.z, 1.0f},

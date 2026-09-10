@@ -132,6 +132,10 @@ class MeshRenderer {
   };
   void setFog(const Fog& fog) { fog_ = fog; }
 
+  // The texture-filtering setting, 1 to 3. What each level means is the
+  // preamble the engine writes for the shader compiler — see the definition.
+  void setTextureFiltering(int quality);
+
   // How many times the detail texture repeats over a terrain patch.
   void setDetailTiling(float tiles) { detailTiling_ = tiles; }
 
@@ -236,6 +240,8 @@ class MeshRenderer {
   // repeating at a quad's edge drags in the opposite edge and leaves a
   // one-pixel dark line.
   SDL_GPUSampler* overlaySampler_ = nullptr;
+  // The normal map's own: the lowest filtering level takes its mips point-wise.
+  SDL_GPUSampler* normalSampler_ = nullptr;
   SDL_GPUTexture* placeholder_ = nullptr;  // a white 1x1 for materials with no texture
   // The ground's light, filled once per frame before the scene is drawn. Null
   // when the device would not give us the pass; then the terrain falls back to
