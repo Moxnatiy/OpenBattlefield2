@@ -7,6 +7,7 @@
 #   BF2_RES=1024x768 tools/bf2_run.sh         another resolution
 #   BF2_PLAIN=1 tools/bf2_run.sh              through CrossOver, no sidecar
 #   BF2_CAPTURE=1 tools/bf2_run.sh            allow a Metal GPU trace (F12)
+#   BF2_CONSTANTS=all tools/bf2_run.sh        dump every draw's shader constants
 #
 # The flags are taken not from forums but from a table in BF2.exe itself — it
 # lies there together with the explanations:
@@ -119,6 +120,16 @@ fi
 if [ -n "$BF2_CAPTURE" ]; then
     MTL_CAPTURE_ENABLED=1
     export MTL_CAPTURE_ENABLED
+fi
+
+# How often a frame dump writes a draw's shader constants: a period, or `all`
+# for every draw (our patch, `tools/mtld3d_frame_dump_constants.patch`; the
+# default is every fortieth). `all` is what a question about one surface needs —
+# which colours a leaf is given — and it costs some twelve thousand lines a
+# frame.
+if [ -n "$BF2_CONSTANTS" ]; then
+    OPENBF2_DUMP_CONSTANTS=$BF2_CONSTANTS
+    export OPENBF2_DUMP_CONSTANTS
 fi
 
 # The frame dump does not come out here. Since v0.8.0 mtld3d's D3D9 side writes

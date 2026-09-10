@@ -649,3 +649,88 @@ the chart map used to sit unused.
 **Not done.** The *near* detail — `dsampler3Wrap` in `Hi_PS_FullDetail` — is
 a texture per terrain material, and the materials live in `terraindata.raw`
 (docs/research/12-renddx9.md). That is the last piece of the ground.
+
+## Measured on Karkand: what the engine actually uploads
+
+A frame dump of the original standing in Strike at Karkand, with our
+constants patch set to `all` (`BF2_CONSTANTS=all tools/bf2_run.sh`), so
+every draw's vertex **and** pixel constants are written. Three questions
+were open; the dump answers all three, and each answer matches what the
+binary said.
+
+**The terrain's two colours are scaled on the way in.** Sky.con sets
+`terrain.sunColor 0.75/0.71/0.57` and `terrain.GIColor 0.73/0.64/0.33`.
+The dump:
+
+```
+draw 1   psc c0: 0.365000 0.320000 0.165000 0.000000     # GI / 2
+draw 113 psc c0: 0.187500 0.177500 0.142500 0.365000     # sun / 4, and GI.r/2 in w
+```
+
+Exactly the quarter and the half that `Terrain::setSunColor` (0x100db420)
+and `Terrain::setGIColor` (0x100db520) store. Reversed first, measured
+after, and the two agree.
+
+**A static mesh gets the level's numbers whole.** Draw 13, a building:
+
+```
+draw 13 vsc c6:  0.800000 0.740000 0.580000 0.700000     # Lights[0].color = staticSunColor
+draw 13 vsc c13: 0.530000 0.450000 0.280000 0.000000     # StaticSkyColor
+```
+
+so the static-mesh path is right to use `Lightmanager.staticSunColor` and
+`staticSkyColor` as the data writes them.
+
+**A leaf gets different colours entirely — and the tree pair at last has a
+use.** Draw 101, a leaf (`CullMode = NONE`, `AlphaRef = 127`, the state
+`RaShaderLeaf.fx:233` sets):
+
+```
+draw 101 vsc c5:  -0.260104 -0.800320 -0.540216          # Lights[0].dir = Lightmanager.sunDirection
+draw 101 vsc c6:   0.430000  0.335000  0.245000  0.35    # Lights[0].color = treeSunColor / 2
+draw 101 vsc c10:  0.580000  0.450000  0.270000  1.0     # OverGrowthAmbient = treeAmbientColor
+```
+
+Karkand's `treeSunColor` is `0.86/0.67/0.49` and its `treeAmbientColor`
+`0.58/0.45/0.27`. The halving is the shader model, not the colour:
+`RaCommon.fx:63` doubles every constant (`CEXP`) below shader model 2.0,
+and the leaf shader compiles to `ps_1_3`.
+
+A trunk sits between the two. Draw 88, `TrunkSTMDetail`:
+
+```
+draw 88 vsc c6:  0.400000 0.370000 0.290000 0.35         # staticSunColor / 2
+draw 88 vsc c10: 0.530000 0.450000 0.280000 1.0          # StaticSkyColor, whole
+```
+
+— the **static** pair, halved for the same `ps_1_x` reason. So a tree is
+lit by two different sets of colours at once: its trunk like a wall, its
+leaves by the `tree*` triple.
+
+### The leaf formula, end to end
+
+`RaShaderLeaf.fx:95` with the constants above, and the `ps_1_3` block at
+:207 (`mul_x4 r0, t0, v0`):
+
+```
+LdotN     = saturate((dot(N, -Lights[0].dir) + 0.6) / 1.4)   // 0.43 .. 1
+Color.rgb = Lights[0].color * LdotN + OverGrowthAmbient / CEXP(1)
+Color     = Color * 0.5
+out       = diffuseMap * CEXP(Color) * 2                     // the asm's x4
+```
+
+Substituting `Lights[0].color = treeSunColor/2`, `CEXP(1) = 2` and the
+final `*4`, everything cancels to:
+
+```
+out = diffuseMap * (treeSunColor * LdotN + treeAmbientColor)
+```
+
+with `LdotN` a shallow ramp that never falls below 0.43 — a leaf in shadow
+is lit, not black. On Karkand that is 0.95 to 1.44 times the texture,
+against the 2.3 our static-mesh formula gives it, which is why our trees
+glow.
+
+**Not implemented**, and for one reason only: we still cannot tell which
+of a mesh's materials are the leaves (docs/research/12-renddx9.md). The
+formula is ready the moment that is settled.
