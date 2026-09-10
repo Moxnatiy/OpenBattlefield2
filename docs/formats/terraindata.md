@@ -101,10 +101,42 @@ TerrainEditable` … `else` / `terrain.create Terrain` / `terrain.load
 branches of every level's Terrain.con and the blob beside it are two
 spellings of one editor state.
 
-## Not read yet
+## The per-patch blocks
 
-The per-patch blocks and the eight secondary terrains. The writer shows their
-shape — two `u32`, the patch's height range, a `vec3` and a `f32`, then a
-`w * h` byte blob per patch — but the blob's dimensions come out of a
-compressor (`FUN_10014800` and its two size calls), and that is the next
-thing to take apart.
+The writer's loop, and what the four calls around its blob turn out to be:
+
+```c
+for (patch = 0; patch < patchesPerSide * patchesPerSide; ++patch) {
+    writeU32(p[0x68]); writeU32(p[0x6c]);      // the patch's place in the grid
+    writeFloat(highest(patch)); writeFloat(lowest(patch));
+    writeVec3(p + 0xa0); writeFloat(p[0xac]);
+    FUN_10109390(…, p);                        // the geo-morph deltas, below
+    ptr  = FUN_10014800(0, 0, 0);              // lock a surface
+    rows = FUN_100148e0();                     // its height
+    pitch= FUN_100148d0();                     // its pitch, in bytes
+    writeRaw(ptr, rows * pitch);               // the surface, as it lies
+    FUN_10014860();                            // unlock
+}
+```
+
+`FUN_10014800` is a lock, not a compressor: it calls the object's own
+`+0x2c` with `(pitch * y, pitch * x, &out, flags)` and returns the pointer,
+`FUN_10014860` unlocks, `FUN_100148d0` returns the pitch (`this+0x28`) and
+`FUN_100148e0` the row count (`this+0x20 / this+0x28`, size over pitch). So
+the blob is **a texture written out raw**, and the size is the surface's own.
+
+`FUN_10109390` (0x10109390) is the interesting half: it walks the patch's
+`(patchSize + 1)²` vertices and, for each, computes four **geo-morph deltas**
+— one per LOD level, `1 << (level + 1)` apart — as the difference between the
+vertex's own height and the average of the two neighbours the coarser level
+would keep. It tracks the smallest and the largest of each level, writes those
+two `float[4]`, and then the whole delta array. That is what feeds
+`geoMorphPosition` in the terrain shader, and it is the thing that lets a
+patch change LOD without popping.
+
+So a patch's block is: where it sits, its height range, a vector and a float,
+its morph deltas with their bounds, and one raw surface.
+
+Left to establish: which surface that is — the chart map the shader selects
+its six materials with is the one we came for — and the eight secondary
+terrains at the end, before the closing `0xffffffff`.
