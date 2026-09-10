@@ -95,10 +95,36 @@ Known items on this side, in the order they cost us picture:
   read.
 * **`SinglePointColor` — done.** Uploaded by the engine, gated by the light
   map's red channel; zero on Karkand, 0.30 grey on some levels.
-* **Normal maps.** Every `N*` channel of a material is parsed and unused —
-  they need a tangent frame, which our `Vertex` does not carry. This is the
-  big one left: it is also what turns the per-pixel path on, and with it the
-  `dot(compNormals, skyNormal)` the sky term is supposed to have.
+* **Normal maps — done.** The mesh carries TANGENT (usage 6) and no
+  BINORMAL, so the frame is `tangent`, `cross(tangent, normal)` and the
+  normal. A material with `NBase` reads its map with the base unwrap and one
+  with `NDetail` with the tiling one (`RaShaderSTM.fx:316`), and 4191 of the
+  game's materials are `BaseDetailNDetail`.
+
+  With a map bound the surface takes the game's **per-pixel** function rather
+  than the vertex one (`RaShaderSTM.fx:382`), and that is not the same
+  formula with a better normal:
+
+  ```
+  diffuse   = saturate(dot(compNormals, lightVec)) * Lights[0].color
+  bumpedSky = lightmap.b * dot(compNormals, skyNormal) * StaticSkyColor
+  ```
+
+  `skyNormal` — `(0.78, 0.52, 0.65)` — is a **tangent-space** direction, so
+  the dot is taken against the sample as it comes out of the texture, before
+  any frame is applied. Where a surface has no map the sample is `(0,0,1)`
+  and the dot is 0.65, which is exactly the vertex path — so the two agree at
+  the boundary instead of stepping.
+
+  One guess is left in it, and it is written down in the shader: the binormal
+  **sign**. The engine keeps it in the w of its own compressed position and
+  flips by `1 + Pos.w * -2` (`RaShaderSTM.fx:125`); the file we read carries
+  no such field, so the sign stays +1. A surface whose relief looks lit from
+  the wrong side is that.
+
+  Measured on Karkand: 27 more textures load, and 29316 channel samples
+  change on one camera by 5 of 255 on average — detail normal maps are gentle
+  and the sun was high.
 * **The hemi map.** `hemiMapManager.setBaseHemiMap` + `Lightmanager.hemilerpbias`,
   a top-down picture of the ground's colour. Not for static meshes —
   `RaShaderSTM.fx` never mentions it — but `RaShaderBM.fx` (vehicles) uses

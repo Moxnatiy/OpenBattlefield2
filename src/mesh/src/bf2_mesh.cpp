@@ -262,6 +262,8 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
   // We take the zeroth and the first; a mesh with only one set reuses it, which
   // is what a material with no detail channel wants anyway.
   bool hasPosition = false, hasNormal = false, hasUv = false, hasUv2 = false, hasUv3 = false;
+  bool hasTangent = false;
+  std::size_t tangentFloat = 0;
   bool hasPart = false;
   std::uint16_t lightmapUsage = 0;
   std::size_t positionFloat = 0, normalFloat = 0, uvFloat = 0, uv2Float = 0, uv3Float = 0;
@@ -308,6 +310,10 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
       case 1: weightFloat = index; hasWeight = true; break;
       case 2: partFloat = index; hasPart = true; break;
       case 3: normalFloat = index; hasNormal = true; break;
+      // TANGENT. Static meshes with a normal map carry one — `house_high_06`
+      // has it at offset 68 of an 80-byte vertex — and BINORMAL (usage 7)
+      // appears in no mesh in the game.
+      case 6: tangentFloat = index; hasTangent = true; break;
       default: break;
     }
   }
@@ -357,6 +363,11 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
       vertex.normal = {mesh.vertexData[base + normalFloat],
                        mesh.vertexData[base + normalFloat + 1],
                        mesh.vertexData[base + normalFloat + 2]};
+    }
+    if (hasTangent && base + tangentFloat + 2 < mesh.vertexData.size()) {
+      vertex.tangent = {mesh.vertexData[base + tangentFloat],
+                        mesh.vertexData[base + tangentFloat + 1],
+                        mesh.vertexData[base + tangentFloat + 2]};
     }
     if (hasUv && base + uvFloat + 1 < mesh.vertexData.size()) {
       vertex.uv[0] = mesh.vertexData[base + uvFloat];

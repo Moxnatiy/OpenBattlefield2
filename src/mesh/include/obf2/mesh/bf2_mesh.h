@@ -103,6 +103,13 @@ struct Vertex {
   // (`Shaders_client.zip:Road.fx:80`, `outcolor.a *= indata.Alpha`). One
   // everywhere else.
   float alpha = 1.0f;
+  // TANGENT, and with the normal it is two thirds of the frame a normal map is
+  // read in. The third — the binormal — is `cross(tangent, normal)` with a sign
+  // the file does not carry: the engine keeps it in the w of its own compressed
+  // position and flips by `1 + Pos.w * -2`
+  // (`Shaders_client.zip:RaShaderSTM.fx:125`). Zero when the mesh has no
+  // TANGENT, and then there is no frame and no normal map.
+  Vec3 tangent{};
 };
 
 // A range of indices sharing one material — one draw call.

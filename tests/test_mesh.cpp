@@ -99,6 +99,68 @@ std::vector<std::byte> buildTriangleMesh(std::uint32_t version = 11) {
   return mesh.bytes();
 }
 
+// TANGENT is the third of the frame a normal map is read in, and the file gives
+// two of the three: usage 6 is in every static mesh that carries a normal map
+// (`house_high_06`, at offset 68 of an 80-byte vertex), while BINORMAL — usage
+// 7 — is in none of them.
+void testTangentIsRead() {
+  MeshBuilder mesh;
+  mesh.u32(0); mesh.u32(11); mesh.u32(0); mesh.u32(0); mesh.u32(0);
+  mesh.u8(0);
+  mesh.u32(1);  // geom
+  mesh.u32(1);  // lods
+
+  mesh.u32(4);                                          // attributes
+  mesh.u16(0); mesh.u16(0);  mesh.u16(2); mesh.u16(0);  // POSITION float3 @0
+  mesh.u16(0); mesh.u16(12); mesh.u16(2); mesh.u16(3);  // NORMAL   float3 @12
+  mesh.u16(0); mesh.u16(24); mesh.u16(1); mesh.u16(5);  // TEXCOORD float2 @24
+  mesh.u16(0); mesh.u16(32); mesh.u16(2); mesh.u16(6);  // TANGENT  float3 @32
+
+  mesh.u32(4);   // vertexFormat
+  mesh.u32(44);  // vertexStride
+  mesh.u32(3);   // vertices
+  for (int i = 0; i < 3; ++i) {
+    mesh.vec3(static_cast<float>(i), 0.0f, 0.0f);
+    mesh.vec3(0.0f, 1.0f, 0.0f);
+    mesh.f32(0.0f); mesh.f32(0.0f);
+    mesh.vec3(1.0f, 0.0f, 0.0f);  // the tangent points along +x
+  }
+
+  mesh.u32(3);
+  mesh.u16(0); mesh.u16(1); mesh.u16(2);
+  mesh.u32(0);
+
+  mesh.vec3(0.0f, 0.0f, 0.0f);
+  mesh.vec3(1.0f, 0.0f, 1.0f);
+  mesh.u32(1);
+  mesh.identityMatrix();
+
+  mesh.u32(1);
+  mesh.u32(0);
+  mesh.string("StaticMesh.fx");
+  mesh.string("BaseNDetail");
+  mesh.u32(2);
+  mesh.string("objects/test_c.dds");
+  mesh.string("objects/test_b.dds");
+  mesh.u32(0); mesh.u32(0); mesh.u32(3); mesh.u32(3);
+  mesh.u32(0);              // nodeIndex
+  mesh.u16(0); mesh.u16(0); // the two unnamed shorts
+  mesh.vec3(0.0f, 0.0f, 0.0f); mesh.vec3(1.0f, 0.0f, 1.0f);  // version 11 bounds
+
+  std::string error;
+  const auto parsed = obf2::mesh::load(mesh.bytes(), obf2::mesh::Kind::Static, &error);
+  CHECK(parsed.has_value());
+  if (!parsed) { std::puts(error.c_str()); return; }
+
+  const auto render = obf2::mesh::extract(*parsed, 0, 0, &error);
+  CHECK(render.has_value());
+  if (!render) { std::puts(error.c_str()); return; }
+  CHECK_EQ(render->vertices.size(), std::size_t(3));
+  CHECK_EQ(render->vertices[0].tangent.x, 1.0f);
+  CHECK_EQ(render->vertices[0].tangent.y, 0.0f);
+  CHECK_EQ(render->vertices[0].tangent.z, 0.0f);
+}
+
 }  // namespace
 
 static void testKindFromExtension() {
@@ -208,4 +270,5 @@ TEST_MAIN({
   testVersion6HasPivot();
   testTruncatedFilesAreRejected();
   testAbsurdCountsAreRejected();
+  testTangentIsRead();
 })

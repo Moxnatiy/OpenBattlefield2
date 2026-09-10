@@ -28,6 +28,7 @@ struct VertexIn {
     float2 uv2      [[attribute(3)]];
     float2 uv3      [[attribute(4)]];
     float  alpha    [[attribute(5)]];
+    float3 tangent  [[attribute(6)]];
 };
 
 struct VertexOut {
@@ -63,6 +64,10 @@ struct VertexOut {
     float4 cameraPosition;
     float4 staticSpecular;
     float3 worldPosition;
+    // The tangent frame, in world coordinates. The binormal is built here and
+    // not in the fragment stage because it is the same for the whole triangle.
+    float3 tangent;
+    float3 binormal;
     // The vertex's own height. The terrain stands in world coordinates with no
     // transform, so this is the world Y the side planes are textured by.
     float localY;
@@ -183,6 +188,16 @@ vertex VertexOut vertex_main(VertexIn in [[stage_in]],
     out.cameraPosition = uniforms.cameraPosition;
     out.staticSpecular = uniforms.staticSpecular;
     out.worldPosition = (uniforms.model * float4(in.position, 1.0)).xyz;
+    // The frame a normal map is read in. The game builds it the same way
+    // (`Shaders_client.zip:RaShaderSTM.fx:130`, getTanBasisTranspose):
+    //
+    //   binormal = normalize(cross(Tan, Normal)) * flip
+    //
+    // where `flip` comes from the w of the engine's own compressed position and
+    // the file we read carries no such field. So the sign is left at +1 and
+    // written down as the one guess here.
+    out.tangent = (uniforms.model * float4(in.tangent, 0.0)).xyz;
+    out.binormal = cross(out.tangent, out.normal);
     out.localY = in.position.y;
     return out;
 }
@@ -193,11 +208,13 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
                               texture2d<float> detail [[texture(2)]],
                               texture2d<float> terrainLight [[texture(3)]],
                               texture2d<float> terrainDetailMap [[texture(4)]],
+                              texture2d<float> normalMap [[texture(5)]],
                               sampler baseSampler [[sampler(0)]],
                               sampler lightSampler [[sampler(1)]],
                               sampler detailSampler [[sampler(2)]],
                               sampler terrainLightSampler [[sampler(3)]],
-                              sampler terrainDetailSampler [[sampler(4)]]) {
+                              sampler terrainDetailSampler [[sampler(4)]],
+                              sampler normalSampler [[sampler(5)]]) {
     float4 albedo = baseColor.sample(baseSampler, in.uv);
 
     // Leaves, fences, grates: the shape is cut out of the base map's alpha.
@@ -256,6 +273,11 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
     }
 
     float3 light;
+    // The normal the specular is taken against: the map's where there is one.
+    float3 shadingNormal = normalize(in.normal);
+    // fogShape.y says whether this material has a normal map and which unwrap
+    // reads it: 0 none, 1 the base map's, 2 the tiling one.
+    const float normalStrength = in.fogShape.y > 0.5 ? 1.0 : 0.0;
     // The object's baked light map, or white where it has none. Declared here
     // and not in the branch below: the specular is gated by its green channel
     // too, and that is computed after the branch chain.
@@ -461,11 +483,48 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
         }
         float3 normal = normalize(in.normal);
         float3 toSun = normalize(-in.sunDirection.xyz);
-        float nDotL = dot(normal, toSun);
-        float invDot = 1.0 - saturate(nDotL * 0.2);
-        float3 sun = saturate(nDotL) * in.sunColor.rgb * lightmapValue.g;
-        float3 sky = kSkyNormalZ * in.skyColor.rgb * invDot * lightmapValue.b;
-        light = 2.0 * (sun + sky + in.pointColor.rgb * lightmapValue.r);
+
+        // A material with a normal map is lit per pixel instead, which is a
+        // different function in the game and not the same one with a better
+        // normal (`RaShaderSTM.fx:382`, getDiffusePixelLighting):
+        //
+        //   diffuse   = saturate(dot(compNormals, normalizedLightVec)) * Lights[0].color
+        //   bumpedSky = lightmap.b * dot(compNormals, skyNormal) * StaticSkyColor
+        //   diffuse   = bumpedSky + diffuse * lightmap.g
+        //   diffuse  += lightmap.r * SinglePointColor
+        //
+        // Two things change. The sun is taken against the map's normal, so a
+        // wall gets its relief. And `skyNormal` — the constant (0.78,0.52,0.65)
+        // — is dotted against that normal rather than contributing its z alone:
+        // it is a **tangent-space** direction, so the dot is taken there, on
+        // the sample as it comes out of the texture, before any frame is
+        // applied. Where a surface has no normal map the sample is (0,0,1) and
+        // the dot is 0.65 — which is exactly the vertex path below, and why the
+        // two branches agree at the boundary.
+        if (in.material.y < 0.5 && normalStrength > 0.5) {
+            const float2 normalUv = in.fogShape.y > 1.5 ? in.uv2 : in.uv;
+            const float3 sampled =
+                normalize(normalMap.sample(normalSampler, normalUv).xyz * 2.0 - 1.0);
+            const float3 t = normalize(in.tangent);
+            const float3 b = normalize(in.binormal);
+            const float3 n = normalize(in.normal);
+            normal = normalize(t * sampled.x + b * sampled.y + n * sampled.z);
+
+            const float3 skyNormal = float3(0.78, 0.52, 0.65);
+            const float3 sunTerm = saturate(dot(normal, toSun)) * in.sunColor.rgb;
+            const float3 skyTerm =
+                lightmapValue.b * dot(sampled, skyNormal) * in.skyColor.rgb;
+            light = 2.0 * (skyTerm + sunTerm * lightmapValue.g +
+                           in.pointColor.rgb * lightmapValue.r);
+        } else {
+            float nDotL = dot(normal, toSun);
+            float invDot = 1.0 - saturate(nDotL * 0.2);
+            float3 sun = saturate(nDotL) * in.sunColor.rgb * lightmapValue.g;
+            float3 sky = kSkyNormalZ * in.skyColor.rgb * invDot * lightmapValue.b;
+            light = 2.0 * (sun + sky + in.pointColor.rgb * lightmapValue.r);
+        }
+        // The specular below takes the same normal, per pixel or per vertex.
+        shadingNormal = normal;
     }
 
     // `SkyDome.fx` samples the sky texture and returns it — the dome carries
@@ -488,7 +547,7 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
     // The light map's green gates it the same way it gates the sun: a wall in
     // baked shadow has no highlight either.
     if (in.fogParams.z < 0.5 && in.treeSunColor.w < 0.5 && in.material.z < 0.5) {
-        const float3 normal = normalize(in.normal);
+        const float3 normal = shadingNormal;
         const float3 toSun = normalize(-in.sunDirection.xyz);
         const float3 toEye = normalize(in.cameraPosition.xyz - in.worldPosition);
         const float3 halfVec = normalize(toSun + toEye);
@@ -616,7 +675,7 @@ SDL_GPUShader* createShader(SDL_GPUDevice* gpu, SDL_GPUShaderStage stage, const 
   info.format = SDL_GPU_SHADERFORMAT_MSL;
   info.stage = stage;
   info.num_uniform_buffers = isVertex ? 1 : 0;
-  info.num_samplers = isVertex ? 0 : 5;  // colour, light map, detail, the ground's light and its texture
+  info.num_samplers = isVertex ? 0 : 6;  // colour, light map, detail, the ground's light and its texture, the normal map
   return SDL_CreateGPUShader(gpu, &info);
 }
 
@@ -658,7 +717,7 @@ struct VertexUniforms {
 
 }  // namespace
 
-static_assert(sizeof(mesh::Vertex) == 52, "the vertex layout must match the shader");
+static_assert(sizeof(mesh::Vertex) == 64, "the vertex layout must match the shader");
 
 SDL_GPUTexture* MeshRenderer::uploadSharedTexture(const texture::Texture& source) {
   SDL_GPUTexture* uploaded = uploadTexture(source);
@@ -696,13 +755,14 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
 
   const SDL_GPUVertexBufferDescription bufferDescription{
       0, static_cast<Uint32>(sizeof(mesh::Vertex)), SDL_GPU_VERTEXINPUTRATE_VERTEX, 0};
-  const SDL_GPUVertexAttribute attributes[6] = {
+  const SDL_GPUVertexAttribute attributes[7] = {
       {0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offsetof(mesh::Vertex, position)},
       {1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offsetof(mesh::Vertex, normal)},
       {2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(mesh::Vertex, uv)},
       {3, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(mesh::Vertex, uv2)},
       {4, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offsetof(mesh::Vertex, uv3)},
       {5, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT, offsetof(mesh::Vertex, alpha)},
+      {6, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, offsetof(mesh::Vertex, tangent)},
   };
 
   SDL_GPUColorTargetDescription colorTarget{};
@@ -714,7 +774,7 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   info.vertex_input_state.vertex_buffer_descriptions = &bufferDescription;
   info.vertex_input_state.num_vertex_buffers = 1;
   info.vertex_input_state.vertex_attributes = attributes;
-  info.vertex_input_state.num_vertex_attributes = 6;
+  info.vertex_input_state.num_vertex_attributes = 7;
   info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
   // Vertex winding in BF2 is counter-clockwise: across all 1635 meshes in the
   // game (2.2 M triangles) the geometric normal agrees with the vertex normals
@@ -1061,6 +1121,18 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
       range.texture = load(layout.base >= 0 ? layout.base : 0);
       range.detail = load(layout.detail);
       range.detailMultiply = range.detail != nullptr;
+      // The normal map, and which UV set it is read with: the shader samples
+      // `NBase` with the base map's unwrap and `NDetail` with the tiling one
+      // (`Shaders_client.zip:RaShaderSTM.fx:316`, getCompositeNormals). A
+      // material names at most one of the two — `BaseDetailNDetail` is 4191 of
+      // the game's materials and `NBase` appears in none of the top ten.
+      if (layout.normalDetail >= 0) {
+        range.normalMap = load(layout.normalDetail);
+        range.normalOnDetailUv = true;
+      } else if (layout.normalBase >= 0) {
+        range.normalMap = load(layout.normalBase);
+        range.normalOnDetailUv = false;
+      }
       // 0 and 2 are the only values the game's static meshes carry, and 2 is
       // the alpha-tested one — the pine's needles have it while its trunk does
       // not (`mesh_info … nc_pinebig01.staticmesh`).
@@ -1282,15 +1354,16 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
         // anyway.
         const bool baked = item.lightmap != nullptr && item.mesh->hasLightmapUv;
         SDL_GPUTexture* lightmapTexture = baked ? item.lightmap : range.lightmap;
-        const SDL_GPUTextureSamplerBinding bindings[5] = {
+        const SDL_GPUTextureSamplerBinding bindings[6] = {
             {range.texture != nullptr ? range.texture : placeholder_, sampler_},
             {lightmapTexture != nullptr ? lightmapTexture : placeholder_, sampler_},
             {range.detail != nullptr ? range.detail : placeholder_, sampler_},
             {groundLight != nullptr ? groundLight : placeholder_,
              groundLight != nullptr ? terrainLight_->readSampler() : sampler_},
             {terrainDetail_ != nullptr ? terrainDetail_ : placeholder_, sampler_},
+            {range.normalMap != nullptr ? range.normalMap : placeholder_, sampler_},
         };
-        SDL_BindGPUFragmentSamplers(pass, 0, bindings, 5);
+        SDL_BindGPUFragmentSamplers(pass, 0, bindings, 6);
 
         // The lighting mode changes from range to range, so the uniform is pushed
         // before every draw call.
@@ -1321,6 +1394,8 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
         uniforms.material[0] = range.detailMultiply ? 1.0f : 0.0f;
         uniforms.material[3] = range.alphaTest ? 1.0f : 0.0f;
         uniforms.treeSunColor[3] = range.leaf ? 1.0f : 0.0f;
+        uniforms.fogShape[1] =
+            range.normalMap == nullptr ? 0.0f : (range.normalOnDetailUv ? 2.0f : 1.0f);
         SDL_PushGPUVertexUniformData(frame.commands, 0, &uniforms, sizeof(uniforms));
 
         SDL_DrawGPUIndexedPrimitives(pass, range.indexCount, 1, range.indexStart, 0, 0);

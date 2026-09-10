@@ -36,6 +36,12 @@ struct GpuMesh {
     // Drawn as leaves: its own shader in the original, and its own two colours
     // (`obf2::mesh::markVegetationLeaves`).
     bool leaf = false;
+    // The material's normal map, and whether it is read with the tiling UV set
+    // (`NDetail`) or the base map's (`NBase`). With one bound the surface is
+    // lit per pixel, which is the path the original takes for exactly these
+    // materials.
+    SDL_GPUTexture* normalMap = nullptr;
+    bool normalOnDetailUv = true;
   };
 
   // Whether the geometry carried the light map's own UV set. Without it a baked
