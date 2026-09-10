@@ -206,6 +206,80 @@ int main(int argc, char** argv) {
     return 0;
   }
 
+  // Does anything in a mesh's material tell a leaf from a wall?
+  //
+  // The renderer picks between `RaShaderLeaf` and the static-mesh shaders on a
+  // flag it holds per material (docs/research/12-renddx9.md), and where that
+  // flag comes from is not established. This walks every material in the game
+  // and splits them by what the artists called the base texture — `leaf_*` and
+  // the like — then prints what each side's parsed fields look like. If some
+  // field is the flag, the two columns differ on it.
+  if (what == "--leafflag") {
+    struct Side {
+      int count = 0;
+      std::map<std::uint32_t, int> alphaModes;
+      std::map<std::uint32_t, int> u5, u6, nodeIndex;
+      std::map<std::string, int> techniques;
+    };
+    Side leaf, other;
+
+    auto scan = files.list();
+    std::sort(scan.begin(), scan.end());
+    scan.erase(std::unique(scan.begin(), scan.end()), scan.end());
+    for (const auto& path : scan) {
+      if (obf2::assetExtension(path) != "staticmesh") continue;
+      const auto bytes = files.read(path);
+      if (!bytes) continue;
+      const auto mesh = obf2::mesh::load(*bytes, obf2::mesh::Kind::Static);
+      if (!mesh) continue;
+      for (const auto& geometry : mesh->geometries) {
+        for (const auto& lod : geometry.lods) {
+          for (const auto& material : lod.materials) {
+            const std::string& base = material.maps.empty() ? std::string() : material.maps.front();
+            std::string name = base;
+            const std::size_t slash = name.find_last_of('/');
+            if (slash != std::string::npos) name = name.substr(slash + 1);
+            for (char& c : name) c = static_cast<char>(std::tolower(c));
+            Side& side = name.rfind("leaf", 0) == 0 ? leaf : other;
+            ++side.count;
+            ++side.alphaModes[material.alphaMode];
+            ++side.u5[material.u5];
+            ++side.u6[material.u6];
+            ++side.nodeIndex[material.nodeIndex];
+            ++side.techniques[material.technique];
+          }
+        }
+      }
+    }
+
+    auto show = [](const char* title, const Side& side) {
+      std::printf("%s: %d materials\n", title, side.count);
+      auto top = [](const char* what, const std::map<std::uint32_t, int>& counts) {
+        std::printf("    %-10s", what);
+        int shown = 0;
+        for (const auto& [value, howMany] : counts) {
+          if (shown++ >= 6) { std::printf(" ..."); break; }
+          std::printf(" %u:%d", value, howMany);
+        }
+        std::putchar('\n');
+      };
+      top("alphaMode", side.alphaModes);
+      top("u5", side.u5);
+      top("u6", side.u6);
+      top("nodeIndex", side.nodeIndex);
+      std::printf("    techniques");
+      int shown = 0;
+      for (const auto& [name, howMany] : side.techniques) {
+        if (shown++ >= 4) { std::printf(" ..."); break; }
+        std::printf(" %s:%d", name.c_str(), howMany);
+      }
+      std::putchar('\n');
+    };
+    show("base texture named leaf*", leaf);
+    show("every other material", other);
+    return 0;
+  }
+
   // Which shader every material asks for. The mesh names its own `.fx` file, so
   // the engine does not have to guess how a surface is lit: leaves say
   // `RaShaderLeaf.fx`, walls say `RaShaderSTM.fx`, and the two are lit by

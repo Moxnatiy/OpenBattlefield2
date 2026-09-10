@@ -195,9 +195,33 @@ without using them; this is where they go. And a leaf takes its sway from
 the WindManager, which is `RaShaderLeaf.fx`'s `GlobalTime`/`WindSpeed`.
 
 **Not established: where the `+0x1ec` flag comes from.** The mesh's own
-material carries no such field — `alphaMode`, the `.fx` name, the technique
-and the texture list are all of it — and the object's `.tweak` says nothing
-about leaves either. What the data does carry is
+material does not carry it, and that is measured rather than assumed:
+`mesh_info --leafflag` walks every material in the game, splits them by
+whether the artists named the base texture `leaf*`, and prints what the
+parsed fields look like on each side. Over 198 leaf materials and 6100
+others, nothing separates them —
+
+```
+base texture named leaf*: 198 materials
+    alphaMode  0:1 2:197
+    u5         0:44 3:2 5:1 16:8 512:1 1304:1 ...
+    techniques :22 Base:176
+every other material: 6100 materials
+    alphaMode  0:5827 1:1 2:272
+    u5         0:715 1:4 2:9 3:6 4:4 5:1 ...
+    techniques :9 Base:218 BaseDetail:117 ...
+```
+
+— `alphaMode 2` is nearly universal among leaves but 272 other materials
+carry it too (fences, grates), and the two unnamed shorts after the node
+index hold values like 12767488, which is a pointer left in the file. The
+object's `.tweak` says nothing about leaves either.
+
+The same function shows a **second** flag, one level up: the vegetation
+path is entered at all only when `+0x29e` of the object's settings is set
+(`FUN_100fcc70`); otherwise the material gets an ordinary key from
+`FUN_100fb550`. So the engine knows two things we do not read — "this
+object is vegetation" and "this material is its leaves". What the data does carry is
 `ObjectTemplate.mapMaterial 0 leafCol 1007` beside
 `mapMaterial 1 wood_col 93`, and textures named `leaf_*.dds`; over the 123
 vegetation tweaks the names divide cleanly (91 leaf, 74 wood). Both are the

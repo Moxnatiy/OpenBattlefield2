@@ -110,8 +110,8 @@ Material readMaterial(Reader& r, std::uint32_t version, Kind kind) {
   material.vertexCount = r.read<std::uint32_t>("material.vertexCount");
 
   material.nodeIndex = r.read<std::uint32_t>("material.nodeIndex");
-  r.read<std::uint16_t>("material.u5");
-  r.read<std::uint16_t>("material.u6");
+  material.u5 = r.read<std::uint16_t>("material.u5");
+  material.u6 = r.read<std::uint16_t>("material.u6");
 
   if (kind != Kind::Skinned && version == 11) {
     r.readArray(&material.bounds, 1, "material.bounds");

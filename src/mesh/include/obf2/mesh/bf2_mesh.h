@@ -41,6 +41,12 @@ struct Material {
   std::uint32_t indexCount = 0;
   std::uint32_t vertexCount = 0;
   std::uint32_t nodeIndex = 0;      // static: an index into Lod::nodes
+  // The two shorts after the node index. Purpose not established; kept because
+  // the renderer chooses a shader family per material on a flag we have not
+  // found in the data yet (docs/research/12-renddx9.md), and this is one of the
+  // few places a per-material flag could live.
+  std::uint16_t u5 = 0;
+  std::uint16_t u6 = 0;
   Aabb bounds;
   bool hasBounds = false;           // version == 11 only, and not skinned
 };
