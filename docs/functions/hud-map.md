@@ -158,3 +158,65 @@ How the engine blends the minimap's centre with the second centre
 (+0x7e8/+0x7ec) by the weight +0x694 — 0x773870 — has **not been worked out
 yet**; for now we simply draw the big map as the whole combat area and the
 minimap following the player.
+
+## The map node's own art
+
+`BF2.exe`, 0x780180 — the map node's constructor (`Bf2MenuMapNode.cpp`). Every
+picture the map draws is loaded here, in one place, through the resource
+manager's `+0x8c` ("load texture by name"). The `.con` names none of them: the
+map node is created with `createMapNode` and given only its positions, its sizes
+and the capture-point font, so all of this is the engine's and not the data's.
+
+| field | texture |
+|---|---|
+| +0x944 and +0x948 | `Ingame/Minimap/map_CombatArea32.dds` — both hold it; +0x940 is set to 0 beside them |
+| +0x930 | `Ingame/Minimap/map_Shadow.tga` |
+| +0x934 | `Ingame/Minimap/map_Frame.tga` |
+| +0x92c | `Ingame/Minimap/map_Mask.tga` |
+| +0x8a8 | `Ingame/Minimap/map_Line.tga` |
+| +0x8ac, +0x8b0 | `SupplyLine/sl2_line.tga`, `SupplyLine/sl2_arrow.tga` |
+| +0x928 | `Ingame/Minimap/Icons/request_circle.tga` |
+| +0x8b4 … +0x900 | the order icons, twice over — plain and `*Commander.tga` |
+| +0x950 … +0x964 | the spawn point's eight states: `spawn_Selected`, `spawn_UnSelected`, each with `Inactive` and `Squad` variants |
+| +0x984 … +0x9b8 | the player icons: `mini_LocalArrow2`, `mini_Soldier`, `mini_Health`, `mini_headingArrow`, `mini_Medic`, `mini_MedicArrow`, `mini_Ammo`, `mini_Repair`, `mini_Revive` |
+| +0x9c8, +0x9cc | `laserpaintTarget.tga` and its active form |
+| +0x9d0 | `unitSpotted.tga` |
+| +0x8a4, +0x8a0 | `Ingame/GeneralIcons/full.tga` and `empty.tga` |
+| +0xa90 | `map_SatelliteScanLine.tga` |
+| +0xad4, +0xad8 | `map_UAV.tga`, `Icons/icon_UAV.tga` |
+| +0xb04, +0xb08 | `Icons/placedAirstrike.tga`, `Icons/icon_artillery.tga` |
+| +0xb24 | `Icons/icon_supplies.tga` |
+
+The same function registers the map's variables with the graph's variable
+manager (`DAT_0098734c`): `%sDelayedMapAngle`, `%sSatelliteTimeUntilReloaded`,
+`%sSatelliteActive`, `%sSatelliteReloading`, `%sUAVTimeUntilReloaded`,
+`%sUAVState`, `%sUAVActive`, `%sUAVReloading`, `%sShowKitsOnMap`,
+`%sZoomDisplay` and a family `%sMapFilter%iActive` — the `%s` is the node's own
+prefix, field +0x24.
+
+### The frame
+
+The square map draws its own frame, and it is in the map's draw call rather than
+in a node of its own: three strips of `full.dds`, four units thick, along the
+top, the right and the bottom of the node's rectangle, in the colour the call is
+tinted with — 0.48/0.47/0.39 at full alpha. The left one is absent on Strike at
+Karkand because the whole node is cut on the left there (see the crop below).
+The bottom strip ends where the DONE button begins, so the two read as one shape.
+
+### The red hatch over the map — not established
+
+Between the map's picture and the atlas batch the original draws one more quad:
+the node's square, 278,27 511.5x511.5, from a 512x512 A8R8G8B8 texture sampled
+whole, tinted white at alpha 0.8. Two textures in the game answer that
+description, and the constructor above loads **both** —
+`Ingame/Minimap/map_CombatArea32.dds`, which is a red (139,57,39) diagonal hatch
+solid along its border, and `Ingame/GeneralIcons/full.dds`, the solid fill.
+
+Which of the two that call binds is **not established**, and neither is what the
+player sees. Drawn as it ships, the hatch would lie over the whole map and not
+only over the ground outside the combat area; that the engine writes the alpha
+channel at level load — the texture is uncompressed and therefore lockable, its
+colour is a single constant so only alpha would need writing, and the node keeps
+two handles to it with a third field zeroed beside them — is a **story that fits
+the evidence and has not been measured**. The way to settle it is to look at the
+original's spawn screen, not to reason about it.
