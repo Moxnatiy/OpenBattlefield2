@@ -2835,6 +2835,20 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     // Without it the capture points' bars are not visible. Debt.
     hudVariables["CPInterfaceEnabled"] = true;
 
+    // The bar across the top of the spawn screen — `SpawnInfo` in
+    // `HudElementsSpawn.con`: the plate `TopMiddleBar` at 250,0 270x19 and the
+    // caption `TimeToSpawn` on `SpawnInfoString` over it.
+    //
+    // Both come from `HudInformationLayer`'s per-frame update (`BF2.exe`,
+    // 0x4668d0). `SpawnInfoShow` (+0x1d3) is on unless the HUD state is 11 or 12
+    // (0x467381 sets one, 0x467391 zero). The caption is `presstospawn` when the
+    // state is 13 or 17 **and** a list the game keeps is not empty (0x4672c2 and
+    // 0x4672eb), and `selectspawnpoint` otherwise — which is the branch the spawn
+    // screen takes. The other two keys the same function writes,
+    // `invalidspawnpoint` and `timetospawn`, belong to states we do not model yet.
+    hudVariables["SpawnInfoShow"] = true;
+    hudStrings["SpawnInfoString"] = "HUD_CENTERINFOBOX_selectspawnpoint";
+
     // --- the spawn screen: seven kits -------------------------------
     //
     // The nodes Kit0..Kit6 in HudElementsSpawn.con show nothing by themselves: each
