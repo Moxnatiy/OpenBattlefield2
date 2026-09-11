@@ -461,6 +461,12 @@ data". Measure: the same dump, taken in a battle.
   spawn screen state each turned out to be local variables of a block:
   after the block exited, the lambda read dead memory. Anything that
   outlives the block is declared at the outer level.
+* **Freeing what someone else is still drawing.** The spawn screen's
+  rebuild released the combat HUD's meshes — without clearing the vector
+  and without rebuilding them. It was invisible whenever a rebuild came
+  with `hudDirty` set, because the combat HUD was rebaked straight after;
+  a rebuild from a click alone left the frame loop drawing freed handles.
+  A rebuild owns its own pieces and nothing else's.
 * **A helper layer that shadows the source of truth.** The transition
   animator answered "show" about nodes it did not know. Such a layer must
   be **advisory**: when it does not know, the main condition decides.

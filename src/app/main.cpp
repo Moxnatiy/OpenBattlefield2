@@ -3582,8 +3582,15 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     rebuildIngame();
 
     rebuildSpawn = [&]() {
-      for (OwnedPiece& piece : ingamePieces) renderer->release(piece.mesh);
-  for (OwnedPiece& piece : spawnPieces) renderer->release(piece.mesh);
+      // Only our own meshes. This used to release `ingamePieces` as well — without
+      // clearing the vector and without rebuilding it — so every rebuild of the
+      // spawn screen handed the graphics card's meshes back while the frame loop
+      // went on drawing from the same handles. When a rebuild came with
+      // `hudDirty` set the combat HUD was rebaked straight after and the damage
+      // was invisible; when it came from a click alone — choosing a kit, a side,
+      // the squad tab — nothing rebuilt it, and the combat HUD flickered over the
+      // screen until the next animation frame.
+      for (OwnedPiece& piece : spawnPieces) renderer->release(piece.mesh);
       spawnPieces.clear();
       applySpawnState();
       for (const char* root : {"SpawnMenu", "MapSplit", "TopLayer"}) {
