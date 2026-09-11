@@ -2710,6 +2710,10 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   // The level's capture points — the map's markers are rebuilt from them every
   // time: a flag stands on each, while a spawn selection circle stands only on our own.
   std::vector<obf2::level::ControlPoint> hudControlPoints;
+  // The map's vehicles and strategic objects. They do not depend on the player's
+  // side, so they are built once with the level and re-seeded into the spawn
+  // screen's context every time it is rebuilt.
+  std::vector<obf2::hud::Context::MapMarker> assetMapMarkers;
   // The screens visible only while a key is held: the scoreboard, the radio, the spawn.
   // The geometry is baked in advance — it does not change, only whether to draw it
   // this frame does.
@@ -3081,7 +3085,8 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
         marker.worldX = point.position.x;
         marker.worldZ = point.position.z;
         marker.label = point.nameKey;
-        marker.texture = obf2::hud::controlPointIcon(point.team == 0 ? "" : teamName(point.team));
+        marker.texture = obf2::hud::controlPointIcon(point.team == 0 ? "" : teamName(point.team),
+                                                     point.unableToChangeTeam);
         spawnContext.mapMarkers.push_back(std::move(marker));
         if (point.team == selectedTeam) {
           const bool chosen =
@@ -3091,6 +3096,10 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           spawnMarkerPoints.push_back(point.id);
         }
       }
+      // The vehicles and the strategic objects come after the flags, the way the
+      // original's batch has them.
+      spawnContext.mapMarkers.insert(spawnContext.mapMarkers.end(), assetMapMarkers.begin(),
+                                     assetMapMarkers.end());
       hudVariables["Team1Selected"] = selectedTeam != 2;
       hudVariables["Team2Selected"] = selectedTeam == 2;
       // The tabs' captions and flags. In the data they are on the variables
@@ -3246,10 +3255,83 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
         marker.worldX = point.position.x;
         marker.worldZ = point.position.z;
         marker.label = point.nameKey;
-        marker.texture = obf2::hud::controlPointIcon(point.team == 0 ? "" : teamName(point.team));
+        marker.texture = obf2::hud::controlPointIcon(point.team == 0 ? "" : teamName(point.team),
+                                                     point.unableToChangeTeam);
         hudContext.mapMarkers.push_back(std::move(marker));
       }
       std::printf("  map: capture points %zu\n", hudControlPoints.size());
+
+      // --- what stands on the map besides the flags ------------------
+      //
+      // The original's map carries two more kinds of icon, and both come out of
+      // the objects' own templates rather than out of the HUD's data:
+      //
+      //   * a vehicle spawner shows the vehicle it issues, 16x16, from that
+      //     template's `vehicleHud.miniMapIcon`;
+      //   * anything with a `StrategicObject` component shows 19x19, from its
+      //     `StrategicObject.intactIcon` — bridges, mobile radars, the air
+      //     control tower (the UAV), the artillery pieces. The component also
+      //     carries a `destroyedIcon`, which we do not use yet: nothing tells us
+      //     an object has been destroyed.
+      //
+      // The sizes are measured on the original's spawn screen, icon by icon
+      // (docs/research/spawn-screen-named.md).
+      const auto iconOf = [&](const std::string& templateName, std::string_view component,
+                              std::string_view property) -> std::string {
+        const auto* object = registry.find(templateName);
+        if (object == nullptr) return {};
+        const auto* part = object->component(component);
+        if (part == nullptr) return {};
+        const auto at = part->properties.find(std::string(property));
+        if (at == part->properties.end() || at->second.empty()) return {};
+        std::string path(at->second.back().value());
+        for (char& c : path) {
+          if (c == '\\') c = '/';
+        }
+        return path;
+      };
+
+      for (const auto& spawner : hudGameplay->spawners) {
+        // Which side's vehicle stands there is the point's business; where the
+        // point is neutral or unknown we take whichever template the spawner
+        // lists first, because the icon is the same shape either way.
+        const auto* point = hudGameplay->controlPoint(spawner.controlPointId);
+        std::string vehicle;
+        if (point != nullptr) {
+          if (const auto found = spawner.templateByTeam.find(point->team);
+              found != spawner.templateByTeam.end()) {
+            vehicle = found->second;
+          }
+        }
+        if (vehicle.empty() && !spawner.templateByTeam.empty()) {
+          vehicle = spawner.templateByTeam.begin()->second;
+        }
+        if (vehicle.empty()) continue;
+        // A spawner can put a strategic object on the field rather than a
+        // vehicle — the mobile radars, the artillery pieces. Those show the
+        // strategic icon at its own size, which is why the original's map has a
+        // `Radar` and two `AirDef` on it and no vehicle icon in their place.
+        std::string icon = iconOf(vehicle, "StrategicObject", "intacticon");
+        float size = 19.0f;
+        if (icon.empty()) {
+          icon = iconOf(vehicle, "VehicleHud", "minimapicon");
+          size = 16.0f;
+        }
+        if (icon.empty()) continue;
+        assetMapMarkers.push_back(obf2::hud::Context::MapMarker{
+            spawner.position.x, spawner.position.z, std::move(icon), {}, size});
+      }
+      if (level) {
+        for (const auto& object : level->objects) {
+          std::string icon = iconOf(object.templateName, "StrategicObject", "intacticon");
+          if (icon.empty()) continue;
+          assetMapMarkers.push_back(obf2::hud::Context::MapMarker{
+              object.position.x, object.position.z, std::move(icon), {}, 19.0f});
+        }
+      }
+      hudContext.mapMarkers.insert(hudContext.mapMarkers.end(), assetMapMarkers.begin(),
+                                   assetMapMarkers.end());
+      std::printf("  map: vehicles and assets %zu\n", assetMapMarkers.size());
     }
     hudContext.localize = [&](std::string_view key) { return engine.lexicon().text(key); };
     // Every node's font is the one named in setTextNodeStyle. In the data the path is

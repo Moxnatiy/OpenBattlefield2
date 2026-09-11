@@ -239,3 +239,39 @@ In our code: `src/hud/src/combat_area.cpp` cuts the hole, `src/app/main.cpp`
 builds the picture once per level and hands it to the texture resolver under
 `#combatarea` the way the Flash menu's frames are handed over, and
 `src/hud/src/render.cpp` draws it between the map and the frame.
+
+### What stands on the map besides the flags
+
+Three kinds of icon, all of them out of the objects' own templates rather than
+out of the HUD's data, and all measured against the original's spawn screen on
+Strike at Karkand (docs/research/spawn-screen-named.md):
+
+| what | size | where the picture comes from |
+|---|---|---|
+| a capture point | 32 | `Ingame/Flags/Icons/Minimap/%s/miniMap_CP.tga` |
+| a side's main base | 32 | the same path with `miniMap_CPBase.tga` |
+| a vehicle spawner | 16 | the vehicle's `vehicleHud.miniMapIcon` |
+| a strategic object | 19 | its `StrategicObject.intactIcon` |
+
+`StrategicObject` is a component, and in the game's data it sits on the bridges
+(`lrg_stonebridge`, the highway segments), the mobile radars, the air control
+towers — the UAV — and the artillery pieces `ars_d30` and `USART_LW155`. It also
+carries a `destroyedIcon`, and every one of those has a `_broken` twin in the
+atlas; we never use it, because nothing tells us an object has been destroyed.
+
+A spawner can put a strategic object on the field instead of a vehicle: that is
+why the original's map shows a `Radar` and two `AirDef` where a vehicle icon
+would otherwise be. So a spawner's template is asked for its strategic icon
+first and its vehicle icon second.
+
+Laid beside the original's dump, every icon it names now lands within about 1.3
+pixels — the same residual the map itself carries. **One difference stands:**
+the original draws one icon per bridge and we draw one per destroyable segment.
+Karkand's north bridge is two `lrg_stonebridge` at world x -95.0 and -51.1, and
+the original's icon sits at 644.5 — the midpoint of the two we draw, at 629.5
+and 660.7. How the engine gathers a bridge's segments into one icon is **not
+established**.
+
+Which point is a base is not read out of the binary either: we go by the level's
+own `unableToChangeTeam`, which on Karkand picks out exactly the one point the
+dump shows a base icon for.

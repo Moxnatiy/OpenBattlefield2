@@ -153,18 +153,13 @@ column is done; the rest of the screen is the map and what stands on it.
 
 | the art | where | what it is |
 |---|---|---|
-| the map's own picture | 342.6, 27.5 447.9x512, `TextureId(671)` DXT1 512x512, uv 0..0.6154 by 0.1817..0.7035 | the level's `ingameMap`, cropped — **our crop and our rectangle differ**, and the difference shows as a smear down the map's left edge |
-| a 512x512 A8R8G8B8 target | 278.0, 27.0 511.5x511.5, alpha 0.8, drawn over the picture | what it holds is not established |
-| the map's frame | three `full.dds` strips — 446.9x4 at the top, 4x508 at the right, 442.9x4 at the bottom | tint 0.48/0.47/0.39 |
-| `minimap_cpbase` | 575.5, 428.5 32x32 | the side's base; a different icon from a capture point's |
-| `mini_jeep`, `mini_tank`, `mini_apc`, `mini_smgsmall`, `mini_armourdefsmall` | 16x16 over the map | the level's vehicles and spawners |
-| `radar`, `bridge`, `airdef`, `uavtrailer` | 19x19 over the map | the level's assets |
 | `spawn_unselected` | 521.5, 356.5 82x4 and 521.5, 360.5 16x16 | a spawn point with a plate under it |
 | `pointerMinimap.tga` | 25x25 wherever the mouse is | the cursor, which we do not draw at all |
 | `GeneralIcons/empty.dds` | 9.5, 26.5 170x25 | the tab strip's click area; ours is two of 85 |
 
-The map is the large one of these. Ours stretches the level picture across the
-whole 512x512 node with a crop computed from the combat area; the original draws
-a narrower rectangle, 447.9 wide, at the node's right, with a crop that starts at
-u 0. The rule behind that is **not measured**: the crop we do have was fitted on
-Dalian Plant, and Karkand does not follow it.
+Everything struck from this list is now drawn and pairs with the original: the
+map's crop and its narrowed rectangle, the frame, the red hatch outside the
+combat area, the base icon, the vehicles, the emplacements and the strategic
+objects. What they cost is written up in docs/functions/hud-map.md, along with
+the one difference that stands — the original draws one icon per bridge and we
+draw one per destroyable segment.

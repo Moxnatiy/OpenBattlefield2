@@ -112,6 +112,11 @@ struct Context {
     float worldZ = 0.0f;
     std::string texture;
     std::string label;  // a localisation key
+    // Zero means the map's own capture-point size. The other two things the map
+    // shows come at their own sizes, both measured on the original's spawn
+    // screen: a vehicle spawner's icon is 16x16 and a strategic object's is
+    // 19x19 (docs/functions/hud-map.md).
+    float size = 0.0f;
   };
   std::vector<MapMarker> mapMarkers;
   // The spawn point selection circles. The game has separate textures for them —

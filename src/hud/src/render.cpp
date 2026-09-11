@@ -422,7 +422,8 @@ std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& fon
         const float cx = rect.x + (u - context.mapU0) / uSpan * rect.width;
         const float cy = rect.y + (v - context.mapV0) / vSpan * rect.height;
         if (!marker.texture.empty()) {
-          const ScreenRect box{cx - icon * 0.5f, cy - icon * 0.5f, icon, icon};
+          const float side = marker.size > 0.0f ? marker.size * scaleY : icon;
+          const ScreenRect box{cx - side * 0.5f, cy - side * 0.5f, side, side};
           pieces.push_back(DrawPiece{quad(box, screen, marker.texture), marker.texture, &node,
                                      Color{}});
         }

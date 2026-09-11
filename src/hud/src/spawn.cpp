@@ -17,9 +17,10 @@ std::string teamFlagIcon(std::string_view teamName) {
   return "Ingame/Flags/Icons/Hud/Score/" + std::string(teamName) + "/scoreBoard_Flag.tga";
 }
 
-std::string controlPointIcon(std::string_view teamName) {
+std::string controlPointIcon(std::string_view teamName, bool isBase) {
   const std::string faction = teamName.empty() ? "Neutral" : std::string(teamName);
-  return "Ingame/Flags/Icons/Minimap/" + faction + "/miniMap_CP.tga";
+  return "Ingame/Flags/Icons/Minimap/" + faction +
+         (isBase ? "/miniMap_CPBase.tga" : "/miniMap_CP.tga");
 }
 
 }  // namespace obf2::hud

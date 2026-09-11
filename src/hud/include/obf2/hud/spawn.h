@@ -31,7 +31,13 @@ std::string teamFlagIcon(std::string_view teamName);
 // The template `Ingame/Flags/Icons/Minimap/%s/miniMap_CP.tga` at 0x925af8, filled
 // in by 0x74fb70. For the neutral side there is a separate ready-made string with
 // `Neutral` (0x925b28) — so an empty name gives exactly that.
-std::string controlPointIcon(std::string_view teamName);
+//
+// A side's main base gets `miniMap_CPBase.tga` instead, and the original's spawn
+// screen on Strike at Karkand draws exactly one of them against four ordinary
+// points. Which point is a base is **not read out of the binary**: what we go by
+// is the level's own `CombatArea`-side flag `unableToChangeTeam`, and on that
+// level it picks out the one point the dump shows a base icon for.
+std::string controlPointIcon(std::string_view teamName, bool isBase = false);
 
 
 }  // namespace obf2::hud
