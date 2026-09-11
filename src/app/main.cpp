@@ -26,6 +26,7 @@
 #include "obf2/font/text.h"
 #include "obf2/hud/bottom_left.h"
 #include "obf2/hud/ingame.h"
+#include "obf2/hud/combat_area.h"
 #include "obf2/hud/kit_list.h"
 #include "obf2/hud/map_node.h"
 #include "obf2/meme/graph.h"
@@ -2428,6 +2429,14 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   // around the unpacking and the decoding, which is the part worth spreading.
   std::mutex textureCacheMutex;
 
+  // The spawn screen's red hatch, handed to the resolver under `#combatarea` —
+  // like `#flash`, a picture we make rather than a file. It is the game's own
+  // `map_CombatArea32.dds` with the alpha cleared inside the level's combat area
+  // (obf2/hud/combat_area.h). It is declared here, at the outer level, because
+  // the resolver below is called from the frame loop: kept inside the level
+  // block it would be dead memory by then (CLAUDE.md, the first of the rakes).
+  std::optional<obf2::texture::Texture> combatAreaOverlay;
+
 #if OBF2_HAVE_FLASH
   // The menu's movie. A frame from it is handed to the resolver under the name
   // `#flash` — the same as colour fills: it is not a file but an image we made
@@ -2564,6 +2573,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
 #if OBF2_HAVE_FLASH
     if (mapName == "#flash" && flashMovie.isOpen()) return flashTexture;
 #endif
+    if (mapName == obf2::hud::kCombatAreaTexture) return combatAreaOverlay;
     if (mapName.size() == 7 && mapName[0] == '#') {
       const auto channel = [&](std::size_t offset) {
         return static_cast<float>(std::stoi(mapName.substr(offset, 2), nullptr, 16)) / 255.0f;
@@ -3189,6 +3199,26 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       std::printf("  map: combat area %.0f..%.0f / %.0f..%.0f, visible u %.3f..%.3f v %.3f..%.3f\n",
                   minX, maxX, minZ, maxZ, hudContext.mapU0, hudContext.mapU1, hudContext.mapV0,
                   hudContext.mapV1);
+
+      // The red hatch over everything outside the combat area. The square it
+      // covers is the **uncut** one — the same square the crop is built from,
+      // before the map's edge takes a bite out of it — because the original's
+      // overlay covers the map node whole while its picture does not.
+      if (const auto bytes = files.read(obf2::normalizeAssetPath(obf2::hud::kCombatAreaSource))) {
+        std::string textureError;
+        if (const auto hatch = obf2::texture::loadImage(*bytes, &textureError)) {
+          const obf2::hud::WorldSquare square{centerX - half, centerZ - half, centerX + half,
+                                              centerZ + half};
+          combatAreaOverlay =
+              obf2::hud::buildCombatAreaOverlay(*hatch, hudGameplay->combatArea.points, square);
+          hudContext.combatAreaTexture = std::string(obf2::hud::kCombatAreaTexture);
+          std::printf("  map: combat-area hatch over %.0f..%.0f / %.0f..%.0f, %zu points\n",
+                      square.minX, square.maxX, square.minZ, square.maxZ,
+                      hudGameplay->combatArea.points.size());
+        } else {
+          std::printf("  map: the combat-area hatch did not read: %s\n", textureError.c_str());
+        }
+      }
 
       // The capture points: the position, the team and the name's key come from the
       // level — exactly what the server sees. The markers themselves are assembled by

@@ -226,6 +226,11 @@ inline constexpr Color kMapFrameColor{0.48f, 0.47f, 0.39f, 1.0f};
 // spawn screen's invisible rectangles are made of too.
 inline constexpr std::string_view kSolidFill = "Ingame/GeneralIcons/full.tga";
 
+// The alpha the combat-area hatch is laid on with. The original's quad carries
+// the vertex colour 1/1/1/0.8 (its frame dump, the draw between the map's
+// picture and the atlas batch).
+inline constexpr float kCombatAreaAlpha = 0.8f;
+
 std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& font,
                                          const std::string& fontAtlas, const Screen& screen,
                                          const Context& context) {
@@ -334,6 +339,24 @@ std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& fon
               ? disc(rect, screen, context.mapTexture, u0, v0, u1, v1)
               : quad(view, screen, context.mapTexture, u0, u1, v0, v1);
       pieces.push_back(DrawPiece{std::move(geometry), context.mapTexture, &node, node.color});
+
+      // The hatch over the ground outside the combat area, between the picture
+      // and the frame — that is where the original's draw sits. It covers the
+      // node's whole square and is not cut with the picture, so on Karkand the
+      // strip on the left that the map cannot fill is hatched too. Its own
+      // rectangle is the node's, moved half a pixel like a bar's, and it is
+      // drawn at alpha 0.8 on top of whatever colour the node carries.
+      if (!context.combatAreaTexture.empty() && node.mapView != MapView::Mini) {
+        ScreenRect over = rect;
+        over.x += kBarInset;
+        over.y += kBarInset;
+        over.width -= kBarInset;
+        over.height -= kBarInset;
+        Color tint = node.color;
+        tint.a *= kCombatAreaAlpha;
+        pieces.push_back(DrawPiece{quad(over, screen, context.combatAreaTexture),
+                                   context.combatAreaTexture, &node, tint});
+      }
 
       // The square map draws its own frame, and the frame is the engine's, not the
       // data's: `createMapNode` in `HudElementsMap.con` sets no border of any kind,

@@ -97,6 +97,13 @@ struct Context {
   // see docs/research/03-frame-dump.md. The whole picture by default.
   float mapU0 = 0.0f, mapV0 = 0.0f, mapU1 = 1.0f, mapV1 = 1.0f;
 
+  // The red hatch over the ground outside the combat area (obf2/hud/combat_area.h).
+  // Unlike the picture it is **not** cut at the map's edge: it covers the node's
+  // whole square, so on Strike at Karkand it also hatches the sixty-four pixels
+  // on the left where the level's map has nothing to show. Empty means no
+  // overlay — a level with no combat area, or a screen that does not want one.
+  std::string combatAreaTexture;
+
   // The markers on the map: the capture points. The map node draws them itself —
   // the data has no separate nodes for them, only the font and the caption's
   // colour (`setCPFont`, `setCPFontColor` on the map node itself).

@@ -203,20 +203,39 @@ tinted with — 0.48/0.47/0.39 at full alpha. The left one is absent on Strike a
 Karkand because the whole node is cut on the left there (see the crop below).
 The bottom strip ends where the DONE button begins, so the two read as one shape.
 
-### The red hatch over the map — not established
+### The red hatch over the map
 
 Between the map's picture and the atlas batch the original draws one more quad:
-the node's square, 278,27 511.5x511.5, from a 512x512 A8R8G8B8 texture sampled
-whole, tinted white at alpha 0.8. Two textures in the game answer that
-description, and the constructor above loads **both** —
-`Ingame/Minimap/map_CombatArea32.dds`, which is a red (139,57,39) diagonal hatch
-solid along its border, and `Ingame/GeneralIcons/full.dds`, the solid fill.
+the node's square, 278.5,27.5 511.5x511.5, from a 512x512 A8R8G8B8 texture
+sampled whole, tinted white at alpha 0.8. The texture is
+`Ingame/Minimap/map_CombatArea32.dds`, which the constructor above loads into
++0x944 and +0x948 — a single colour, (139, 57, 39), carrying a diagonal hatch in
+its alpha channel and solid along its border. Nothing else in the frame binds
+that texture id, and no other 512x512 uncompressed texture the map node loads
+would be drawn over the map whole.
 
-Which of the two that call binds is **not established**, and neither is what the
-player sees. Drawn as it ships, the hatch would lie over the whole map and not
-only over the ground outside the combat area; that the engine writes the alpha
-channel at level load — the texture is uncompressed and therefore lockable, its
-colour is a single constant so only alpha would need writing, and the node keeps
-two handles to it with a third field zeroed beside them — is a **story that fits
-the evidence and has not been measured**. The way to settle it is to look at the
-original's spawn screen, not to reason about it.
+A texture that ships with the game cannot know a level's combat area, and a
+screenshot of the original settles what happens: **the hatch stands everywhere
+except inside the combat area**, where the map shows through untouched, and the
+hole has the polygon's own outline. So the engine writes the texture at level
+load, and the smallest write that produces the picture is clearing the alpha
+inside the polygon. The texture is uncompressed and therefore lockable, its
+colour is one constant so only alpha need be written, and the node keeps two
+handles to it with a third field zeroed beside them — but the code that does the
+writing has **not** been found; what is measured is the picture and the texture
+that makes it.
+
+Two details the same screenshot settles:
+
+* the overlay covers the map node's **whole** square and is not cut with the
+  picture. On Strike at Karkand the sixty-four pixels on the left that the
+  level's map cannot fill are hatched over the world behind them;
+* the square of world the texture spans is the **uncut** crop square — the one
+  centred on the combat area whose side is the area's larger side plus the map's
+  margin. Its left edge is world x -603 there, while the picture beside it starts
+  at -512 because that is where the picture begins.
+
+In our code: `src/hud/src/combat_area.cpp` cuts the hole, `src/app/main.cpp`
+builds the picture once per level and hands it to the texture resolver under
+`#combatarea` the way the Flash menu's frames are handed over, and
+`src/hud/src/render.cpp` draws it between the map and the frame.
