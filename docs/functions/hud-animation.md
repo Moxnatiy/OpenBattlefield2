@@ -551,3 +551,37 @@ width, as if the player were in a vehicle. The correct on-foot position is
 What is left: the flags `BottomLeftHealthAlpha` / `BottomLeftVehicleAlpha`
 themselves — who sets them to 0 and 1 has not been worked out yet. Until then we
 take the "on foot" position and do not switch to the vehicle one.
+
+## An effect belongs to the subtree, not to its node
+
+An effect command does not decorate the node it is written under. The builder
+(`Menu/Bf2HudBuilder.cpp`, 0x79b2c0 and 0x79db80) looks up that node's
+`<name>CullNode` and hangs a graph node on it, and everything below a cull node
+draws **through** it:
+
+* `dice::meme::CullNode::iteratePaint` (`MemeDll.dll`, 0x1000141a) — at progress
+  1 the children draw with the parent's pipe unchanged, at 0 they do not draw at
+  all, and in between they get a new pipe whose alpha is the parent's times the
+  progress;
+* `dice::meme::MoveEffect::picturePaint` (0x10001b27) offsets that pipe.
+
+So a move effect on a split node moves everything under it, and two nested
+groups multiply their alphas and add their offsets.
+
+This is not a corner case — it is where nearly every effect in the game's data
+lives. Of the 84 `addNodeMoveShowEffect` and 137 `addNodeAlphaShowEffect` calls
+in `Menu_client.zip`, almost all sit on a group: `SpawnInfo`, `Kit0NotSelected`,
+`Kit0Selected`, the corner regions, the vote panel. A picture with an effect of
+its own is the exception.
+
+While we applied an effect to its own node and no further, **almost nothing on
+the screen moved or faded**. The plain case: `SpawnInfo` carries
+`addNodeMoveShowEffect -1.57 50` and `setNodeInTime 0.3`, and the bar under it,
+`TopMiddleBar`, stayed at y 0 through every rebuild — twenty-five of them in a
+sixty-frame run.
+
+In our code `updateAnimator` (`src/hud/src/render.cpp`) walks the tree carrying
+what the ancestors add up to, and `Animator::compose` puts the two together:
+alphas multiply, offsets add, and the progress stays the node's own, because
+that is what decides whether the node is drawn at all — the walk has already
+stopped at an ancestor that is not.
