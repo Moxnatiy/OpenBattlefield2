@@ -387,6 +387,9 @@ openbf2 --level Dalian_plant --width 800 --height 600 --frames 4 --screenshot ou
 # what exactly landed on screen: rectangle, texture, show variable
 openbf2 --level Dalian_plant --frames 2 --hud-rects
 
+# every variable the HUD asks for, and which of them nobody fills in
+openbf2 --hosted --level strike_at_karkand --frames 10 --hud-vars
+
 # a particular HUD screen
 openbf2 --level Dalian_plant --frames 4 --hud-screen Scoreboard
 
@@ -448,6 +451,16 @@ and `c_GIEscape` do in the game, the screens other than singleplayer, and
 the chevrons on `PLAY NOW` — the movie never asks for
 `images/components/playNow.png` and it is not established why. Measure:
 Escape in a battle opens the menu, and it can be used to quit the game.
+
+**477 of the HUD's 676 variables are filled by nobody.** `--hud-vars` prints
+the list, longest first. A name nobody writes is a node that never appears, and
+it fails silently — which is why the list matters more than the count. The bulk
+of it is whole screens we do not model at all: the vehicle HUD (`VehicleBanking`,
+`AltitudeString`, `SpeedString`, `TorqueString`), the commander's menu
+(`OrderMenuPosX/Y`), the item wheel (`ItemSelectActive`, `GuiIndex` — 88 nodes on
+that one alone), the chat, the demo player, the server browser. Measure: the
+number falls as each screen is reversed, and nothing on the list is there by
+accident.
 
 **There is no reference for the battle HUD.** We have a frame dump of the
 original (`docs/research/03-frame-dump.md`) only for the spawn screen —

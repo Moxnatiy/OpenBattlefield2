@@ -158,6 +158,10 @@ struct Args {
   // same as in the original's frame dump, so they can be compared
   // (tools/hud_coverage.py).
   bool hudRects = false;
+  // --hud-vars: list every variable the HUD's tree asks for and say which of them
+  // nobody fills in. A name nobody writes is a node that never appears, and it
+  // fails silently — so the debt is printed as a list.
+  bool hudVars = false;
   float distance = 0.0f;             // 0 = choose it from the bounds
   // The game is made for 4:3, and for now we keep to that: 1600x1200 is exactly
   // twice the base 800x600, so the HUD lands with nothing left over.
@@ -206,6 +210,7 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--height" && i + 1 < argc) args.height = std::atoi(argv[++i]);
     else if (flag == "--hud-screen" && i + 1 < argc) args.hudScreenName = argv[++i];
     else if (flag == "--hud-rects") args.hudRects = true;
+    else if (flag == "--hud-vars") args.hudVars = true;
     else if (flag == "--connect-password" && i + 1 < argc) args.connectPassword = argv[++i];
     else if (flag == "--name" && i + 1 < argc) args.playerName = argv[++i];
     else if (flag == "--calibrate" && i + 1 < argc) args.calibrate = argv[++i];
@@ -4863,6 +4868,64 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   for (auto& dynamic : hudDynamic) {
     for (OwnedPiece& piece : dynamic.pieces) renderer->release(piece.mesh);
   }
+  // --hud-vars: every variable the tree asks for, and whether anyone fills it.
+  //
+  // The HUD is a stream of nodes hanging off names, and a name nobody writes is
+  // a node that never appears — silently. This is the list of those names, so
+  // the debt is a list rather than a feeling. It is printed once, after the tree
+  // is built, and it says the kind because the kinds live in different maps: a
+  // show condition is a bool, a bar's fill a float, a caption and a texture path
+  // a string.
+  if (args.hudVars) {
+    struct Use {
+      std::string kind;
+      int nodes = 0;
+    };
+    std::map<std::string, Use> used;
+    const auto note = [&](const std::string& name, const char* kind) {
+      if (name.empty() || name == "1" || name == "0") return;
+      Use& use = used[name];
+      if (use.kind.empty()) use.kind = kind;
+      else if (use.kind.find(kind) == std::string::npos) use.kind += std::string("+") + kind;
+      ++use.nodes;
+    };
+    for (const auto& node : ingameHud.nodes()) {
+      note(node.showVariable, "show");
+      for (const auto& test : node.showTests) note(test.variable, "show");
+      note(node.alphaVariable, "alpha");
+      note(node.textVariable, "string");
+      note(node.textureVariable, "texture");
+      note(node.valueVariable, "value");
+      note(node.rotateVariable, "rotate");
+      note(node.positionVariableX, "pos");
+      note(node.positionVariableY, "pos");
+      for (const auto& rgb : node.rgbVariables) note(rgb, "rgb");
+      for (const auto& occupied : node.occupiedPosVariables) note(occupied, "pos");
+    }
+    int known = 0;
+    std::vector<std::pair<int, std::string>> missing;
+    for (const auto& [name, use] : used) {
+      // Three maps and one lambda: the corner regions' alphas are computed by
+      // their own state machine rather than kept in a map, and `variableAlpha`
+      // is where a node asks for them.
+      const bool have = hudVariables.count(name) != 0 || hudValues.count(name) != 0 ||
+                        hudStrings.count(name) != 0 ||
+                        (hudContext.variableAlpha && hudContext.variableAlpha(name).has_value());
+      if (have) {
+        ++known;
+        continue;
+      }
+      missing.emplace_back(use.nodes, name + "  (" + use.kind + ")");
+    }
+    std::sort(missing.begin(), missing.end(),
+              [](const auto& a, const auto& b) { return a.first > b.first; });
+    std::printf("  HUD variables: %zu asked for, %d filled, %zu not\n", used.size(), known,
+                missing.size());
+    for (const auto& [nodes, text] : missing) {
+      std::printf("    %4d nodes  %s\n", nodes, text.c_str());
+    }
+  }
+
   for (OwnedPiece& piece : spawnPieces) renderer->release(piece.mesh);
   for (auto& gpuMesh : gpuMeshes) renderer->release(gpuMesh);
   std::printf("frames drawn: %d\n", frame);
