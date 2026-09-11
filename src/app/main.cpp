@@ -2839,6 +2839,8 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     // visible in the binary: the flag field (Scoreboard+0x365) has exactly one
     // constant store, `movb $0x1, 0x365(%esi)` at 0x7a48f7.
     hudVariables["ToggleScore"] = true;
+    hudVariables["ToggleSquads"] = false;
+    hudVariables["ToggleManage"] = false;
 
     // Source not found: CPInterfaceEnabled (the HUD object's field 0xa8) is written
     // by many places in the game, and which of them is ours is not established.
@@ -2856,7 +2858,13 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     // 0x4672eb), and `selectspawnpoint` otherwise — which is the branch the spawn
     // screen takes. The other two keys the same function writes,
     // `invalidspawnpoint` and `timetospawn`, belong to states we do not model yet.
-    hudVariables["SpawnInfoShow"] = true;
+    // The caption. The same function chooses between four keys by the HUD's state
+    // and a list it keeps: `presstospawn` in the states 1, 13, 17 and 18 when that
+    // list is not empty (0x46729c through 0x4672eb), `selectspawnpoint` otherwise,
+    // and `timetospawn` / `instantspawn` in branches of their own. The spawn screen
+    // with nothing chosen takes `selectspawnpoint`, which is what the original
+    // draws; the other three are debt, because what the list holds is not
+    // established. `SpawnInfoShow` is set per frame, see `updateHudVariables`.
     hudStrings["SpawnInfoString"] = "HUD_CENTERINFOBOX_selectspawnpoint";
 
     // --- the spawn screen: seven kits -------------------------------
@@ -2976,6 +2984,21 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
         std::printf("  spawn screen: circle %d of %zu chosen\n", selectedSpawn,
                     spawnMarkerPoints.size());
       });
+      // The scoreboard's three tabs. The buttons in the data run
+      // `scoreboard.setToggleShow 0|1|2` (`HudElementsScoreboard.con`), and the
+      // three flags they pick between are neighbours in the Scoreboard object —
+      // `ToggleSquads` +0x364, `ToggleScore` +0x365, `ToggleManage` +0x366
+      // (docs/functions/hud-variables.md). Exactly one is on at a time: each tab's
+      // picture and its bright label hang on its own flag, and the faded label on
+      // `NOT` it.
+      console.bind("scoreboard.setToggleShow", [&](const obf2::con::Command& command) {
+        const int tab = command.argInt(0).value_or(0);
+        hudVariables["ToggleScore"] = tab == 0;
+        hudVariables["ToggleSquads"] = tab == 1;
+        hudVariables["ToggleManage"] = tab == 2;
+        hudDirty = true;
+        std::printf("  scoreboard: tab %d\n", tab);
+      });
       console.bind("spawnManager.selectNextUnlock", [](const obf2::con::Command&) {});
       console.bind("spawnManager.commitSuicide", [](const obf2::con::Command&) {});
       console.bind("sound.playSound", [](const obf2::con::Command&) {});
@@ -3014,6 +3037,14 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       // as on the left: our controlled object is always a soldier for now.
       bottomRightShow = hasPlayer;
       bottomRightShownX = obf2::hud::kBottomRightShownX;
+      // The bar across the top belongs to the spawn flow. `SpawnInfoShow`
+      // (+0x1d3) is written by 0x4668d0, and there it is `state != 11 && state
+      // != 12` — but the whole block sits behind an outer branch at 0x467278
+      // that we have not read, so in combat the condition is **not measured**.
+      // What is measured is the spawn screen: the original draws the bar there,
+      // and the caption on it is `selectspawnpoint`
+      // (docs/research/spawn-screen-named.md). So we show it exactly there.
+      hudVariables["SpawnInfoShow"] = !hasPlayer;
     };
 
     // What DONE does. There are two paths, and both are equally "real":
@@ -3121,6 +3152,15 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       // player's team, the second the opposite one.
       hudStrings["FriendlyFlagIconPathString"] = teamFlagIcon(selectedTeam);
       hudStrings["EnemyFlagIconPathString"] = teamFlagIcon(selectedTeam == 2 ? 1 : 2);
+      // The scoreboard's two headers name the sides with the same pair
+      // (`FriendlyTeamNameString` +0x52c, `EnemyTeamNameString` +0x530), and the
+      // same 0x787260 fills them beside the flags. `FriendlyTeamWinsString` and
+      // `EnemyTeamWinsString` are the rounds won; we count no rounds, so those two
+      // stay empty and the headers show the caption without a number — debt.
+      hudStrings["FriendlyTeamNameString"] =
+          std::string(engine.lexicon().text(teamLabel(selectedTeam)));
+      hudStrings["EnemyTeamNameString"] =
+          std::string(engine.lexicon().text(teamLabel(selectedTeam == 2 ? 1 : 2)));
       // `MapFullSizeAndSpawnShow` used to be set here by hand, because there was no
       // source. Now there is: 0x4668d0 computes it every frame as
       // `MapFullSize AND SpawnShow`, and `applyDerived` already does that
