@@ -778,7 +778,12 @@ std::optional<std::size_t> spawnMarkerAt(const Builder& builder, std::string_vie
 void updateAnimator(const Builder& builder, std::string_view rootGroup, Animator& animator,
                     const Context& context, int maxDepth) {
   std::vector<std::string> visited;
-  const auto walk = [&](auto&& self, std::string_view group, int depth) -> void {
+  // Down the tree the ancestors' effects are carried along: a group's fade and a
+  // group's travel belong to everything under it (see `Animator::compose`). The
+  // root starts from nothing — `known` false, so the first real node keeps its
+  // own state untouched.
+  const auto walk = [&](auto&& self, std::string_view group, const ShowState& from,
+                        int depth) -> void {
     if (depth > maxDepth) return;
     for (const std::string& seen : visited) {
       if (seen == group) return;
@@ -786,10 +791,12 @@ void updateAnimator(const Builder& builder, std::string_view rootGroup, Animator
     visited.emplace_back(group);
     for (const Node* node : builder.group(group)) {
       animator.setVisible(*node, nodeVisible(*node, context) && !hiddenByAlpha(*node, context));
-      self(self, node->name, depth + 1);
+      const ShowState combined = Animator::compose(from, animator.ownState(*node));
+      animator.setInherited(*node, combined);
+      self(self, node->name, combined, depth + 1);
     }
   };
-  walk(walk, rootGroup, 0);
+  walk(walk, rootGroup, ShowState{}, 0);
 }
 
 const Node* buttonAt(const Builder& builder, std::string_view group, const Screen& screen,

@@ -2687,6 +2687,7 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   // state 2, where the data leaves the map alone on screen.
   bool bigMap = false;
   bool mapKeyWasDown = false;
+  bool zoomKeyWasDown = false;
   // There was no state yet: -1 leads into the first switch's `default` branch, that
   // is "clear absolutely everything" (0x78653c).
   int hudStatePrevious = -1;
@@ -4414,6 +4415,26 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           const bool down = !mapKey.empty() && device->isKeyDown(mapKey);
           if (down && !mapKeyWasDown) bigMap = !bigMap;
           mapKeyWasDown = down;
+        }
+        // The map's zoom is its own action: `c_GIMapZoom`, control 0x24, right
+        // beside `c_GIMapSize`'s 0x23 in the table the game builds at 0x690222.
+        // The profile puts it on N (`Controls.con`,
+        // `addKeyToTriggerMapping c_GIMapZoom IDFKeyboard IDKey_N`).
+        //
+        // **The engine's handler for that action has not been found**, only the
+        // action itself. What the console command behind the on-screen button
+        // does is a plain property — 0x57a97e reads and writes the map node's
+        // +0x6d0 and nothing else — so the step from one zoom to the next lives
+        // somewhere we have not looked. Cycling through the three levels is ours,
+        // and it is debt, not reversing.
+        {
+          const std::string_view zoomKey = controls.key("c_GIMapZoom");
+          const bool down = !zoomKey.empty() && device->isKeyDown(zoomKey);
+          if (down && !zoomKeyWasDown) {
+            mapNode.setZoomIndex((mapNode.zoomIndex() + 1) % obf2::hud::kMapZoomLevels);
+            std::printf("  map: zoom %d\n", mapNode.zoomIndex());
+          }
+          zoomKeyWasDown = down;
         }
         const int hudState = spawned ? (bigMap ? 2 : 0) : 1;
         const bool spawnVisible = hudState == 1 || args.hudScreenName == "SpawnMenu";

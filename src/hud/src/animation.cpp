@@ -46,7 +46,7 @@ void Animator::advance(float dt) {
   }
 }
 
-ShowState Animator::state(const Node& node) const {
+ShowState Animator::ownState(const Node& node) const {
   ShowState out;
   const auto it = entries_.find(node.name);
   // We have not heard of the node — let the ordinary show condition decide.
@@ -99,6 +99,30 @@ ShowState Animator::state(const Node& node) const {
     }
   }
   return out;
+}
+
+ShowState Animator::compose(const ShowState& ancestors, const ShowState& own) {
+  ShowState out = own;
+  if (!ancestors.known) return out;
+  out.known = true;
+  // The alpha of a pipe is the parent's times the child's, and the offsets add:
+  // an effect wraps the subtree, it does not replace what is under it.
+  out.alpha *= ancestors.alpha;
+  out.offsetX += ancestors.offsetX;
+  out.offsetY += ancestors.offsetY;
+  // The progress stays the node's own: it is what decides whether this node is
+  // drawn at all, and the walk has already stopped at an ancestor that is not.
+  return out;
+}
+
+void Animator::setInherited(const Node& node, const ShowState& fromAncestors) {
+  inherited_[node.name] = fromAncestors;
+}
+
+ShowState Animator::state(const Node& node) const {
+  const auto found = inherited_.find(node.name);
+  if (found != inherited_.end()) return found->second;
+  return ownState(node);
 }
 
 }  // namespace obf2::hud

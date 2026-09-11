@@ -292,6 +292,58 @@ static void testShowEffectsAnimate() {
   CHECK(!animator.animating());
 }
 
+// A group's effect belongs to everything under it. In the game the effect hangs
+// on the group's `CullNode` and the children draw through its pipe
+// (`MemeDll.dll`, `CullNode::iteratePaint` 0x1000141a), so a move effect on a
+// split node moves the whole subtree. Nearly every effect in the game's HUD data
+// sits on a group, and while we applied one to its own node alone, next to
+// nothing on the screen moved.
+static void testEffectsReachTheChildren() {
+  hud::Builder builder = build(
+      "hudBuilder.createSplitNode IngameHud SpawnInfo\n"
+      "hudBuilder.setNodeShowVariable SpawnInfoShow\n"
+      "hudBuilder.setNodeInTime 0.4\n"
+      "hudBuilder.setNodeOutTime 0.4\n"
+      "hudBuilder.addNodeMoveShowEffect -1.57 50\n"
+      "hudBuilder.createPictureNode SpawnInfo TopMiddleBar 250 0 270 19\n"
+      "hudBuilder.setPictureNodeTexture Ingame/Respawn/spawnBar_short.tga\n");
+
+  const hud::Node* bar = nullptr;
+  for (const hud::Node& node : builder.nodes()) {
+    if (node.name == "TopMiddleBar") bar = &node;
+  }
+  CHECK(bar != nullptr);
+  if (bar == nullptr) return;
+
+  hud::Context context;
+  context.isVisible = [](std::string_view variable) { return variable == "SpawnInfoShow"; };
+
+  hud::Animator animator;
+  hud::updateAnimator(builder, "IngameHud", animator, context);
+  // Half of the group's 0.4 seconds. The child has no time of its own, so it
+  // arrives at once and carries only what the group gives it.
+  animator.advance(0.2f);
+  hud::updateAnimator(builder, "IngameHud", animator, context);
+
+  const hud::ShowState state = animator.state(*bar);
+  CHECK(state.known);
+  CHECK(std::abs(state.progress - 1.0f) < 0.001f);
+  CHECK(std::abs(state.alpha - 0.5f) < 0.001f);
+  // dy = sin(-pi/2) * 50 * (1 - 0.5) = -25, and the child travels with the group.
+  CHECK(std::abs(state.offsetY + 25.0f) < 0.5f);
+  CHECK(std::abs(state.offsetX) < 0.5f);
+
+  // The group itself is unchanged by the composition.
+  const hud::Node* group = nullptr;
+  for (const hud::Node& node : builder.nodes()) {
+    if (node.name == "SpawnInfo") group = &node;
+  }
+  CHECK(group != nullptr);
+  if (group != nullptr) {
+    CHECK(std::abs(animator.state(*group).alpha - 0.5f) < 0.001f);
+  }
+}
+
 // `setNodePosVariable <axis> <variable>`: the first argument is the axis, not a
 // name. Until now we put exactly it into the field, and no such variable was ever
 // found — because of which the sight would stand still.
@@ -309,6 +361,7 @@ static void testPosVariableTakesAxisFirst() {
 }
 
 TEST_MAIN({
+  testEffectsReachTheChildren();
   testPosVariableTakesAxisFirst();
   testShowEffectsAnimate();
   testBarNodeHasDirectionBeforeRect();

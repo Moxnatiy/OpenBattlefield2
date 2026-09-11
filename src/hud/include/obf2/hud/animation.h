@@ -120,7 +120,28 @@ class Animator {
   // when it is visible and in the zero state when it is not.
   void setVisible(const Node& node, bool visible);
 
+  // The node's own transition, without its ancestors'.
+  ShowState ownState(const Node& node) const;
+
+  // A parent's effect belongs to its children too. In the game an effect is a
+  // graph node attached to the group's `CullNode`, and the group's children draw
+  // **through** it: `dice::meme::CullNode::iteratePaint` (`MemeDll.dll`,
+  // 0x1000141a) hands the subtree a pipe whose alpha is the parent's times the
+  // progress, and `MoveEffect::picturePaint` (0x10001b27) offsets that pipe. So a
+  // move effect on a split node moves everything under it.
+  //
+  // That is nearly all of them: of the 84 move effects and 137 alpha effects in
+  // the game's HUD data almost every one sits on a group rather than on a picture
+  // — `SpawnInfo`, `Kit0NotSelected`, the corner regions. While we applied an
+  // effect to its own node only, next to nothing on the screen moved at all.
+  //
+  // `updateAnimator` walks the tree and hands each node what its ancestors add
+  // up to; `state` then answers with the total.
+  void setInherited(const Node& node, const ShowState& fromAncestors);
   ShowState state(const Node& node) const;
+
+  // Compose an ancestor's accumulated state with a node's own.
+  static ShowState compose(const ShowState& ancestors, const ShowState& own);
 
   // Whether some node is mid-transition right now. While it is, the screen has
   // to be rebuilt every frame.
@@ -134,6 +155,7 @@ class Animator {
     float outTime = 0.0f;
   };
   std::unordered_map<std::string, Entry> entries_;
+  std::unordered_map<std::string, ShowState> inherited_;
   bool animating_ = false;
 };
 
