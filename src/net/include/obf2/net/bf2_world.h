@@ -28,8 +28,13 @@ namespace obf2::net::bf2 {
 // An object the server created while in the game: another player's soldier or a vehicle.
 struct RemoteObject {
   Vec3f position;
-  std::optional<float> yaw;  // degrees, when a yaw arrived
-  // The owner's team. Zero means it is not a player's soldier (a vehicle, level property).
+  std::optional<float> yaw;  // degrees, when a yaw arrived: body yaw plus aim (soldier_state.h)
+  // What the object is on the network, from its first full ghost record
+  // (bf2_events.h, GhostClass). A soldier is a soldier by class — a jeep with a
+  // player in it stays a jeep.
+  GhostClass netClass = GhostClass::Unknown;
+  // The team of the player who entered it (`EnterVehicleEvent`). Zero when nobody
+  // did, or when that event came before we joined and was not repeated.
   int team = 0;
   bool fromGhostStream = false;  // the position is refined by the stream, not only by an event
   // The number `CreateObjectEvent` gave the object's template — creation order in
@@ -84,8 +89,7 @@ class WorldView {
   void setGroundProbe(std::function<float(const Vec3f&)> probe) { ground_ = std::move(probe); }
 
  private:
-  bool isSoldier(std::uint16_t id) const;
-  Vec3f referenceFor(std::uint16_t id) const;
+  GhostClass classOf(std::uint16_t id) const;
   bool looksSane(const Vec3f& at, bool soldier) const;
 
   std::string ownName_;

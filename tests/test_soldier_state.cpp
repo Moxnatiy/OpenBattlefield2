@@ -84,7 +84,7 @@ static void testControlledOrder() {
   CHECK_EQ(*state->pairB20, 4u);
   CHECK(state->position && std::abs(state->position->y - 150.25f) < 0.002f);
   CHECK(state->velocity && std::abs(state->velocity->z + 2.0f) < 0.002f);
-  CHECK(state->yaw && std::abs(*state->yaw - 123.5f) < 0.0001f);
+  CHECK(state->bodyYaw && std::abs(*state->bodyYaw - 123.5f) < 0.0001f);
   CHECK_EQ(state->value0to3, 3u);
   CHECK(state->bitA && !state->bitB && state->bitC);
   CHECK(state->value400 && std::abs(*state->value400 - 50.0f) < 0.01f);
@@ -114,7 +114,7 @@ static void testGhostAngles() {
   const auto state = readSoldierState(r, Vec3f{}, SoldierLayout::Ghost);
   CHECK(state && state->complete);
   if (!state) return;
-  CHECK(state->yaw && std::abs(*state->yaw - 360.0f) < 0.01f);
+  CHECK(state->bodyYaw && std::abs(*state->bodyYaw - 360.0f) < 0.01f);
   CHECK(state->position && std::abs(state->position->z - 30.0f) < 0.002f);
 }
 

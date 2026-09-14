@@ -158,13 +158,21 @@ void testGhostRecordsCarryPositions() {
   obf2::Vec3f reference;
   int withPosition = 0;
   int onTheMap = 0;
+  // An object's class is told by its first full record and kept (bf2_events.h).
+  std::map<std::uint16_t, obf2::net::bf2::GhostClass> classes;
+  const auto classOf = [&](std::uint16_t id) {
+    const auto found = classes.find(id);
+    return found == classes.end() ? obf2::net::bf2::GhostClass::Unknown : found->second;
+  };
   for (const auto& packet : packets) {
     if (const auto state = obf2::net::bf2::readControlObjectState(packet)) {
       reference = state->compressionReference;
       continue;
     }
-    const auto base = [&](std::uint16_t) { return reference; };
-    for (const auto& record : obf2::net::bf2::readGhostRecords(packet, base)) {
+    for (const auto& record : obf2::net::bf2::readGhostRecords(packet, reference, classOf)) {
+      if (record.netClass != obf2::net::bf2::GhostClass::Unknown) {
+        classes[record.networkId] = record.netClass;
+      }
       if (!record.position) continue;
       ++withPosition;
       // Dalian is 2048 metres across, so any position on it lies within these

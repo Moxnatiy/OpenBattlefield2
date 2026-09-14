@@ -703,6 +703,28 @@ for every set:
 The set's size in memory is 28 bytes, and the offsets match exactly: six words
 at +4..+0xe, a `u32` at +0x10, a `u32` at +0x14, a byte at +0x18.
 
+### One action per tick, and the client plays the quantized one
+
+`BF2.exe`, `FUN_005c0260` — the client's per-tick input step:
+
+1. takes **one** `PlayerInput` off the queue at `+0x80` (or a zeroed one when
+   the queue is empty);
+2. hands it to the controlled object's interface 0xc4c5, vtable `+0x15c`;
+3. `PlayerAction::set` (0x5bc890): every axis goes through 0x5bc5f0 —
+   `value * 100.0` (0x8e9474), clamped to `±32767.0` (0x8e9470 / 0x8e9478),
+   then `_ftol2` (0x83d84c), which **truncates** — into an int16; the buttons
+   whose input is above 0.5 become mask bits (`c_PI*` number − 8);
+4. `PlayerAction::get` (0x5bc6a0) turns the int16 straight back into
+   `value * 0.01`;
+5. that **quantized** input is set on the player (vtable `+0x40`, flag 1).
+
+So the original simulates its own soldier with exactly the numbers the server
+will receive, one action per game tick. A client that turns its camera with the
+raw mouse, or sends one action per wall-clock interval, drifts from the server:
+ours built the action every frame and sent whichever was current every 33 ms,
+so at 60 frames half of the mouse movement never reached the server — a 360°
+turn on our screen was about 180° in the original client watching us.
+
 ### What the axes mean
 
 The captured traffic answered directly. The original sends three sets per packet
@@ -1139,11 +1161,118 @@ predicted body: `correction: server -253.53 163.40 -139.59, us -253.53 163.40
 sample is the first tick, while the body was still falling from the creation
 point).
 
-Still debt: the client **measures** the server's position and does not adopt it.
-The server's state is some ticks old; the original replays the actions it has not
-answered yet on top of it (the prediction component at the end of the state,
-keyed by the counter). Until that is reversed, adopting the position as it is
-would throw a running soldier back every packet.
+The replay that makes the position usable is the next section.
+
+## Playing our own soldier: actions, the server's answer, the replay
+
+### What a packet of actions is
+
+`PlayerActionManager` in `BF2.exe`: constructor 0x5bffb0 (vtable 0x8e9968), three
+28-byte action slots at +0x18, +0x34, +0x50.
+
+* **transmit** 0x5bfbe0: when the manager has actions (`+0x6c`, "numNewActions"),
+  1 bit set, 4 bits of count, 9 bits of `+0x80`, then `FUN_004f9bc0(slot[0].tick,
+  32)` — the counter is the **first** set's tick — and every set (0x5bfaf0);
+  "PlayerActionManager failed to write stream size %d numNewActions %d" on
+  failure;
+* **processReceivedPacket** 0x5bfea0: reads the same, numbers set i as
+  `counter + i` (+0x88, stride 28), then 0x5bf940 plays only the sets whose tick
+  is newer than the last one played (`+0x78`) and pushes them into the player's
+  action buffer (`FUN_005bc590`).
+
+So a packet carries the last actions oldest first, and a lost packet costs
+nothing. We used to send three **copies** of the current action with the counter
++1 per packet; the receiver took them for three consecutive ticks.
+
+### The client's tick
+
+`FUN_005c0260` (one per game tick): one `PlayerInput` off the local queue, into
+`PlayerAction::set` (0x5bc890, see above), straight back through
+`PlayerAction::get` (0x5bc6a0), and that quantized input is what the soldier is
+played with. See "One action per tick" in the action-stream section.
+
+### The server's tick for a remote player
+
+`FUN_004cc400`: the player's action buffer (player vtable +0x94).
+
+* not empty: the head action is played; `+0xec` = its tick; the buffer's
+  repeat count `+0x30` is reset;
+* **empty: the last action is played again**, `+0xec` = last tick + 1, up to 30
+  times (`+0x30 < 0x1e`); after that a zeroed input.
+
+A repeated action repeats its mouse movement too. Measured with `--look-at`:
+a 90° turn on our screen became 101.95° on the server, once our ticks were
+bursty against its own; the replay below shows that on our screen as a jump of
+up to 6°. Whether the original client does anything to keep the buffer from
+running dry is **not established**.
+
+### The replay
+
+The controlled-object state ends with the prediction component: 0x5b9860 calls
+`(*DAT_0099e348→+0xc)→+0x10(stream, control id, counter, …, 1/30)`, which is
+`FUN_004d4b30`:
+
+1. the networkables have already put the server's state on the soldier
+   (0x62d4e0 type 3: position, velocity, angles);
+2. `FUN_005bc530(counter)` drops every action older than the counter from the
+   player's action list and keeps the one equal to it;
+3. every action left is played again: `PlayerAction::get`, set on the player,
+   the object simulated with the tick (vtable +0x3c), then 0x5b2f30, 0x5b30a0,
+   0x5b3130.
+
+Ours does the same (`RemoteWorld::reconcile` in `src/app/main.cpp`): the feet
+(position − pivot), the velocity, the look, the sent list trimmed by the counter,
+the rest played. Measured on the live server, running forward for 180 frames
+through a turn: **the replay lands 0.02 m from the prediction on average**
+(it was the full lag before); two lives, a suicide in between, the same.
+
+### Where the angles go
+
+The apply block of 0x62d4e0 writes the four angles into the soldier:
+
+| bit | field | what `FUN_005a8630` does with it |
+|---|---|---|
+| 0x2 | +0x224 | the body's yaw |
+| 0x4 | +0x240 | the aim's yaw offset from the body; the look is `+0x240 + +0x244` (the mouse's, `0x5a99a0` on the +0x15c sub-object), clamped by the handle at 0x9ec2a8 |
+| 0x8 | +0x248 | purpose not established |
+| 0x10 | +0x238 | the pitch; the look is `+0x238 + +0x23c` (the mouse's), clamped by 0x9ec2a8[1] |
+
+Measured: during a turn the body (0x2) lags and the offset (0x4) carries the rest;
+their sum follows the turn and settles when the offset returns to zero. A mouse
+movement down of 60° gave 0x10 = +59.95, so the pitch's sign is the opposite of
+ours. The spawn's yaw arrives in the first state — 100.52° on one run, where we
+used to start at 0.
+
+## Other players: the class decides the layout
+
+A ghost record's layout is the object's networkable class. We decided "soldier"
+by `EnterVehicleEvent` — whoever a player entered — and a player drives jeeps.
+Recorded with the original client in the gas station's jeep on Karkand
+(`tests/data/bf2-karkand-other-player.bin`):
+
+| object | template | full record's mask | position |
+|---|---|---|---|
+| 1841, the jeep | 5184 | 0x5849b | bit 19, 0.0005 |
+| 1731, his soldier | 3283 | 0x1950ff | bit 21, `SoldierNetworkable` ghost layout |
+
+Both masks are the classes' `getGhostStateMask` (Linux server 0x5d6990,
+0x5dabe0) — a full record carries the whole mask, so it names the class. A
+soldier record with mask 0 is exactly 30 bits: 21 + the nine bits every soldier
+state has.
+
+Both positions are packed against the stream's compression vector (`FUN_0062bd60`
+reads `stream+0x54`): raw floats while we had no soldier, differences from our
+soldier's position after. The jeep lands on its creation spot in 18 updates of
+18 either way; read with the soldier's layout, the same bits gave metres of
+scatter one packet and 4.9e29 the next.
+
+A second recording showed the other trap: the server had sent `EnterVehicleEvent`
+only for an older object of that player, so his live soldier had **no team** on
+our side, and was drawn as level property. The class does not depend on that
+event.
+
+What is still not read: a soldier record with the 0x1000 bit (the weapon index)
+stops the reader there, as in our own state.
 
 ## Objects the server creates, measured
 

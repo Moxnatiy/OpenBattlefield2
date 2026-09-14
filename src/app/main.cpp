@@ -162,6 +162,18 @@ struct Args {
   };
   std::vector<ScheduledLine> scheduledLines;
   std::vector<ScheduledClick> clicks;
+  // --look-at <frame>:<frames>:<dx>:<dy> — mouse pixels added on every frame of a
+  // range. A turn of known size without a hand on the mouse: what the server's
+  // own yaw says afterwards is the measure of the look chain.
+  struct ScheduledLook {
+    int frame;
+    int frames;
+    float dx, dy;
+  };
+  std::vector<ScheduledLook> looks;
+  // --move-at <frame>:<frames>:<forward>:<right> — the movement keys held over a
+  // range, as -1..1. The same idea for running: where the server puts us after it.
+  std::vector<ScheduledLook> moves;
   // --hud-screen <group>: show a screen normally visible only while a key is
   // held. Needed for screenshots and for checking by eye.
   std::string hudScreenName;
@@ -244,6 +256,22 @@ Args parseArgs(int argc, char** argv) {
         continue;
       }
       args.scheduledLines.push_back({std::atoi(text.substr(0, colon).c_str()), text.substr(colon + 1)});
+    }
+    else if (flag == "--look-at" && i + 1 < argc) {
+      Args::ScheduledLook look{};
+      if (std::sscanf(argv[++i], "%d:%d:%f:%f", &look.frame, &look.frames, &look.dx, &look.dy) != 4) {
+        std::fprintf(stderr, "--look-at expects <frame>:<frames>:<dx>:<dy>, not %s\n", argv[i]);
+        continue;
+      }
+      args.looks.push_back(look);
+    }
+    else if (flag == "--move-at" && i + 1 < argc) {
+      Args::ScheduledLook move{};
+      if (std::sscanf(argv[++i], "%d:%d:%f:%f", &move.frame, &move.frames, &move.dx, &move.dy) != 4) {
+        std::fprintf(stderr, "--move-at expects <frame>:<frames>:<forward>:<right>, not %s\n", argv[i]);
+        continue;
+      }
+      args.moves.push_back(move);
     }
     else if (flag == "--click-at" && i + 1 < argc) {
       // "frame:x:y" — three numbers separated by colons.
@@ -1016,11 +1044,9 @@ struct RemoteWorld {
 
   bool havePoint = false;
   float chosenX = 0.0f, chosenZ = 0.0f, chosenWorld = 2048.0f;
-  // The input we send to the server. We keep it here because the frame loop sends
-  // it while whoever reads the keyboard and mouse assembles it.
+  // The action of the current tick: what was sent and what the body moved with.
   obf2::net::bf2::PlayerAction action;
   std::uint32_t actionTick = 0;
-  std::chrono::steady_clock::time_point lastAction = std::chrono::steady_clock::now();
 
   // Prediction of our own movement.
   //
@@ -1082,11 +1108,132 @@ struct RemoteWorld {
     }
   }
 
-  // One prediction step. `yaw` is where the player is looking.
-  void predict(float step, float yawDegrees) {
-    if (!bodyReady || terrain == nullptr) return;
+  // The input gathered since the last tick. The mouse **adds up** — every frame's
+  // movement belongs to the next action; the rest is the latest state of the keys.
+  float pendingLookX = 0.0f;  // axis units
+  float pendingLookY = 0.0f;
+  obf2::net::bf2::PlayerAction pendingKeys;
+  // Where the soldier looks, in degrees — turned only by the quantized actions.
+  float yaw = 0.0f;
+  float pitch = -10.0f;
+
+  // A button pressed for one frame between two ticks (a jump is an edge) would be
+  // lost if only the latest frame counted, so presses gather until a tick takes them.
+  std::uint32_t pendingPresses = 0;
+  std::string lastLookReport;
+
+  void queueInput(float lookAxisX, float lookAxisY, const obf2::net::bf2::PlayerAction& keys) {
+    pendingLookX += lookAxisX;
+    pendingLookY += lookAxisY;
+    pendingKeys = keys;
+    pendingPresses |= keys.buttons;
+  }
+
+  // One frame of the player's own simulation, cut into whole 1/30 s ticks
+  // (`WorldPref::mTickTime`). Every tick does what `FUN_005c0260` does in the
+  // original: one action is built from the input, quantized for the wire
+  // (`axisToWire`, 0x5bc890), turned back (`axisFromWire`, 0x5bc6a0), and **that**
+  // turns the look and moves the body — and the same action is sent. So the server
+  // and our screen play the same numbers.
+  void predict(float step) {
+    const int ticks = tick.take(step);
+    for (int i = 0; i < ticks; ++i) {
+      obf2::net::bf2::PlayerAction next = pendingKeys;
+      next.buttons |= pendingPresses;
+      pendingPresses = 0;
+      next.axes[obf2::net::bf2::kAxisMouseX] = obf2::net::bf2::axisToWire(pendingLookX);
+      next.axes[obf2::net::bf2::kAxisMouseY] = obf2::net::bf2::axisToWire(pendingLookY);
+      // What truncation left over stays for the next tick. This is ours, not the
+      // binary's: the link "pixels -> axis" is not reversed (`--mouse-scale`), and
+      // without the carry a float like 3 * 0.02 * 100 = 5.9999 would lose a unit.
+      pendingLookX -= obf2::net::bf2::axisFromWire(next.axes[obf2::net::bf2::kAxisMouseX]);
+      pendingLookY -= obf2::net::bf2::axisFromWire(next.axes[obf2::net::bf2::kAxisMouseY]);
+      action = next;
+
+      const std::uint32_t number = actionTick++;
+      sent.push_back({number, action});
+      // Nothing answers while there is no soldier; the list is not allowed to grow
+      // for a whole spawn screen. Ours, not the binary's.
+      while (sent.size() > 256) sent.pop_front();
+
+      playAction(action);
+      sendAction();
+      if (bodyReady && terrain != nullptr) {
+        // Where the body is, every two seconds of ticks, for the first minute of a
+        // life: the measure for "the soldier hangs in the air".
+        if (++bodyTicks % 60 == 0 && bodyTicks <= 1800) {
+          std::printf("  body: %.2f %.2f %.2f, terrain %.2f, on the ground %s, falling %.2f m/s\n",
+                      body.position.x, body.position.y, body.position.z,
+                      terrain->groundHeightAt(body.position), body.onGround ? "yes" : "no",
+                      body.velocity.y);
+        }
+      }
+    }
+  }
+
+  // Every action sent, oldest first, with its tick number — the list the original
+  // keeps in the player's action buffer (`FUN_005bc590` adds, `FUN_005bc530` drops
+  // what the server has answered).
+  std::deque<std::pair<std::uint32_t, obf2::net::bf2::PlayerAction>> sent;
+
+  // One action applied to our soldier: the look, then one tick of movement.
+  void playAction(const obf2::net::bf2::PlayerAction& played) {
+    // `angle += axis * phy-soldier-look-factor-*` (`0x5a99a0`), axis from the wire.
+    yaw += obf2::net::bf2::axisFromWire(played.axes[obf2::net::bf2::kAxisMouseX]) *
+           physics.lookFactorX;
+    pitch -= obf2::net::bf2::axisFromWire(played.axes[obf2::net::bf2::kAxisMouseY]) *
+             physics.lookFactorY;
+    // Not measured: the look clamps through the handles at 0x9ec2a8
+    // (`FUN_005a8630`), whose values are not read yet.
+    pitch = std::max(-89.0f, std::min(89.0f, pitch));
+    if (bodyReady && terrain != nullptr) stepBody(played);
+  }
+
+  // The server's state of our soldier, and the actions it has not played yet on
+  // top of it — `FUN_004d4b30`, the prediction component the controlled-object
+  // state ends with (0x5b9860 passes it the counter and a tick of 1/30):
+  //
+  //   the networkable has already set the state (0x62d4e0, type 3);
+  //   `FUN_005bc530(counter)` drops every action older than the counter and keeps
+  //   the one equal to it;
+  //   every action left is played again, with the same tick.
+  void reconcile(const obf2::net::bf2::SoldierState& state, std::int32_t counter) {
+    if (!state.position || !bodyReady) return;
+    const obf2::Vec3f predicted = body.position;
+    const float predictedYaw = yaw;
+
+    // The position is the pivot, `coll-soldier-pivot-height` above the feet
+    // (`FUN_006ed4c0`); our body's position is the feet.
+    obf2::Vec3f feet = *state.position;
+    feet.y -= physics.pivotHeight;
+    body.position = feet;
+    if (state.velocity) body.velocity = *state.velocity;
+    // The look is the body's yaw plus the aim's offset from it, and the pitch
+    // with the opposite sign (soldier_state.h, from `FUN_005a8630`).
+    if (state.bodyYaw) yaw = *state.bodyYaw + state.aimYaw.value_or(0.0f);
+    if (state.pitch) pitch = -*state.pitch;
+
+    while (!sent.empty() && static_cast<std::int64_t>(sent.front().first) < counter) {
+      sent.pop_front();
+    }
+    for (const auto& [number, played] : sent) playAction(played);
+
+    // The measure: how far the replayed body lands from where the prediction had
+    // it. A right replay lands on the prediction, unless the server disagreed.
+    const obf2::Vec3f replayed = body.position;
+    body.position = predicted;
+    observe(replayed);
+    body.position = replayed;
+    const float yawJump = std::remainder(yaw - predictedYaw, 360.0f);
+    yawCorrectionMax = std::max(yawCorrectionMax, std::abs(yawJump));
+    yawCorrectionSum += std::abs(yawJump);
+  }
+  float yawCorrectionMax = 0.0f;
+  float yawCorrectionSum = 0.0f;
+
+  void stepBody(const obf2::net::bf2::PlayerAction& action) {
     constexpr float kToRadians = 3.14159265358979323846f / 180.0f;
-    const float yaw = yawDegrees * kToRadians;
+    const float yawRadians = yaw * kToRadians;
 
     // The axes in the action stream are ±99; we need a direction of 0..1. A
     // soldier strafes with the yaw axis: the engine has no separate strafe axis.
@@ -1095,8 +1242,8 @@ struct RemoteWorld {
     const float strafe = static_cast<float>(action.axes[obf2::net::bf2::kAxisYaw]) * scale;
     // A zero angle looks along +Z — the same as the server computes, so "right" is
     // the angle plus 90 degrees.
-    obf2::Vec3f wish{std::sin(yaw) * forward + std::cos(yaw) * strafe, 0.0f,
-                     std::cos(yaw) * forward - std::sin(yaw) * strafe};
+    obf2::Vec3f wish{std::sin(yawRadians) * forward + std::cos(yawRadians) * strafe, 0.0f,
+                     std::cos(yawRadians) * forward - std::sin(yawRadians) * strafe};
     const float magnitude = std::sqrt(wish.x * wish.x + wish.z * wish.z);
     if (magnitude > 1.0f) wish = wish * (1.0f / magnitude);
 
@@ -1107,45 +1254,32 @@ struct RemoteWorld {
     // The movement goes through the same function as on the server: ground, water,
     // walls. While the client had its own shortened copy, it knew only the ground's
     // height — and the soldier walked through objects.
-    //
-    // And in whole 1/30 s ticks only (`WorldPref::mTickTime`). A step as long as a
-    // frame made movement and jumping differ at 60 and at 120 frames.
-    const int ticks = tick.take(step);
-    for (int i = 0; i < ticks; ++i) {
-      obf2::server::moveSoldier(body, swim, wish, speed, jump, physics, terrain, collision,
-                                obf2::server::kTickTime);
-      // Where the body is, every two seconds of ticks, for the first minute of a
-      // life: the measure for "the soldier hangs in the air". A body at rest on
-      // the terrain has its height within a few centimetres of the terrain's; one
-      // on a roof stands above it with `on the ground` set; one in the air has
-      // `on the ground` clear and does not come down.
-      if (++bodyTicks % 60 == 0 && bodyTicks <= 1800) {
-        std::printf("  body: %.2f %.2f %.2f, terrain %.2f, on the ground %s, falling %.2f m/s\n",
-                    body.position.x, body.position.y, body.position.z,
-                    terrain->groundHeightAt(body.position), body.onGround ? "yes" : "no",
-                    body.velocity.y);
-      }
-    }
+    obf2::server::moveSoldier(body, swim, wish, speed, jump, physics, terrain, collision,
+                              obf2::server::kTickTime);
   }
   int bodyTicks = 0;
 
-  // Send the current input. The original does this thirty times a second and puts
-  // the last three sets into the packet — in case of loss.
-  void sendActions() {
-    if (socket == nullptr || ourSoldier == 0) return;
-    const auto now = std::chrono::steady_clock::now();
-    if (now - lastAction < std::chrono::milliseconds(33)) return;
-    lastAction = now;
+  // Send the newest actions — one packet per tick, as the original builds one
+  // action per tick (`FUN_005c0260`). The layout is `PlayerActionManager::transmit`
+  // (0x5bfbe0): the counter is the tick of the **first** set, and set i is tick
+  // counter + i, oldest first — the receiver (0x5bfea0) numbers them that way and
+  // plays only the ones newer than the last it played (0x5bf940). So the last
+  // three actions go, and a lost packet costs nothing.
+  //
+  // Three identical copies were wrong in a way that hid: the receiver took them
+  // for three consecutive ticks.
+  void sendAction() {
+    if (socket == nullptr || ourSoldier == 0 || sent.empty()) return;
 
     obf2::net::bf2::ExtendedHeader header;
     header.sequence = sequence++ & 0x3F;
     header.ack = lastServerSequence;
     header.ackBits = 0xFFFFFFFFu;
-    // Three identical sets — as the original does: a packet may be lost, and the
-    // next one carries the same thing.
     obf2::net::bf2::PlayerActions stream;
-    stream.tick = static_cast<std::int32_t>(actionTick++);
-    stream.actions.assign(3, action);
+    const std::size_t count = std::min<std::size_t>(3, sent.size());
+    const auto first = sent.end() - static_cast<std::ptrdiff_t>(count);
+    stream.tick = static_cast<std::int32_t>(first->first);
+    for (auto it = first; it != sent.end(); ++it) stream.actions.push_back(it->second);
     socket->send(obf2::net::bf2::writePlayerActions(id, header, stream));
   }
 
@@ -1309,17 +1443,17 @@ struct RemoteWorld {
     }
   }
 
+  // One turn: advance the join chain and read what arrived. Waiting long is
   // only allowed outside a frame — inside one it would be a freeze.
   // One turn of the conversation: send what is due and **parse one packet**.
   // Returns whether there was a packet — because this has to be called until the
   // queue is empty. The socket's queue does not clear itself: taking one packet
   // per frame while the server sends more makes it grow, and we look at the world
   // as it was several seconds ago.
-      // When to send the next step is decided by JoinSequence — every rule about
   bool pump(int timeoutMs) {
+      // When to send the next step is decided by JoinSequence — every rule about
       // pauses and waiting is there, together with its test. Assembling the packet
       // and reporting that we sent it is what is left here.
-            std::printf("  step: the level is loaded\n");
       const auto now = std::chrono::steady_clock::now();
       if (const auto todo = join.next(now)) {
         obf2::net::bf2::ExtendedHeader next;
@@ -1455,15 +1589,26 @@ struct RemoteWorld {
             ++controlStates;
             // The compression reference point for the whole stream that follows.
             compressionReference = state->compressionReference;
-            // Our soldier's own state: the position is the pivot, which stands
-            // `coll-soldier-pivot-height` above the feet — `FUN_006ed4c0`
-            // (Physics/SoldierResponse.cpp) takes a soldier's extent as
-            // `[y - pivot, y + pose height - pivot]`. Our body's position is the feet.
-            if (state->soldier && state->soldier->position && playerSpawned &&
-                state->networkId == ourSoldier && bodyReady && placedSoldier == ourSoldier) {
-              obf2::Vec3f feet = *state->soldier->position;
-              feet.y -= physics.pivotHeight;
-              observe(feet);
+            // Our soldier's own state, and the replay of what the server has not
+            // played yet on top of it (`reconcile`, `FUN_004d4b30`).
+            if (state->soldier && playerSpawned && state->networkId == ourSoldier &&
+                bodyReady && placedSoldier == ourSoldier) {
+              const auto& s = *state->soldier;
+              const float predictedYaw = yaw;
+              reconcile(s, state->counter);
+              // The look chain's measure (`--look-at`): the server's angles, our
+              // prediction before the replay and after it. Printed when they change.
+              char line[256];
+              std::snprintf(line, sizeof(line),
+                            "server body %.2f aim %.2f 0x8 %.2f pitch %.2f; ours %.2f -> %.2f %.2f",
+                            s.bodyYaw.value_or(-999.0f), s.aimYaw.value_or(-999.0f),
+                            s.angle8.value_or(-999.0f), s.pitch.value_or(-999.0f), predictedYaw,
+                            yaw, pitch);
+              if (lastLookReport != line) {
+                std::printf("  look: %s (counter %d, tick %u, unanswered %zu)\n", line,
+                            state->counter, actionTick, sent.size());
+                lastLookReport = line;
+              }
             }
             // The server states the controlled object's number directly. But the
             // controlled object is not always a soldier: before spawning it is the
@@ -1821,6 +1966,8 @@ struct RemoteWorld {
                   corrections, correctionSum / n, correctionMax);
       std::printf("    per axis: x %.2f, y %.2f (signed), z %.2f\n", correctionAxis.x / n,
                   correctionAxis.y / n, correctionAxis.z / n);
+      std::printf("    look: the replay moved the yaw %.2f degrees on average, at most %.2f\n",
+                  yawCorrectionSum / n, yawCorrectionMax);
     }
     std::printf("  objects created in the game (other soldiers and vehicles): %zu, "
                 "position updates from the ghost stream: %d\n",
@@ -1841,10 +1988,15 @@ struct RemoteWorld {
     }
     for (const auto& [id, object] : world.objects()) {
       const obf2::Vec3f& at = object.position;
-      std::printf("    object %5u  %8.1f %7.1f %8.1f  %s%s\n", id, at.x, at.y, at.z,
-                  object.team == 0 ? "not a player"
-                                   : (object.team == world.ownTeam() ? "our soldier"
-                                                                     : "AN ENEMY SOLDIER"),
+      const char* kind =
+          object.netClass == obf2::net::bf2::GhostClass::Soldier        ? "soldier"
+          : object.netClass == obf2::net::bf2::GhostClass::SimpleObject ? "object"
+                                                                        : "class unknown";
+      const char* side = object.team == 0                ? "no player"
+                         : object.team == world.ownTeam() ? "our team"
+                                                          : "THE ENEMY";
+      std::printf("    object %5u  %8.1f %7.1f %8.1f  template %u, %s, %s%s\n", id, at.x, at.y,
+                  at.z, object.templateId, kind, side,
                   object.fromGhostStream ? " (from the stream)" : "");
     }
     if (ourSoldier != 0) {
@@ -4137,7 +4289,17 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     // every click that was not handled by the first consumer: menu
     // buttons under the Flash movie, and DONE on the spawn screen while
     // the local server was running.
-    const obf2::gfx::Device::InputState frameInput = device->readInput();
+    obf2::gfx::Device::InputState frameInput = device->readInput();
+    for (const auto& look : args.looks) {
+      if (frame < look.frame || frame >= look.frame + look.frames) continue;
+      frameInput.mouseDeltaX += look.dx;
+      frameInput.mouseDeltaY += look.dy;
+    }
+    for (const auto& move : args.moves) {
+      if (frame < move.frame || frame >= move.frame + move.frames) continue;
+      frameInput.moveForward = move.dx;
+      frameInput.moveRight = move.dy;
+    }
     // The server sends pings and waits for answers: staying silent frame after frame
     // gets us disconnected. So the connection runs together with the picture, and we
     // keep the waiting short — otherwise it would be a freeze.
@@ -4150,8 +4312,6 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       remote->pump(1);
       while (remote->pump(0)) {
       }
-      // The input goes separately from the rest of the conversation and at its own rate.
-      remote->sendActions();
     }
 
     auto acquired = device->beginFrame();
@@ -4230,29 +4390,16 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       if (remoteSoldier && remote != nullptr) {
         const auto& raw = frameInput;
 
-        // The engine's chain: **pixels -> axis -> angle**, and all three links have
-        // to be the same for the camera and for what we send the server.
-        // That is exactly what was missing: the camera turned on `pixels * 0.15`,
-        // while we sent the server raw pixels, which it multiplied by 5.0. The
-        // divergence came to thirty times — hence "a 360 sweep does not give 360",
-        // and the soldier ending up somewhere other than where you look.
+        // The engine's chain: **pixels -> axis -> wire -> angle**. The frame only
+        // gathers the input; the look turns and the body moves per tick, from the
+        // quantized action that is also sent (RemoteWorld::predict). Turning the
+        // camera per frame from the raw mouse, while the server got one frame's
+        // movement per 33 ms, made a 360 on our screen about 180 on the server.
         //
-        //   axis  = pixels * sensitivity
-        //   angle += axis * phy-soldier-look-factor-*   (0x5a99a0)
-        //   wire   = axis * 100                         (0x5bc5f0)
-        const obf2::server::PhysicsConstants& look = remote->physics;
-        const float axisX = raw.mouseDeltaX * args.mouseScale;
-        const float axisY = raw.mouseDeltaY * args.mouseScale;
-        yaw += axisX * look.lookFactorX;
-        pitch -= axisY * look.lookFactorY;
-        pitch = std::max(-89.0f, std::min(89.0f, pitch));
-
-        obf2::net::bf2::PlayerAction& out = remote->action;
-        out = obf2::net::bf2::PlayerAction{};
-        out.axes[obf2::net::bf2::kAxisMouseX] =
-            static_cast<std::int16_t>(axisX * obf2::net::bf2::kAxisWireScale);
-        out.axes[obf2::net::bf2::kAxisMouseY] =
-            static_cast<std::int16_t>(axisY * obf2::net::bf2::kAxisWireScale);
+        //   axis  = pixels * sensitivity               (--mouse-scale, not measured)
+        //   wire  = trunc(axis * 100)                   (0x5bc890 -> 0x5bc5f0)
+        //   angle += wire * 0.01 * look factor          (0x5bc6a0, phy-soldier-look-factor-*)
+        obf2::net::bf2::PlayerAction out;
         // Full forward movement in the dump is 99, so our ±1 is multiplied by it.
         out.axes[obf2::net::bf2::kAxisThrottle] =
             static_cast<std::int16_t>(raw.moveForward * obf2::net::bf2::kAxisFull);
@@ -4264,9 +4411,13 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
         if (raw.jump) out.buttons |= obf2::net::bf2::kButtonAction;
         if (raw.fire) out.buttons |= obf2::net::bf2::kButtonFire;
 
+        remote->queueInput(raw.mouseDeltaX * args.mouseScale, raw.mouseDeltaY * args.mouseScale,
+                           out);
         // And we compute our own movement at once: waiting for the server's
         // correction would mean jerks a few tenths of a second apart.
-        remote->predict(frameStep, yaw);
+        remote->predict(frameStep);
+        yaw = remote->yaw;
+        pitch = remote->pitch;
         eye = *remote->soldierPosition();
         eye.y += 1.7f;
       }
@@ -4512,7 +4663,11 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           if (id == remote->ourSoldier && !args.showOwnBox) continue;  // we do not draw ourselves from inside
           // Not a player's soldier: find out what stands there. Resolved once per
           // object and again only if it has moved off the spot it was matched on.
-          if (object.team == 0 && remotePlacement) {
+          // By class, not by team: a jeep a player entered has a team and is still
+          // a jeep, and a soldier whose `EnterVehicleEvent` came before we joined
+          // has none and is still a soldier.
+          const bool soldier = object.netClass == obf2::net::bf2::GhostClass::Soldier;
+          if (!soldier && remotePlacement) {
             auto resolved = remoteResolved.find(id);
             if (resolved == remoteResolved.end() ||
                 obf2::length(resolved->second.at - object.position) >
@@ -4553,9 +4708,11 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           // `CreatePlayerEvent` and the object from `EnterVehicleEvent`. Zero means "not a player".
           const int which =
               object.team == 0 ? 0 : (object.team == remote->world.ownTeam() ? 1 : 2);
-          // The placeholder is turned by the angle we read: the yaw travels in the
-          // same state, in twelve bits (`BF2.exe`, 0x62d4e0).
-          obf2::Mat4 place = obf2::translation(object.position);
+          // A soldier's networked position is its pivot, `coll-soldier-pivot-height`
+          // above the feet (`FUN_006ed4c0`); the box stands on its base.
+          obf2::Vec3f base = object.position;
+          if (soldier) base.y -= remote->physics.pivotHeight;
+          obf2::Mat4 place = obf2::translation(base);
           if (object.yaw) {
             place = place * obf2::rotationY(*object.yaw * 3.14159265f / 180.0f);
           }

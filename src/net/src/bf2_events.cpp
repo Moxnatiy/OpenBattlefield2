@@ -494,8 +494,8 @@ std::optional<GhostHeader> enterGhosts(BitReader& reader) {
 }  // namespace
 
 std::vector<GhostRecord> readGhostRecords(
-    std::span<const std::byte> packet, const std::function<Vec3f(std::uint16_t)>& referenceFor,
-    const std::function<bool(std::uint16_t)>& isSoldier) {
+    std::span<const std::byte> packet, const Vec3f& reference,
+    const std::function<GhostClass(std::uint16_t)>& classOf) {
   std::vector<GhostRecord> out;
   BitReader reader(packet);
   const auto header = enterGhosts(reader);
@@ -525,53 +525,42 @@ std::vector<GhostRecord> readGhostRecords(
       // an object it does not know. The content is read by a separate reader: if
       // we get it wrong, the stream does not go astray because of it.
       const std::size_t payloadStart = reader.bitPosition();
+      record.payloadStart = payloadStart;
       if (!reader.skipBits(*length)) break;
 
-      // The content's layout depends on the object's networked class, and for a
-      // soldier it differs: the mask is wider, the position is under a different
-      // bit, the reference is zero, the precision coarse.
-      const bool soldier = isSoldier && isSoldier(record.networkId);
-      const unsigned maskBits = soldier ? kSoldierStateMaskBits : kObjectStateMaskBits;
-      const std::uint32_t positionBit = soldier ? kSoldierStatePosition : kObjectStatePosition;
-      const float precision = soldier ? kSoldierPositionPrecision : kObjectPositionPrecision;
-      const Vec3f origin = referenceFor ? referenceFor(record.networkId) : Vec3f{};
+      // The layout is the object's class (see GhostClass). When the caller does not
+      // know it yet, a full record names it by its mask.
+      const std::size_t payloadEnd = payloadStart + *length;
+      record.netClass = classOf ? classOf(record.networkId) : GhostClass::Unknown;
+      if (record.netClass == GhostClass::Unknown) {
+        BitReader peek(packet);
+        if (peek.skipBits(payloadStart)) {
+          const auto wide = peek.readBits(kSoldierMaskBits);
+          if (wide && *wide == kSoldierGhostMask) {
+            record.netClass = GhostClass::Soldier;
+          } else if (wide && (*wide & ((1u << kObjectStateMaskBits) - 1u)) == kObjectGhostMask) {
+            record.netClass = GhostClass::SimpleObject;
+          }
+        }
+      }
 
       BitReader payload(packet);
-      if (payload.skipBits(payloadStart)) {
-        const auto mask = payload.readBits(maskBits);
-        if (mask) {
+      if (record.netClass == GhostClass::Soldier && payload.skipBits(payloadStart)) {
+        if (auto state = readSoldierState(payload, reference, SoldierLayout::Ghost)) {
+          record.stateMask = state->mask;
+          // Taken only when it fitted into the content: otherwise we read the
+          // wrong thing and would pass rubbish off as a position.
+          if (payload.bitPosition() <= payloadEnd) {
+            record.position = state->position;
+            record.soldier = std::move(*state);
+          }
+        }
+      } else if (record.netClass == GhostClass::SimpleObject && payload.skipBits(payloadStart)) {
+        if (const auto mask = payload.readBits(kObjectStateMaskBits)) {
           record.stateMask = *mask;
-
-          // The fields that lie **before** the position. Skipping them is
-          // mandatory: without it the read shifts and rubbish comes out instead of the position.
-          bool ok = true;
-          if (soldier) {
-            if ((*mask & kSoldierStateRagdoll) != 0) ok = false;  // another branch
-            if (ok && (*mask & kSoldierStateHasByte) != 0) ok = payload.skipBits(8 + 1);
-            if (ok && (*mask & kSoldierStateHasPair) != 0) ok = payload.skipBits(3 + 3);
-          }
-
-          if (ok && (*mask & positionBit) != 0) {
-            const auto at = payload.readCompressedVector(origin, precision);
-            // The position is taken only when it fitted into the content:
-            // otherwise we read the wrong thing and would pass rubbish off as a position.
-            if (at && payload.bitPosition() <= payloadStart + *length) record.position = *at;
-            else ok = false;
-          }
-
-          // Then come the velocity and the angles. We read them not for the
-          // fields' own sake but because the yaw comes **after** the velocity:
-          // without skipping the velocity the angle would be the wrong one.
-          if (ok && soldier) {
-            if ((*mask & kSoldierStateVelocity) != 0) {
-              ok = payload.readCompressedVector(Vec3f{}, kSoldierVelocityPrecision).has_value();
-            }
-            if (ok && (*mask & kSoldierStateYaw) != 0) {
-              const auto packed = payload.readBits(kSoldierAngleBits);
-              if (packed && payload.bitPosition() <= payloadStart + *length) {
-                record.yaw = soldierAngle(*packed, kSoldierYawRange);
-              }
-            }
+          if ((*mask & kObjectStatePosition) != 0) {
+            const auto at = payload.readCompressedVector(reference, kObjectPositionPrecision);
+            if (at && payload.bitPosition() <= payloadEnd) record.position = *at;
           }
         }
       }

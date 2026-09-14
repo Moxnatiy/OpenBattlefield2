@@ -86,8 +86,8 @@ std::optional<SoldierState> readSoldierState(BitReader& reader, const Vec3f& ref
     into = controlled ? rawFloat(*v) : expand(*v, 12, limit);
     return true;
   };
-  if (!angle(0x2, 360.0f, out.yaw) || !angle(0x4, 90.0f, out.pitch) ||
-      !angle(0x8, 180.0f, out.angle8) || !angle(0x10, 90.0f, out.angle10)) {
+  if (!angle(0x2, 360.0f, out.bodyYaw) || !angle(0x4, 90.0f, out.aimYaw) ||
+      !angle(0x8, 180.0f, out.angle8) || !angle(0x10, 90.0f, out.pitch)) {
     return out;
   }
 

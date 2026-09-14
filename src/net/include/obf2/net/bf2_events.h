@@ -320,6 +320,14 @@ struct GhostHeader {
   bool controlObjectState = false;
 };
 
+// What an object is on the network — which layout its ghost records have (see
+// kSoldierGhostMask below for how it is told).
+enum class GhostClass {
+  Unknown,       // no full record seen yet: walked by length, not read
+  SimpleObject,  // `SimpleObjectNetworkable`: vehicles, emplacements, props
+  Soldier,       // `SoldierNetworkable`
+};
+
 // One ghost stream record (`GhostManager::readData`):
 //   2 bits kind, 16 bits network id;
 //   kind 1 — a state update: 1 bit, 11 bits of content length, the content;
@@ -332,12 +340,15 @@ struct GhostRecord {
   std::uint32_t kind = 0;
   std::uint16_t networkId = 0;
   std::uint32_t payloadBits = 0;
+  std::size_t payloadStart = 0;  // the content's first bit in the packet
   bool baseline = false;         // the flag before the length
-  std::uint32_t stateMask = 0;   // 19 bits: which fields travel in the content
-  // The position, when the mask has kObjectStatePosition set.
+  std::uint32_t stateMask = 0;   // the first networkable's mask, 19 or 21 bits by class
+  GhostClass netClass = GhostClass::Unknown;
+  // The position, when the class is known and the mask carries it. For a soldier
+  // it is the pivot, `coll-soldier-pivot-height` above the feet.
   std::optional<Vec3f> position;
-  // Where the soldier is looking, in degrees (mask 0x2).
-  std::optional<float> yaw;
+  // A soldier's state, as far as the ghost layout could be read.
+  std::optional<SoldierState> soldier;
 };
 
 // A record's contents are read by the object's networked class. For everything
@@ -360,65 +371,28 @@ inline constexpr unsigned kObjectStateMaskBits = 19;
 inline constexpr std::uint32_t kObjectStatePosition = 0x2;
 inline constexpr float kObjectPositionPrecision = 0.0005f;
 
-// **A soldier is read differently, and that is no detail.** Its networked class
-// is its own — `SoldierNetworkable` (0x5dc640), and in it:
+// **Which layout a record has is the object's class, not who sits in it.** A
+// record carries the networkables of the object (`GhostManager::readData`,
+// `BF2.exe` 0x5b8840, through 0x5b81c0 with type 2); a soldier's is
+// `SoldierNetworkable` (soldier_state.h, the ghost layout), a vehicle's starts
+// with the 19-bit one above.
 //
-//   * the mask is not 19 bits but **21** (`readBits(..., 0x15)` at 0x5dc719).
-//     The mask's width is the number of bits in `getGhostStateMask`, and that
-//     differs per class: 0x5849b for a simple object, for a soldier
-//     0x1950ff (0x5dabe0);
-//   * the position is enabled by **bit 7**, not bit 1 (`testb %dl, %dl; js` at
-//     0x5dc941 — a check of the sign bit of the mask's low byte);
-//   * the reference point is neither the stream's nor the previous position but
-//     `dice::hfe::nullVec`, that is **zero** (0x5dd367). So a soldier's position
-//     arrives essentially absolute;
-//   * the precision is 0.01 (the constant at 0xb6d934), not 0.0005.
+// We used to call an object a soldier when a player had entered it — and a jeep
+// with a player at the wheel was read with the soldier's layout: positions metres
+// off one packet and 4.9e29 the next. Measured on a live server (`--record`, the
+// original client in the gas station's jeep):
 //
-// That is why other players' soldiers did not move for us: we read them with a
-// simple object's layout. Which object is a soldier we know for certain — the
-// server says so itself with the `CreatePlayerEvent` and `EnterVehicleEvent` events.
-// The layout of the start of a soldier's state comes from the client, from the
-// `SoldierNetworkable::setNetUpdate` (`BF2.exe`, 0x62d4e0):
+//   jeep 1841 (template 5184)     full record mask 0x5849b, the position at bit 19
+//   soldier 1731 (template 3283)  full record mask 0x1950ff, the position at bit 21;
+//                                 a record with mask 0 is exactly 30 bits
 //
-//   mask                      21 bits     (0x62d5xx, a read of 0x15)
-//   if mask & 0x40            8 bits, then 1 bit
-//   if mask & 0x20            3 bits, then 3 bits   (range 0..4)
-//   if mask & 0x8000          another branch — the ragdoll state, which we do not read
-//   if mask & 0x1             **the position**: a compressed vector, precision 0.001
-//
-// Then come the velocity (0x80), the angles (0x2 -> yaw, 0x4 -> pitch, 0x8,
-// 0x10 — 12 bits each, expanded into ±360/±90/±180/±90) and a dozen more fields;
-// we do not need them yet, and they need not be read — after the position we can
-// stop straight away.
-//
-// Two things we stumbled on before this:
-//
-// * the position is enabled by **bit 0**, not 7. We used to take bit 7 (that is
-//   the velocity) and read from the wrong place — numbers like -6.7e27 came out;
-// * the reference is the **stream's compression vector**, the same one the
-//   controlled-object state sets. Visible in `FUN_0062bd60`: it calls the vector
-//   read with the field `stream+0x54`, that is with the internal compression
-//   vector, rather than with the zero passed in (the zero is for the neighbouring fields, 0x62bdb0).
-inline constexpr unsigned kSoldierStateMaskBits = 21;
-inline constexpr std::uint32_t kSoldierStatePosition = 0x1;
-inline constexpr std::uint32_t kSoldierStateHasByte = 0x40;    // 8 bits + 1 bit
-inline constexpr std::uint32_t kSoldierStateHasPair = 0x20;    // 3 bits + 3 bits
-inline constexpr std::uint32_t kSoldierStateRagdoll = 0x8000;  // another branch
-inline constexpr float kSoldierPositionPrecision = 0.001f;
-inline constexpr std::uint32_t kSoldierStateVelocity = 0x80;   // a compressed vector
-inline constexpr float kSoldierVelocityPrecision = 0.01f;
-inline constexpr std::uint32_t kSoldierStateYaw = 0x2;         // 12 bits -> ±360°
-
-// The angles travel in twelve bits expanded into a range. The arithmetic is
-// verbatim from the client: `(v * 2/4095 - 1) * limit`, where the limit for yaw is 360.
-inline constexpr unsigned kSoldierAngleBits = 12;
-inline constexpr float kSoldierYawRange = 360.0f;
-inline float soldierAngle(std::uint32_t packed, float range) {
-  const float unit = static_cast<float>(packed) * (2.0f / 4095.0f) - 1.0f;
-  return unit * range;
-}
-// `dice::hfe::nullVec` — it is what stands as the reference in a soldier's layout.
-inline constexpr Vec3f kNullVec{};
+// Both full masks are the classes' `getGhostStateMask` (Linux server 0x5d6990 and
+// 0x5dabe0): a full record carries the whole mask. That is what tells the class.
+// Both positions are raw floats (level 0) or a difference from the stream's
+// compression vector — the jeep's lands on its creation spot to the centimetre
+// either way.
+inline constexpr std::uint32_t kObjectGhostMask = 0x5849b;
+inline constexpr std::uint32_t kSoldierGhostMask = 0x1950ff;
 
 // The width of the length field. In the engine it is computed on the fly, and on
 // the wire it is exactly eleven bits: with it the whole captured sample parses to
@@ -433,18 +407,15 @@ std::optional<GhostHeader> readGhostHeader(std::span<const std::byte> packet);
 // The ghost stream's records. Empty when there are no ghosts or when the packet
 // has the controlled-object state flag set — that state comes before the records
 // and is not parsed yet.
-// referenceFor is the reference point for **this** object's compressed vector.
-// Measurement showed the difference is small (metres) rather than half a map
-// away: so the base is the object's own last known position, not one point for
-// the whole stream. Whoever calls remembers the last position; while the object
-// is unknown, the position from `CreateObjectEvent` serves as the base.
+// `reference` is the stream's compression vector: the one the latest
+// controlled-object state set (measured on the jeep above).
 //
-// isSoldier says whether this id belongs to a player's soldier: a soldier has a
-// different layout (see above), and without this it reads as rubbish.
+// `classOf` says what the caller already knows about an object. A record of an
+// unknown object is recognised by its full mask (kSoldierGhostMask /
+// kObjectGhostMask) and comes back with `netClass` set, for the caller to keep.
 std::vector<GhostRecord> readGhostRecords(
-    std::span<const std::byte> packet,
-    const std::function<Vec3f(std::uint16_t)>& referenceFor = {},
-    const std::function<bool(std::uint16_t)>& isSoldier = {});
+    std::span<const std::byte> packet, const Vec3f& reference = {},
+    const std::function<GhostClass(std::uint16_t)>& classOf = {});
 
 // Walks a data packet and returns every event in it.
 // Empty means this is not a data packet or it broke off on the very first event.

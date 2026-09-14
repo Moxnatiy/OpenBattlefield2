@@ -258,6 +258,21 @@ inline constexpr std::int16_t kAxisFull = 99;
 // Hence "full movement = 99": the throttle axis reached 0.99.
 inline constexpr float kAxisWireScale = 100.0f;
 
+// An axis onto the wire, as `PlayerAction::set` does it (0x5bc890 → 0x5bc5f0):
+// times 100.0 (0x8e9474), clamped to ±32767.0 (0x8e9470 / 0x8e9478), then
+// `_ftol2` (0x83d84c) — truncation towards zero, not rounding.
+inline std::int16_t axisToWire(float axis) {
+  float value = axis * kAxisWireScale;
+  if (value > 32767.0f) value = 32767.0f;
+  if (value < -32767.0f) value = -32767.0f;
+  return static_cast<std::int16_t>(value);
+}
+
+// And back, as `PlayerAction::get` does it (0x5bc6a0): `(float)wire * 0.01`. The
+// client plays its own soldier with this value, not with the raw input
+// (`FUN_005c0260`), so it is the same number the server receives.
+inline float axisFromWire(std::int16_t wire) { return static_cast<float>(wire) * 0.01f; }
+
 // The button mask: the bit is the constant's number minus `c_PIFire`'s number.
 // The check agrees with the traffic: sprint is 13 - 8 = 5, and bit 5 (value 32)
 // is exactly what stood in the dump while the player held Shift.

@@ -8,6 +8,7 @@
 //      captured off the network (`tests/data/actions-*.bin`).
 //
 // The second test is the proof that the layout is right: those bytes are not ours.
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -152,7 +153,19 @@ static void testCapturedTickIsSane() {
   CHECK(sprint->tick > run->tick);
 }
 
+// `PlayerAction::set` truncates (0x83d84c) and clamps (0x8e9470); `get` scales
+// back by 0.01 (0x5bc6a0).
+static void testAxisQuantization() {
+  CHECK_EQ(axisToWire(0.999f), static_cast<std::int16_t>(99));
+  CHECK_EQ(axisToWire(-0.999f), static_cast<std::int16_t>(-99));
+  CHECK_EQ(axisToWire(0.0149f), static_cast<std::int16_t>(1));
+  CHECK_EQ(axisToWire(1000.0f), static_cast<std::int16_t>(32767));
+  CHECK_EQ(axisToWire(-1000.0f), static_cast<std::int16_t>(-32767));
+  CHECK(std::abs(axisFromWire(-169) + 1.69f) < 1e-5f);
+}
+
 TEST_MAIN({
+  testAxisQuantization();
   testRoundTrip();
   testNegativeAxes();
   testPacketWithoutActions();

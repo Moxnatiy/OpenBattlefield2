@@ -5,20 +5,12 @@
 
 namespace obf2::net::bf2 {
 
-bool WorldView::isSoldier(std::uint16_t id) const {
-  // A soldier is an object a player occupied. The server says so itself with the
-  // `EnterVehicleEvent` (type 9), so there is no guesswork here.
-  return owners_.find(id) != owners_.end();
-}
-
-Vec3f WorldView::referenceFor(std::uint16_t id) const {
-  // A soldier's position is packed relative to the **stream's compression
-  // vector**: `BF2.exe`, 0x62bd60 reads the vector from the field `stream+0x54`,
-  // where the controlled-object state put it.
-  if (isSoldier(id)) return compressionReference_;
+GhostClass WorldView::classOf(std::uint16_t id) const {
+  // Not "an object a player entered": players enter jeeps too, and a jeep read
+  // with the soldier's layout is rubbish. The class comes from the object's first
+  // full record (bf2_events.h).
   const auto found = objects_.find(id);
-  if (found != objects_.end()) return found->second.position;
-  return compressionReference_;
+  return found == objects_.end() ? GhostClass::Unknown : found->second.netClass;
 }
 
 bool WorldView::looksSane(const Vec3f& at, bool soldier) const {
@@ -86,21 +78,30 @@ void WorldView::feed(std::span<const std::byte> packet) {
   }
 
   // 3. The ghost stream's records: where everything is moving.
-  const auto soldier = [this](std::uint16_t id) { return isSoldier(id); };
-  const auto reference = [this](std::uint16_t id) { return referenceFor(id); };
-  for (const GhostRecord& record : readGhostRecords(packet, reference, soldier)) {
+  // Every position in the records is packed against the stream's compression
+  // vector (`FUN_0062bd60` reads it from `stream+0x54`), which the latest
+  // controlled-object state set.
+  const auto known = [this](std::uint16_t id) { return classOf(id); };
+  for (const GhostRecord& record : readGhostRecords(packet, compressionReference_, known)) {
     // Kind 3 — the object is gone (GhostManager::readData, 0x445820: the branch
     // calls disableObject and removeActiveDescriptor).
     if (record.kind == 3) {
       objects_.erase(record.networkId);
       continue;
     }
+    if (record.kind == 1 && record.netClass != GhostClass::Unknown) {
+      objects_[record.networkId].netClass = record.netClass;
+    }
     if (!record.position) continue;
-    if (!looksSane(*record.position, isSoldier(record.networkId))) {
+    const bool soldier = record.netClass == GhostClass::Soldier;
+    if (!looksSane(*record.position, soldier)) {
       ++rejected_;
       continue;
     }
     RemoteObject& object = objects_[record.networkId];
+    if (soldier && record.soldier && record.soldier->bodyYaw) {
+      object.yaw = *record.soldier->bodyYaw + record.soldier->aimYaw.value_or(0.0f);
+    }
     if (object.updates == 0) object.firstSeen = *record.position;
     ++object.updates;
     const Vec3f moved = *record.position - object.firstSeen;
@@ -109,7 +110,6 @@ void WorldView::feed(std::span<const std::byte> packet) {
     if (ground_) object.aboveGround += record.position->y - ground_(*record.position);
     object.position = *record.position;
     object.fromGhostStream = true;
-    if (record.yaw) object.yaw = *record.yaw;
     const auto owner = owners_.find(record.networkId);
     if (owner != owners_.end() && players_.count(owner->second)) {
       object.team = players_[owner->second].team;

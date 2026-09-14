@@ -78,10 +78,20 @@ struct SoldierState {
   std::optional<Vec3f> vector200;  // 0x200, Controlled only — purpose not established
   std::optional<Vec3f> vector40000;  // 0x40000, Controlled only — purpose not established
 
-  std::optional<float> yaw;      // 0x2, degrees
-  std::optional<float> pitch;    // 0x4, degrees
+  // The angles, degrees. Where the apply block of 0x62d4e0 writes them, and what
+  // `FUN_005a8630` (the soldier's look) makes of those fields:
+  //   0x2  -> soldier +0x224  the body's yaw
+  //   0x4  -> soldier +0x240  the aim's yaw offset from the body; the look adds the
+  //                           mouse's own offset (+0x244, `0x5a99a0`) and clamps
+  //   0x8  -> soldier +0x248  purpose not established
+  //   0x10 -> soldier +0x238  the pitch; the look adds the mouse's (+0x23c) and
+  //                           clamps. Positive is down: mouse down turns it up.
+  // So the direction the soldier looks is `bodyYaw + aimYaw` — measured on a live
+  // server, the sum follows a turn while the body lags behind it and catches up.
+  std::optional<float> bodyYaw;  // 0x2
+  std::optional<float> aimYaw;   // 0x4
   std::optional<float> angle8;   // 0x8 — purpose not established (±180)
-  std::optional<float> angle10;  // 0x10 — purpose not established (±90)
+  std::optional<float> pitch;    // 0x10
 
   std::uint32_t value0to3 = 0;  // always — purpose not established
   std::uint32_t value0to1 = 0;  // always — purpose not established
