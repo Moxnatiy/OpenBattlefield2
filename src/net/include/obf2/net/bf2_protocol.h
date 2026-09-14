@@ -189,6 +189,11 @@ inline constexpr std::uint32_t kNetSelectKit = 8;
 // traffic it arrives 100 ms after `NESelectSpawnGroup`, and it is the most direct
 // sign that the spawn succeeded.
 inline constexpr std::uint32_t kNetPlayerSpawned = 9;
+// The other two ends of a life, from the same table `BF2.exe` registers
+// (docs/functions/network-events.md): the server's word that the player died, and
+// the client's request to die — what the spawn screen's SUICIDE button sends.
+inline constexpr std::uint32_t kNetPlayerDead = 10;
+inline constexpr std::uint32_t kNetSuicide = 12;
 
 // One set of a player's actions — what the client sends the server thirty times a
 // second. The layout comes from `PlayerActionManager::processReceivedPacket`

@@ -1013,3 +1013,34 @@ terrain is a constant difference, not a drift: it looks as though a soldier's
 networked position is the object's origin rather than his feet. Where exactly
 that metre comes from is **not established yet**, so the placeholder is drawn
 where it arrived.
+
+## A life on a live server, measured
+
+Taken with `openbf2 --connect` against the original server on Strike at Karkand,
+one unattended run: `--exec-at 700:openbf2.spawnAt 6`,
+`--exec-at 1900:spawnManager.commitSuicide`, `--exec-at 2900:openbf2.spawnAt 6`.
+
+| step | what arrives | note |
+|---|---|---|
+| before the first spawn | control state names object **258** | the spawn screen's camera |
+| `NESelectSpawnGroup` 6 | `EnterVehicleEvent` → object **1795**, then `NEPlayerSpawned` (9) with value 1 | |
+| first control state for 1795 | the compression reference is the creation position, ~1.2 m above the terrain | the spawn point's offset; the body falls onto the ground |
+| client sends `NESuicide` (12) | control state names **258** again, then `NEPlayerDead` (10) | the camera comes back one packet **before** the death event |
+| second `NESelectSpawnGroup` | `EnterVehicleEvent` → object **1795 again**, `NEPlayerSpawned` | **the soldier's object is reused across lives**, with a new creation position |
+
+Two consequences, both built into the client:
+
+* **a life ends on `NEPlayerDead`, not on a new object id.** The id does not
+  change, so anything keyed on "a different soldier" misses every respawn. The
+  predicted body was placed once per connection, behind `!bodyReady`, and on
+  respawn the new soldier was simulated from wherever the old one died — the
+  "hanging in the air" seen in play. It is now reset on `NEPlayerDead` and placed
+  again at the new creation position; the run above shows it settling on the
+  terrain in both lives.
+* **the camera is not a soldier.** Because 258 returns one packet ahead of
+  `NEPlayerDead`, the client briefly took it for its soldier. The controlled
+  object seen before the first spawn is remembered and never adopted.
+
+Still debt: after the body is placed there are **no corrections** — the real
+position rides the soldier's own ghost state, which we do not parse (CLAUDE.md,
+the protocol debt). Placement and prediction are all the client has.

@@ -150,6 +150,15 @@ struct Args {
     int frame;
     float x, y;
   };
+  // --exec-at <frame>:<console line> — a console command on a schedule, several
+  // are allowed. What `--click-at` is for the menu this is for a live server: a
+  // spawn, a suicide and a respawn in one unattended run, so a bug that only
+  // shows on the second life can be measured without a person at the keyboard.
+  struct ScheduledLine {
+    int frame;
+    std::string line;
+  };
+  std::vector<ScheduledLine> scheduledLines;
   std::vector<ScheduledClick> clicks;
   // --hud-screen <group>: show a screen normally visible only while a key is
   // held. Needed for screenshots and for checking by eye.
@@ -225,6 +234,15 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--skeleton" && i + 1 < argc) args.skeletonPath = argv[++i];
     else if (flag == "--frame" && i + 1 < argc) args.frame = std::atoi(argv[++i]);
     else if (flag == "--click") args.click = true;
+    else if (flag == "--exec-at" && i + 1 < argc) {
+      const std::string text = argv[++i];
+      const std::size_t colon = text.find(':');
+      if (colon == std::string::npos) {
+        std::fprintf(stderr, "--exec-at expects <frame>:<console line>, not %s\n", text.c_str());
+        continue;
+      }
+      args.scheduledLines.push_back({std::atoi(text.substr(0, colon).c_str()), text.substr(colon + 1)});
+    }
     else if (flag == "--click-at" && i + 1 < argc) {
       // "frame:x:y" — three numbers separated by colons.
       const std::string text = argv[++i];
@@ -984,6 +1002,11 @@ struct RemoteWorld {
 
   int directGroup = 0;
 
+  // The spawn screen's SUICIDE button (`spawnManager.commitSuicide`). Sent on the
+  // next turn of the conversation.
+  bool suicideRequested = false;
+  void commitSuicide() { suicideRequested = true; }
+
   bool havePoint = false;
   float chosenX = 0.0f, chosenZ = 0.0f, chosenWorld = 2048.0f;
   // The input we send to the server. We keep it here because the frame loop sends
@@ -1074,8 +1097,20 @@ struct RemoteWorld {
     for (int i = 0; i < ticks; ++i) {
       obf2::server::moveSoldier(body, swim, wish, speed, jump, physics, terrain, collision,
                                 obf2::server::kTickTime);
+      // Where the body is, every two seconds of ticks, for the first minute of a
+      // life: the measure for "the soldier hangs in the air". A body at rest on
+      // the terrain has its height within a few centimetres of the terrain's; one
+      // on a roof stands above it with `on the ground` set; one in the air has
+      // `on the ground` clear and does not come down.
+      if (++bodyTicks % 60 == 0 && bodyTicks <= 1800) {
+        std::printf("  body: %.2f %.2f %.2f, terrain %.2f, on the ground %s, falling %.2f m/s\n",
+                    body.position.x, body.position.y, body.position.z,
+                    terrain->groundHeightAt(body.position), body.onGround ? "yes" : "no",
+                    body.velocity.y);
+      }
     }
   }
+  int bodyTicks = 0;
 
   // Send the current input. The original does this thirty times a second and puts
   // the last three sets into the packet — in case of loss.
@@ -1141,6 +1176,11 @@ struct RemoteWorld {
   // soldier: before spawning there is no soldier, and the engine's `getSoldier`
   // returns nothing (0x445e01).
   bool playerSpawned = false;
+  // Which soldier the predicted body was placed for. A respawn is a new object.
+  std::uint16_t placedSoldier = 0;
+  // The spawn screen's camera — the controlled object while the player has no
+  // soldier. Zero until the first control state names it.
+  std::uint16_t cameraObject = 0;
 
   // Where our soldier is now. Empty means we have not spawned yet.
   std::optional<obf2::Vec3f> soldierPosition() const {
@@ -1341,6 +1381,20 @@ struct RemoteWorld {
         if (sent) join.commit(now);
       }
 
+      // A request the player makes outside the join chain. `NESuicide` travels
+      // the same way as the chain's own events — `PostRemoteEvent` in the
+      // network category — and the server answers it with `NEPlayerDead`.
+      if (suicideRequested) {
+        suicideRequested = false;
+        obf2::net::bf2::ExtendedHeader header;
+        header.sequence = sequence++ & 0x3F;
+        header.ack = lastServerSequence;
+        header.ackBits = 0xFFFFFFFFu;
+        socket->send(obf2::net::bf2::writePostRemoteEvent(
+            id, header, batch++, obf2::net::bf2::kNetworkCategory, obf2::net::bf2::kNetSuicide));
+        std::printf("  step: suicide\n");
+      }
+
       const auto more = socket->receive(timeoutMs);
       if (!more) return false;
       if (recording != nullptr) {
@@ -1391,6 +1445,12 @@ struct RemoteWorld {
             // `getSoldier` right after `getObject`, and we cannot do that yet — so
             // for now we only check the number against the enter event rather than
             // replacing it.
+            // Before the first spawn the controlled object is the spawn screen's
+            // camera, and it is the same object again after every death: on the
+            // live server the control state names 258 before the first spawn and
+            // 258 again the moment `NESuicide` is answered, one packet before
+            // `NEPlayerDead`. So it is remembered, and never taken for a soldier.
+            if (!playerSpawned && cameraObject == 0) cameraObject = state->networkId;
             if (state->networkId != controlObject) {
               controlObject = state->networkId;
               std::printf("  controlled object: %u%s\n", controlObject,
@@ -1401,8 +1461,13 @@ struct RemoteWorld {
             // says the same, but it comes once per game and may not arrive; and
             // without the number we send no action stream — and then the server
             // stops sending us state, because it has nothing to answer.
-            if (playerSpawned && controlObject != 0 && ourSoldier != controlObject) {
+            if (playerSpawned && controlObject != 0 && controlObject != cameraObject &&
+                ourSoldier != controlObject) {
               ourSoldier = controlObject;
+              // A different soldier than the body was built for: a respawn whose
+              // `NEPlayerDead` we missed or that arrived out of order. The same
+              // rule — a new soldier gets a new body.
+              if (bodyReady && placedSoldier != ourSoldier) bodyReady = false;
               std::printf("  our soldier by the controlled-object state: %u\n", ourSoldier);
             }
             // There is nothing here to correct the position with: the real one
@@ -1414,9 +1479,12 @@ struct RemoteWorld {
             if (!bodyReady && playerSpawned && ourSoldier != 0) {
               const auto born = objects.find(ourSoldier);
               if (born != objects.end()) {
+                placedSoldier = ourSoldier;
                 correct(born->second);
-                std::printf("  the body was placed at %.1f %.1f %.1f (the soldier's creation position)\n",
-                            born->second.x, born->second.y, born->second.z);
+                std::printf("  the body was placed at %.1f %.1f %.1f (the soldier's creation position), "
+                            "terrain %.2f\n",
+                            born->second.x, born->second.y, born->second.z,
+                            terrain != nullptr ? terrain->groundHeightAt(born->second) : -1.0f);
               }
             }
           }
@@ -1518,6 +1586,18 @@ struct RemoteWorld {
                 if (remote.number == obf2::net::bf2::kNetPlayerSpawned) {
                   playerSpawned = true;
                   std::printf("  THE PLAYER SPAWNED\n");
+                }
+                // A life is over. Everything the prediction held belonged to that
+                // soldier: its position, its velocity, whether it was standing.
+                // The next life is a **new object** with its own creation
+                // position, and until now the body was placed only once per
+                // connection — `!bodyReady` — so on respawn the new soldier was
+                // simulated from wherever the old one died, mid-air included.
+                if (remote.number == obf2::net::bf2::kNetPlayerDead) {
+                  playerSpawned = false;
+                  bodyReady = false;
+                  bodyTicks = 0;
+                  std::printf("  THE PLAYER DIED\n");
                 }
               }
               continue;
@@ -3000,7 +3080,9 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
         std::printf("  scoreboard: tab %d\n", tab);
       });
       console.bind("spawnManager.selectNextUnlock", [](const obf2::con::Command&) {});
-      console.bind("spawnManager.commitSuicide", [](const obf2::con::Command&) {});
+      console.bind("spawnManager.commitSuicide", [&](const obf2::con::Command&) {
+        if (remote != nullptr) remote->commitSuicide();
+      });
       console.bind("sound.playSound", [](const obf2::con::Command&) {});
     }
 
@@ -4539,6 +4621,13 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
         const bool teamKnown =
             remote == nullptr || (remote->world.ownTeam() > 0 &&
                                   selectedTeam == remote->world.ownTeam());
+        for (const auto& scheduled : args.scheduledLines) {
+          if (frame != scheduled.frame) continue;
+          std::printf("  console (frame %d): %s\n", frame, scheduled.line.c_str());
+          if (!engine.console().executeLine(scheduled.line)) {
+            std::printf("    the command was not recognised\n");
+          }
+        }
         if (!args.execLines.empty() && spawnVisible && !spawnPieces.empty() &&
             !spawnMarkerPoints.empty() && teamKnown && !execDone) {
           execDone = true;
