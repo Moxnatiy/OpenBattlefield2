@@ -1,6 +1,7 @@
 add_library(obf2_level
   src/level.cpp
   src/gameplay.cpp
+  src/placement_index.cpp
   src/lightmap_atlas.cpp
   src/terrain_raw.cpp
 )

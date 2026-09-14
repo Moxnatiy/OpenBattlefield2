@@ -15,6 +15,7 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <deque>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -42,6 +43,7 @@
 #include "obf2/gfx/mesh_renderer.h"
 #include "obf2/level/gameplay.h"
 #include "obf2/level/level.h"
+#include "obf2/level/placement_index.h"
 #include "obf2/level/lightmap_atlas.h"
 #include "obf2/server/game_client.h"
 #include "obf2/server/physics.h"
@@ -1002,6 +1004,11 @@ struct RemoteWorld {
 
   int directGroup = 0;
 
+  // The game mode and the size the server plays — which `GamePlayObjects.con`
+  // its spawners come from (`gamemodes/<mode>/<size>`).
+  std::string serverGameMode;
+  int serverSize = 0;
+
   // The spawn screen's SUICIDE button (`spawnManager.commitSuicide`). Sent on the
   // next turn of the conversation.
   bool suicideRequested = false;
@@ -1558,6 +1565,8 @@ struct RemoteWorld {
                   std::printf("  the server plays %s, mode %s, size %d, first number %u\n",
                               info->levelName.c_str(), info->gameMode.c_str(), info->size,
                               info->first);
+                  serverGameMode = info->gameMode;
+                  serverSize = info->size;
                   // The challenge number no longer goes here: it is in block 2, while
                   // block 5's first number is something else.
                   std::string levelError;
@@ -1650,10 +1659,12 @@ struct RemoteWorld {
                 found = checked.emplace(match->name, stage).first;
                 ++stageCounts[stage];
               }
-              if (found->second != DrawStage::Drawn) {
-                std::printf("  NOT VISIBLE: %-44s %s\n", match->name.c_str(),
-                            std::string(drawStageName(found->second)).c_str());
-              }
+              // Every created object once, with the number the server gave its
+              // template: the pairs (number, what stands there) are the raw
+              // material for the template table the protocol debt asks for.
+              std::printf("  created: template %5u  id %5u  at %-44s %s\n",
+                          event.object->templateId, event.object->networkId, match->name.c_str(),
+                          std::string(drawStageName(found->second)).c_str());
             }
             if (event.player) {
               playerTeam[event.player->id] = static_cast<int>(event.player->team);
@@ -3975,6 +3986,33 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   // (`coll-soldier-radius` 0.25, `coll-soldier-stand-height` 1.7).
   obf2::gfx::GpuMesh boxes[3];
   bool boxesReady = false;
+
+  // What the server's created objects are, by where they stand
+  // (obf2/level/placement_index.h). A spawner's object is drawn as the vehicle it
+  // issues; a static placement is skipped, because the level draws it already —
+  // until now every barrel and fence the server created got a grey box on top of
+  // itself, and every jeep, tank and machine gun got nothing but a grey box.
+  //
+  // The meshes are built the first time a vehicle type is seen and kept in a
+  // deque, whose elements stay put: the frame's draw list holds pointers to them
+  // while new ones are still being added in the same loop.
+  std::optional<obf2::level::PlacementIndex> remotePlacement;
+  std::deque<obf2::gfx::GpuMesh> remoteMeshes;
+  std::unordered_map<std::string, obf2::gfx::GpuMesh*> remoteMeshByName;
+  struct RemoteResolved {
+    obf2::Vec3f at;
+    obf2::level::PlacedAt placed;
+  };
+  std::unordered_map<std::uint16_t, RemoteResolved> remoteResolved;
+  if (remote != nullptr && level) {
+    const std::string mode = remote->serverGameMode.empty() ? "gpm_cq" : remote->serverGameMode;
+    const int size = remote->serverSize > 0 ? remote->serverSize : 16;
+    if (const auto gameplay = obf2::level::loadGameplayObjects(files, level->name, mode, size)) {
+      remotePlacement.emplace(*gameplay, *level);
+      std::printf("  server objects are matched against %s/%d: %zu spawners\n", mode.c_str(), size,
+                  gameplay->spawners.size());
+    }
+  }
   if (remote != nullptr) {
     const obf2::server::PhysicsConstants& shape = remote->physics;
     const obf2::mesh::Vec3 size{shape.radius * 2.0f, shape.standHeight, shape.radius * 2.0f};
@@ -4452,6 +4490,45 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
         if (withOthers.empty()) withOthers = items;
         for (const auto& [id, object] : remote->world.objects()) {
           if (id == remote->ourSoldier && !args.showOwnBox) continue;  // we do not draw ourselves from inside
+          // Not a player's soldier: find out what stands there. Resolved once per
+          // object and again only if it has moved off the spot it was matched on.
+          if (object.team == 0 && remotePlacement) {
+            auto resolved = remoteResolved.find(id);
+            if (resolved == remoteResolved.end() ||
+                obf2::length(resolved->second.at - object.position) >
+                    obf2::level::PlacementIndex::kTolerance) {
+              resolved = remoteResolved
+                             .insert_or_assign(id, RemoteResolved{object.position,
+                                                                  remotePlacement->at(object.position)})
+                             .first;
+            }
+            const obf2::level::PlacedAt& placed = resolved->second.placed;
+            if (placed.kind == obf2::level::PlacedAt::Kind::Static) continue;
+            if (placed.kind == obf2::level::PlacedAt::Kind::Spawned) {
+              auto mesh = remoteMeshByName.find(placed.templateName);
+              if (mesh == remoteMeshByName.end()) {
+                obf2::gfx::GpuMesh* uploaded = nullptr;
+                if (auto built = buildObjectMesh(files, registry, placed.templateName, args, false)) {
+                  if (auto gpu = renderer->upload(*built, resolveTexture)) {
+                    remoteMeshes.push_back(*gpu);
+                    uploaded = &remoteMeshes.back();
+                  }
+                }
+                std::printf("  server object %u is %s%s\n", id, placed.templateName.c_str(),
+                            uploaded != nullptr ? "" : " (no geometry)");
+                mesh = remoteMeshByName.emplace(placed.templateName, uploaded).first;
+              }
+              if (mesh->second != nullptr) {
+                obf2::Mat4 place = obf2::translation(object.position);
+                if (placed.hasRotation) {
+                  place = place * obf2::rotationYawPitchRoll(placed.rotation.x, placed.rotation.y,
+                                                             placed.rotation.z);
+                }
+                withOthers.push_back(obf2::gfx::MeshRenderer::DrawItem{mesh->second, place});
+                continue;
+              }
+            }
+          }
           // Whose soldier this is the server knows: the team came from
           // `CreatePlayerEvent` and the object from `EnterVehicleEvent`. Zero means "not a player".
           const int which =
@@ -5057,6 +5134,7 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
 
   for (OwnedPiece& piece : spawnPieces) renderer->release(piece.mesh);
   for (auto& gpuMesh : gpuMeshes) renderer->release(gpuMesh);
+  for (auto& gpuMesh : remoteMeshes) renderer->release(gpuMesh);
   std::printf("frames drawn: %d\n", frame);
   if (nextLevel != nullptr) *nextLevel = requestedLevel;
   return 0;

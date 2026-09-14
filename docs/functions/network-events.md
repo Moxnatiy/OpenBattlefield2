@@ -1044,3 +1044,38 @@ Two consequences, both built into the client:
 Still debt: after the body is placed there are **no corrections** — the real
 position rides the soldier's own ghost state, which we do not parse (CLAUDE.md,
 the protocol debt). Placement and prediction are all the client has.
+
+## Objects the server creates, measured
+
+The same live server, `CreateObjectEvent` by `CreateObjectEvent`, each matched to
+what the level places at that spot (`openbf2 --connect`, the `created:` lines).
+The template **number** is stable per template across objects — every
+`trestle01_dest` came as 3763, every yellow barrel as 3741 — and the objects fall
+into two groups:
+
+| group | examples (number → what stands there) | what to draw |
+|---|---|---|
+| the level's destructibles | 3741 barrel_yellow, 3763 trestle01_dest, 3762 trafficlight_dest, 3696 lrg_stonebridge, 3770 highway_bridge_low_segment | nothing — the level already draws them |
+| what spawners issue | 5184 `…gasstation_Jeep`, 5217 `…gasstation_HeavyTank`, 5134 `…gasstation_APC`, 5007 `…market_HeavyJeep`, 5035 `…market_HeavyTank`, 3970/3972 UAV, 3989/3991 radar | the vehicle the spawner issues |
+
+**The number belongs to the vehicle, not to the spawner.** The same kind of spawner
+gives different numbers on different sides: the machine gun on the three MEC
+points came as **5553** and the one at the US gas station as **5561**; artillery
+5498 on MEC ground and 5575 on US; the AT emplacement 5503 against 5510. So an
+object on a spawner's spot is the vehicle `ObjectTemplate.setObjectTemplate`
+names for the side holding that spawner's control point. Resolved that way on
+the same run, every one came out on the right side:
+
+| MEC points | US gas station |
+|---|---|
+| `JEP_VODNIK`, `RUTNK_T90`, `MEC_BIPOD` (5553), `ARS_D30` (5498), `ATS_HJ8` (5503), `aircontroltower_mec`, `mobileradar_mech_dest` | `USJEP_HMMWV` (5184), `USTNK_M1A2` (5217), `USAPC_LAV25` (5134), `US_BIPOD` (5561), `USART_LW155` (5575), `ATS_TOW` (5510), `aircontroltower`, `mobileradar_us_dest` |
+
+These pairs are also the first ground truth for the template-number table the
+protocol debt asks for: fifteen numbers with names, from the server itself. The
+limit of the position rule is the spawner's side: it is the control point's
+owner at the round's start, and a point that changes hands would change the
+answer until capture events are read.
+
+In our code: `obf2::level::PlacementIndex` (with a test), used by the client's
+draw loop — spawned objects get their vehicle's mesh, static ones are left to
+the level, anything else keeps the grey placeholder.

@@ -32,6 +32,11 @@ struct RemoteObject {
   // The owner's team. Zero means it is not a player's soldier (a vehicle, level property).
   int team = 0;
   bool fromGhostStream = false;  // the position is refined by the stream, not only by an event
+  // The number `CreateObjectEvent` gave the object's template — creation order in
+  // the server's registry (bf2_events.h). Zero until the create event arrives.
+  // Stable per template across objects and runs: on the live server every
+  // `trestle01_dest` came as 3763 and every barrel as 3741.
+  std::uint32_t templateId = 0;
 
   // The track is a measure of the parsing, not decoration. A soldier stands on
   // the ground, so a constant difference from the terrain means the object's

@@ -55,6 +55,7 @@ void WorldView::feed(std::span<const std::byte> packet) {
       RemoteObject& object = objects_[event.object->networkId];
       // The position from the create event is the initial one; the stream refines it later.
       if (!object.fromGhostStream) object.position = *event.object->position;
+      object.templateId = event.object->templateId;
     }
     if (event.enter) {
       owners_[event.enter->object] = event.enter->player;
