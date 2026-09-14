@@ -362,6 +362,29 @@ std::vector<std::byte> writeContentCheckEvent(std::uint8_t connectionId,
                                               const std::array<std::byte, 16>& archives,
                                               const std::array<std::byte, 16>& level);
 
+// The client's connection type, `ConnectionTypeEvent` (type 3). The layout is
+// `ConnectionTypeEvent::serialize` (Linux server 0x422360): the event type, then
+// the value in 3 bits (0..6). The server's `GameServer::setConnectionType`
+// (0x45f5c0) clamps it to its `maxConnectionType` and copies two numbers of the
+// row from `g_connectionTypes` (0xb308c0, six rows of six u32) into the client's
+// connection (+0x20 from +4, +0x24 from +0xc):
+//
+//   type   +4    +0xc
+//   0, 1    4    320
+//   2      10    350
+//   3      20    400
+//   4      20    512
+//   5      20    640
+//
+// Without the event the server kept us on the lowest row: ghost packets 7 ticks
+// (~233 ms) apart, where the original client, whose profile says
+// `GeneralSettings.setConnectionType 5`, gets them far more often. That the +4
+// column is the update rate is read from that measurement, not from the code.
+inline constexpr std::uint32_t kConnectionTypeEvent = 3;
+std::vector<std::byte> writeConnectionTypeEvent(std::uint8_t connectionId,
+                                                const ExtendedHeader& header, std::uint8_t batch,
+                                                std::uint32_t connectionType);
+
 // Reads a fingerprint file: "number md5" for the archives, "name number md5" for
 // the level. nullopt means there is no line with that number.
 std::optional<std::array<std::byte, 16>> readFingerprint(std::string_view text, int ordinal);

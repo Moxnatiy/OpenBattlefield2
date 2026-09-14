@@ -90,4 +90,12 @@ struct Settings {
   void bind(Console& console);
 };
 
+// The player's own profile, as the game finds it: `Profiles/Global.con` names the
+// default user (`GlobalSettings.setDefaultUser "0001"`), and that user's
+// `General.con` holds `GeneralSettings.*` — the connection type among them. Runs
+// the file's lines through `console`, so whatever `bind` knows lands in
+// `settings`. `profiles` is `<documents>/Battlefield 2/Profiles`. Returns the
+// file read, or an empty path when there is no profile.
+std::string loadDefaultProfile(const std::string& profiles, Console& console);
+
 }  // namespace obf2::engine

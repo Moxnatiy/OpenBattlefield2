@@ -239,6 +239,18 @@ std::vector<std::byte> writePostRemoteEvent(std::uint8_t connectionId,
   return finishDataPacket(buffer, writer);
 }
 
+std::vector<std::byte> writeConnectionTypeEvent(std::uint8_t connectionId,
+                                                const ExtendedHeader& header, std::uint8_t batch,
+                                                std::uint32_t connectionType) {
+  std::vector<std::byte> buffer(24);
+  BitWriter writer(buffer);
+  writeDataHeader(writer, connectionId, header);
+  writeEventFraming(writer, batch, 1);
+  writer.writeBits(kConnectionTypeEvent, kEventTypeBits);
+  writer.writeBits(connectionType & 0x7u, 3);
+  return finishDataPacket(buffer, writer);
+}
+
 std::vector<std::byte> writeContentCheckEvent(std::uint8_t connectionId,
                                               const ExtendedHeader& header, std::uint8_t batch,
                                               const std::array<std::byte, 16>& misc,

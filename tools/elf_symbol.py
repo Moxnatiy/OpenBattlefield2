@@ -62,6 +62,10 @@ def main():
     parser.add_argument("pattern")
     parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
     parser.add_argument("--type", default="f32", choices=["f32", "f64", "u32", "i32", "u8"])
+    # A table rather than one number: `--type u32 --count 36` prints the first 36
+    # values, `--columns 6` lays them out as rows (g_connectionTypes is 6 x 6).
+    parser.add_argument("--count", type=int, default=1)
+    parser.add_argument("--columns", type=int, default=0)
     args = parser.parse_args()
 
     data = args.binary.read_bytes()
@@ -82,8 +86,16 @@ def main():
             continue
         if section and size >= struct.calcsize(fmt):
             offset = section["offset"] + (value - section["addr"])
-            (number,) = struct.unpack_from(fmt, data, offset)
-            print(line + f"\n  value ({args.type}): {number}")
+            width = struct.calcsize(fmt)
+            count = max(1, min(args.count, size // width))
+            numbers = [struct.unpack_from(fmt, data, offset + i * width)[0] for i in range(count)]
+            if count == 1:
+                print(line + f"\n  value ({args.type}): {numbers[0]}")
+            else:
+                print(line + f"\n  values ({args.type}), {count}:")
+                columns = args.columns or count
+                for row in range(0, count, columns):
+                    print("  +%#04x  %s" % (row * width, "  ".join(str(n) for n in numbers[row:row + columns])))
         else:
             print(line)
     if not found:

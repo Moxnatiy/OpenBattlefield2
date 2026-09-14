@@ -62,3 +62,5 @@ obf2_add_test(test_soldier_state obf2_net)
 # Real packets from the original server, from tests/data.
 target_compile_definitions(test_soldier_state PRIVATE
   OBF2_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
+
+obf2_add_test(test_ghost_track obf2_net)

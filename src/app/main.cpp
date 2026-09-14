@@ -941,6 +941,23 @@ std::optional<ContentHashes> contentHashes(obf2::FileSystem& files, const std::s
 struct RemoteWorld {
   RemoteWorld(const Args& a, obf2::FileSystem& f) : args(a), files(f) {
     world.setOwnName(args.playerName);
+    // The connection type the player's profile names, sent as the original does
+    // (`ConnectionTypeEvent`, bf2_protocol.h). No profile — no event, and the
+    // server keeps its lowest row, as before.
+    {
+      obf2::engine::Console console;
+      obf2::engine::Settings profile;
+      profile.bind(console);
+      const std::string documents = obf2::userDocumentsDirectory();
+      if (!documents.empty()) {
+        const std::string read =
+            obf2::engine::loadDefaultProfile(documents + "/Battlefield 2/Profiles", console);
+        if (!read.empty()) {
+          connectionType = profile.general.connectionType;
+          std::printf("  profile %s: connection type %d\n", read.c_str(), *connectionType);
+        }
+      }
+    }
     if (!args.recordTo.empty()) {
       recording = std::fopen(args.recordTo.c_str(), "wb");
       if (recording == nullptr) {
@@ -951,6 +968,7 @@ struct RemoteWorld {
   ~RemoteWorld() {
     if (recording != nullptr) std::fclose(recording);
   }
+  std::optional<int> connectionType;
   RemoteWorld(const RemoteWorld&) = delete;
   RemoteWorld& operator=(const RemoteWorld&) = delete;
 
@@ -1913,6 +1931,11 @@ struct RemoteWorld {
               }
               std::printf("  ClientInfo sent: name %s, %zu bytes\n",
                           info.name.c_str(), blob.size());
+              if (connectionType) {
+                socket->send(obf2::net::bf2::writeConnectionTypeEvent(
+                    id, nextHeader(), batch++, static_cast<std::uint32_t>(*connectionType)));
+                std::printf("  ConnectionTypeEvent sent: %d\n", *connectionType);
+              }
 
             }
           }
@@ -4176,6 +4199,14 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     obf2::level::PlacedAt placed;
   };
   std::unordered_map<std::uint16_t, RemoteResolved> remoteResolved;
+  std::unordered_map<std::uint32_t, obf2::level::PlacedAt> remoteByTemplate;
+  struct DrawStat {
+    int frames[3] = {0, 0, 0};  // GhostPrediction: newest, extrapolated, interpolated
+    obf2::Vec3f last;
+    bool seen = false;
+    float largestStep = 0.0f;
+  };
+  std::map<std::uint16_t, DrawStat> drawStats;
   if (remote != nullptr && level) {
     const std::string mode = remote->serverGameMode.empty() ? "gpm_cq" : remote->serverGameMode;
     const int size = remote->serverSize > 0 ? remote->serverSize : 16;
@@ -4312,6 +4343,8 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       remote->pump(1);
       while (remote->pump(0)) {
       }
+      // The clock other objects are drawn by runs with the frames (bf2_world.h).
+      remote->world.advanceClock(frameStep);
     }
 
     auto acquired = device->beginFrame();
@@ -4667,15 +4700,37 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           // a jeep, and a soldier whose `EnterVehicleEvent` came before we joined
           // has none and is still a soldier.
           const bool soldier = object.netClass == obf2::net::bf2::GhostClass::Soldier;
+          // Drawn where its track puts it now (ghost_track.h), not where the last
+          // update left it.
+          const auto pose = remote->world.poseOf(id);
+          const obf2::Vec3f drawAt = pose ? pose->position : object.position;
+          // The measure of smoothness: how the pose was made, and the largest
+          // step between two frames for an object that is moving.
+          if (pose && object.track.count() >= 2) {
+            auto& stat = drawStats[id];
+            ++stat.frames[static_cast<int>(pose->mode)];
+            if (stat.seen) {
+              stat.largestStep = std::max(stat.largestStep, obf2::length(drawAt - stat.last));
+            }
+            stat.last = drawAt;
+            stat.seen = true;
+          }
           if (!soldier && remotePlacement) {
+            // What it is, by the spot it was **created** on — a jeep that drove off
+            // stays a jeep. The template number is stable per template, so a match
+            // is remembered by number too, for objects first seen away from their
+            // spawner.
             auto resolved = remoteResolved.find(id);
-            if (resolved == remoteResolved.end() ||
-                obf2::length(resolved->second.at - object.position) >
-                    obf2::level::PlacementIndex::kTolerance) {
-              resolved = remoteResolved
-                             .insert_or_assign(id, RemoteResolved{object.position,
-                                                                  remotePlacement->at(object.position)})
-                             .first;
+            if (resolved == remoteResolved.end()) {
+              obf2::level::PlacedAt placed = remotePlacement->at(object.createdAt);
+              if (placed.kind == obf2::level::PlacedAt::Kind::Spawned && object.templateId != 0) {
+                remoteByTemplate.insert_or_assign(object.templateId, placed);
+              } else if (placed.kind == obf2::level::PlacedAt::Kind::Unknown) {
+                const auto byNumber = remoteByTemplate.find(object.templateId);
+                if (byNumber != remoteByTemplate.end()) placed = byNumber->second;
+              }
+              resolved =
+                  remoteResolved.insert_or_assign(id, RemoteResolved{object.createdAt, placed}).first;
             }
             const obf2::level::PlacedAt& placed = resolved->second.placed;
             if (placed.kind == obf2::level::PlacedAt::Kind::Static) continue;
@@ -4694,7 +4749,9 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
                 mesh = remoteMeshByName.emplace(placed.templateName, uploaded).first;
               }
               if (mesh->second != nullptr) {
-                obf2::Mat4 place = obf2::translation(object.position);
+                // The rotation is the spawner's: a simple object's own rotation
+                // travels in its record and is not read yet.
+                obf2::Mat4 place = obf2::translation(drawAt);
                 if (placed.hasRotation) {
                   place = place * obf2::rotationYawPitchRoll(placed.rotation.x, placed.rotation.y,
                                                              placed.rotation.z);
@@ -4710,11 +4767,11 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
               object.team == 0 ? 0 : (object.team == remote->world.ownTeam() ? 1 : 2);
           // A soldier's networked position is its pivot, `coll-soldier-pivot-height`
           // above the feet (`FUN_006ed4c0`); the box stands on its base.
-          obf2::Vec3f base = object.position;
+          obf2::Vec3f base = drawAt;
           if (soldier) base.y -= remote->physics.pivotHeight;
           obf2::Mat4 place = obf2::translation(base);
-          if (object.yaw) {
-            place = place * obf2::rotationY(*object.yaw * 3.14159265f / 180.0f);
+          if (soldier && pose) {
+            place = place * obf2::rotationY(pose->bodyYaw * 3.14159265f / 180.0f);
           }
           withOthers.push_back(obf2::gfx::MeshRenderer::DrawItem{&boxes[which], place});
         }
@@ -5313,6 +5370,12 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   for (auto& gpuMesh : gpuMeshes) renderer->release(gpuMesh);
   for (auto& gpuMesh : remoteMeshes) renderer->release(gpuMesh);
   std::printf("frames drawn: %d\n", frame);
+  for (const auto& [id, stat] : drawStats) {
+    if (stat.largestStep < 0.01f) continue;  // standing still: nothing to measure
+    std::printf("  drawn object %u: interpolated %d, extrapolated %d, newest %d frames, "
+                "largest step between frames %.2f m\n",
+                id, stat.frames[2], stat.frames[1], stat.frames[0], stat.largestStep);
+  }
   if (nextLevel != nullptr) *nextLevel = requestedLevel;
   return 0;
 }

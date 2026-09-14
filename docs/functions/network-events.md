@@ -1308,3 +1308,55 @@ answer until capture events are read.
 In our code: `obf2::level::PlacementIndex` (with a test), used by the client's
 draw loop — spawned objects get their vehicle's mesh, static ones are left to
 the level, anything else keeps the grey placeholder.
+
+## How often the server sends: the connection type
+
+`ConnectionTypeEvent` (game event 3): the event type, then the connection type in
+3 bits (`ConnectionTypeEvent::serialize`, Linux server 0x422360). On the server
+`GameServer::setConnectionType` (0x45f5c0) clamps the value to its
+`maxConnectionType` (+0x11c — it calls itself with the maximum, it does not kick)
+and copies two numbers of the type's row of `g_connectionTypes` (0xb308c0, six
+rows of six u32, read with `tools/elf_symbol.py _ZN4dice3hfe17g_connectionTypesE
+--binary …/linuxded-full/… --type u32 --count 36 --columns 6`) into the client's
+connection, +0x20 and +0x24:
+
+```
+type  +0   +4   +8    +0xc  +0x10 +0x14
+0     10    4   160   320   200   200
+1     10    4   160   320   200   200
+2     30   10   160   350   200   200
+3     30   20   320   400   200   200
+4     30   20   320   512   200   200
+5     30   20   320   640   200   200
+```
+
+We never sent it. The player's profile (`Documents/Battlefield 2/Profiles/<default
+user>/General.con`) says `GeneralSettings.setConnectionType 5`; sending that after
+`ClientInfo`, on the live server, over the same 1500 frames:
+
+| | ghost packets | step between them |
+|---|---|---|
+| without the event | 58 | 7–8 ticks (~250 ms) |
+| with type 5 | 311 | 1–2 ticks |
+
+That the +4 column is an update rate is read from this measurement, not from the
+code that uses it. Without a profile the event is not sent.
+
+## Drawing between updates
+
+`SoldierNetworkable::predict` (0x62d130) and `SimpleObjectNetworkable::predict`
+(0x62f7d0), in `src/net/include/obf2/net/ghost_track.h` with every address:
+a ring of four updates stamped with the server's time (the ghost header's tick,
+0x5b9ee0), drawn at `now − GSInterpolationTime` (100 ms) — interpolated between
+the two updates around it when they are 0–500 ms apart, extrapolated along the
+velocity for at most `GSExtrapolationTime` (1200 ms) past the newest, the newest
+otherwise. Defaults registered at 0x4077cd, read into the game object's
++0x50/+0x54 by 0x6a5f60.
+
+Not found: who calls `predict` every frame and with what time. Ours runs a clock
+that never lags the newest packet's time and advances with the frames
+(`WorldView::advanceClock`) — a stand-in, marked as such.
+
+A simple object's own rotation (a quaternion in its update slot, slerped by
+0x6d9290 in its `predict`) is not read from its record: moving vehicles keep
+their spawner's rotation.

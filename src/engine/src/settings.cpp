@@ -1,4 +1,6 @@
 #include <cstdlib>
+#include <fstream>
+#include <string>
 #include "obf2/engine/settings.h"
 
 namespace obf2::engine {
@@ -236,6 +238,29 @@ void Settings::bind(Console& console) {
   console.bind("sound.setMusicVolume", [this](const con::Command& c) {
     audio.musicVolume = c.argFloat(0).value_or(audio.musicVolume);
   });
+}
+
+std::string loadDefaultProfile(const std::string& profiles, Console& console) {
+  std::ifstream global(profiles + "/Global.con");
+  if (!global) return {};
+  std::string user;
+  for (std::string line; std::getline(global, line);) {
+    const std::string key = "GlobalSettings.setDefaultUser";
+    const std::size_t at = line.find(key);
+    if (at == std::string::npos) continue;
+    const std::size_t open = line.find('"', at + key.size());
+    const std::size_t close = open == std::string::npos ? open : line.find('"', open + 1);
+    if (close != std::string::npos) user = line.substr(open + 1, close - open - 1);
+  }
+  if (user.empty()) return {};
+  const std::string path = profiles + "/" + user + "/General.con";
+  std::ifstream general(path);
+  if (!general) return {};
+  for (std::string line; std::getline(general, line);) {
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    if (!line.empty()) console.executeLine(line);
+  }
+  return path;
 }
 
 }  // namespace obf2::engine

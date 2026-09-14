@@ -22,12 +22,14 @@
 
 #include "obf2/core/math.h"
 #include "obf2/net/bf2_events.h"
+#include "obf2/net/ghost_track.h"
 
 namespace obf2::net::bf2 {
 
 // An object the server created while in the game: another player's soldier or a vehicle.
 struct RemoteObject {
   Vec3f position;
+  Vec3f createdAt;  // the position `CreateObjectEvent` gave it
   std::optional<float> yaw;  // degrees, when a yaw arrived: body yaw plus aim (soldier_state.h)
   // What the object is on the network, from its first full ghost record
   // (bf2_events.h, GhostClass). A soldier is a soldier by class — a jeep with a
@@ -51,6 +53,10 @@ struct RemoteObject {
   int updates = 0;
   float travelled = 0.0f;    // the largest displacement from the first position
   float aboveGround = 0.0f;  // the sum of the heights above the terrain
+
+  // The last four updates stamped with the server's time, to draw from
+  // (ghost_track.h). `position` above is the newest as it arrived.
+  GhostTrack track;
 };
 
 struct RemotePlayer {
@@ -81,6 +87,16 @@ class WorldView {
 
   // How many positions arrived from the stream and how many we rejected as unreadable.
   int positionUpdates() const { return positionUpdates_; }
+
+  // The clock objects are drawn by, in the server's milliseconds. It never lags
+  // behind the newest ghost packet's time and runs with the frames between them.
+  // Not reversed: who calls `predict` in BF2.exe, and with which time, was not
+  // found — this is our stand-in for that caller.
+  void advanceClock(float seconds);
+  float clockMs() const { return clockMs_; }
+  // Where an object is drawn now: its track at the clock, or its last position
+  // when it has no track (created, never updated).
+  std::optional<GhostPose> poseOf(std::uint16_t id) const;
   int rejected() const { return rejected_; }
 
   // A check on the parsing: a soldier stands on the ground, so a constant
@@ -105,6 +121,8 @@ class WorldView {
   std::function<float(const Vec3f&)> ground_;
   int positionUpdates_ = 0;
   int rejected_ = 0;
+  float clockMs_ = 0.0f;
+  bool clockStarted_ = false;
 };
 
 }  // namespace obf2::net::bf2

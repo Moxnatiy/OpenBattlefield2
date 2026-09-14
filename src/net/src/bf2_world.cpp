@@ -5,6 +5,20 @@
 
 namespace obf2::net::bf2 {
 
+void WorldView::advanceClock(float seconds) {
+  if (clockStarted_) clockMs_ += seconds * 1000.0f;
+}
+
+std::optional<GhostPose> WorldView::poseOf(std::uint16_t id) const {
+  const auto found = objects_.find(id);
+  if (found == objects_.end()) return std::nullopt;
+  if (auto pose = found->second.track.poseAt(clockMs_)) return pose;
+  GhostPose still;
+  still.position = found->second.position;
+  still.bodyYaw = found->second.yaw.value_or(0.0f);
+  return still;
+}
+
 GhostClass WorldView::classOf(std::uint16_t id) const {
   // Not "an object a player entered": players enter jeeps too, and a jeep read
   // with the soldier's layout is rubbish. The class comes from the object's first
@@ -47,6 +61,7 @@ void WorldView::feed(std::span<const std::byte> packet) {
       RemoteObject& object = objects_[event.object->networkId];
       // The position from the create event is the initial one; the stream refines it later.
       if (!object.fromGhostStream) object.position = *event.object->position;
+      object.createdAt = *event.object->position;
       object.templateId = event.object->templateId;
     }
     if (event.enter) {
@@ -81,6 +96,14 @@ void WorldView::feed(std::span<const std::byte> packet) {
   // Every position in the records is packed against the stream's compression
   // vector (`FUN_0062bd60` reads it from `stream+0x54`), which the latest
   // controlled-object state set.
+  // The packet's server time: the header's tick, as 0x5b9ee0 turns it into time.
+  const auto header = readGhostHeader(packet);
+  const float packetMs = header ? static_cast<float>(header->time) * kGhostTickMs : 0.0f;
+  if (header && (!clockStarted_ || clockMs_ < packetMs)) {
+    clockMs_ = packetMs;
+    clockStarted_ = true;
+  }
+
   const auto known = [this](std::uint16_t id) { return classOf(id); };
   for (const GhostRecord& record : readGhostRecords(packet, compressionReference_, known)) {
     // Kind 3 — the object is gone (GhostManager::readData, 0x445820: the branch
@@ -92,12 +115,32 @@ void WorldView::feed(std::span<const std::byte> packet) {
     if (record.kind == 1 && record.netClass != GhostClass::Unknown) {
       objects_[record.networkId].netClass = record.netClass;
     }
-    if (!record.position) continue;
     const bool soldier = record.netClass == GhostClass::Soldier;
-    if (!looksSane(*record.position, soldier)) {
+    if (record.position && !looksSane(*record.position, soldier)) {
       ++rejected_;
       continue;
     }
+
+    // Every update of a known object is a slot in its track, even one that
+    // changes nothing (ghost_track.h). A soldier record that could not be read
+    // to its end is not one.
+    const bool readable = record.kind == 1 && record.netClass != GhostClass::Unknown &&
+                          (!soldier || record.soldier.has_value()) && header.has_value();
+    if (readable) {
+      RemoteObject& object = objects_[record.networkId];
+      const bool first = object.track.count() == 0;
+      GhostSample& sample = object.track.push(packetMs);
+      if (first) sample.position = object.position;
+      if (record.position) sample.position = *record.position;
+      if (soldier) {
+        const SoldierState& state = *record.soldier;
+        if (state.velocity) sample.velocity = *state.velocity;
+        if (state.bodyYaw) sample.bodyYaw = *state.bodyYaw + state.aimYaw.value_or(0.0f);
+        if (state.pitch) sample.pitch = -*state.pitch;
+      }
+    }
+
+    if (!record.position) continue;
     RemoteObject& object = objects_[record.networkId];
     if (soldier && record.soldier && record.soldier->bodyYaw) {
       object.yaw = *record.soldier->bodyYaw + record.soldier->aimYaw.value_or(0.0f);

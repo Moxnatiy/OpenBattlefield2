@@ -3,6 +3,8 @@
 // No platform-specific code outside this header and src/platform/.
 
 #include <cstdint>
+#include <cstdlib>
+#include <string>
 
 #if defined(_WIN32)
   #define OBF2_PLATFORM_WINDOWS 1
@@ -37,5 +39,17 @@ namespace obf2 {
 // Windows habit). On APFS/NTFS that almost never matters, but on
 // case-sensitive volumes it is critical, so normalisation is mandatory.
 inline constexpr bool kAssetPathsAreCaseInsensitive = true;
+
+// The user's documents folder: where BF2 keeps `Battlefield 2/Profiles`
+// ("My Documents" on Windows). Empty when the environment does not say.
+inline std::string userDocumentsDirectory() {
+#if OBF2_PLATFORM_WINDOWS
+  const char* home = std::getenv("USERPROFILE");
+#else
+  const char* home = std::getenv("HOME");
+#endif
+  if (home == nullptr || *home == '\0') return {};
+  return std::string(home) + "/Documents";
+}
 
 }  // namespace obf2
