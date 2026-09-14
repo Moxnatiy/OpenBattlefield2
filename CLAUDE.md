@@ -416,11 +416,12 @@ know how the original does it. Each has a measure.
 
 | what | state | measure |
 |---|---|---|
-| `readControlObjectState` | we read the start, we do not know the end | ghost records are read in packets that also carry controlled-object state |
+| our soldier's server position | read (0x5b9860 → `setNetUpdate` type 3) and measured against the prediction, not adopted: the replay of unanswered actions (the prediction component, keyed by the counter) is not reversed | a running soldier corrected by the server without being thrown back |
+| soldier weapon index (0x1000) | the width is the kit's weapon count (`*(object+0x14)+0x22c` → `+0x10`), not known on our side, so the soldier reader stops there | `SoldierState::complete` on the live capture |
 | ghost records for other players' soldiers | the layout is known, the data does not arrive | another player's position updates more than once a second |
 | tickets on `--connect` | the layout is known; it rides a ghost (`ScoreManager::setNetUpdate`, 0x5c9650) — blocked by the line above | the numbers match the original on the same server |
 | simple object state mask (19 bits) | we know 1 bit out of 19 | all 19 named in the notes |
-| soldier state mask (21 bits) | we know 1 bit out of 21 | all 21 named |
+| soldier state mask (21 bits) | the layout of all 21 is read (`soldier_state.h`); position, velocity, yaw, pitch, weapon index are named, the rest are "purpose not established" | all 21 named |
 | template number → name | the number is creation order, ours differs | `--calibrate` says "matched 21" |
 | ping | ours and the original's differ by 5–6× on the same machine | the difference is within noise |
 

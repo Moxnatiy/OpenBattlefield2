@@ -15,6 +15,7 @@ void PhysicsConstants::bind(engine::Console& console) {
     else if (name == "coll-soldier-stand-height") standHeight = *value;
     else if (name == "coll-soldier-crouch-height") crouchHeight = *value;
     else if (name == "coll-soldier-prone-height") proneHeight = *value;
+    else if (name == "coll-soldier-pivot-height") pivotHeight = *value;
     else if (name == "phy-soldier-walk-speed") walkSpeed = *value;
     else if (name == "phy-soldier-run-speed") runSpeed = *value;
     else if (name == "phy-soldier-sprint-speed") sprintSpeed = *value;

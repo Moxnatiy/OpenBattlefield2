@@ -207,11 +207,10 @@ void testControlObjectStateIsSkippable() {
   std::printf("  packets with a controlled-object state: %d, walked to the end: %d\n", withControl,
               walked);
   CHECK(withControl > 100);
-  // One packet in a hundred takes a branch we have not worked out (the function has
-  // a read of 10 bits in a loop at 0x44633a). Such a packet simply yields no
-  // records — that is one update lost, not a broken stream. For now we require at
-  // least 95 in 100 to pass.
-  CHECK(walked * 100 >= withControl * 95);
+  // The state's first twelve bits are its own size (the writer 0x5b9230 and the
+  // reader 0x5b9860 both say so), so skipping it needs no branch inside it: every
+  // packet reaches its records. The field-by-field walk this replaced managed 199.
+  CHECK_EQ(walked, withControl);
 }
 
 TEST_MAIN({

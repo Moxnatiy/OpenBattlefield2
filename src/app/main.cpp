@@ -1045,6 +1045,19 @@ struct RemoteWorld {
 
   // A correction from the server: we put the body where the server sees it.
   void correct(const obf2::Vec3f& position) {
+    observe(position);
+    body.position = position;
+    if (!bodyReady) body.velocity = obf2::Vec3f{};
+    bodyReady = true;
+  }
+
+  // Where the server sees our feet, against where the prediction put them —
+  // without moving the body. The server's state is a few ticks old, and the
+  // original replays the actions it has not answered yet on top of it (the
+  // prediction component at the end of the controlled-object state, after the
+  // networkables, 0x5b9860); until that is reversed, taking the server's
+  // position as it is would throw a running soldier back every packet.
+  void observe(const obf2::Vec3f& position) {
     // How far we diverged from the server. That is a measure of the prediction's
     // quality: while the divergence is small, no abrupt position substitution is
     // visible and there is nothing to smooth.
@@ -1067,9 +1080,6 @@ struct RemoteWorld {
                     body.position.z, terrain->groundHeightAt(position), delta.y);
       }
     }
-    body.position = position;
-    if (!bodyReady) body.velocity = obf2::Vec3f{};
-    bodyReady = true;
   }
 
   // One prediction step. `yaw` is where the player is looking.
@@ -1445,6 +1455,16 @@ struct RemoteWorld {
             ++controlStates;
             // The compression reference point for the whole stream that follows.
             compressionReference = state->compressionReference;
+            // Our soldier's own state: the position is the pivot, which stands
+            // `coll-soldier-pivot-height` above the feet — `FUN_006ed4c0`
+            // (Physics/SoldierResponse.cpp) takes a soldier's extent as
+            // `[y - pivot, y + pose height - pivot]`. Our body's position is the feet.
+            if (state->soldier && state->soldier->position && playerSpawned &&
+                state->networkId == ourSoldier && bodyReady && placedSoldier == ourSoldier) {
+              obf2::Vec3f feet = *state->soldier->position;
+              feet.y -= physics.pivotHeight;
+              observe(feet);
+            }
             // The server states the controlled object's number directly. But the
             // controlled object is not always a soldier: before spawning it is the
             // spawn screen's camera (number 257 on Dalian, with the position from
@@ -1477,10 +1497,10 @@ struct RemoteWorld {
               if (bodyReady && placedSoldier != ourSoldier) bodyReady = false;
               std::printf("  our soldier by the controlled-object state: %u\n", ourSoldier);
             }
-            // There is nothing here to correct the position with: the real one
-            // travels later, in the object's own state, and we do not parse that
-            // yet. Until we do, only the prediction computes the movement — from
-            // the point the server named when it created the soldier. Debt, not a decision.
+            // The body starts from the point the server named when it created the
+            // soldier; after that only the prediction moves it. The server's own
+            // position is read (above) and measured against it, not adopted — the
+            // replay of unanswered actions is not reversed. Debt, not a decision.
             // Only after `NEPlayerSpawned`: before spawning we have no soldier,
             // and the enter event happens for other players too.
             if (!bodyReady && playerSpawned && ourSoldier != 0) {

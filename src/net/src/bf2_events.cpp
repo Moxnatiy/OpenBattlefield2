@@ -443,54 +443,24 @@ bool enterPayload(BitReader& reader) {
 
 namespace {
 
-// Shared by the header and the records: get to the ghost stream, having walked
-// the player action stream and every event.
-// Walk past the controlled-object state without parsing it.
-//
-// The walk was written out from `GhostManager::readControlObjectState` (0x445c30)
-// with `tools/linuxded/bitfields.py --blocks`, branch by branch:
-//
-//   12                     a number at the start
-//   1 + 31                 a counter (sign and magnitude; with the sign 0x445cbf,
-//                          without it 0x445ed0 — both branches 31 bits)
-//   32, 32, 32             the compression reference point -> setCompressionVector
-//   16                     the controlled object's network id
-//   1                      flag A; if 1 -> 16 more bits (0x445f93)
-//   1                      flag B (0x445db3, after getObject)
-//                          if 1 -> 1 bit (0x445f33), and if that is 1 -> 16 (0x445f66)
-//   1                      flag C (0x445e52)
-//   3                      both branches read 3 bits (0x445e80 / 0x445fde)
-//
-// Further on the function also has a read of 10 bits in a loop (0x44633a), but it
-// is behind a condition we have not worked out. So the walk is **checked against
-// data**: after it exactly `records` records have to read and the packet has to
-// end. If it does not add up we say we cannot do it rather than pretending we
-// read something.
+// The controlled-object state carries its own length. The writer,
+// `GhostManager::writeControlObjectState` (`BF2.exe`, 0x5b9230 — the path
+// `Code\BF2\Game\Common\GhostManager.cpp` in its error calls), reserves twelve
+// bits first, writes the whole state, and goes back to store how many bits it
+// wrote after them; past 0xfff it complains "control object size is to big!!!"
+// (line 0x480); the reader, 0x5b9860, checks the same number at its end ("Size
+// differs bits read … indicated size"). So the first twelve bits are the
+// state's size, and the end is found without knowing a single branch inside.
+// On `tests/data/bf2-spawned.bin` that reaches the records in 200 packets of
+// 200, where the old field-by-field walk managed 199.
 bool skipControlObjectState(BitReader& reader) {
-  if (!reader.skipBits(12)) return false;
-
-  const auto sign = reader.readBits(1);
-  if (!sign || !reader.skipBits(31)) return false;
-  if (!reader.skipBits(32 * 3)) return false;  // the reference point
-  if (!reader.skipBits(16)) return false;      // the network id
-
-  const auto flagA = reader.readBits(1);
-  if (!flagA) return false;
-  if (*flagA == 1 && !reader.skipBits(16)) return false;
-
-  const auto flagB = reader.readBits(1);
-  if (!flagB) return false;
-  if (*flagB == 1) {
-    const auto more = reader.readBits(1);
-    if (!more) return false;
-    if (*more == 1 && !reader.skipBits(16)) return false;
-  }
-
-  const auto flagC = reader.readBits(1);
-  if (!flagC || !reader.skipBits(3)) return false;
-  return true;
+  const auto size = reader.readBits(12);
+  if (!size) return false;
+  return reader.skipBits(*size);
 }
 
+// Shared by the header and the records: get to the ghost stream, having walked
+// the player action stream and every event.
 std::optional<GhostHeader> enterGhosts(BitReader& reader) {
   if (!enterPayload(reader)) return std::nullopt;
 
@@ -636,6 +606,7 @@ std::optional<ControlObjectState> readControlObjectState(std::span<const std::by
   if (!header || !header->controlObjectState) return std::nullopt;
 
   ControlObjectState out;
+  const std::size_t headerStart = reader.bitPosition();
   const auto first = reader.readBits(12);
   if (!first) return std::nullopt;
   out.first = *first;
@@ -654,6 +625,28 @@ std::optional<ControlObjectState> readControlObjectState(std::span<const std::by
   const auto networkId = reader.readBits(16);
   if (!networkId) return std::nullopt;
   out.networkId = static_cast<std::uint16_t>(*networkId);
+
+  // The rest, as `GhostManager::readControlObjectState` (`BF2.exe`, 0x5b9860)
+  // reads it: flag A and a second object's id, flag B ("in a vehicle") with a
+  // bit and the vehicle's id, then the baseline — one bit and three bits of
+  // index ("Invalid server baseLineIndex" past 7). Then every networkable of the
+  // controlled object reads itself with type 3 through its vtable slot +0x30,
+  // and for a soldier that slot is `SoldierNetworkable::setNetUpdate` (the
+  // vtable at 0x8fcba8, slot 12 = 0x62d4e0).
+  const auto flagA = reader.readBits(1);
+  if (!flagA || (*flagA == 1 && !reader.skipBits(16))) return out;
+  const auto flagB = reader.readBits(1);
+  if (!flagB) return out;
+  if (*flagB == 1) {
+    const auto inVehicle = reader.readBits(1);
+    if (!inVehicle || (*inVehicle == 1 && !reader.skipBits(16))) return out;
+  }
+  if (!reader.skipBits(1 + 3)) return out;
+  const std::size_t stateEnd = headerStart + 12 + out.first;
+  if (auto soldier = readSoldierState(reader, out.compressionReference,
+                                      SoldierLayout::Controlled)) {
+    if (reader.bitPosition() <= stateEnd) out.soldier = std::move(*soldier);
+  }
   return out;
 }
 

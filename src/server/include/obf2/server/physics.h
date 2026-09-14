@@ -88,6 +88,12 @@ struct PhysicsConstants {
   float standHeight = 1.7f;    // coll-soldier-stand-height
   float crouchHeight = 1.4f;   // coll-soldier-crouch-height
   float proneHeight = 0.8f;    // coll-soldier-prone-height
+  // How far above the feet the soldier's position is. `BF2.exe` registers the
+  // variable at 0x860f00 with 1.0 (the handle at 0xa086f0), and `FUN_006ed4c0`
+  // takes the extent as `[y - pivot, y + pose height - pivot]`. Measured on the
+  // live server too: our standing soldier's networked height is the terrain's
+  // plus 1.00 (docs/functions/network-events.md).
+  float pivotHeight = 1.0f;    // coll-soldier-pivot-height
 
   // How gentle a surface still holds: 0.5 is a slope of up to 60 degrees.
   float feetContactNormal = 0.5f;  // phy-soldier-feet-contact-normal

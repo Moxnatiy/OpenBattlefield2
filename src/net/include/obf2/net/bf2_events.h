@@ -23,6 +23,7 @@
 
 #include "obf2/core/math.h"
 #include "obf2/net/bitstream.h"
+#include "obf2/net/soldier_state.h"
 
 namespace obf2::net::bf2 {
 
@@ -295,7 +296,14 @@ std::optional<bool> ghostFlag(std::span<const std::byte> packet);
 // (0x445dc3 and 0x445e01). That is a direct answer to which soldier is ours:
 // guessing by the distance to a flag is no longer needed.
 struct ControlObjectState {
+  // The number of bits the state occupies after this field — see
+  // `skipControlObjectState` in bf2_events.cpp (`BF2.exe`, 0x5b9230).
   std::uint32_t first = 0;
+  // The controlled soldier's own state, read with the precise layout — see
+  // obf2/net/soldier_state.h. Present when the controlled object is a soldier
+  // and the state reached that far; the spawn camera's state reads as something
+  // else and is not taken for one.
+  std::optional<SoldierState> soldier;
   std::int32_t counter = 0;
   // The name is deliberately not "position": a soldier must not be moved by this field.
   Vec3f compressionReference;

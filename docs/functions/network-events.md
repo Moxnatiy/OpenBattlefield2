@@ -1009,10 +1009,8 @@ soldier 1602's track: 4 updates, travelled 0.4 m, above the ground 1.00 m on ave
 ```
 
 The numbers are on the map and the height is steady. Exactly 1.00 m above the
-terrain is a constant difference, not a drift: it looks as though a soldier's
-networked position is the object's origin rather than his feet. Where exactly
-that metre comes from is **not established yet**, so the placeholder is drawn
-where it arrived.
+terrain is a constant difference, not a drift. The metre is
+`coll-soldier-pivot-height` — see "The soldier's position is its pivot" below.
 
 ## A life on a live server, measured
 
@@ -1041,9 +1039,111 @@ Two consequences, both built into the client:
   `NEPlayerDead`, the client briefly took it for its soldier. The controlled
   object seen before the first spawn is remembered and never adopted.
 
-Still debt: after the body is placed there are **no corrections** — the real
-position rides the soldier's own ghost state, which we do not parse (CLAUDE.md,
-the protocol debt). Placement and prediction are all the client has.
+The capture of that run is `tests/data/bf2-karkand-lives.bin`.
+
+## The controlled-object state, read whole
+
+`GhostManager::readControlObjectState`, `BF2.exe` 0x5b9860 (the writer is
+0x5b9230). The earlier sections walked it field by field from the Linux server
+and never found the end; the client's function says where it is — the very first
+field.
+
+```
+12 bits            the size of everything after this field, in bits
+1 + 31             a counter (FUN_004f9c10(32): sign, then magnitude)
+32, 32, 32         the compression reference -> setCompressionVector
+16                 the network id of the controlled object
+1                  flag A; if 1 -> 16 bits
+1                  flag B; if 1 -> 1 bit; if that is 1 -> 16 bits (a vehicle's id)
+                   -- only if the object exists on our side --
+1                  a baseline flag
+3                  a baseline index
+                   every networkable of the object, in order, through its vtable
+                   +0x30 with type 3 (FUN_005b81c0 / FUN_005b8550) — unframed
+10                 a length, then a part read by NetworkManager's vtable +0x194
+                   the prediction component
+                   "Size differs bits read ... indicated size" when the count is off
+```
+
+So a reader that does not understand the contents skips `12 + size` bits and
+lands exactly on the ghost records: `tests/test_bf2_events.cpp` walks **200 of
+200** packets of `tests/data/bf2-spawned.bin` that way (it was 199 by the field
+walk).
+
+For a soldier the first networkable is `SoldierNetworkable`, whose slot +0x30
+(vtable 0x8fcba8, slot 12) is `setNetUpdate` 0x62d4e0. Type 3 selects its
+**controlled** layout. Both layouts, every field, are in
+`src/net/include/obf2/net/soldier_state.h`:
+
+| bit | Ghost | Controlled |
+|---|---|---|
+| mask | 21 bits | 21 bits |
+| 0x40 | 8 bits, 1 bit | same |
+| 0x20 | two values 0..4, 3 bits each | same |
+| 0x8000 | ragdoll branch (FUN_007e5440 / FUN_007ea290); the rest is skipped | same |
+| 0x1 | position, compressed from the stream's reference, 0.001 | same |
+| 0x80 | velocity, from zero, 0.01 | velocity, from zero, 0.001 |
+| 0x100, 0x200 | — | vectors from zero, 0.0001 — purpose not established |
+| 0x40000 | — | vector from zero, 0.001 — purpose not established |
+| 0x2, 0x4, 0x8, 0x10 | 12 bits each, expanded to ±360, ±90, ±180, ±90 | 32 bits each, the float itself |
+| always | 0..3 (3 bits), 0..1 (2 bits), three single bits | same |
+| 0x400, 0x800 | 10 bits, expanded to ±50 | 16 bits, expanded to ±50 |
+| always | 1 bit | same |
+| 0x4000 | 5 bits / 31 | 7 bits / 127, then 1 bit |
+| 0x1000 | 0..(weapon count + 1), minus one: the weapon index | same |
+| 0x2000 | 2 bits | same |
+| 0x20000 | — | 7 bits, expanded to ±1 |
+| 0x10000 | 0..255 (9 bits); if not zero, 12 bits / 4095 | same |
+| 0x100000 | 16 bits; if not zero, 12 bits / 4095 | same |
+| 0x80000 | 0..15 (5 bits) | same |
+
+Two traps in reading it:
+
+* **the ranged read takes one bit more than the range needs.**
+  `FUN_004f9a10(min, max)` takes the smallest n with `2^n - 1 >= max - min + 1`:
+  0..1 is two bits, 0..3 three, 0..255 nine. Read as `ceil(log2)` everything
+  after the first ranged field is shifted;
+* **0x1000's width is not in the stream.** It is the soldier's weapon count,
+  asked of its inventory (`*(object+0x14)+0x22c` → `+0x10`). Our own soldier's
+  mask on Karkand is 0x1f7fff, with 0x1000 set, so our reader stops there
+  (`SoldierState::complete` stays false) until the kit's weapon count is known.
+  Everything before it — position, velocity, angles — is read.
+
+Measured on `tests/data/bf2-karkand-lives.bin` (`tests/test_soldier_state.cpp`):
+**47 of 47** controlled states of our soldier, across both lives, put it on the
+x and z its `CreateObjectEvent` named, to 5 cm, while the player stood still.
+
+## The soldier's position is its pivot
+
+The height in that state is **not the feet**. In both lives:
+
+| life | created at y | server's y at rest | terrain |
+|---|---|---|---|
+| 1 | 164.649 | 164.399 | — |
+| 2 | 164.663 | 164.412 | — |
+| live run | 164.6 | 164.40 | 163.40 |
+
+The creation point is the spawn point's `setSpawnPositionOffset 0/1.25/0`; the
+soldier falls 0.25 m and rests with its position **1.00 m** above the terrain.
+
+The metre is `coll-soldier-pivot-height`. `BF2.exe` registers it at 0x860f00 with
+the default 1.0 (the handle at 0xa086f0), and `FUN_006ed4c0`
+(`Physics/SoldierResponse.cpp`, soldier against soldier) takes a soldier's
+vertical extent as `[matrix.y - pivot, matrix.y + pose height - pivot]`, the pose
+height being `coll-soldier-stand/crouch/prone-height`. The same handle is read by
+0x6ee040, 0x6ee4d0, 0x6eeef0 and 0x6efc30.
+
+With the pivot taken off, `openbf2 --connect` puts the server's feet on our
+predicted body: `correction: server -253.53 163.40 -139.59, us -253.53 163.40
+-139.59, ground 163.40 (dy 0.00)`, 28 samples, 0.04 m on average (the one 1.00 m
+sample is the first tick, while the body was still falling from the creation
+point).
+
+Still debt: the client **measures** the server's position and does not adopt it.
+The server's state is some ticks old; the original replays the actions it has not
+answered yet on top of it (the prediction component at the end of the state,
+keyed by the counter). Until that is reversed, adopting the position as it is
+would throw a running soldier back every packet.
 
 ## Objects the server creates, measured
 
