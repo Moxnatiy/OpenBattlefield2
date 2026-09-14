@@ -25,7 +25,7 @@ sv.endDelay 15
 sv.spawnTime 15
 sv.manDownTime 15
 sv.endOfRoundDelay 15
-sv.ticketRatio 100
+sv.ticketRatio 600
 sv.roundsPerMap 3
 sv.timeLimit 0
 sv.scoreLimit 0
