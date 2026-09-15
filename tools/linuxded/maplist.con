@@ -1,3 +1,6 @@
 rem *** One level at a time: the rig is for comparing our client against the
 rem *** original, and that means both standing on the same map.
-mapList.append strike_at_karkand gpm_cq 16
+rem *** Co-op with bots (sv.coopBotCount in serversettings.con): something always
+rem *** moves on the server, so other soldiers and vehicles can be measured
+rem *** without a second person at the keyboard.
+mapList.append strike_at_karkand gpm_coop 16

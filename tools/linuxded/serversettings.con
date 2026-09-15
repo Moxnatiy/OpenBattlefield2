@@ -25,7 +25,7 @@ sv.endDelay 15
 sv.spawnTime 15
 sv.manDownTime 15
 sv.endOfRoundDelay 15
-sv.ticketRatio 600
+sv.ticketRatio 2000
 sv.roundsPerMap 3
 sv.timeLimit 0
 sv.scoreLimit 0
@@ -53,7 +53,7 @@ sv.timeBeforeRestartMap 30
 sv.autoBalanceTeam 0
 sv.teamRatioPercent 100
 sv.coopBotRatio	50
-sv.coopBotCount	16
+sv.coopBotCount	12
 sv.coopBotDifficulty 50
 sv.voipEnabled 1
 sv.voipQuality 3
