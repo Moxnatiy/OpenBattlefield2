@@ -88,15 +88,28 @@ class WorldView {
   // How many positions arrived from the stream and how many we rejected as unreadable.
   int positionUpdates() const { return positionUpdates_; }
 
-  // The clock objects are drawn by, in the server's milliseconds. It never lags
-  // behind the newest ghost packet's time and runs with the frames between them.
-  // Not reversed: who calls `predict` in BF2.exe, and with which time, was not
-  // found — this is our stand-in for that caller.
-  void advanceClock(float seconds);
-  float clockMs() const { return clockMs_; }
-  // Where an object is drawn now: its track at the clock, or its last position
-  // when it has no track (created, never updated).
-  std::optional<GhostPose> poseOf(std::uint16_t id) const;
+  // The game tick other objects are predicted at — the client's own clock:
+  //
+  //   * `FUN_005c0460`, the client's tick, calls `FUN_004d5460`, which calls
+  //     `predict(gameTime * 1000)` on every active networkable but our controlled
+  //     object and its vehicle; the game time (0x9a7420) is the game tick
+  //     (0x9a7428) times 1/30 (0x970398) — whole ticks, no frame fraction;
+  //   * the tick is set by the prediction component of every controlled-object
+  //     state, `FUN_004d4b30`: to the server tick of that packet
+  //     (`GhostManager +0x1080`, from the ghost header, 0x5b9ee0) — 0x4c4440 at
+  //     0x4d4bc9 — and advanced by one for every action it plays again (0x4c4470
+  //     at 0x4d4c15);
+  //   * between states the client's tick loop advances it by one per tick.
+  //
+  // So the client runs ahead of the newest state by the actions not answered yet.
+  void setGameTick(std::uint32_t tick) { gameTick_ = tick; tickSet_ = true; }
+  void advanceGameTick() { if (tickSet_) ++gameTick_; }
+  std::uint32_t gameTick() const { return gameTick_; }
+  std::uint32_t newestPacketTick() const { return newestPacketTick_; }
+  // Where an object is drawn now: its track at the game time, `fraction` of a
+  // tick past the last tick. Blending between ticks by the frame is ours: the
+  // original has `BF2FrameInterpolator` (0x89d770's file) for it, not reversed.
+  std::optional<GhostPose> poseOf(std::uint16_t id, float fraction = 0.0f) const;
   int rejected() const { return rejected_; }
 
   // A check on the parsing: a soldier stands on the ground, so a constant
@@ -121,8 +134,9 @@ class WorldView {
   std::function<float(const Vec3f&)> ground_;
   int positionUpdates_ = 0;
   int rejected_ = 0;
-  float clockMs_ = 0.0f;
-  bool clockStarted_ = false;
+  std::uint32_t gameTick_ = 0;
+  std::uint32_t newestPacketTick_ = 0;
+  bool tickSet_ = false;
 };
 
 }  // namespace obf2::net::bf2

@@ -1360,3 +1360,75 @@ that never lags the newest packet's time and advances with the frames
 A simple object's own rotation (a quaternion in its update slot, slerped by
 0x6d9290 in its `predict`) is not read from its record: moving vehicles keep
 their spawner's rotation.
+
+## A vehicle's update, read whole: `SimpleObjectNetworkable::setNetUpdate`
+
+`BF2.exe` 0x6306b0 (the path `…\Networkables\SimpleObjectNetworkable.cpp` in its
+error call, line 0x20b). It writes into the object's ring slot (0xbc bytes at
+`+0x58`, slot `+0x38`; copied from the previous slot first, 0x2f ints), stamps
+the slot's time (+0), and reads, for a ghost record (`param_5` — a baseline
+buffer — is 0 there; with a buffer the vectors are read against it instead, and
+the buffer's cursor `+0x400` advances by 0x24):
+
+| order | condition | read | slot field | applied as |
+|---|---|---|---|---|
+| mask | always | 19 bits | | |
+| 1 | 0x2 | compressed vector from the stream's vector (`param_2+0x54`), 0.0005 (0x3a03126f) | +0xc position | `FUN_0062ed00` (the object's position) |
+| 2 | 0x4, **physical** | compressed vector from zero (0x9f6768), 0.001 | +0x38 | physics +100 (linear velocity) |
+| 3 | 0x8, **physical** | type 3: compressed vector 0.001; otherwise the **wide** vector (0x6b6f50) from zero, 0.01 | +0x5c | physics +0x68 (angular velocity) |
+| 4 | 0x1 | quaternion, `FUN_006b7270(14)` | +0x18 rotation | |
+| 5 | 0x4000, **physical** | compressed vector 0.001, then another | +0x80, +0x8c | physics +0x184, +0x18c |
+| 6 | 0x20, **physical** | compressed vector 0.0001 (0x38d1b717) | +0x44 | physics +0x74 |
+| 7 | 0x40, **physical** | compressed vector 0.0001 | +0x68 | physics +0x78 |
+| 8 | 0x100, **physical** | compressed vector 0.0001 | +0x50 | physics +0x7c |
+| 9 | 0x200, **physical** | compressed vector 0.0001 | +0x74 | physics +0x80 |
+| 10 | 0x80, **physical** | 1 bit | +0x9c | asleep: physics +300 / +0x120(-1) |
+| 11 | 0x8000, **physical** | 1 bit | +0xb0 | `FUN_005fe210` when the template class is 0x9c47 |
+| 12 | 0x10, the object has the interface at `+0x3c` | `FUN_004f9a10(min, max)` with the range from that interface (+0x88, +0x84) | +0x98 | +0x38 of that interface (a health-like value; purpose not established) |
+| 13 | 0x400 | 2 bits | +0x9d | object +0x14c |
+| 14 | an object up the chain answers 0xc4c5 (a player control object), template class ≠ 0xc5a8 | 0x800, 0x1000, 0x20000: `ranged(0, 8) − 1` each; 0x10000: `ranged(0, 15)`; 0x40000: 1 bit | +0xa0, +0xa4, +0xa8, +0xb4, +0xb8 | control object +0x78(slot N) per index, +0x150, +300 |
+| 15 | the same, template class = 0xc5a8 | 0x2000: `ranged(0, 7)` | +0xac | object +0x158 → +0x10 |
+
+**physical** is `(*(object+0x44))->vtable+0x130()`, asked of the object on the
+client; the stream does not say it. Fields 12–15 depend on the object too.
+
+The readers:
+
+* **the quaternion** `FUN_006b7270(n)`: four values, each `n` bits over
+  `2^n − 1` (`FUN_004f9c70`) mapped to `2u − 1` — `n = 32` reads raw floats
+  instead; read in the order w, x, y, z, stored as (x, y, z, w) and normalised by
+  0x62ebc0 (a length under 1.19e-7 becomes the identity);
+* **the wide vector** `FUN_006b6f50(base, precision)`: a 3-bit level; 0 — three
+  raw floats; 7 — the base itself; 1..6 — sign and magnitude of 24, 20, 16, 12,
+  10, 8 bits per component (the table at 0x9791c4 starts with 28 at level 0), times
+  the precision, plus the base.
+
+Still to check on data: which objects are physical (a quaternion read from the
+right place has a length of 1 before normalising — the test for it), and the
+quaternion's convention against a spawner's rotation from the level.
+
+## The client's clock and its tick budget
+
+Found the caller the previous section did not:
+
+* `FUN_004d5740` — the client's frame. `param_2` is the number of ticks due.
+  With an allowance at `+0x148`: more ticks due than allowed → run **one**, the
+  allowance drops to 1, the rest are dropped; otherwise the allowance grows by one
+  per frame up to 3. Each tick runs `FUN_005c0460`. It also reads
+  `GSUseClientSidePrediction` (default 1) into `+0xfd`.
+* `FUN_005c0460` — one client tick: … `FUN_005c0260` (our actions) … then
+  `FUN_004d5460`, which calls `predict(gameTime * 1000)` (slot +0x14 of the
+  networkable's interface, 0x8fcb8c for a soldier) on every active descriptor
+  except our controlled object and its vehicle.
+* the game time: `FUN_004c4400` returns 0x9a7420 = the game tick (0x9a7428) ×
+  1/30 (0x970398). `FUN_004c4440` sets the tick, `FUN_004c4470` adds to it;
+  `FUN_004ee9f0` resets it to 0 at a level's start.
+* `FUN_004d4b30` (the replay) sets the tick to the packet's server tick
+  (`GhostManager +0x1080`, the 4th argument, 0x4d4bc9) and adds one per action
+  played again (0x4d4c15, network mode 1).
+
+Measured on the live server with that clock: the game tick runs 5–9 ticks ahead
+of the newest packet, which is the number of our actions the server has not
+answered (5–7, steady — not growing). The replay lands 0.00 m from the prediction
+over 504 corrections while running. Frame blending between ticks is ours
+(`BF2FrameInterpolator` exists, not reversed).

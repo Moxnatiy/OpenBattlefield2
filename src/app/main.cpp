@@ -1153,8 +1153,22 @@ struct RemoteWorld {
   // (`axisToWire`, 0x5bc890), turned back (`axisFromWire`, 0x5bc6a0), and **that**
   // turns the look and moves the body — and the same action is sent. So the server
   // and our screen play the same numbers.
+  // How many ticks a frame may run — the client's frame, `FUN_004d5740`: when a
+  // frame has more ticks due than the allowance at `+0x148`, it runs **one** and
+  // the allowance drops to 1; otherwise the allowance grows by one per frame, up
+  // to 3. The ticks not run are dropped. Without it a slow frame (a mesh being
+  // uploaded) sent the server a burst, and its action buffer, which plays one per
+  // tick (`FUN_004cc400`), kept that backlog for the rest of the life.
+  int tickAllowance = 1;
+
   void predict(float step) {
-    const int ticks = tick.take(step);
+    int ticks = tick.take(step, 1 << 20);
+    if (ticks > tickAllowance) {
+      ticks = 1;
+      tickAllowance = 1;
+    } else if (tickAllowance < 3) {
+      ++tickAllowance;
+    }
     for (int i = 0; i < ticks; ++i) {
       obf2::net::bf2::PlayerAction next = pendingKeys;
       next.buttons |= pendingPresses;
@@ -1168,6 +1182,17 @@ struct RemoteWorld {
       pendingLookY -= obf2::net::bf2::axisFromWire(next.axes[obf2::net::bf2::kAxisMouseY]);
       action = next;
 
+      // The client's tick loop moves the game tick by one (bf2_world.h).
+      world.advanceGameTick();
+      // The measure of the action queue: how many of ours the server has not
+      // answered, every ten seconds of ticks. A number that keeps growing is a
+      // queue on the server that never drains.
+      if (ourSoldier != 0 && actionTick % 300 == 0) {
+        std::printf("  actions: tick %u, unanswered %zu, game tick %u, newest packet tick %u\n",
+                    actionTick, sent.size(), world.gameTick(), world.newestPacketTick());
+      }
+      // No soldier, no actions: the game tick runs, nothing is built or sent.
+      if (ourSoldier == 0) continue;
       const std::uint32_t number = actionTick++;
       sent.push_back({number, action});
       // Nothing answers while there is no soldier; the list is not allowed to grow
@@ -1607,6 +1632,14 @@ struct RemoteWorld {
             ++controlStates;
             // The compression reference point for the whole stream that follows.
             compressionReference = state->compressionReference;
+            // Before we play a soldier there are no actions, and 0x4d4b30 leaves the
+            // tick alone; the original's tick then comes from somewhere not found.
+            // Ours: the packet's server tick. Not reversed.
+            if (sent.empty() || !playerSpawned) {
+              if (const auto header = obf2::net::bf2::readGhostHeader(*more)) {
+                world.setGameTick(header->time);
+              }
+            }
             // Our soldier's own state, and the replay of what the server has not
             // played yet on top of it (`reconcile`, `FUN_004d4b30`).
             if (state->soldier && playerSpawned && state->networkId == ourSoldier &&
@@ -1614,6 +1647,11 @@ struct RemoteWorld {
               const auto& s = *state->soldier;
               const float predictedYaw = yaw;
               reconcile(s, state->counter);
+              // The game tick: this packet's server tick plus one per action played
+              // again (`FUN_004d4b30`, 0x4d4bc9 and 0x4d4c15; bf2_world.h).
+              if (const auto header = obf2::net::bf2::readGhostHeader(*more); header && !sent.empty()) {
+                world.setGameTick(header->time + static_cast<std::uint32_t>(sent.size()));
+              }
               // The look chain's measure (`--look-at`): the server's angles, our
               // prediction before the replay and after it. Printed when they change.
               char line[256];
@@ -4207,6 +4245,7 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     float largestStep = 0.0f;
   };
   std::map<std::uint16_t, DrawStat> drawStats;
+  std::set<std::uint16_t> boxReported;
   if (remote != nullptr && level) {
     const std::string mode = remote->serverGameMode.empty() ? "gpm_cq" : remote->serverGameMode;
     const int size = remote->serverSize > 0 ? remote->serverSize : 16;
@@ -4343,8 +4382,9 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       remote->pump(1);
       while (remote->pump(0)) {
       }
-      // The clock other objects are drawn by runs with the frames (bf2_world.h).
-      remote->world.advanceClock(frameStep);
+      // The game tick runs whether we have a soldier or not; with one, the
+      // soldier's branch below runs the same ticks.
+      if (!remote->soldierPosition()) remote->predict(frameStep);
     }
 
     auto acquired = device->beginFrame();
@@ -4702,7 +4742,8 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           const bool soldier = object.netClass == obf2::net::bf2::GhostClass::Soldier;
           // Drawn where its track puts it now (ghost_track.h), not where the last
           // update left it.
-          const auto pose = remote->world.poseOf(id);
+          const auto pose =
+              remote->world.poseOf(id, remote->tick.pending / obf2::server::kTickTime);
           const obf2::Vec3f drawAt = pose ? pose->position : object.position;
           // The measure of smoothness: how the pose was made, and the largest
           // step between two frames for an object that is moving.
@@ -4760,6 +4801,18 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
                 continue;
               }
             }
+          }
+          // Every object that ends up a box says why, once: a box is a debt.
+          if (!soldier && boxReported.insert(id).second) {
+            const auto resolved = remoteResolved.find(id);
+            const int kind = resolved == remoteResolved.end()
+                                 ? -1
+                                 : static_cast<int>(resolved->second.placed.kind);
+            std::printf("  box: object %u, template %u, class %d, created at %.1f %.1f %.1f, "
+                        "now %.1f %.1f %.1f, placement kind %d\n",
+                        id, object.templateId, static_cast<int>(object.netClass),
+                        object.createdAt.x, object.createdAt.y, object.createdAt.z, drawAt.x,
+                        drawAt.y, drawAt.z, kind);
           }
           // Whose soldier this is the server knows: the team came from
           // `CreatePlayerEvent` and the object from `EnterVehicleEvent`. Zero means "not a player".
@@ -5370,6 +5423,10 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   for (auto& gpuMesh : gpuMeshes) renderer->release(gpuMesh);
   for (auto& gpuMesh : remoteMeshes) renderer->release(gpuMesh);
   std::printf("frames drawn: %d\n", frame);
+  if (remote != nullptr) {
+    std::printf("  game tick %u, newest packet tick %u at the end\n", remote->world.gameTick(),
+                remote->world.newestPacketTick());
+  }
   for (const auto& [id, stat] : drawStats) {
     if (stat.largestStep < 0.01f) continue;  // standing still: nothing to measure
     std::printf("  drawn object %u: interpolated %d, extrapolated %d, newest %d frames, "

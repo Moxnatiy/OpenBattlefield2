@@ -5,14 +5,11 @@
 
 namespace obf2::net::bf2 {
 
-void WorldView::advanceClock(float seconds) {
-  if (clockStarted_) clockMs_ += seconds * 1000.0f;
-}
-
-std::optional<GhostPose> WorldView::poseOf(std::uint16_t id) const {
+std::optional<GhostPose> WorldView::poseOf(std::uint16_t id, float fraction) const {
   const auto found = objects_.find(id);
   if (found == objects_.end()) return std::nullopt;
-  if (auto pose = found->second.track.poseAt(clockMs_)) return pose;
+  const float nowMs = (static_cast<float>(gameTick_) - 1.0f + fraction) * kGhostTickMs;
+  if (auto pose = found->second.track.poseAt(nowMs)) return pose;
   GhostPose still;
   still.position = found->second.position;
   still.bodyYaw = found->second.yaw.value_or(0.0f);
@@ -99,10 +96,7 @@ void WorldView::feed(std::span<const std::byte> packet) {
   // The packet's server time: the header's tick, as 0x5b9ee0 turns it into time.
   const auto header = readGhostHeader(packet);
   const float packetMs = header ? static_cast<float>(header->time) * kGhostTickMs : 0.0f;
-  if (header && (!clockStarted_ || clockMs_ < packetMs)) {
-    clockMs_ = packetMs;
-    clockStarted_ = true;
-  }
+  if (header) newestPacketTick_ = std::max(newestPacketTick_, header->time);
 
   const auto known = [this](std::uint16_t id) { return classOf(id); };
   for (const GhostRecord& record : readGhostRecords(packet, compressionReference_, known)) {
