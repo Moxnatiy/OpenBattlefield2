@@ -1504,6 +1504,7 @@ struct RemoteWorld {
                                                   packet->accept->connectionId));
     std::printf("  acknowledgement sent\n");
     id = packet->accept->connectionId;
+    world.setOwnConnection(static_cast<int>(id));
     return true;
   }
 
@@ -1963,13 +1964,12 @@ struct RemoteWorld {
               playerTeam[event.player->id] = static_cast<int>(event.player->team);
               std::printf("  player: %s (id %u, team %u)\n",
                           event.player->name.c_str(), event.player->id, event.player->team);
-              // We learn our own player number by name: the server assembles it as
-              // "clan tag + space + name", so we compare by the tail rather than by the
-              // whole string.
-              const std::string& name = event.player->name;
-              const std::string& want = args.playerName;
-              if (ourPlayer < 0 && !want.empty() && name.size() >= want.size() &&
-                  name.compare(name.size() - want.size(), want.size(), want) == 0) {
+              // We are the player whose id is our connection id (bf2_world.h,
+              // setOwnConnection). It used to be the name's tail, and a stale session
+              // of ours kept "OpenBF2" while this one became "OpenBF2_0": we took the
+              // stale id, and ignored our own `NEPlayerSpawned` — the "pressed DONE
+              // quickly and did not appear".
+              if (ourPlayer < 0 && static_cast<int>(event.player->id) == static_cast<int>(id)) {
                 ourPlayer = static_cast<int>(event.player->id);
                 ourTeam = static_cast<int>(event.player->team);
                 std::printf("  that is us: id %d, team %d\n", ourPlayer, ourTeam);
@@ -5099,9 +5099,17 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           const auto& input = frameInput;
           // --click --mouse gives one synthetic click: that is how the screen is
           // checked by a screenshot, hands-free.
-          const bool clicked = input.clicked || (args.click && frame == 1);
-          const float clickX = args.click ? args.mouseX : input.mouseX;
-          const float clickY = args.click ? args.mouseY : input.mouseY;
+          bool clicked = input.clicked || (args.click && frame == 1);
+          float clickX = args.click ? args.mouseX : input.mouseX;
+          float clickY = args.click ? args.mouseY : input.mouseY;
+          // `--click-at` reaches the spawn screen too: "DONE pressed straight after
+          // joining" has to be repeatable without a hand on the mouse.
+          for (const auto& scheduled : args.clicks) {
+            if (frame != scheduled.frame) continue;
+            clicked = true;
+            clickX = scheduled.x;
+            clickY = scheduled.y;
+          }
           if (clicked) {
             // The spawn circles first: the data has no nodes for them, the map catches
             // the mouse itself. The game takes the selected one's texture from a

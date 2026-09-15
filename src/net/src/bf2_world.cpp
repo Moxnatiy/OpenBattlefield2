@@ -45,11 +45,15 @@ void WorldView::feed(std::span<const std::byte> packet) {
       RemotePlayer& player = players_[event.player->id];
       player.name = event.player->name;
       player.team = static_cast<int>(event.player->team);
-      // We recognise ourselves by the name's tail: the server assembles it as
-      // "clan tag, space, name", and on a server without ranking the tag is empty.
+      // We are the player whose id is our connection's (setOwnConnection). By name
+      // only when that is not known — a recorded capture: a name is not unique,
+      // a stale session of ours keeps it and the new one is renamed "OpenBF2_0".
       const std::string& name = event.player->name;
-      if (ownPlayer_ < 0 && !ownName_.empty() && name.size() >= ownName_.size() &&
-          name.compare(name.size() - ownName_.size(), ownName_.size(), ownName_) == 0) {
+      const bool byConnection =
+          ownConnection_ >= 0 && static_cast<int>(event.player->id) == ownConnection_;
+      const bool byName = ownConnection_ < 0 && !ownName_.empty() && name.size() >= ownName_.size() &&
+                          name.compare(name.size() - ownName_.size(), ownName_.size(), ownName_) == 0;
+      if (ownPlayer_ < 0 && (byConnection || byName)) {
         ownPlayer_ = static_cast<int>(event.player->id);
         ownTeam_ = player.team;
       }

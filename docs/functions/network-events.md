@@ -1514,3 +1514,23 @@ id in its four bytes. Only events naming our player id are ours.
 Still not found: once in a while a ghost header's tick reads as garbage
 (4067420318) — not in a 563-packet capture, so rare; the packet it comes from is
 not identified.
+
+## "Pressed DONE quickly and did not appear": we took someone else's id
+
+Reproduced with `--click-at <frame>:727:546` (it now reaches the spawn screen
+too): 2 of 4 runs did not spawn. In both, the server listed two players of ours —
+`OpenBF2` (id 2), the previous run's session not yet timed out, and `OpenBF2_0`
+(id 0), this one, renamed because the name was taken. We found ourselves by the
+name's tail, took id 2, and ignored `NEPlayerSpawned = 0` — which arrived right
+after our `NESelectSpawnGroup`: the server had spawned us.
+
+Our player id is our connection's: `ConnectAccept`'s connection id equalled the
+player id in every one of seven runs (0, 2, 3), the renamed one included. After
+the change both failing cases spawn.
+
+While looking, `ServerGameLogic::uPlayingSpawning` (Linux 0x4ab5a0) turned out to
+hold a third check the notes above missed: when the group is missing or
+`group->vtable+0x58(isAI)` refuses, the server clears the player's group
+(`setSpawnGroup(0)`, 0x4ab66a) and sends that player `PostRemoteEvent(6, 6)` —
+`NESelectSpawnGroup` without data, "choose again" (0x4ab696). We do nothing with
+it yet; it did not occur in these runs.

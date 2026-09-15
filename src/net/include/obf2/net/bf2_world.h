@@ -75,6 +75,10 @@ class WorldView {
   // The name we recognise ourselves by. The server assembles it as "clan tag,
   // space, name", so we compare by the tail.
   void setOwnName(std::string name) { ownName_ = std::move(name); }
+  // The connection id `ConnectAccept` gave us. A human player's id is that id:
+  // measured on the live server over seven runs (connection 0/2/3 → player
+  // 0/2/3), including one where a stale session of ours held the name.
+  void setOwnConnection(int connection) { ownConnection_ = connection; }
   void setPlayerSpawned(bool spawned) { playerSpawned_ = spawned; }
 
   int ownPlayer() const { return ownPlayer_; }
@@ -122,6 +126,7 @@ class WorldView {
   bool looksSane(const Vec3f& at, bool soldier) const;
 
   std::string ownName_;
+  int ownConnection_ = -1;
   int ownPlayer_ = -1;
   int ownTeam_ = 0;
   std::uint16_t ownObject_ = 0;
