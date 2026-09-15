@@ -50,6 +50,7 @@
 #include "obf2/server/physics.h"
 #include "obf2/server/soldier_look.h"
 #include "obf2/server/soldier_move.h"
+#include "obf2/server/soldier_sprint.h"
 #include <set>
 
 #include "obf2/net/bf2_events.h"
@@ -171,10 +172,12 @@ struct Args {
     int frame;
     int frames;
     float dx, dy;
+    int sprint = 0;  // --move-at only
   };
   std::vector<ScheduledLook> looks;
-  // --move-at <frame>:<frames>:<forward>:<right> — the movement keys held over a
-  // range, as -1..1. The same idea for running: where the server puts us after it.
+  // --move-at <frame>:<frames>:<forward>:<right>[:<sprint>] — the movement keys held
+  // over a range, as -1..1, and sprint held when the last number is 1. The same idea
+  // for running: where the server puts us after it.
   std::vector<ScheduledLook> moves;
   // --trace-frames <frame>:<frames> — per frame, the camera and every other
   // soldier drawn: the measure for "the camera jerks, the box hops".
@@ -276,8 +279,10 @@ Args parseArgs(int argc, char** argv) {
     }
     else if (flag == "--move-at" && i + 1 < argc) {
       Args::ScheduledLook move{};
-      if (std::sscanf(argv[++i], "%d:%d:%f:%f", &move.frame, &move.frames, &move.dx, &move.dy) != 4) {
-        std::fprintf(stderr, "--move-at expects <frame>:<frames>:<forward>:<right>, not %s\n", argv[i]);
+      if (std::sscanf(argv[++i], "%d:%d:%f:%f:%d", &move.frame, &move.frames, &move.dx, &move.dy,
+                      &move.sprint) < 4) {
+        std::fprintf(stderr, "--move-at expects <frame>:<frames>:<forward>:<right>[:<sprint>], not %s\n",
+                     argv[i]);
         continue;
       }
       args.moves.push_back(move);
@@ -1272,17 +1277,43 @@ struct RemoteWorld {
     // look (body plus aim offset) two states back — strafing with the aim at -40,
     // the heading is body + aim - 90 of two ticks before, not body - 90.
     const float matrixYaw = look.yaw();
-    matrixYawAt[number % matrixYawAt.size()] = matrixYaw;
+    // The input reads the sprint as the previous tick's update left it; this
+    // action's sprint key reaches the sprint only after (below). Measured on the
+    // live server: the tick whose action lets go of sprint and presses strafe still
+    // has its strafe dropped, and the state after it reports the flag down.
+    const bool sprinting = sprint.sprinting;
+    inputAt[number % inputAt.size()] = {matrixYaw, sprinting};
     obf2::server::turnSoldier(
         look, obf2::net::bf2::axisFromWire(played.axes[obf2::net::bf2::kAxisMouseX]),
         obf2::net::bf2::axisFromWire(played.axes[obf2::net::bf2::kAxisMouseY]),
         obf2::net::bf2::axisFromWire(played.axes[obf2::net::bf2::kAxisThrottle]), physics);
-    if (bodyReady && terrain != nullptr) stepBody(played, matrixYaw);
+    if (bodyReady && terrain != nullptr) stepBody(played, matrixYaw, sprinting);
+
+    // The sprint message (`FUN_005c0460`): while the player's sprint is on, 0x2a on
+    // the tick it came on, 0x29 after. The player's sprint is the key with the
+    // throttle forward — measured on the live server (shift and strafe alone never
+    // raise the flag, letting go of forward drops it with the smoothed axis still
+    // at 0.979); the code that sets it (`Player::setSprintState`) is not found.
+    const bool sprintKey = sprintInputOf(played);
+    if (sprintKey) obf2::server::sprintMessage(sprint, sprintKeyLastTick);
+    sprintKeyLastTick = sprintKey;
+    // Not modelled: the blocking argument and the recharge delay after a jump.
+    obf2::server::updateSprint(sprint, false, 0.0f, obf2::server::kTickTime);
   }
-  // The body's yaw each action's input read its movement from, by action tick —
-  // for the velocity request a correction has to rebuild (`reconcile`). As many as
-  // `sent` holds.
-  std::array<float, 256> matrixYawAt{};
+  // What each action's input read, by action tick — for the velocity request a
+  // correction has to rebuild (`reconcile`). As many as `sent` holds.
+  struct InputRecord {
+    float matrixYaw = 0.0f;
+    bool sprinting = false;
+  };
+  std::array<InputRecord, 256> inputAt{};
+  obf2::server::SprintState sprint;
+  bool sprintKeyLastTick = false;
+
+  static bool sprintInputOf(const obf2::net::bf2::PlayerAction& action) {
+    return (action.buttons & obf2::net::bf2::kButtonSprint) != 0 &&
+           action.axes[obf2::net::bf2::kAxisThrottle] > 0;
+  }
 
   // The facing of a body yaw in degrees: a zero angle looks along +Z — the same as
   // the server computes, so "right" is the angle plus 90 degrees.
@@ -1294,9 +1325,9 @@ struct RemoteWorld {
     const float radians = degrees * (3.14159265358979323846f / 180.0f);
     return {std::cos(radians), 0.0f, -std::sin(radians)};
   }
-  float speedOf(const obf2::net::bf2::PlayerAction& action) const {
-    return (action.buttons & obf2::net::bf2::kButtonSprint) != 0 ? physics.sprintSpeed : maxSpeed;
-  }
+  // The speed state (`Soldier::updateSpeedState`, Linux 0x54e8d0): standing, a
+  // sprinting soldier takes `phy-soldier-sprint-speed`, the rest run.
+  float speedOf(bool sprinting) const { return sprinting ? physics.sprintSpeed : maxSpeed; }
 
   // The server's state of our soldier, and the actions it has not played yet on
   // top of it — `FUN_004d4b30`, the prediction component the controlled-object
@@ -1333,6 +1364,10 @@ struct RemoteWorld {
     if (state.aimYaw) look.aimYaw = *state.aimYaw;
     if (state.angle8) look.turnLeft = *state.angle8;
     if (state.pitch) look.pitch = *state.pitch;
+    // The sprint and its stamina (0x4000). The flag is the one the next tick's
+    // input reads.
+    if (state.flag4000) sprint.sprinting = *state.flag4000;
+    if (state.value4000) sprint.stamina = *state.value4000;
 
     while (!sent.empty() && static_cast<std::int64_t>(sent.front().first) < counter) {
       sent.pop_front();
@@ -1349,10 +1384,12 @@ struct RemoteWorld {
     // established.
     if (!sent.empty()) {
       const auto& [headNumber, head] = sent.front();
-      const float matrixYaw = matrixYawAt[headNumber % matrixYawAt.size()];
+      const InputRecord& input = inputAt[headNumber % inputAt.size()];
       body.request = obf2::server::soldierAxesDirection(body.forwardAxis, body.strafeAxis,
-                                                        facingOf(matrixYaw), rightOf(matrixYaw)) *
-                     (speedOf(head) * physics.speedFactor);
+                                                        facingOf(input.matrixYaw),
+                                                        rightOf(input.matrixYaw)) *
+                     (speedOf(input.sprinting) * physics.speedFactor);
+      sprintKeyLastTick = sprintInputOf(head);
       sent.pop_front();
     }
     for (const auto& [number, played] : sent) playAction(number, played);
@@ -1371,28 +1408,32 @@ struct RemoteWorld {
     const float moved = obf2::length(replayed - predicted);
     if ((std::abs(yawJump) > 0.5f || moved > 0.05f) && ++bigCorrections <= 30) {
       std::printf("  big correction: counter %d, yaw %+.2f, moved %.3f m, replayed %zu; "
-                  "server body %.2f aim %.2f 0x8 %.2f, axes %.3f %.3f\n",
+                  "server body %.2f aim %.2f 0x8 %.2f, axes %.3f %.3f, sprint %d stamina %.3f\n",
                   counter, yawJump, moved, sent.size(), state.bodyYaw.value_or(-999.0f),
                   state.aimYaw.value_or(-999.0f), state.angle8.value_or(-999.0f),
-                  state.value400.value_or(-99.0f), state.value800.value_or(-99.0f));
+                  state.value400.value_or(-99.0f), state.value800.value_or(-99.0f),
+                  state.flag4000.value_or(false) ? 1 : 0, state.value4000.value_or(-1.0f));
     }
   }
   int bigCorrections = 0;
   float yawCorrectionMax = 0.0f;
   float yawCorrectionSum = 0.0f;
 
-  void stepBody(const obf2::net::bf2::PlayerAction& action, float matrixYaw) {
+  void stepBody(const obf2::net::bf2::PlayerAction& action, float matrixYaw, bool sprinting) {
     // The axes as the server reads them back from the wire (0x5bc6a0). A soldier
-    // strafes with the yaw axis: the engine has no separate strafe axis.
+    // strafes with the yaw axis: the engine has no separate strafe axis. A
+    // sprinting soldier does not strafe: `updateSoldierSpeed` zeroes that input
+    // when `isSprinting` (0x5a7c50's first test; Linux 0x54ec75).
     const float forward = obf2::net::bf2::axisFromWire(action.axes[obf2::net::bf2::kAxisThrottle]);
-    const float strafe = obf2::net::bf2::axisFromWire(action.axes[obf2::net::bf2::kAxisYaw]);
+    const float strafe =
+        sprinting ? 0.0f : obf2::net::bf2::axisFromWire(action.axes[obf2::net::bf2::kAxisYaw]);
     // `Soldier::updateSoldierSpeed` (0x5a7c50): the axes are smoothed, the facing
     // is not.
     const obf2::Vec3f wish = obf2::server::soldierMoveDirection(
         body, forward, strafe, facingOf(matrixYaw), rightOf(matrixYaw), physics);
 
     const bool jump = (action.buttons & obf2::net::bf2::kButtonAction) != 0;
-    const float speed = speedOf(action);
+    const float speed = speedOf(sprinting);
 
     // The movement goes through the same function as on the server: ground, water,
     // walls. While the client had its own shortened copy, it knew only the ground's
@@ -4489,6 +4530,7 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       if (frame < move.frame || frame >= move.frame + move.frames) continue;
       frameInput.moveForward = move.dx;
       frameInput.moveRight = move.dy;
+      frameInput.sprint = move.sprint != 0;
     }
     // The server sends pings and waits for answers: staying silent frame after frame
     // gets us disconnected. So the connection runs together with the picture, and we

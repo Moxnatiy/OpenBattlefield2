@@ -26,6 +26,7 @@ obf2_add_test(test_frustum obf2_core)
 obf2_add_test(test_server obf2_server)
 obf2_add_test(test_soldier_move obf2_server)
 obf2_add_test(test_soldier_look obf2_server)
+obf2_add_test(test_soldier_sprint obf2_server)
 obf2_add_test(test_meme obf2_meme obf2_vfs)
 # The test reads a real `Menu/Ingame` from the user's installation; without one
 # it says so and passes.

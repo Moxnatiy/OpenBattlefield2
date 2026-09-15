@@ -3,6 +3,7 @@ add_library(obf2_server
   src/game_client.cpp
   src/physics.cpp
   src/soldier_look.cpp
+  src/soldier_sprint.cpp
   src/soldier_move.cpp
   src/collision_world.cpp
 )

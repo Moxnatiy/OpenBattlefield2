@@ -203,3 +203,83 @@ Before this, the prediction smoothed the world velocity and turned it with the
 look on the same tick. On the live coop server a run while spinning at 12 degrees
 a tick drew 30 corrections of 5–17 cm in 20 seconds; with the order above, none
 (`--move-at 900:600:1:0 --look-at 900:600:60:0`: "divergence on average 0.00 m").
+
+## Sprint
+
+**A sprinting soldier does not strafe.** `Soldier::updateSoldierSpeed` begins
+with `if (isSprinting || +0x2d4) strafe = 0` (`BF2.exe` 0x5a7c50, the interface at
+`+0x154`, slot 0xf8; Linux 0x54ec75, slot 0x468 = `getIsSprinting`, the byte
+`+0x516`). The speed comes from the table at 0x9ec428, indexed by the speed state
+`+0x2d8` (`Soldier::updateSpeedState`, Linux 0x54e8d0: standing → sprint 4 when
+sprinting, walk 2 or run 3 otherwise; crouch 1; prone 0; swimming → 6 or 5):
+
+| index | variable | registered | default |
+|---|---|---|---|
+| 0 | `phy-soldier-crawl-speed` | 0x853c40 | 0.8 |
+| 1 | `phy-soldier-crouch-speed` | 0x853c20 | 2.0 |
+| 2 | `phy-soldier-walk-speed` | 0x853c00 | 1.5 |
+| 3 | `phy-soldier-run-speed` | 0x853be0 | 3.9 |
+| 4 | `phy-soldier-sprint-speed` | 0x853bc0 | 7.0 |
+| 5 | `phy-soldier-swim-speed` | 0x853c60 | 2.1 |
+| 6 | `phy-soldier-swimcrawl-speed` | 0x853c80 | 3.645 |
+
+(copied into the table at 0x8547b0). A change of pose ramps the speed from the old
+state's to the new one's over `pose-<from>-<to>` seconds (`executePoseChange`,
+Linux 0x54eb70; the 7×7 table at 0x9ec468 / 0x108e920; defaults at 0x853d20..0x8541a0:
+0.25 between walk, run, sprint and crouch, 0.5 to or from crawl and swimming).
+A sprint starting or ending is not a pose change and switches at once — measured:
+3.78 → 6.79 between two states.
+
+**The sprint itself** is `SprintState` (Linux: constructor 0x43de70, `setConstants`
+0x43e0e0, `handleTMSprint` 0x43deb0, `handleUpdate` 0x43ded0):
+
+| offset | field |
+|---|---|
+| +0x0 | dissipation time — `ObjectTemplate.SprintDissipationTime` (light kits 10, heavy 8) |
+| +0x4 | recover time — `SprintRecoverTime` (light 17, heavy 20) |
+| +0x8 | limit — `SprintLimit` (0.05) |
+| +0xc | drain scale, 1.0; halved on a no-vehicles server (0x43e002) |
+| +0x10 | stamina, 1.0 |
+| +0x14 | wants: set by a message, cleared by every update |
+| +0x16 | sprinting |
+
+```
+handleTMSprint(goOnOnly):  wants = 1; if goOnOnly and not sprinting: wants = 0
+handleUpdate(blocked, rechargeDelay, step):
+  blocked also when dissipation time <= float epsilon (0xb2bfb0)
+  sprinting:  stamina = max(0, stamina - scale * step / dissipation)
+              ends unless wants and stamina > 0 and not blocked
+  otherwise:  recover <= 0 -> stamina = 1
+              rechargeDelay <= 0 -> stamina = min(1, stamina + step / recover)
+              wants and stamina >= limit and not blocked -> starts
+  wants = 0
+```
+
+The messages come from the tick (`BF2.exe` `FUN_005c0460`): for every player whose
+sprint is on (player slot 0x1b8, Linux `Player::getSprintState`, `+0x1e3`), 0x2a
+when it was off the tick before (slot 0x1c0, `getSprintStateLastTick`, `+0x1e4`),
+0x29 otherwise; `Soldier::handleMessage` (0x5a7570) passes both to
+`handleTMSprint(message == 0x29)`. The code that sets the player's sprint state is
+**not found**. Measured on the live server, it is the sprint key with the throttle
+forward: shift with strafe alone never raises the flag, and letting go of forward
+drops it while the smoothed forward axis still reads 0.979.
+
+The soldier state's 0x4000 carries the stamina and the flag. What the states show:
+
+* the action that lets go of sprint and presses strafe has its strafe dropped; the
+  state after it has the flag down and the strafe axis at its first step — so a
+  tick's input reads the flag the previous update left, and the update after the
+  input takes this tick's action;
+* the stamina drains 0.992 → 0.661 over 101 ticks (1/300, dissipation 10) and
+  recovers 0.661 → 0.732 over 37 (≈ 1/510, recover 17).
+
+Not modelled: `handleUpdate`'s blocking argument (Linux 0x54b655: `isWalking` and a
+field at `+0x50`), the recharge delay after a jump (`sprint-recharge-delay-after-jump`),
+`SprintLossAtJump`, the kit's own constants. Unexplained: one state at the start of a
+sprint reports 5.53 m/s, between run and sprint; a full stop out of a sprint
+decelerates slower than the axes give (5.24, 3.70 m/s against 2.27, 1.36).
+
+Before this, the prediction treated the shift key as sprint and kept the strafe.
+Running forward with sprint while pressing A or D, the server pulled us back by
+6–24 cm on every state. With `SprintState`: W+shift held, A/D toggled ten times,
+the mouse turning — no correction beyond the spawn.

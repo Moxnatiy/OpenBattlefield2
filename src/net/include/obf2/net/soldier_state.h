@@ -101,8 +101,13 @@ struct SoldierState {
   std::optional<float> value800;  // 0x800, ±50 — purpose not established
   bool bitD = false;              // always — purpose not established
 
-  std::optional<float> value4000;  // 0x4000, 0..1 — purpose not established
-  std::optional<bool> flag4000;    // 0x4000, Controlled only
+  // 0x4000: the sprint's stamina and, Controlled only, whether it sprints
+  // (`SprintState` +0x10 and +0x16, soldier_sprint.h). Measured on the live server:
+  // the flag rises with shift and forward held and falls when either is let go; the
+  // value drains by 1/300 a tick while it is up, as a light kit's
+  // `SprintDissipationTime 10` gives.
+  std::optional<float> value4000;
+  std::optional<bool> flag4000;
 
   std::optional<int> weaponIndex;  // 0x1000
   std::optional<std::uint32_t> value2000;   // 0x2000: 2 bits
