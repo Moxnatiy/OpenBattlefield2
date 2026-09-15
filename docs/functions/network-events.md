@@ -1466,3 +1466,27 @@ The rules, each found by what it fixed:
 
 Not covered: the level's own templates (control points, 5720/5721 on Karkand) and
 where `Common_server.zip` and `Booster_server.zip` fall relative to them.
+
+## Between ticks: `BF2FrameInterpolator` and the camera
+
+The client's frame, `FUN_0040ca80`:
+
+1. the ticks due this frame (`FUN_006a41c0` of the timer);
+2. when there are any, `storeObjectStates(ticks)` (`FUN_0045bbb0`, the path
+   `…\Main\BF2FrameInterpolator.cpp` in its checks) stores every visible object's
+   transform and the tick count (`+4`) **before** the ticks run
+   (`FUN_0045b1f0` per object tree);
+3. the ticks (`DAT_0099e348 +0x2c(ticks, 1/30)`);
+4. before drawing, `interpolateObjectStates` (`FUN_0045c190(now, tick start)`):
+   `f = (now − tick start) / (ticks × 1/30)`, clamped to −0.1..1.1 (0xbdcccccd,
+   0x3f8ccccd), each stored object blended by `FUN_0045bfc0(object, f)`; the
+   soldier's camera (class 0x9493) is not blended — it gets this frame's mouse
+   movement from the input device (+0x38) through its component 0xc4d7 (`+0x94`);
+5. draw, then `FUN_0045c4b0` restores the states.
+
+Measured with `--trace-frames` while turning and running: before, the look and the
+eye stood still for 3–5 frames and jumped each tick; with the body blended by `f`
+and the unsent mouse added to the look every frame, the yaw grows by exactly 0.5°
+a frame (5 px × 0.02 × 5) and the eye moves every frame. Steps of 0.5–1° remain
+where a server state corrects the look; where they come from (the mouse offset at
+`+0x244`, which the state does not carry) is not established.

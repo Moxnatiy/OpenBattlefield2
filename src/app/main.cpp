@@ -175,6 +175,10 @@ struct Args {
   // --move-at <frame>:<frames>:<forward>:<right> — the movement keys held over a
   // range, as -1..1. The same idea for running: where the server puts us after it.
   std::vector<ScheduledLook> moves;
+  // --trace-frames <frame>:<frames> — per frame, the camera and every other
+  // soldier drawn: the measure for "the camera jerks, the box hops".
+  int traceFrom = -1;
+  int traceFrames = 0;
   // --hud-screen <group>: show a screen normally visible only while a key is
   // held. Needed for screenshots and for checking by eye.
   std::string hudScreenName;
@@ -257,6 +261,9 @@ Args parseArgs(int argc, char** argv) {
         continue;
       }
       args.scheduledLines.push_back({std::atoi(text.substr(0, colon).c_str()), text.substr(colon + 1)});
+    }
+    else if (flag == "--trace-frames" && i + 1 < argc) {
+      std::sscanf(argv[++i], "%d:%d", &args.traceFrom, &args.traceFrames);
     }
     else if (flag == "--look-at" && i + 1 < argc) {
       Args::ScheduledLook look{};
@@ -1163,6 +1170,33 @@ struct RemoteWorld {
   // tick (`FUN_004cc400`), kept that backlog for the rest of the life.
   int tickAllowance = 1;
 
+  // What a frame shows between ticks — `BF2FrameInterpolator`. The frame loop
+  // (`FUN_0040ca80`) stores the objects' state before it runs the frame's ticks
+  // (`storeObjectStates`, 0x45bbb0, with the tick count at `+4`), and before
+  // drawing blends each stored state toward the current one (`FUN_0045c190`):
+  // `f = (now - tick start) / (ticks / 30)`, clamped to -0.1..1.1 (0xbdcccccd,
+  // 0x3f8ccccd), per object by `FUN_0045bfc0`. The soldier's camera is not
+  // blended: `FUN_0045c190` hands it the input device's mouse movement of this
+  // frame (component 0xc4d7, `+0x94`) — so the look turns every frame.
+  obf2::Vec3f drawFrom;
+  int drawTicks = 0;
+
+  float drawFraction() const {
+    if (drawTicks <= 0) return 1.0f;
+    const float f = tick.pending / (static_cast<float>(drawTicks) * obf2::server::kTickTime);
+    return std::max(-0.1f, std::min(1.1f, f));
+  }
+  std::optional<obf2::Vec3f> drawnSoldierPosition() const {
+    const auto at = soldierPosition();
+    if (!at || !bodyReady || drawTicks <= 0) return at;
+    return drawFrom + (body.position - drawFrom) * drawFraction();
+  }
+  // The look this frame: the last tick's plus the mouse not yet in an action.
+  float cameraYaw() const { return yaw + pendingLookX * physics.lookFactorX; }
+  float cameraPitch() const {
+    return std::max(-89.0f, std::min(89.0f, pitch - pendingLookY * physics.lookFactorY));
+  }
+
   void predict(float step) {
     int ticks = tick.take(step, 1 << 20);
     if (ticks > tickAllowance) {
@@ -1170,6 +1204,10 @@ struct RemoteWorld {
       tickAllowance = 1;
     } else if (tickAllowance < 3) {
       ++tickAllowance;
+    }
+    if (ticks > 0) {
+      drawFrom = body.position;
+      drawTicks = ticks;
     }
     for (int i = 0; i < ticks; ++i) {
       obf2::net::bf2::PlayerAction next = pendingKeys;
@@ -4503,15 +4541,22 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
         // And we compute our own movement at once: waiting for the server's
         // correction would mean jerks a few tenths of a second apart.
         remote->predict(frameStep);
-        yaw = remote->yaw;
-        pitch = remote->pitch;
-        eye = *remote->soldierPosition();
+        // Drawn between ticks, as `BF2FrameInterpolator` does (RemoteWorld).
+        yaw = remote->cameraYaw();
+        pitch = remote->cameraPitch();
+        eye = *remote->drawnSoldierPosition();
         eye.y += 1.7f;
       }
 
       constexpr float kToRadians = 3.14159265358979323846f / 180.0f;
       const float yawRadians = yaw * kToRadians;
       const float pitchRadians = pitch * kToRadians;
+      if (remote != nullptr && frame >= args.traceFrom && frame < args.traceFrom + args.traceFrames) {
+        std::printf("  trace frame %d: step %.4f, eye %.4f %.4f %.4f, yaw %.3f pitch %.3f, game tick %u "
+                    "fraction %.3f, unanswered %zu\n",
+                    frame, frameStep, eye.x, eye.y, eye.z, yaw, pitch, remote->world.gameTick(),
+                    remote->tick.pending / obf2::server::kTickTime, remote->sent.size());
+      }
       // A zero angle looks along +Z — the same as the server computes.
       lookTarget = eye + obf2::Vec3f{std::sin(yawRadians) * std::cos(pitchRadians),
                                      std::sin(pitchRadians),
@@ -4843,6 +4888,16 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           obf2::Mat4 place = obf2::translation(base);
           if (soldier && pose) {
             place = place * obf2::rotationY(pose->bodyYaw * 3.14159265f / 180.0f);
+          }
+          if (soldier && pose && frame >= args.traceFrom &&
+              frame < args.traceFrom + args.traceFrames) {
+            const auto* newest = object.track.newest();
+            std::printf("    soldier %u: at %.4f %.4f %.4f yaw %.3f mode %d, samples %zu, newest "
+                        "%.4f %.4f %.4f at tick %.1f\n",
+                        id, base.x, base.y, base.z, pose->bodyYaw, static_cast<int>(pose->mode),
+                        object.track.count(), newest ? newest->position.x : 0.0f,
+                        newest ? newest->position.y : 0.0f, newest ? newest->position.z : 0.0f,
+                        newest ? newest->timeMs / obf2::net::bf2::kGhostTickMs : 0.0f);
           }
           withOthers.push_back(obf2::gfx::MeshRenderer::DrawItem{&boxes[which], place});
         }
