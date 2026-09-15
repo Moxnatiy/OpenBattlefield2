@@ -243,16 +243,18 @@ std::optional<Event> readEvent(BitReader& reader) {
     if (!category || !number || !delay || !length) return std::nullopt;
     remote.category = *category;
     remote.number = *number;
-    if (*length == 4) {
+    remote.data.reserve(*length);
+    for (std::uint32_t i = 0; i < *length; ++i) {
+      const auto byte = reader.readBits(8);
+      if (!byte) return std::nullopt;
+      remote.data.push_back(static_cast<std::uint8_t>(*byte));
+    }
+    // The events that carry a number carry it in the first four bytes, whatever
+    // follows (NEPlayerDead has eight, see RemoteEvent).
+    if (remote.data.size() >= 4) {
       std::uint32_t raw = 0;
-      for (int i = 0; i < 4; ++i) {
-        const auto byte = reader.readBits(8);
-        if (!byte) return std::nullopt;
-        raw |= *byte << (i * 8);
-      }
+      for (int i = 0; i < 4; ++i) raw |= static_cast<std::uint32_t>(remote.data[i]) << (i * 8);
       remote.value = static_cast<std::int32_t>(raw);
-    } else if (!reader.skipBits(*length * 8)) {
-      return std::nullopt;
     }
     event.remote = remote;
     return event;

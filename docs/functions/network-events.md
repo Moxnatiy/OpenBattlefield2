@@ -1490,3 +1490,27 @@ and the unsent mouse added to the look every frame, the yaw grows by exactly 0.5
 a frame (5 px × 0.02 × 5) and the eye moves every frame. Steps of 0.5–1° remain
 where a server state corrects the look; where they come from (the mouse offset at
 `+0x244`, which the state does not carry) is not established.
+
+## Two replay details and whose death it is
+
+**The counter's own action is dropped too.** `FUN_004d4b30` calls `FUN_005bc530`
+(drops actions older than the counter) and then `FUN_004cbf60` on the same buffer
+(0x4d4bce), which takes the head off as well. The counter is the tick of the
+action the server has **played**: `FUN_005b7390` writes `+0x20e4` from the
+player's action buffer `+0x10`, which `FUN_004cbf60` sets when it pops an action
+to play (`FUN_004cc400`); a counter already sent goes as −1 (against `+0x20e8`).
+Keeping the counter's action played it twice: on the live server a fast turn
+(`--look-at …:25:0`, 2.5° a frame) left 4–9 actions unanswered and corrected the
+look by degrees; dropping it, 1 action is unanswered and the replay lands on the
+prediction exactly (`look: … ours X -> X`), 482 corrections at 0.01 m.
+
+**`NEPlayerSpawned` and `NEPlayerDead` go to every client.** On a co-op server
+with bots, every bot's death reset our body. `GameLogic::killPlayer` (Linux server
+0x47a6b0) posts `PostRemoteEvent(6, 10, data, 8)` (0x47a91c): +0 the player's
+`vtable+0xa8` (the id — bots 244..255 on the live server, ours 2), +4 a byte
+from the third argument (purpose not established). `NEPlayerSpawned` carries the
+id in its four bytes. Only events naming our player id are ours.
+
+Still not found: once in a while a ghost header's tick reads as garbage
+(4067420318) — not in a 563-packet capture, so rare; the packet it comes from is
+not identified.

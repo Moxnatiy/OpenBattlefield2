@@ -1279,7 +1279,14 @@ struct RemoteWorld {
   //   the networkable has already set the state (0x62d4e0, type 3);
   //   `FUN_005bc530(counter)` drops every action older than the counter and keeps
   //   the one equal to it;
+  //   `FUN_004cbf60` on the same buffer (0x4d4bce) takes that one off too — the
+  //   counter is the tick of the action the server has **played**: the server
+  //   writes it from its player's action buffer `+0x10` (`FUN_005b7390`), which
+  //   0x4cbf60 sets to the tick of the action it pops to play (`FUN_004cc400`);
   //   every action left is played again, with the same tick.
+  //
+  // We used to keep the counter's action and play it a second time: on a fast
+  // turn that is one large mouse movement too many, taken back by the next state.
   void reconcile(const obf2::net::bf2::SoldierState& state, std::int32_t counter) {
     if (!state.position || !bodyReady) return;
     const obf2::Vec3f predicted = body.position;
@@ -1299,6 +1306,10 @@ struct RemoteWorld {
     while (!sent.empty() && static_cast<std::int64_t>(sent.front().first) < counter) {
       sent.pop_front();
     }
+    // 0x4d4bce: the head goes whatever its tick. A counter the server already
+    // sent comes as -1 (`FUN_005b7390` against `+0x20e8`), and then this is the
+    // one action it took off its buffer.
+    if (!sent.empty()) sent.pop_front();
     for (const auto& [number, played] : sent) playAction(played);
 
     // The measure: how far the replayed body lands from where the prediction had
@@ -1866,6 +1877,14 @@ struct RemoteWorld {
               if (remote.category == obf2::net::bf2::kNetworkCategory) {
                 std::printf("  server: event %u%s\n", remote.number,
                             remote.value ? (" = " + std::to_string(*remote.value)).c_str() : "");
+                // Both events go to every client and name the player they are about
+                // (RemoteEvent in bf2_events.h). Another player's are not ours.
+                const bool aboutUs =
+                    !remote.value || ourPlayer < 0 || *remote.value == ourPlayer;
+                if (!aboutUs && (remote.number == obf2::net::bf2::kNetPlayerSpawned ||
+                                 remote.number == obf2::net::bf2::kNetPlayerDead)) {
+                  continue;
+                }
                 if (remote.number == obf2::net::bf2::kNetPlayerSpawned) {
                   playerSpawned = true;
                   std::printf("  THE PLAYER SPAWNED\n");

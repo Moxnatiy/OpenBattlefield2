@@ -214,10 +214,19 @@ struct EnterVehicle {
 
 // A network event the server raised on our side (`PostRemoteEvent`, type 11).
 // Those that carry a value carry it in four bytes.
+//
+// They go to every client, not only the one they are about. `NEPlayerSpawned`
+// (9) carries the player's id; `NEPlayerDead` (10) carries eight bytes —
+// `GameLogic::killPlayer` (Linux server 0x47a6b0) fills them with the player's
+// `vtable+0xa8` (the id, as in the spawn event: a bot's death on the live co-op
+// server named 244..255) and, at +4, a byte from its third argument, purpose not
+// established. A client that takes every such event for its own loses its body to
+// every bot that dies.
 struct RemoteEvent {
   std::uint32_t category = 0;
   std::uint32_t number = 0;
-  std::optional<std::int32_t> value;
+  std::optional<std::int32_t> value;  // the first four bytes, when there are four
+  std::vector<std::uint8_t> data;
 };
 
 struct Event {
