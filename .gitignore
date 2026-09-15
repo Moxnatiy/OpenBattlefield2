@@ -1,6 +1,8 @@
 # The original game files — these never go into git
 Game Files/
-game/
+# Anchored to the root: unanchored, `game/` also hid `src/game/`, and the
+# ObjectTemplate module never reached git.
+/game/
 extract/
 
 # Ghidra
