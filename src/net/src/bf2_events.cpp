@@ -351,6 +351,11 @@ std::uint8_t nearestSpawnGroup(const std::vector<CreateSpawnGroup>& groups, floa
     // own (`ServerGameLogic::uPlayingSpawning` takes the player's group, which is
     // set by `NESelectSpawnGroup`). Zero in the group means neutral.
     if (team > 0 && group.team != 0 && static_cast<int>(group.team) != team) continue;
+    // A flag's group is one the level made. Numbers from kDynamicSpawnGroupFirst up
+    // are the server's own, created at run time (mobile spawns in vehicles and the
+    // like): on the co-op server a LAV's group 197 stood nearer the gas station's
+    // flag than the flag's group 3, was chosen, and the player did not appear.
+    if (group.id >= kDynamicSpawnGroupFirst) continue;
     const float gx = spawnGroupWorldPos(group.worldX, worldSize);
     const float gz = spawnGroupWorldPos(group.worldZ, worldSize);
     const float dx = gx - worldX;

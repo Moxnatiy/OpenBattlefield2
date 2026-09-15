@@ -191,6 +191,11 @@ inline float spawnGroupWorldPos(std::uint8_t packed, float worldSize) {
 // team is our team. Other teams' groups are skipped: the server spawns a player
 // only in their own, and a request for another team's simply does nothing — which
 // is exactly why spawning sometimes "did not work".
+//
+// Only the level's own groups count: `SpawnManager::createDynamicSpawnGroup`
+// (Linux server 0x4ba5a0) numbers the groups it makes at run time from 192 (0xc0)
+// to 255, taking the first free one, so a flag's group is always below that.
+inline constexpr std::uint8_t kDynamicSpawnGroupFirst = 192;
 std::uint8_t nearestSpawnGroup(const std::vector<CreateSpawnGroup>& groups, float worldX,
                                float worldZ, float worldSize, float* distance = nullptr,
                                int team = 0);

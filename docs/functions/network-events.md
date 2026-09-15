@@ -1534,3 +1534,27 @@ hold a third check the notes above missed: when the group is missing or
 (`setSpawnGroup(0)`, 0x4ab66a) and sends that player `PostRemoteEvent(6, 6)` —
 `NESelectSpawnGroup` without data, "choose again" (0x4ab696). We do nothing with
 it yet; it did not occur in these runs.
+
+## A flag's group is never a run-time one
+
+The maintainer's run on the co-op server: the right player id, DONE on the gas
+station, `step: spawn point 197 (at 29 m …)` — and no spawn. The server had sent
+26 groups: the level's (1..6, flags `101`) and run-time ones from 192 (`000` at
+the map's centre while empty, or at a vehicle, like 194..197). The LAV's group 197
+stood 29 m from the flag, the flag's own group 3 36 m, and the nearest won.
+
+`SpawnManager::createDynamicSpawnGroup` (Linux 0x4ba5a0) numbers the groups it
+makes at run time from 192 (`movl $0xc0`) to 255 (`cmpl $0x100`), the first free
+one. A flag's group is the level's, so below 192: `nearestSpawnGroup` skips the
+rest (`kDynamicSpawnGroupFirst`). Two runs after the change: group 3, spawned.
+
+`CreateSpawnGroupEvent`'s fields, from its construction in
+`SpawnManager::createSpawnGroupOnClients` (0x4b96e0): the group's number
+(`+0xa4`), the network id (`+0x10`), the team (`vtable+0x38`), then three flags —
+the first is `group->vtable+0x58(false)`, the same "can a human spawn here" the
+spawn loop asks; the second `+0x9a` and the third `+0xa0`, purposes not
+established — and the packed position.
+
+Still not handled: when that check refuses later, the server clears the player's
+group and sends `NESelectSpawnGroup` without data (0x4ab66a / 0x4ab696); our join
+chain does not start again on it.

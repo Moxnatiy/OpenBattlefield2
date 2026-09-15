@@ -3,6 +3,7 @@
 // The numbers here are not invented: this is what a live server gives on Dalian
 // Plant, and the flags' positions from the same level's `GamePlayObjects.con`
 // (docs/functions/network-events.md).
+#include <cmath>
 #include <vector>
 
 #include "check.h"
@@ -91,7 +92,29 @@ static void testSquadGroupsInTheCentreDoNotWin() {
   CHECK_EQ(nearestSpawnGroup(groups, -254.0f, -210.0f, kWorld, &away), std::uint8_t(4));
 }
 
+// A run-time group (192 and up, `SpawnManager::createDynamicSpawnGroup`) nearer
+// the flag than the flag's own must not win: on the co-op Karkand server the LAV's
+// group 197 did, and the player never appeared.
+static void testDynamicGroupNearTheFlagDoesNotWin() {
+  std::vector<CreateSpawnGroup> groups;
+  groups.push_back({3, 2u, true, false, true, 0, 0, 517});
+  groups.push_back({197, 2u, true, false, true, 0, 0, 583});
+  // Pack both positions: the flag's group a little further than the vehicle's.
+  const float flagX = -161.0f, flagZ = -263.0f;
+  // The inverse of spawnGroupWorldPos.
+  const auto pack = [](float world) {
+    return static_cast<std::uint8_t>(std::lround((world + kWorld * 0.5f) / kWorld * 255.0f));
+  };
+  groups[0].worldX = pack(flagX - 30.0f);
+  groups[0].worldZ = pack(flagZ);
+  groups[1].worldX = pack(flagX - 10.0f);
+  groups[1].worldZ = pack(flagZ);
+  float away = 0.0f;
+  CHECK_EQ(nearestSpawnGroup(groups, flagX, flagZ, kWorld, &away, 2), std::uint8_t(3));
+}
+
 TEST_MAIN({
+  testDynamicGroupNearTheFlagDoesNotWin();
   testUnpackedPositions();
   testEachFlagFindsItsGroup();
   testNoGroupsGivesZero();
