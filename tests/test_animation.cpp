@@ -261,6 +261,43 @@ static void testSkinMovesVertexWithItsBone() {
   CHECK(std::abs(posed.vertices[0].normal.y - 1.0f) < 0.001f);
 }
 
+// A kit appended to a body keeps its own rig: its range points past the body's
+// rigs, and skinning it by its bone moves it, not the body.
+static void testAppendedMeshKeepsItsRig() {
+  const auto oneVertexMesh = [](std::uint32_t boneId) {
+    mesh::RenderMesh part;
+    part.vertices.resize(1);
+    part.indices = {0};
+    part.skin.resize(1);
+    mesh::Rig rig;
+    mesh::Bone entry;
+    entry.id = boneId;
+    entry.transform.m[0] = entry.transform.m[5] = entry.transform.m[10] = entry.transform.m[15] = 1.0f;
+    rig.bones.push_back(entry);
+    part.rigs.push_back(rig);
+    mesh::DrawRange range;
+    range.indexCount = 1;
+    range.rig = 0;
+    part.ranges.push_back(range);
+    return part;
+  };
+  mesh::RenderMesh body = oneVertexMesh(0);
+  mesh::appendSkinned(body, oneVertexMesh(1));
+  CHECK_EQ(body.vertices.size(), std::size_t(2));
+  CHECK_EQ(body.rigs.size(), std::size_t(2));
+  CHECK_EQ(body.ranges[1].rig, 1);
+  CHECK_EQ(body.ranges[1].indexStart, std::uint32_t(1));
+  CHECK_EQ(body.indices[1], std::uint32_t(1));
+
+  std::vector<mesh::Mat4> pose(2);
+  for (auto& bone : pose) bone.m[0] = bone.m[5] = bone.m[10] = bone.m[15] = 1.0f;
+  pose[1].m[12] = 3.0f;
+  mesh::RenderMesh posed = body;
+  mesh::skinMesh(body, pose, posed);
+  CHECK(std::abs(posed.vertices[0].position.x) < 0.001f);
+  CHECK(std::abs(posed.vertices[1].position.x - 3.0f) < 0.001f);
+}
+
 static void testFullWeightStageClearsWhatWasBefore() {
   // The engine's rule: a clip with weight 1 clears the bone's stack, that is owns it
   // entirely rather than blending with the previous ones.
@@ -334,6 +371,7 @@ static void testStageTouchesOnlyItsOwnBones() {
 }
 
 TEST_MAIN({
+  testAppendedMeshKeepsItsRig();
   testFullWeightStageClearsWhatWasBefore();
   testStageTouchesOnlyItsOwnBones();
   testPoseWithoutClipIsRestPose();

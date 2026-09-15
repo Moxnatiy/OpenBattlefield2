@@ -1,5 +1,6 @@
 #include "obf2/mesh/skinning.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace obf2::mesh {
@@ -220,6 +221,34 @@ void skinMesh(const RenderMesh& bindPose, const std::vector<Mat4>& boneWorld, Re
     }
     out.vertices[i].position = position;
     out.vertices[i].normal = normal;
+  }
+}
+
+void appendSkinned(RenderMesh& target, const RenderMesh& source) {
+  const auto vertexBase = static_cast<std::uint32_t>(target.vertices.size());
+  const auto indexBase = static_cast<std::uint32_t>(target.indices.size());
+  const int rigBase = static_cast<int>(target.rigs.size());
+  const bool hadVertices = !target.vertices.empty();
+
+  target.vertices.insert(target.vertices.end(), source.vertices.begin(), source.vertices.end());
+  for (const std::uint32_t index : source.indices) target.indices.push_back(index + vertexBase);
+  for (DrawRange range : source.ranges) {
+    range.indexStart += indexBase;
+    if (range.rig >= 0) range.rig += rigBase;
+    target.ranges.push_back(std::move(range));
+  }
+  target.skin.insert(target.skin.end(), source.skin.begin(), source.skin.end());
+  target.rigs.insert(target.rigs.end(), source.rigs.begin(), source.rigs.end());
+
+  if (!hadVertices) {
+    target.bounds = source.bounds;
+  } else {
+    target.bounds.min.x = std::min(target.bounds.min.x, source.bounds.min.x);
+    target.bounds.min.y = std::min(target.bounds.min.y, source.bounds.min.y);
+    target.bounds.min.z = std::min(target.bounds.min.z, source.bounds.min.z);
+    target.bounds.max.x = std::max(target.bounds.max.x, source.bounds.max.x);
+    target.bounds.max.y = std::max(target.bounds.max.y, source.bounds.max.y);
+    target.bounds.max.z = std::max(target.bounds.max.z, source.bounds.max.z);
   }
 }
 

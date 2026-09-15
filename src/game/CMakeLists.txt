@@ -2,6 +2,7 @@ add_library(obf2_game
   src/controls.cpp
   src/object_template.cpp
   src/template_numbers.cpp
+  src/soldier_model.cpp
   src/scene.cpp
 )
 add_library(obf2::game ALIAS obf2_game)

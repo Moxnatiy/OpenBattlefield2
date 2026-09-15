@@ -92,6 +92,11 @@ class MeshRenderer {
                                 std::string* error = nullptr);
   void release(GpuMesh& gpuMesh);
 
+  // New vertex positions for a mesh already uploaded — a skinned mesh posed again.
+  // The vertex count must be the one it was uploaded with; the indices, the
+  // ranges and the textures stay.
+  bool updateVertices(GpuMesh& gpuMesh, const mesh::RenderMesh& source);
+
   // A texture that belongs to no one mesh — a page of the level's light map
   // atlas, which many placements share. The renderer keeps it and frees it with
   // itself; nullptr when the upload failed.

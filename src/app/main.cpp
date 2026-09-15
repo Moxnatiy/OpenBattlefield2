@@ -41,6 +41,8 @@
 #include "obf2/game/controls.h"
 #include "obf2/game/scene.h"
 #include "obf2/game/template_numbers.h"
+#include "obf2/game/soldier_model.h"
+#include "obf2/anim/system.h"
 #include "obf2/gfx/mesh_renderer.h"
 #include "obf2/level/gameplay.h"
 #include "obf2/level/level.h"
@@ -104,6 +106,9 @@ struct Args {
   // needed in the game itself, but without it the other players' placeholder
   // cannot be checked on an empty server.
   bool showOwnBox = false;
+  // --watch-soldier: the camera looks at the nearest other soldier (ours, for
+  // screenshots of how other players are drawn).
+  bool watchSoldier = false;
   // --mouse-scale: how many axis units one mouse pixel gives. The link
   // "pixels -> axis" lives in the client's `ControlMap` and is **not reversed
   // yet**, so this number is NOT measured — it plays the role of sensitivity and
@@ -231,6 +236,7 @@ Args parseArgs(int argc, char** argv) {
       args.cameraPitch = static_cast<float>(std::atof(argv[++i]));
     }
     else if (flag == "--own-box") args.showOwnBox = true;
+    else if (flag == "--watch-soldier") args.watchSoldier = true;
     else if (flag == "--flash" && i + 1 < argc) args.flashSwf = argv[++i];
     else if (flag == "--connect" && i + 1 < argc) args.connectTo = argv[++i];
     else if (flag == "--probe") args.probe = true;
@@ -4407,6 +4413,85 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   };
   std::map<std::uint16_t, DrawStat> drawStats;
   std::set<std::uint16_t> boxReported;
+
+  // Other players' soldiers, drawn as the game assembles them
+  // (obf2/game/soldier_model.h): the body's third-person geometry and the kit's
+  // piece of the kits' mesh, skinned on the soldier's skeleton. One mesh per
+  // soldier template and kit, kept in a deque so the draw list's pointers stay put.
+  //
+  // The pose is standing: the legs from the soldier's `stand_rightFootBack`
+  // bundle and the upper body from the weapon's `stand_still` (both named in the
+  // animation systems' data), at their first frame. Which bundles the trigger tree
+  // picks from the soldier's state is not reversed yet (docs/functions/
+  // animation-system.md, "What is still missing"); until it is, every soldier stands.
+  std::deque<obf2::gfx::GpuMesh> soldierMeshes;
+  std::unordered_map<std::string, obf2::gfx::GpuMesh*> soldierMeshByLook;
+  const auto soldierMeshFor = [&](const std::string& soldierName,
+                                  const std::string& kitName) -> obf2::gfx::GpuMesh* {
+    const std::string key = soldierName + "|" + kitName;
+    if (const auto found = soldierMeshByLook.find(key); found != soldierMeshByLook.end()) {
+      return found->second;
+    }
+    obf2::gfx::GpuMesh* uploaded = nullptr;
+    const auto model = obf2::game::soldierModel(registry, soldierName, kitName);
+    const auto loadPart = [&](const obf2::game::SoldierPart& part) {
+      const std::string path = resolveGeometryPath(files, part.templateFile, part.geometryName);
+      return path.empty() ? std::nullopt : loadMesh(files, path, part.geometry, 0, false);
+    };
+    std::optional<obf2::mesh::RenderMesh> bind = model ? loadPart(model->body) : std::nullopt;
+    if (bind && model->kit) {
+      if (const auto kit = loadPart(*model->kit)) obf2::mesh::appendSkinned(*bind, *kit);
+    }
+    std::optional<obf2::mesh::Skeleton> skeleton;
+    if (bind && !model->skeleton3p.empty()) {
+      if (const auto bytes = files.read(obf2::normalizeAssetPath(model->skeleton3p))) {
+        skeleton = obf2::mesh::loadSkeleton(*bytes);
+      }
+    }
+    // The first animation of a bundle, by the bundle's name in an animation system.
+    const auto clipOf = [&](const std::string& script,
+                            const char* bundleName) -> std::optional<obf2::mesh::BoneAnimation> {
+      if (script.empty()) return std::nullopt;
+      const auto system = obf2::anim::System::load(files, obf2::normalizeAssetPath(script));
+      if (!system) return std::nullopt;
+      // The system keys its names in lower case, as the engine compares them.
+      const auto lower = [](std::string text) {
+        std::transform(text.begin(), text.end(), text.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return text;
+      };
+      const auto bundle = system->bundles().find(lower(bundleName));
+      if (bundle == system->bundles().end() || bundle->second.animations.empty()) return std::nullopt;
+      const auto animation = system->animations().find(lower(bundle->second.animations.front()));
+      const std::string path =
+          animation != system->animations().end() ? animation->second.path
+                                                  : bundle->second.animations.front();
+      const auto bytes = files.read(obf2::normalizeAssetPath(path));
+      return bytes ? obf2::mesh::loadBoneAnimation(*bytes) : std::nullopt;
+    };
+    if (bind && skeleton) {
+      const auto legs = clipOf(model->animationSystem3p, "stand_rightFootBack");
+      const auto upper = clipOf(model->weaponAnimationSystem3p, "stand_still");
+      std::vector<obf2::mesh::PoseStage> stages;
+      if (legs) stages.push_back(obf2::mesh::PoseStage{&*legs, 0, 1.0f});
+      if (upper) stages.push_back(obf2::mesh::PoseStage{&*upper, 0, 1.0f});
+      const auto pose = obf2::mesh::poseSkeleton(*skeleton, stages);
+      obf2::mesh::RenderMesh posed = *bind;
+      obf2::mesh::skinMesh(*bind, pose, posed);
+      if (auto gpu = renderer->upload(posed, resolveTexture)) {
+        soldierMeshes.push_back(*gpu);
+        uploaded = &soldierMeshes.back();
+      }
+      std::printf("  soldier look %s: %zu vertices, kit %s, legs %s, upper body %s\n", key.c_str(),
+                  bind->vertices.size(), model->kit ? "yes" : "no", legs ? "yes" : "no",
+                  upper ? "yes" : "no");
+    } else {
+      std::printf("  soldier look %s: not assembled (model %d, mesh %d, skeleton %d)\n",
+                  key.c_str(), model ? 1 : 0, bind ? 1 : 0, skeleton ? 1 : 0);
+    }
+    soldierMeshByLook.emplace(key, uploaded);
+    return uploaded;
+  };
   if (remote != nullptr && level) {
     const std::string mode = remote->serverGameMode.empty() ? "gpm_cq" : remote->serverGameMode;
     const int size = remote->serverSize > 0 ? remote->serverSize : 16;
@@ -4692,6 +4777,32 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       const float angle = static_cast<float>(frame) / 60.0f * 0.6f;
       eye = obf2::Vec3f{scene.center.x + std::sin(angle) * distance, scene.center.y + eyeHeight,
                         scene.center.z + std::cos(angle) * distance};
+    }
+
+    // `--watch-soldier`: a debugging camera, ours and not the game's. It stands four
+    // metres from the nearest other soldier, at a fixed bearing, and looks at his
+    // chest — so a screenshot shows how other players are drawn without anyone
+    // having to be found by hand.
+    if (args.watchSoldier && remote != nullptr) {
+      float nearest = 1e9f;
+      std::optional<obf2::Vec3f> target;
+      const obf2::Vec3f from = remoteSoldier ? *remoteSoldier : eye;
+      for (const auto& [id, object] : remote->world.objects()) {
+        if (id == remote->ourSoldier || object.netClass != obf2::net::bf2::GhostClass::Soldier) {
+          continue;
+        }
+        const auto pose = remote->world.poseOf(id, remote->tick.pending / obf2::server::kTickTime);
+        const obf2::Vec3f at = pose ? pose->position : object.position;
+        const float away = obf2::length(at - from);
+        if (away < nearest) {
+          nearest = away;
+          target = at;
+        }
+      }
+      if (target) {
+        lookTarget = *target;
+        eye = *target + obf2::Vec3f{2.8f, 0.6f, 2.8f};
+      }
     }
 
     const float aspect =
@@ -5008,6 +5119,18 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
                         object.track.count(), newest ? newest->position.x : 0.0f,
                         newest ? newest->position.y : 0.0f, newest ? newest->position.z : 0.0f,
                         newest ? newest->timeMs / obf2::net::bf2::kGhostTickMs : 0.0f);
+          }
+          if (soldier) {
+            const std::string* soldierName = remote->templateNumbers.nameOf(object.templateId);
+            const std::uint32_t kit = remote->world.kitTemplateOf(id);
+            const std::string* kitName = kit != 0 ? remote->templateNumbers.nameOf(kit) : nullptr;
+            if (soldierName != nullptr) {
+              if (obf2::gfx::GpuMesh* model =
+                      soldierMeshFor(*soldierName, kitName != nullptr ? *kitName : std::string())) {
+                withOthers.push_back(obf2::gfx::MeshRenderer::DrawItem{model, place});
+                continue;
+              }
+            }
           }
           withOthers.push_back(obf2::gfx::MeshRenderer::DrawItem{&boxes[which], place});
         }

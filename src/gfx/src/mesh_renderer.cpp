@@ -1345,6 +1345,36 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
   return gpuMesh;
 }
 
+bool MeshRenderer::updateVertices(GpuMesh& gpuMesh, const mesh::RenderMesh& source) {
+  if (gpuMesh.vertices == nullptr || source.vertices.empty()) return false;
+  SDL_GPUDevice* gpu = device_->gpu();
+  const Uint32 vertexBytes = static_cast<Uint32>(source.vertices.size() * sizeof(mesh::Vertex));
+
+  SDL_GPUTransferBufferCreateInfo transferInfo{};
+  transferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+  transferInfo.size = vertexBytes;
+  SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(gpu, &transferInfo);
+  if (transfer == nullptr) return false;
+  auto* mapped = static_cast<std::byte*>(SDL_MapGPUTransferBuffer(gpu, transfer, false));
+  if (mapped == nullptr) {
+    SDL_ReleaseGPUTransferBuffer(gpu, transfer);
+    return false;
+  }
+  std::memcpy(mapped, source.vertices.data(), vertexBytes);
+  SDL_UnmapGPUTransferBuffer(gpu, transfer);
+
+  SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(gpu);
+  SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(commands);
+  SDL_GPUTransferBufferLocation location{transfer, 0};
+  SDL_GPUBufferRegion region{gpuMesh.vertices, 0, vertexBytes};
+  // Cycling: a buffer still bound by the previous frame is not overwritten under it.
+  SDL_UploadToGPUBuffer(copy, &location, &region, true);
+  SDL_EndGPUCopyPass(copy);
+  SDL_SubmitGPUCommandBuffer(commands);
+  SDL_ReleaseGPUTransferBuffer(gpu, transfer);
+  return true;
+}
+
 void MeshRenderer::release(GpuMesh& gpuMesh) {
   SDL_GPUDevice* gpu = device_->gpu();
   for (SDL_GPUTexture* texture : gpuMesh.ownedTextures) SDL_ReleaseGPUTexture(gpu, texture);

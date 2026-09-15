@@ -51,4 +51,10 @@ std::vector<Mat4> poseSkeleton(const Skeleton& skeleton, const BoneAnimation* an
 // `out` receives the moved positions and normals. Both are the same size.
 void skinMesh(const RenderMesh& bindPose, const std::vector<Mat4>& boneWorld, RenderMesh& out);
 
+// Appends one skinned mesh to another that is posed on the same skeleton — a
+// soldier's body and the kit worn over it. Ranges keep their own rigs: the rig
+// numbers of the appended mesh are moved past the target's, and its vertices keep
+// their bindings.
+void appendSkinned(RenderMesh& target, const RenderMesh& source);
+
 }  // namespace obf2::mesh

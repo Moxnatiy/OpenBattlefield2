@@ -217,6 +217,29 @@ struct EnterVehicle {
   bool flag = false;
 };
 
+// A kit object (`CreateKitEvent`, type 31; `deSerialize` Linux server 0x422b30):
+// the template's number (32 bits, +0x10), the network id (16, +0x14), the
+// position (three raw floats, +0x18), then two four-bit values (+0x24, and +0x28
+// stored minus one) whose purpose is not established.
+struct CreateKit {
+  std::uint32_t templateId = 0;
+  std::uint16_t networkId = 0;
+  Vec3f position;
+  std::uint32_t value24 = 0;
+  std::int32_t value28 = 0;
+};
+
+// A pickup (`HandlePickupEvent`, type 14; `deSerialize` 0x428a60, `executeClient`
+// 0x428860): a player (8 bits) and two network ids (16 each). The client hands
+// them to `GameLogic::handlePickup(object +0x12, player, object +0x14, true)`.
+// Measured on the live server: the spawn reply carries it right after the
+// soldier's `CreateObjectEvent` and the kit's `CreateKitEvent`.
+struct HandlePickup {
+  std::uint32_t player = 0;
+  std::uint16_t first = 0;   // +0x12
+  std::uint16_t second = 0;  // +0x14
+};
+
 // A network event the server raised on our side (`PostRemoteEvent`, type 11).
 // Those that carry a value carry it in four bytes.
 //
@@ -244,6 +267,8 @@ struct Event {
   // The most important one for us is `NEPlayerSpawned`.
   std::optional<RemoteEvent> remote;
   std::optional<EnterVehicle> enter;
+  std::optional<CreateKit> kit;
+  std::optional<HandlePickup> pickup;
   // `ExitVehicleEvent` (type 10): the number of the player who left.
   std::optional<std::uint32_t> exitPlayer;
 };

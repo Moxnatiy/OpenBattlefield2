@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "obf2/net/bf2_events.h"
+#include "obf2/net/bf2_protocol.h"
 #include "check.h"
 
 namespace {
@@ -221,7 +222,50 @@ void testControlObjectStateIsSkippable() {
   CHECK_EQ(walked, withControl);
 }
 
+// The kit and its pickup, laid out as `CreateKitEvent::deSerialize` (Linux server
+// 0x422b30) and `HandlePickupEvent::deSerialize` (0x428a60) read them. Kit template
+// 3186 (MEC_Specops) and soldier 1666 were seen together on the live server; the
+// kit's id, the player, the position and the two small values are made up.
+void testKitAndPickupAreRead() {
+  std::vector<std::byte> buffer(64);
+  obf2::net::BitWriter writer(buffer);
+  writer.writeBits(31, obf2::net::bf2::kEventTypeBits);
+  writer.writeBits(3186, 32);
+  writer.writeBits(2210, 16);
+  for (const float value : {-161.0f, 158.2f, -263.5f}) {
+    std::uint32_t raw = 0;
+    std::memcpy(&raw, &value, sizeof(raw));
+    writer.writeBits(raw, 32);
+  }
+  writer.writeBits(1, 4);
+  writer.writeBits(3, 4);
+  writer.writeBits(14, obf2::net::bf2::kEventTypeBits);
+  writer.writeBits(250, 8);
+  writer.writeBits(2210, 16);
+  writer.writeBits(1666, 16);
+  CHECK(writer.ok());
+
+  obf2::net::BitReader reader(std::span<const std::byte>(buffer.data(), writer.byteSize()));
+  const auto kit = obf2::net::bf2::readEvent(reader);
+  CHECK(kit.has_value() && kit->kit.has_value());
+  if (kit && kit->kit) {
+    CHECK_EQ(kit->kit->templateId, std::uint32_t(3186));
+    CHECK_EQ(kit->kit->networkId, std::uint16_t(2210));
+    CHECK(std::abs(kit->kit->position.y - 158.2f) < 0.001f);
+    CHECK_EQ(kit->kit->value24, std::uint32_t(1));
+    CHECK_EQ(kit->kit->value28, 2);  // stored minus one
+  }
+  const auto pickup = obf2::net::bf2::readEvent(reader);
+  CHECK(pickup.has_value() && pickup->pickup.has_value());
+  if (pickup && pickup->pickup) {
+    CHECK_EQ(pickup->pickup->player, std::uint32_t(250));
+    CHECK_EQ(pickup->pickup->first, std::uint16_t(2210));
+    CHECK_EQ(pickup->pickup->second, std::uint16_t(1666));
+  }
+}
+
 TEST_MAIN({
+  testKitAndPickupAreRead();
   testWorldCaptureIsFullyDecoded();
   testHeightsAreOnTheTerrain();
   testGhostStreamIsWalkable();

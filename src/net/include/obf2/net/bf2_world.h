@@ -89,6 +89,14 @@ class WorldView {
   const std::map<std::uint16_t, RemoteObject>& objects() const { return objects_; }
   const Vec3f& compressionReference() const { return compressionReference_; }
 
+  // The kit's template a soldier picked up: `CreateKitEvent` names the kit and
+  // `HandlePickupEvent` the object that took it (bf2_events.h). Zero when none is
+  // known — a soldier that spawned before we joined.
+  std::uint32_t kitTemplateOf(std::uint16_t object) const {
+    const auto found = kitOf_.find(object);
+    return found == kitOf_.end() ? 0 : found->second;
+  }
+
   // How many positions arrived from the stream and how many we rejected as unreadable.
   int positionUpdates() const { return positionUpdates_; }
 
@@ -135,6 +143,8 @@ class WorldView {
   std::map<std::uint32_t, RemotePlayer> players_;
   std::map<std::uint16_t, RemoteObject> objects_;
   std::map<std::uint16_t, std::uint32_t> owners_;  // object -> player
+  std::map<std::uint16_t, CreateKit> kits_;        // kit network id -> its creation
+  std::map<std::uint16_t, std::uint32_t> kitOf_;   // object -> kit template
   Vec3f compressionReference_;
   std::function<float(const Vec3f&)> ground_;
   int positionUpdates_ = 0;

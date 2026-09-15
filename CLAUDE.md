@@ -424,7 +424,7 @@ know how the original does it. Each has a measure.
 | soldier weapon index (0x1000) | the width is the kit's weapon count (`*(object+0x14)+0x22c` → `+0x10`), not known on our side, so the soldier reader stops there | `SoldierState::complete` on the live capture |
 | other players on screen | positions read by class, drawn through the four-update track (`ghost_track.h`); the per-frame caller of `predict` and its time are not found, our clock stands in | `frames drawn` report: a moving player drawn interpolated, largest step between frames within his speed × frame time |
 | a vehicle's rotation | the quaternion in a simple object's update is not read; moving vehicles keep the spawner's rotation | a turning jeep turns on screen |
-| soldiers as models | other soldiers are boxes: no mesh, skeleton or animation on `--connect` | the soldier mesh, animated from the ghost state |
+| soldiers as models | other soldiers are drawn as body and kit, standing (docs/functions/soldier-model.md, stage 1); the trigger tree's conditions and `BundlePlayer` are not reversed, no weapon in the hands, the body's sub-geometry choice is read from texture names, not from `RendDX9.dll` | a running bot runs on screen, with the weapon he has out |
 | tickets on `--connect` | the layout is known; it rides a ghost (`ScoreManager::setNetUpdate`, 0x5c9650), whose class mask is not taken yet | the numbers match the original on the same server |
 | simple object state mask (19 bits) | we know 1 bit out of 19 | all 19 named in the notes |
 | soldier state mask (21 bits) | the layout of all 21 is read (`soldier_state.h`); position, velocity, yaw, pitch, weapon index are named, the rest are "purpose not established" | all 21 named |

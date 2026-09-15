@@ -579,6 +579,23 @@ this pass but takes what it is given. So the spawn screen has to show the
 circles on the flags of exactly that team — otherwise DONE asks for another
 team's flag, and the server is entitled to refuse.
 
+### Which kit a soldier wears
+
+The rest of that spawn packet names the kit, for every player's spawn alike:
+
+| event | reader (Linux server) | fields |
+|---|---|---|
+| `CreateKitEvent` (31) | `deSerialize` 0x422b30 | template 32 bits (+0x10), network id 16 (+0x14), position 3 raw floats (+0x18), 4 bits (+0x24), 4 bits stored minus one (+0x28) — the last two purpose not established |
+| `HandlePickupEvent` (14) | `deSerialize` 0x428a60 | player 8 bits (+0x10), id 16 (+0x12), id 16 (+0x14) |
+
+`HandlePickupEvent::executeClient` (0x428860) looks both ids up in the network
+manager and calls `GameLogic::handlePickup(object +0x12, player, object +0x14,
+true)` (vtable 0x1d8). Measured on the live co-op server over 21 pickups: the
++0x12 id was always a kit `CreateKitEvent` had just named, and +0x14 a soldier —
+heavy soldiers took AT, Support and Assault kits, light ones Medic, Engineer,
+Specops and Sniper, as the levels' `Init.con` pairs them. A soldier that spawned
+before we joined has no known kit until it spawns again.
+
 ### Our own soldier is moved by the client, not by the server
 
 That is the main thing we did not understand. After spawning the server **does

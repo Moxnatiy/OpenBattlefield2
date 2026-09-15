@@ -74,6 +74,14 @@ void WorldView::feed(std::span<const std::byte> packet) {
         ownObject_ = event.enter->object;
       }
     }
+    if (event.kit) kits_[event.kit->networkId] = *event.kit;
+    if (event.pickup) {
+      // The first id is the kit and the second the soldier that took it —
+      // `handlePickup(picked up, player, taker)`; measured on the live server: in
+      // 21 pickups of 21 the first id was a kit `CreateKitEvent` had named.
+      const auto kit = kits_.find(event.pickup->first);
+      if (kit != kits_.end()) kitOf_[event.pickup->second] = kit->second.templateId;
+    }
     if (event.exitPlayer) {
       const auto found = players_.find(*event.exitPlayer);
       if (found != players_.end()) {

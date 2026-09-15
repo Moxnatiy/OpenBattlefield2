@@ -227,6 +227,34 @@ std::optional<Event> readEvent(BitReader& reader) {
     event.enter = enter;
     return event;
   }
+  if (*type == 31) {
+    CreateKit kit;
+    const auto templateId = reader.readBits(32);
+    const auto id = reader.readBits(16);
+    const auto position = readVector(reader);
+    const auto value24 = reader.readBits(4);
+    const auto value28 = reader.readBits(4);
+    if (!templateId || !id || !position || !value24 || !value28) return std::nullopt;
+    kit.templateId = *templateId;
+    kit.networkId = static_cast<std::uint16_t>(*id);
+    kit.position = *position;
+    kit.value24 = *value24;
+    kit.value28 = static_cast<std::int32_t>(*value28) - 1;  // 0x422c18: `decl`
+    event.kit = kit;
+    return event;
+  }
+  if (*type == 14) {
+    HandlePickup pickup;
+    const auto player = reader.readBits(8);
+    const auto first = reader.readBits(16);
+    const auto second = reader.readBits(16);
+    if (!player || !first || !second) return std::nullopt;
+    pickup.player = *player;
+    pickup.first = static_cast<std::uint16_t>(*first);
+    pickup.second = static_cast<std::uint16_t>(*second);
+    event.pickup = pickup;
+    return event;
+  }
   if (*type == 10) {
     const auto player = reader.readBits(8);
     const auto flag = reader.readBits(1);
