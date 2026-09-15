@@ -52,9 +52,11 @@ struct TickAccumulator {
 
 // wish is the desired direction in the plane (already rotated by the look angle),
 // of length 0..1. terrain and collision may be empty: with no terrain the ground
-// counts as zero, with no collision there are no walls.
+// counts as zero, with no collision there are no walls. directVelocity: wish is
+// already the smoothed direction of `soldierMoveDirection` and becomes the
+// velocity on the ground as it is (`BF2.exe` 0x5a7c50).
 void moveSoldier(BodyState& body, SwimState& swim, const Vec3f& wish, float maxSpeed, bool jump,
                  const PhysicsConstants& physics, const level::Level* terrain,
-                 const CollisionWorld* collision, float step);
+                 const CollisionWorld* collision, float step, bool directVelocity = false);
 
 }  // namespace obf2::server

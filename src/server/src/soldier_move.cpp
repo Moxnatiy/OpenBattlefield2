@@ -8,7 +8,7 @@ namespace obf2::server {
 
 void moveSoldier(BodyState& body, SwimState& swim, const Vec3f& wish, float maxSpeed, bool jump,
                  const PhysicsConstants& physics, const level::Level* terrain,
-                 const CollisionWorld* collision, float step) {
+                 const CollisionWorld* collision, float step, bool directVelocity) {
   // The ground is not only the terrain. The engine looks for support on objects
   // too, otherwise a roof or a staircase cannot be climbed. We take the higher of the two.
   float ground = terrain != nullptr ? terrain->groundHeightAt(body.position) : 0.0f;
@@ -44,7 +44,7 @@ void moveSoldier(BodyState& body, SwimState& swim, const Vec3f& wish, float maxS
     body.velocity = Vec3f{};
     body.onGround = false;
   } else {
-    stepSoldier(body, wish, maxSpeed, jump, physics, ground, step);
+    stepSoldier(body, wish, maxSpeed, jump, physics, ground, step, directVelocity);
   }
 
   // Collision with walls: a soldier in BF2 is a column of spheres, not one sphere

@@ -48,6 +48,7 @@
 #include "obf2/level/lightmap_atlas.h"
 #include "obf2/server/game_client.h"
 #include "obf2/server/physics.h"
+#include "obf2/server/soldier_look.h"
 #include "obf2/server/soldier_move.h"
 #include <set>
 
@@ -1140,9 +1141,12 @@ struct RemoteWorld {
   float pendingLookX = 0.0f;  // axis units
   float pendingLookY = 0.0f;
   obf2::net::bf2::PlayerAction pendingKeys;
-  // Where the soldier looks, in degrees — turned only by the quantized actions.
-  float yaw = 0.0f;
-  float pitch = -10.0f;
+  // Where the soldier looks — the body, the aim's offset, the pitch
+  // (`soldier_look.h`), turned only by the quantized actions. Ours looks up with a
+  // positive pitch, the engine's down, so `pitch()` turns the sign.
+  obf2::server::SoldierLook look{0.0f, 0.0f, 0.0f, 10.0f};
+  float yaw() const { return look.yaw(); }
+  float pitch() const { return -look.pitch; }
 
   // A button pressed for one frame between two ticks (a jump is an edge) would be
   // lost if only the latest frame counted, so presses gather until a tick takes them.
@@ -1192,9 +1196,10 @@ struct RemoteWorld {
     return drawFrom + (body.position - drawFrom) * drawFraction();
   }
   // The look this frame: the last tick's plus the mouse not yet in an action.
-  float cameraYaw() const { return yaw + pendingLookX * physics.lookFactorX; }
+  float cameraYaw() const { return yaw() + pendingLookX * physics.lookFactorX; }
   float cameraPitch() const {
-    return std::max(-89.0f, std::min(89.0f, pitch - pendingLookY * physics.lookFactorY));
+    return std::max(-physics.lookMaxPitch,
+                    std::min(physics.lookMaxPitch, pitch() - pendingLookY * physics.lookFactorY));
   }
 
   void predict(float step) {
@@ -1239,7 +1244,7 @@ struct RemoteWorld {
       // for a whole spawn screen. Ours, not the binary's.
       while (sent.size() > 256) sent.pop_front();
 
-      playAction(action);
+      playAction(number, action);
       sendAction();
       if (bodyReady && terrain != nullptr) {
         // Where the body is, every two seconds of ticks, for the first minute of a
@@ -1260,16 +1265,37 @@ struct RemoteWorld {
   std::deque<std::pair<std::uint32_t, obf2::net::bf2::PlayerAction>> sent;
 
   // One action applied to our soldier: the look, then one tick of movement.
-  void playAction(const obf2::net::bf2::PlayerAction& played) {
-    // `angle += axis * phy-soldier-look-factor-*` (`0x5a99a0`), axis from the wire.
-    yaw += obf2::net::bf2::axisFromWire(played.axes[obf2::net::bf2::kAxisMouseX]) *
-           physics.lookFactorX;
-    pitch -= obf2::net::bf2::axisFromWire(played.axes[obf2::net::bf2::kAxisMouseY]) *
-             physics.lookFactorY;
-    // Not measured: the look clamps through the handles at 0x9ec2a8
-    // (`FUN_005a8630`), whose values are not read yet.
-    pitch = std::max(-89.0f, std::min(89.0f, pitch));
-    if (bodyReady && terrain != nullptr) stepBody(played);
+  void playAction(std::uint32_t number, const obf2::net::bf2::PlayerAction& played) {
+    // The body's matrix still stands where the previous tick left it: the input
+    // (0x5adea0) turns the body first and builds the movement from that older
+    // matrix. Measured on the live server: the reported velocity's heading is the
+    // look (body plus aim offset) two states back — strafing with the aim at -40,
+    // the heading is body + aim - 90 of two ticks before, not body - 90.
+    const float matrixYaw = look.yaw();
+    matrixYawAt[number % matrixYawAt.size()] = matrixYaw;
+    obf2::server::turnSoldier(
+        look, obf2::net::bf2::axisFromWire(played.axes[obf2::net::bf2::kAxisMouseX]),
+        obf2::net::bf2::axisFromWire(played.axes[obf2::net::bf2::kAxisMouseY]),
+        obf2::net::bf2::axisFromWire(played.axes[obf2::net::bf2::kAxisThrottle]), physics);
+    if (bodyReady && terrain != nullptr) stepBody(played, matrixYaw);
+  }
+  // The body's yaw each action's input read its movement from, by action tick —
+  // for the velocity request a correction has to rebuild (`reconcile`). As many as
+  // `sent` holds.
+  std::array<float, 256> matrixYawAt{};
+
+  // The facing of a body yaw in degrees: a zero angle looks along +Z — the same as
+  // the server computes, so "right" is the angle plus 90 degrees.
+  static obf2::Vec3f facingOf(float degrees) {
+    const float radians = degrees * (3.14159265358979323846f / 180.0f);
+    return {std::sin(radians), 0.0f, std::cos(radians)};
+  }
+  static obf2::Vec3f rightOf(float degrees) {
+    const float radians = degrees * (3.14159265358979323846f / 180.0f);
+    return {std::cos(radians), 0.0f, -std::sin(radians)};
+  }
+  float speedOf(const obf2::net::bf2::PlayerAction& action) const {
+    return (action.buttons & obf2::net::bf2::kButtonSprint) != 0 ? physics.sprintSpeed : maxSpeed;
   }
 
   // The server's state of our soldier, and the actions it has not played yet on
@@ -1290,7 +1316,7 @@ struct RemoteWorld {
   void reconcile(const obf2::net::bf2::SoldierState& state, std::int32_t counter) {
     if (!state.position || !bodyReady) return;
     const obf2::Vec3f predicted = body.position;
-    const float predictedYaw = yaw;
+    const float predictedYaw = yaw();
 
     // The position is the pivot, `coll-soldier-pivot-height` above the feet
     // (`FUN_006ed4c0`); our body's position is the feet.
@@ -1298,10 +1324,15 @@ struct RemoteWorld {
     feet.y -= physics.pivotHeight;
     body.position = feet;
     if (state.velocity) body.velocity = *state.velocity;
-    // The look is the body's yaw plus the aim's offset from it, and the pitch
-    // with the opposite sign (soldier_state.h, from `FUN_005a8630`).
-    if (state.bodyYaw) yaw = *state.bodyYaw + state.aimYaw.value_or(0.0f);
-    if (state.pitch) pitch = -*state.pitch;
+    // The smoothed movement axes, `Soldier +0x22c` and `+0x228` (0x400, 0x800 in
+    // the state): without them the replay starts every ramp from our own guess.
+    if (state.value400) body.forwardAxis = *state.value400;
+    if (state.value800) body.strafeAxis = *state.value800;
+    // The angles, each in its own field (soldier_state.h, `soldier_look.h`).
+    if (state.bodyYaw) look.bodyYaw = *state.bodyYaw;
+    if (state.aimYaw) look.aimYaw = *state.aimYaw;
+    if (state.angle8) look.turnLeft = *state.angle8;
+    if (state.pitch) look.pitch = *state.pitch;
 
     while (!sent.empty() && static_cast<std::int64_t>(sent.front().first) < counter) {
       sent.pop_front();
@@ -1309,8 +1340,22 @@ struct RemoteWorld {
     // 0x4d4bce: the head goes whatever its tick. A counter the server already
     // sent comes as -1 (`FUN_005b7390` against `+0x20e8`), and then this is the
     // one action it took off its buffer.
-    if (!sent.empty()) sent.pop_front();
-    for (const auto& [number, played] : sent) playAction(played);
+    //
+    // The velocity the server's input asked for on that tick (physics `+0x84`)
+    // does not travel in the state, and the next tick moves by it. It is rebuilt
+    // from what does: the state's axes, the played action's speed, and the matrix
+    // the input read — the body's yaw before that action's turn, as our own
+    // prediction of that tick had it. How the original client restores it is not
+    // established.
+    if (!sent.empty()) {
+      const auto& [headNumber, head] = sent.front();
+      const float matrixYaw = matrixYawAt[headNumber % matrixYawAt.size()];
+      body.request = obf2::server::soldierAxesDirection(body.forwardAxis, body.strafeAxis,
+                                                        facingOf(matrixYaw), rightOf(matrixYaw)) *
+                     (speedOf(head) * physics.speedFactor);
+      sent.pop_front();
+    }
+    for (const auto& [number, played] : sent) playAction(number, played);
 
     // The measure: how far the replayed body lands from where the prediction had
     // it. A right replay lands on the prediction, unless the server disagreed.
@@ -1318,38 +1363,42 @@ struct RemoteWorld {
     body.position = predicted;
     observe(replayed);
     body.position = replayed;
-    const float yawJump = std::remainder(yaw - predictedYaw, 360.0f);
+    const float yawJump = std::remainder(yaw() - predictedYaw, 360.0f);
     yawCorrectionMax = std::max(yawCorrectionMax, std::abs(yawJump));
     yawCorrectionSum += std::abs(yawJump);
+    // The corrections a player would see: a turn of over half a degree or a move of
+    // over 5 cm, the first thirty of a run, with the state's angles and axes.
+    const float moved = obf2::length(replayed - predicted);
+    if ((std::abs(yawJump) > 0.5f || moved > 0.05f) && ++bigCorrections <= 30) {
+      std::printf("  big correction: counter %d, yaw %+.2f, moved %.3f m, replayed %zu; "
+                  "server body %.2f aim %.2f 0x8 %.2f, axes %.3f %.3f\n",
+                  counter, yawJump, moved, sent.size(), state.bodyYaw.value_or(-999.0f),
+                  state.aimYaw.value_or(-999.0f), state.angle8.value_or(-999.0f),
+                  state.value400.value_or(-99.0f), state.value800.value_or(-99.0f));
+    }
   }
+  int bigCorrections = 0;
   float yawCorrectionMax = 0.0f;
   float yawCorrectionSum = 0.0f;
 
-  void stepBody(const obf2::net::bf2::PlayerAction& action) {
-    constexpr float kToRadians = 3.14159265358979323846f / 180.0f;
-    const float yawRadians = yaw * kToRadians;
+  void stepBody(const obf2::net::bf2::PlayerAction& action, float matrixYaw) {
+    // The axes as the server reads them back from the wire (0x5bc6a0). A soldier
+    // strafes with the yaw axis: the engine has no separate strafe axis.
+    const float forward = obf2::net::bf2::axisFromWire(action.axes[obf2::net::bf2::kAxisThrottle]);
+    const float strafe = obf2::net::bf2::axisFromWire(action.axes[obf2::net::bf2::kAxisYaw]);
+    // `Soldier::updateSoldierSpeed` (0x5a7c50): the axes are smoothed, the facing
+    // is not.
+    const obf2::Vec3f wish = obf2::server::soldierMoveDirection(
+        body, forward, strafe, facingOf(matrixYaw), rightOf(matrixYaw), physics);
 
-    // The axes in the action stream are ±99; we need a direction of 0..1. A
-    // soldier strafes with the yaw axis: the engine has no separate strafe axis.
-    const float scale = 1.0f / static_cast<float>(obf2::net::bf2::kAxisFull);
-    const float forward = static_cast<float>(action.axes[obf2::net::bf2::kAxisThrottle]) * scale;
-    const float strafe = static_cast<float>(action.axes[obf2::net::bf2::kAxisYaw]) * scale;
-    // A zero angle looks along +Z — the same as the server computes, so "right" is
-    // the angle plus 90 degrees.
-    obf2::Vec3f wish{std::sin(yawRadians) * forward + std::cos(yawRadians) * strafe, 0.0f,
-                     std::cos(yawRadians) * forward - std::sin(yawRadians) * strafe};
-    const float magnitude = std::sqrt(wish.x * wish.x + wish.z * wish.z);
-    if (magnitude > 1.0f) wish = wish * (1.0f / magnitude);
-
-    const bool sprint = (action.buttons & obf2::net::bf2::kButtonSprint) != 0;
     const bool jump = (action.buttons & obf2::net::bf2::kButtonAction) != 0;
-    const float speed = sprint ? physics.sprintSpeed : maxSpeed;
+    const float speed = speedOf(action);
 
     // The movement goes through the same function as on the server: ground, water,
     // walls. While the client had its own shortened copy, it knew only the ground's
     // height — and the soldier walked through objects.
     obf2::server::moveSoldier(body, swim, wish, speed, jump, physics, terrain, collision,
-                              obf2::server::kTickTime);
+                              obf2::server::kTickTime, true);
   }
   int bodyTicks = 0;
 
@@ -1697,7 +1746,7 @@ struct RemoteWorld {
             if (state->soldier && playerSpawned && state->networkId == ourSoldier &&
                 bodyReady && placedSoldier == ourSoldier) {
               const auto& s = *state->soldier;
-              const float predictedYaw = yaw;
+              const float predictedYaw = yaw();
               reconcile(s, state->counter);
               // The game tick: this packet's server tick plus one per action played
               // again (`FUN_004d4b30`, 0x4d4bc9 and 0x4d4c15; bf2_world.h).
@@ -1711,7 +1760,7 @@ struct RemoteWorld {
                             "server body %.2f aim %.2f 0x8 %.2f pitch %.2f; ours %.2f -> %.2f %.2f",
                             s.bodyYaw.value_or(-999.0f), s.aimYaw.value_or(-999.0f),
                             s.angle8.value_or(-999.0f), s.pitch.value_or(-999.0f), predictedYaw,
-                            yaw, pitch);
+                            yaw(), pitch());
               if (lastLookReport != line) {
                 std::printf("  look: %s (counter %d, tick %u, unanswered %zu)\n", line,
                             state->counter, actionTick, sent.size());

@@ -417,7 +417,8 @@ know how the original does it. Each has a measure.
 | what | state | measure |
 |---|---|---|
 | the server repeating our last action | when a player's action buffer is empty the server plays the last action again, mouse included (`FUN_004cc400`); our replay then jumps the look by up to 6°. What the original does to keep the buffer from running dry is not established | a `--look-at` turn gives the same angle on the server |
-| look clamps | pitch is clamped to ±89 by us; the engine clamps through the handles at 0x9ec2a8 (`FUN_005a8630`), values not read | the clamp names its source |
+| the velocity request after a correction | the server's tick takes the velocity its input asked for on the tick before (docs/functions/soldier-physics.md, "One tick"); the request is not in the state, so our replay rebuilds it from our own record of that tick's look. How the original client restores it is not established | the notes name the place in `FUN_004d4b30` or the networkable that restores it |
+| the soldier in the air | the air branch of `Soldier::updateSoldierSpeed` (0x5a7c50) and the tick the jump impulse lands on are not reversed; our blend stands in | a jump while turning draws no correction |
 | soldier weapon index (0x1000) | the width is the kit's weapon count (`*(object+0x14)+0x22c` → `+0x10`), not known on our side, so the soldier reader stops there | `SoldierState::complete` on the live capture |
 | other players on screen | positions read by class, drawn through the four-update track (`ghost_track.h`); the per-frame caller of `predict` and its time are not found, our clock stands in | `frames drawn` report: a moving player drawn interpolated, largest step between frames within his speed × frame time |
 | a vehicle's rotation | the quaternion in a simple object's update is not read; moving vehicles keep the spawner's rotation | a turning jeep turns on screen |

@@ -118,3 +118,88 @@ traffic the mouse axis reaches 169). We need to find what
 multiply by frame time, divide by a constant, or add it as a rate. Until
 then our factor stays **unmeasured**, and a full sweep of the mouse does
 not give a full turn.
+
+## The look over one tick
+
+`Soldier::handlePlayerInput` in the client (`BF2.exe` 0x5adea0), block
+0x5ae72b..0x5ae960, then `FUN_005a8630`. The action is copied to the stack:
+axis *i* sits at `EBP - 0x1c0 + 4i` under mask bit `1 << i` (`EBP - 0xc0`).
+
+| field | offset | state bit | what |
+|---|---|---|---|
+| body yaw | `+0x224` | 0x2 | the movement follows it (with the aim, see below) |
+| aim offset | `+0x240` | 0x4 | the camera's yaw off the body |
+| turn left | `+0x248` | 0x8 | what the body still turns to take the offset back |
+| pitch | `+0x238` | 0x10 | positive looks down |
+
+```
+delta = axis4 * phy-soldier-look-factor-x (0x9ec248)      ; mouse X, 0x5ae205
+F     = clamp(axis3, -1, 1); moving = |sign(F) * F^2| > 0.01 (0x892adc)  ; 0x5ae0f7, 0x5ae7af
+bodyDelta = delta
+moving:   aim != 0 -> turnLeft = aim                       ; 0x5ae7c1
+standing: aim += delta                                     ; 0x5ae7e8
+          aim >= max or aim <= -max -> turnLeft = aim      ; 0x5ae805, 0x5ae826
+          otherwise bodyDelta = 0                          ; 0x5ae839
+turnLeft != 0:                                             ; 0x5ae842
+  step = sign(turnLeft) * soldier-lookSideRestore (0x9ec2cc), no further than turnLeft
+  turnLeft -= step; aim -= step; bodyDelta += step
+body += bodyDelta, wrapped into (-360, 360)                ; 0x5ae8c6
+FUN_005a8630: aim clamped to ±max.x, pitch to ±max.y (after += axis5 * look-factor-y)
+```
+
+`max` is `soldier-lookMaxAngle`, a vector registered at 0x854280 as
+**(40, 85, 0)**; `soldier-lookSideRestore` at 0x854260 is **4.0**. The game's
+data sets neither. The yaw limits of a seat (`+0x208`, `ESI` at 0x5ae801),
+the sight's zoom multiplier (0x5a61a0) and recoil (0x5a5f40, 0x5a5fa0) are not
+modelled.
+
+Measured on the live server, strafing left with the mouse at -5 degrees a tick:
+aim -36, 0x8 -36, body -271.5 → aim -37, 0x8 -37, body -280.5; at the limit
+aim -40, 0x8 -41, body -9 a tick (the mouse's 5 and the restore's 4). Code:
+`src/server/soldier_look.h`, test `tests/test_soldier_look.cpp`.
+
+## One tick
+
+The order the server runs a soldier's tick in, read from the live server's
+states of our own soldier and confirmed in the binary:
+
+1. **The physics node** — `SoldierPhysicsNode::updatePositionalPhysics`
+   (Linux server 0x6f1de0). The new velocity is the old one plus the
+   accumulated change, times `p-pos-damp` (0.99, `BF2.exe` 0x8607a0) or
+   `p-pos-damp-water` (0.9, 0x8607c0) mixed by the share under water (`+0x68`).
+   The position then moves by **the average of the old and the new velocity**
+   (`(old + new) * 0.5`, the 0.5 at 0xb2f234) times the step.
+2. **The input** — 0x5adea0: the angles above, then
+   `Soldier::updateSoldierSpeed` (0x5a7c50) smooths the axes and asks the physics
+   (`+0x84`) for `speed * axes` along the matrix of the soldier's object
+   (`*(+0x1d0)->+0xc->+0x80`: row 2 forward, row 0 right, in the decompilation of
+   0x5adea0). That matrix still holds the previous tick's look.
+
+What the states show (forward held, spinning 12 degrees a tick):
+
+| state | position x | velocity | axis 0x400 | body yaw |
+|---|---|---|---|---|
+| 333 | -121.7630 | 0, 0 | 0.195 | -78.05 |
+| 334 | -121.7756 | -0.757, 0 | 0.352 | -66.05 |
+| 338 | -121.9807 | -1.891, 1.701 | 0.723 | -24.05 |
+| 339 | -122.0396 | -1.641, 2.257 | 0.774 | -12.05 |
+
+* the velocity's length is the **previous** state's axis: 0.757 = 3.9 × 0.196 × 0.99;
+* its heading is the look of **two** states back: -90 at 334, when the body was
+  -90 at 332;
+* the position moves by the average: 339 − 338 = (−1.891 − 1.641) / 2 / 30 = −0.0589.
+
+Strafing with the aim offset at -40 the heading is body + aim − 90 of two
+states back, so the matrix is the whole look, not the body alone.
+
+The velocity asked for does not travel in the state. After a correction our
+prediction rebuilds it from the state's axes, the played action's speed and our
+own record of the look that tick's input read; how the original client restores
+it is **not established**. The air branch of 0x5a7c50 and the jump's place in
+this order (the input adds the impulse, `*0x9ec334 * 6.0` in 0x5adea0; which
+tick's physics takes it is not measured) are not reversed.
+
+Before this, the prediction smoothed the world velocity and turned it with the
+look on the same tick. On the live coop server a run while spinning at 12 degrees
+a tick drew 30 corrections of 5–17 cm in 20 seconds; with the order above, none
+(`--move-at 900:600:1:0 --look-at 900:600:60:0`: "divergence on average 0.00 m").

@@ -48,6 +48,15 @@ struct PhysicsConstants {
   // 1.26, that is the tiniest twitch of the mouse.
   float lookFactorX = 5.0f;  // phy-soldier-look-factor-x
   float lookFactorY = 5.0f;  // phy-soldier-look-factor-y
+  // `soldier-lookMaxAngle`, a vector registered at `BF2.exe` 0x854280 as
+  // (40, 85, 0): how far the aim turns off the body, and the pitch's limit
+  // (read by 0x5a8630). Measured on the live server: a standing soldier's aim
+  // offset stops at -40.
+  float lookMaxYaw = 40.0f;
+  float lookMaxPitch = 85.0f;
+  // `soldier-lookSideRestore`, 0x854260 (`PUSH 0x40800000`, 4.0): degrees per tick
+  // the body turns to take the aim offset back (0x5ae863).
+  float lookSideRestore = 4.0f;
   // `phy-soldier-jump-factor`. The engine's default is 0.98 (the constant at
   // 0xb4e8d4 in the same `Vars::getFloat` list), but the game's data sets 1.0
   // (`objects/soldiers/common/common.con`), and the data wins.
@@ -69,6 +78,15 @@ struct PhysicsConstants {
   // The jump comes out as: height 6^2/(2*14.73) = 1.22 m, in the air
   // 2*6/14.73 = 0.81 s.
   float jumpSpeed = 6.0f;
+
+  // `p-pos-damp` and `p-pos-damp-water`: `BF2.exe` registers them at 0x8607a0
+  // (`PUSH 0x3f7d70a4`, 0.99) and 0x8607c0 (`PUSH 0x3f666666`, 0.9).
+  // `SoldierPhysicsNode::updatePositionalPhysics` (Linux server 0x6f1de0)
+  // multiplies the new velocity by them, mixed by the share under water. Measured
+  // on the live server: a soldier running at 3.9 with an axis of 0.979 reports a
+  // speed of 3.78 = 3.9 * 0.979 * 0.99.
+  float positionalDamping = 0.99f;
+  float positionalDampingWater = 0.9f;  // not used yet: the water share is not modelled
 
   // --- the engine's constants (docs/functions/soldier-physics.md) ---
   //
@@ -123,14 +141,63 @@ struct BodyState {
   Vec3f position;
   Vec3f velocity;
   bool onGround = false;
+  // The smoothed movement axes, `Soldier +0x22c` (forward) and `+0x228` (strafe)
+  // — they travel in the soldier's state under 0x400 and 0x800 (0x62d4e0's apply
+  // block), so a correction sets them too.
+  float forwardAxis = 0.0f;
+  float strafeAxis = 0.0f;
+  // The velocity the soldier's input asked for (physics `+0x84`), which the
+  // physics node takes on its **next** update — see `stepSoldierNode`.
+  Vec3f request;
 };
+
+// The soldier's direction from its smoothed axes: forward * forwardAxis + right *
+// strafeAxis, divided by the axes' length when that is over 1 (`BF2.exe` 0x5a7c50).
+Vec3f soldierAxesDirection(float forwardAxis, float strafeAxis, const Vec3f& forward,
+                           const Vec3f& right);
+
+// The movement a soldier asks for this tick — `Soldier::updateSoldierSpeed`
+// (`BF2.exe` 0x5a7c50):
+//
+//   axis += (input - axis) * (input != 0 ? phy-soldier-acceleration (0x9ec260)
+//                                        : phy-soldier-deceleration (0x9ec2dc))
+//   an axis under 0.001 becomes 0
+//   direction = forward * forwardAxis + right * strafeAxis, divided by the axes'
+//   length when that is over 1
+//
+// once per tick, not scaled by the step. The caller multiplies the direction by
+// the speed and `phy-soldier-speed-factor` (0x9ec2f0) and hands it to the body
+// (physics `+0x84`), which takes it as its velocity on the next tick: the velocity
+// follows the soldier's facing, and only the axes are smoothed. Ours used to smooth
+// the world velocity, which lagged behind every fast turn and was corrected by the
+// server.
+//
+// Measured on the live server: from standing, forward and strafe held, the state's
+// axes read 0.195, 0.578, 0.774, 0.895 … 0.979.
+Vec3f soldierMoveDirection(BodyState& body, float forwardInput, float strafeInput,
+                           const Vec3f& forward, const Vec3f& right,
+                           const PhysicsConstants& constants);
 
 // One step of a soldier's movement.
 //
 // wish is the desired direction in the plane (already rotated by the look angle),
 // of length 0..1. groundHeight is the terrain's height under the body.
+//
+// directVelocity selects the engine's own order of one tick, measured on the live
+// server and read in the binary (docs/functions/soldier-physics.md, "One tick"):
+//
+//   1. the physics node (`SoldierPhysicsNode::updatePositionalPhysics`, Linux
+//      server 0x6f1de0): on the ground the velocity becomes the previous tick's
+//      `request` times `p-pos-damp`, and the position moves by the **average** of
+//      the old and the new velocity (the 0.5 at 0xb2f234);
+//   2. the input (`BF2.exe` 0x5adea0): `wish`, built by the caller from the body's
+//      matrix as it stood before this tick's turn, times the speed becomes the new
+//      `request`.
+//
+// In the air the old blend stays: that branch of 0x5a7c50 is not reversed.
 void stepSoldier(BodyState& body, const Vec3f& wish, float maxSpeed, bool jump,
-                 const PhysicsConstants& constants, float groundHeight, float step);
+                 const PhysicsConstants& constants, float groundHeight, float step,
+                 bool directVelocity = false);
 
 // The centres of the soldier's spheres above foot level. The count and the step
 // follow the engine's formula: spacing = (height - 2 * radius) / (count - 1).

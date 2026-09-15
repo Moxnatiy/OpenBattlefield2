@@ -105,7 +105,53 @@ void testJumpMatchesEngineConstants() {
   CHECK(airborne < 1.0f);
 }
 
+// The axes ramp as `Soldier::updateSoldierSpeed` smooths them (0x5a7c50). The
+// live server's state, forward held from standing: 0.195, 0.352, … 0.979 — an
+// input of 0.98 closing a fifth of the gap per tick.
+void testAxesRampLikeTheServer() {
+  PhysicsConstants physics;
+  BodyState body;
+  const Vec3f forward{0.0f, 0.0f, 1.0f};
+  const Vec3f right{1.0f, 0.0f, 0.0f};
+  Vec3f direction = soldierMoveDirection(body, 0.98f, 0.0f, forward, right, physics);
+  CHECK(std::abs(body.forwardAxis - 0.196f) < 1e-4f);
+  CHECK(std::abs(direction.z - 0.196f) < 1e-4f);
+  direction = soldierMoveDirection(body, 0.98f, 0.0f, forward, right, physics);
+  CHECK(std::abs(body.forwardAxis - 0.3528f) < 1e-4f);
+  for (int i = 0; i < 60; ++i) soldierMoveDirection(body, 0.98f, 0.0f, forward, right, physics);
+  CHECK(std::abs(body.forwardAxis - 0.98f) < 1e-3f);
+
+  // Both axes full: the direction's length is held to one.
+  BodyState both;
+  both.forwardAxis = 1.0f;
+  both.strafeAxis = 1.0f;
+  direction = soldierMoveDirection(both, 1.0f, 1.0f, forward, right, physics);
+  CHECK(std::abs(length(direction) - 1.0f) < 1e-4f);
+}
+
+// One tick in the engine's order. The live server's states 333 and 334: from rest,
+// the axis at 0.196 asks for 3.9 * 0.196 m/s; the next tick reports 0.757 m/s
+// (times `p-pos-damp` 0.99) and moved 0.0126 m — half of that speed for a tick,
+// the average of the old velocity and the new (0x6f1de0).
+void testTickTakesThePreviousRequest() {
+  PhysicsConstants physics;
+  BodyState body;
+  body.onGround = true;
+  const Vec3f wish{0.0f, 0.0f, 0.98f * physics.acceleration};
+  stepSoldier(body, wish, physics.runSpeed, false, physics, 0.0f, kTickTime, true);
+  // The first tick only asks.
+  CHECK(std::abs(body.position.z) < 1e-6f);
+  CHECK(std::abs(body.velocity.z) < 1e-6f);
+  CHECK(std::abs(body.request.z - 0.7644f) < 1e-4f);
+
+  stepSoldier(body, wish, physics.runSpeed, false, physics, 0.0f, kTickTime, true);
+  CHECK(std::abs(body.velocity.z - 0.7568f) < 1e-4f);
+  CHECK(std::abs(body.position.z - 0.0126f) < 1e-4f);
+}
+
 TEST_MAIN({
+  testAxesRampLikeTheServer();
+  testTickTakesThePreviousRequest();
   testMovementDoesNotDependOnFrameRate();
   testJumpMatchesEngineConstants();
   testAccumulatorKeepsTheRemainder();
