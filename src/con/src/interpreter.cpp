@@ -189,6 +189,15 @@ bool Interpreter::execute(std::string_view text, std::string_view normalizedPath
     if (tokens.empty()) continue;
     const std::string keyword = toLower(tokens[0]);
 
+    // 0. At the highest level the block constructs are refused line by line and
+    //    change nothing (Options::highestLevel).
+    if (options_.highestLevel &&
+        (keyword == "beginrem" || keyword == "endrem" || keyword == "if" || keyword == "elseif" ||
+         keyword == "else" || keyword == "endif")) {
+      diagnose(normalizedPath, lineNo, "\"" + keyword + "\" not allowed on the highest level");
+      continue;
+    }
+
     // 1. Block comments have the highest priority: nothing applies inside them.
     if (keyword == "beginrem") { ++remDepth; continue; }
     if (keyword == "endrem") {

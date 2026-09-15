@@ -1,0 +1,2 @@
+add_executable(template_numbers main.cpp)
+target_link_libraries(template_numbers PRIVATE obf2_game obf2_vfs obf2_flags)

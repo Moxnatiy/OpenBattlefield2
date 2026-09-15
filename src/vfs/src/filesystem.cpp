@@ -1,5 +1,6 @@
 #include "obf2/vfs/filesystem.h"
 
+#include <cctype>
 #include <cstring>
 #include <fstream>
 #include <mutex>
@@ -246,6 +247,23 @@ std::vector<std::string> FileSystem::list(std::string_view prefix) const {
     } else {
       for (const auto& [key, _] : mount.diskIndex) consider(key, mount.mountPoint);
     }
+  }
+  return out;
+}
+
+std::vector<std::string> FileSystem::archiveEntries(std::string_view archiveFileName) const {
+  const auto lower = [](std::string text) {
+    for (char& c : text) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return text;
+  };
+  const std::string wanted = lower(std::string(archiveFileName));
+  std::vector<std::string> out;
+  for (const auto& mount : mounts_) {
+    if (!mount.archive || lower(mount.archive->file().filename().string()) != wanted) continue;
+    for (const auto& entry : mount.archive->entries()) {
+      out.push_back(mount.mountPoint.empty() ? entry : mount.mountPoint + "/" + entry);
+    }
+    break;
   }
   return out;
 }

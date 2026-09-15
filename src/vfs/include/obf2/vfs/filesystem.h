@@ -53,6 +53,9 @@ class FileSystem : public con::FileProvider {
   std::optional<std::vector<std::byte>> read(std::string_view path) const;
   std::optional<std::string> loadText(std::string_view normalizedPath) override;
   std::vector<std::string> list(std::string_view prefix = {}) const;
+  // Every file of one mounted archive, by the archive's file name ("Objects_server.zip",
+  // any case), as normalised VFS paths, in no particular order. Empty when not mounted.
+  std::vector<std::string> archiveEntries(std::string_view archiveFileName) const;
 
   std::size_t mountCount() const { return mounts_.size(); }
 

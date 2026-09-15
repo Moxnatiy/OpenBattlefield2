@@ -54,6 +54,14 @@ class FileProvider {
 struct Options {
   int maxIncludeDepth = 64;
   bool stopOnError = false;
+  // Run as the engine's "highest level", its scope depth 0 (`BF2.exe`, the
+  // script runner 0x69ec30, depth at `+0x89c`): there `beginRem` is refused
+  // ("\"beginRem\" not allowed on the highest level!", 0x69eed7) and so is `if`
+  // ("\"if\" not allowed on the highest level!", 0x69f625) — the line itself is
+  // dropped and everything after it runs. The object templates are loaded this
+  // way: the server numbers three templates that stand inside `beginrem` blocks
+  // (obf2/game/template_numbers.h).
+  bool highestLevel = false;
 };
 
 // The interpreter for the .con/.tweak language.

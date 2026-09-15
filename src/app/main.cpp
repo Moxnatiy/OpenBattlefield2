@@ -40,6 +40,7 @@
 #include "obf2/hud/states.h"
 #include "obf2/game/controls.h"
 #include "obf2/game/scene.h"
+#include "obf2/game/template_numbers.h"
 #include "obf2/gfx/mesh_renderer.h"
 #include "obf2/level/gameplay.h"
 #include "obf2/level/level.h"
@@ -991,6 +992,7 @@ struct RemoteWorld {
   std::vector<KnownObject> known;
   std::map<std::uint16_t, obf2::Vec3f> objects;  // id -> where it stands
   obf2::game::Registry registry;
+  obf2::game::TemplateNumbers templateNumbers;
   std::map<std::string, DrawStage> checked;
   std::map<DrawStage, int> stageCounts;
   obf2::net::bf2::DataBlockAssembler blocks;
@@ -1797,6 +1799,19 @@ struct RemoteWorld {
                     known = buildKnownObjects(files, info->levelName, &levelError);
                     registry = buildRegistry(files);
                     std::printf("  the level was read: known objects %zu\n", known.size());
+                    // The server's template numbers (obf2/game/template_numbers.h).
+                    if (const auto listed = files.read("ServerArchives.con")) {
+                      const std::string text(reinterpret_cast<const char*>(listed->data()),
+                                             listed->size());
+                      std::vector<std::vector<std::string>> archives;
+                      for (const auto& archive : obf2::game::archivesFromCon(text)) {
+                        archives.push_back(files.archiveEntries(archive));
+                      }
+                      templateNumbers = obf2::game::TemplateNumbers::build(files, archives);
+                      const auto lav = templateNumbers.numberOf("USAPC_LAV25");
+                      std::printf("  template numbers: %zu, USAPC_LAV25 is %d\n",
+                                  templateNumbers.size(), lav ? static_cast<int>(*lav) : -1);
+                    }
                   }
                   levelReady = true;
                   join.setLevelReady();
@@ -4237,7 +4252,6 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     obf2::level::PlacedAt placed;
   };
   std::unordered_map<std::uint16_t, RemoteResolved> remoteResolved;
-  std::unordered_map<std::uint32_t, obf2::level::PlacedAt> remoteByTemplate;
   struct DrawStat {
     int frames[3] = {0, 0, 0};  // GhostPrediction: newest, extrapolated, interpolated
     obf2::Vec3f last;
@@ -4764,11 +4778,15 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
             auto resolved = remoteResolved.find(id);
             if (resolved == remoteResolved.end()) {
               obf2::level::PlacedAt placed = remotePlacement->at(object.createdAt);
-              if (placed.kind == obf2::level::PlacedAt::Kind::Spawned && object.templateId != 0) {
-                remoteByTemplate.insert_or_assign(object.templateId, placed);
-              } else if (placed.kind == obf2::level::PlacedAt::Kind::Unknown) {
-                const auto byNumber = remoteByTemplate.find(object.templateId);
-                if (byNumber != remoteByTemplate.end()) placed = byNumber->second;
+              if (placed.kind == obf2::level::PlacedAt::Kind::Unknown) {
+                // Not on a placement: the template number names it
+                // (obf2/game/template_numbers.h).
+                if (const std::string* name = remote->templateNumbers.nameOf(object.templateId);
+                    name != nullptr && object.templateId != 0) {
+                  placed.kind = obf2::level::PlacedAt::Kind::Spawned;
+                  placed.templateName = *name;
+                  placed.hasRotation = false;
+                }
               }
               resolved =
                   remoteResolved.insert_or_assign(id, RemoteResolved{object.createdAt, placed}).first;

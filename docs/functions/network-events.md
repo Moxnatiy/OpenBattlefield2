@@ -1432,3 +1432,37 @@ of the newest packet, which is the number of our actions the server has not
 answered (5–7, steady — not growing). The replay lands 0.00 m from the prediction
 over 504 corrections while running. Frame blending between ticks is ours
 (`BF2FrameInterpolator` exists, not reversed).
+
+## Template numbers, reproduced
+
+`tools/template_order.py --walk lower` and `obf2::game::TemplateNumbers`
+(`tools/template_numbers/template_numbers <modDir> [name…]`) give the server's
+numbers for the mod's templates; both agree line by line (6294), and with every
+pair measured on the live Karkand server at offset 0:
+
+| name | server | ours |
+|---|---|---|
+| us_heavy_soldier / us_light_soldier | 3283 / 3284 | 3283 / 3284 |
+| lrg_stonebridge, barrel_yellow, trafficlight_dest, trestle01_dest, highway_bridge_low_segment | 3696, 3741, 3762, 3763, 3770 | the same |
+| aircontroltower(_mec), mobileradar_mech/us_dest | 3970, 3972, 3989, 3991 | the same |
+| jep_vodnik, RUTNK_T90, USAPC_LAV25, USJEP_HMMWV, USTNK_M1A2 | 5007, 5035, 5134, 5184, 5217 | the same |
+| ARS_D30, ATS_HJ8, ATS_TOW, MEC_BIPOD, US_BIPOD, USART_LW155 | 5498, 5503, 5510, 5553, 5561, 5575 | the same |
+
+The rules, each found by what it fixed:
+
+1. archives in `ServerArchives.con` order, each walked on its own;
+2. directory entries sorted by lower-case name — `_asia` before `ambient…` (the
+   zip's order put `_asia` and `_middle-east`, 266 templates, after `military`:
+   offset +241 against −25);
+3. a name created again takes no new number (25 repeats before the soldiers,
+   one before `ARS_D30`: exactly the −25 and −26);
+4. the files are run at the script runner's **highest level**: `BF2.exe`
+   0x69ec30 compares keywords with `_stricmp` (0x737eb0) and, at scope depth 0
+   (`+0x89c`, pushed by `if` at 0x69eb90, popped at 0x69ebe0), refuses `beginRem`
+   ("\"beginRem\" not allowed on the highest level!", 0x69eed7) and `if` (0x69f625)
+   — the line is dropped, the block runs. Three templates inside `beginrem` blocks
+   (`em_vExp_Su30_Fuselage`, `p_vExp_Su30_Fuselage`, `em_vexp_mig29_fuselage`)
+   are numbered by the server; skipping them left us 3 short.
+
+Not covered: the level's own templates (control points, 5720/5721 on Karkand) and
+where `Common_server.zip` and `Booster_server.zip` fall relative to them.
