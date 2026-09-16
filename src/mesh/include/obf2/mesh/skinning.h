@@ -30,7 +30,10 @@ namespace obf2::mesh {
 // gets the upper body from the weapon and the legs from the movement at once.
 struct PoseStage {
   const BoneAnimation* animation = nullptr;
-  std::uint32_t frame = 0;
+  // In frames, and fractional: the engine samples between two of them and mixes
+  // by what is left over (`BoneAnimation::sample`). Any number does — it is
+  // wrapped into the clip's own length.
+  float frame = 0.0f;
   float weight = 1.0f;
 };
 

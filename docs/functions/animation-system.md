@@ -122,6 +122,36 @@ the client's offsets (32-bit; the Linux ones are 4 bytes further on from `pose`)
 (Linux 0x6b1920) is what fills them; who calls it in the client, and in what
 frame the direction is measured, is **not established** yet.
 
+### A clip is sampled between its frames
+
+`BoneAnimation::getValue(int bone, float time, Quat&, Vec3&, float)` (Linux
+server 0x6b4900) does not land on a frame. It keeps a little cache in the
+animation itself — the last time at `+0x14`, the frame at `+0x18`, the fraction
+at `+0x1c` and the frame after it at `+0x20` — and fills it like this:
+
+```
+scaled = time * this[+0xc]                      0x6b49cc
+count  = this[+0x48] (u16); if this[+0x1] == 0: count -= 1      a looping flag
+looping:   frac = modff(scaled, &whole)         0x6b4a13
+           if frac < 0: frac += 1               0x6b4d67
+           x = count * frac
+           this[+0x1c] = modff(x, &whole)       0x6b4a34   the fraction
+           this[+0x18] = (int)whole, or 0 when count <= it
+           this[+0x20] = that + 1, or 0 when count <= it     0x6b4a54
+not looping: past 1.0 it stops on the last pair, before 0 on the first
+```
+
+Then it samples both frames and mixes them by the fraction. So the frame after
+the last is **the first again**, which is what makes a looping clip come round
+without a jump.
+
+We were rounding the time down to a whole frame. A clip holds 24 pictures a
+second and a movement bundle is played at `speed / holder[2]` — 3.85/5.8 for a
+running soldier, so about 16 of those a second reached the screen while the game
+drew 60. That is the "animation like ten frames a second" with everything else
+smooth. `obf2::mesh::BoneAnimation::sample` now takes a fractional frame,
+slerps the rotation and mixes the translation, and `PoseStage::frame` is a float.
+
 ### Where the ranges come from: one file, loaded once
 
 No script mentions it, and the engine names it itself.

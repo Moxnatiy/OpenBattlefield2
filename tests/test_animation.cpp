@@ -177,6 +177,52 @@ mesh::Skeleton makeTwoBoneSkeleton() {
 
 }  // namespace
 
+// Between two frames, as `BoneAnimation::getValue` does (Linux 0x6b4900): the
+// whole part picks the frame, what is left over mixes it with the next, and the
+// frame after the last is the first again.
+static void testSamplingBlendsBetweenFrames() {
+  // One bone, four frames, the translation running 0, 1/3, 2/3, 1.
+  const auto bytes = buildOneBone(4, 15, {0, 0, 0, 0}, true);
+  // The builder's first channel is the quaternion's x; a translation channel is
+  // easier to check, so build a clip whose channel 4 runs per frame instead.
+  AnimationBuilder builder(1, 4, 15);
+  std::vector<std::vector<std::int16_t>> channels;
+  for (int i = 0; i < 4; ++i) {  // the quaternion: no rotation
+    builder.constantChannel(4, i == 3 ? 32767 : 0);
+    channels.push_back(builder.channel());
+  }
+  const std::int16_t full = static_cast<std::int16_t>((1 << 15) - 1);
+  builder.frameChannel({0, static_cast<std::int16_t>(full / 3),
+                        static_cast<std::int16_t>(full * 2 / 3), full});  // x
+  channels.push_back(builder.channel());
+  for (int i = 5; i < mesh::kAnimationChannels; ++i) {
+    builder.constantChannel(4, 0);
+    channels.push_back(builder.channel());
+  }
+  builder.flushBone(channels);
+  (void)bytes;
+
+  const auto clip = mesh::loadBoneAnimation(builder.bytes());
+  CHECK(clip.has_value());
+  if (!clip) return;
+  CHECK_EQ(clip->frameCount, 4u);
+
+  float rotation[4];
+  mesh::Vec3 position;
+  // On a frame it is that frame.
+  CHECK(clip->sample(0, 1.0f, rotation, &position));
+  CHECK(std::abs(position.x - 1.0f / 3.0f) < 0.001f);
+  // Halfway between frames 1 and 2 is halfway between their values.
+  CHECK(clip->sample(0, 1.5f, rotation, &position));
+  CHECK(std::abs(position.x - 0.5f) < 0.002f);
+  // Past the last frame it wraps back to the first: halfway from 1 to 0.
+  CHECK(clip->sample(0, 3.5f, rotation, &position));
+  CHECK(std::abs(position.x - 0.5f) < 0.002f);
+  // And a time longer than the clip is wrapped into it.
+  CHECK(clip->sample(0, 5.5f, rotation, &position));
+  CHECK(std::abs(position.x - 0.5f) < 0.002f);
+}
+
 static void testPoseWithoutClipIsRestPose() {
   const mesh::Skeleton skeleton = makeTwoBoneSkeleton();
   const auto pose = mesh::poseSkeleton(skeleton, nullptr, 0);
@@ -478,6 +524,7 @@ TEST_MAIN({
   testAppendedMeshKeepsItsRig();
   testFullWeightStageClearsWhatWasBefore();
   testStageTouchesOnlyItsOwnBones();
+  testSamplingBlendsBetweenFrames();
   testPoseWithoutClipIsRestPose();
   testClipMovesOnlyItsOwnBones();
   testSkinMovesVertexWithItsBone();

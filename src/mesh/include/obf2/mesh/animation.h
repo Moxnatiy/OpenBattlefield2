@@ -60,6 +60,19 @@ struct BoneAnimation {
 
   // A bone's rotation and translation at a frame.
   bool sample(std::size_t bone, std::uint32_t frame, float outRotation[4], Vec3* outPosition) const;
+
+  // The same between two frames, which is what the engine does and what makes a
+  // clip look like more than the twenty-four pictures a second it holds.
+  // `BoneAnimation::getValue` (Linux server 0x6b4900) turns its time into a whole
+  // frame and a fraction with `modff` (0x6b4a34): the whole goes to `+0x18`, the
+  // fraction to `+0x1c`, and the frame after it to `+0x20` — **wrapping to zero**
+  // past the last one (0x6b4a54), because a looping clip's last frame leads back
+  // into its first. The rotation is then slerped and the translation mixed by the
+  // fraction.
+  //
+  // `frame` may be any number: it is wrapped into the clip's own length here, the
+  // way a looping animation's time is (0x6b4a0b, `modff` of the normalised time).
+  bool sample(std::size_t bone, float frame, float outRotation[4], Vec3* outPosition) const;
 };
 
 std::optional<BoneAnimation> loadBoneAnimation(std::span<const std::byte> bytes,

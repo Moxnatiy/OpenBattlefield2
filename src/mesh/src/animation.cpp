@@ -1,5 +1,6 @@
 #include "obf2/mesh/animation.h"
 
+#include <cmath>
 #include <cstring>
 
 namespace obf2::mesh {
@@ -108,6 +109,69 @@ bool BoneAnimation::sample(std::size_t bone, std::uint32_t frame, float outRotat
     outPosition->x = value(bone, frame, 4);
     outPosition->y = value(bone, frame, 5);
     outPosition->z = value(bone, frame, 6);
+  }
+  return true;
+}
+
+bool BoneAnimation::sample(std::size_t bone, float frame, float outRotation[4],
+                           Vec3* outPosition) const {
+  if (bone >= tracks.size() || frameCount == 0) return false;
+
+  // Into the clip's own length, the way a looping time is wrapped.
+  const auto count = static_cast<float>(frameCount);
+  float wrapped = std::fmod(frame, count);
+  if (wrapped < 0.0f) wrapped += count;
+
+  const float whole = std::floor(wrapped);
+  const float fraction = wrapped - whole;
+  const auto first = static_cast<std::uint32_t>(whole);
+  // The frame after the last is the first again (0x6b4a54).
+  const std::uint32_t second = first + 1 < frameCount ? first + 1 : 0;
+
+  if (outRotation != nullptr) {
+    float a[4], b[4];
+    for (int i = 0; i < 4; ++i) {
+      a[i] = value(bone, first, i);
+      b[i] = value(bone, second, i);
+    }
+    // The two quaternions of a clip's neighbouring frames are close, so the
+    // shortest path is the one to take; q and -q are the same rotation.
+    float dot = 0.0f;
+    for (int i = 0; i < 4; ++i) dot += a[i] * b[i];
+    if (dot < 0.0f) {
+      for (float& value : b) value = -value;
+      dot = -dot;
+    }
+    float weightA = 1.0f - fraction;
+    float weightB = fraction;
+    if (dot < 0.9995f) {
+      const float angle = std::acos(dot < -1.0f ? -1.0f : (dot > 1.0f ? 1.0f : dot));
+      const float sine = std::sin(angle);
+      if (sine > 1e-6f) {
+        weightA = std::sin((1.0f - fraction) * angle) / sine;
+        weightB = std::sin(fraction * angle) / sine;
+      }
+    }
+    float length = 0.0f;
+    for (int i = 0; i < 4; ++i) {
+      outRotation[i] = a[i] * weightA + b[i] * weightB;
+      length += outRotation[i] * outRotation[i];
+    }
+    length = std::sqrt(length);
+    if (length > 1e-6f) {
+      for (int i = 0; i < 4; ++i) outRotation[i] /= length;
+    }
+  }
+
+  if (outPosition != nullptr) {
+    const auto mix = [&](int channel) {
+      const float a = value(bone, first, channel);
+      const float b = value(bone, second, channel);
+      return a + (b - a) * fraction;
+    };
+    outPosition->x = mix(4);
+    outPosition->y = mix(5);
+    outPosition->z = mix(6);
   }
   return true;
 }

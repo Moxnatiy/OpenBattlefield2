@@ -2939,7 +2939,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
             // legs 16 frames, the weapon 36), while we show one moment.
             const std::uint32_t frame =
                 clip.frameCount == 0 ? 0 : frameIndex % clip.frameCount;
-            stages.push_back(obf2::mesh::PoseStage{&clip, frame, 1.0f});
+            stages.push_back(obf2::mesh::PoseStage{&clip, static_cast<float>(frame), 1.0f});
             std::printf("  clip: %zu tracks, %u frames -> frame %u\n", clip.boneIds.size(),
                         clip.frameCount, frame);
           }
@@ -5434,10 +5434,12 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
                   if (playing.weight <= 0.001f) continue;
                   const obf2::mesh::BoneAnimation* clip = clipAt(playing.path);
                   if (clip == nullptr || clip->frameCount == 0) continue;
-                  const auto frame = static_cast<std::uint32_t>(
-                      playing.time * obf2::mesh::kAnimationFramesPerSecond);
-                  stages.push_back(obf2::mesh::PoseStage{clip, frame % clip->frameCount,
-                                                         playing.weight});
+                  // Fractional, and not wrapped here: the clip is sampled between
+                  // two frames and wraps itself, the way the engine does
+                  // (`BoneAnimation::sample`). Rounding this down to a whole frame
+                  // is what made a soldier at sixty frames a second look like ten.
+                  const float frame = playing.time * obf2::mesh::kAnimationFramesPerSecond;
+                  stages.push_back(obf2::mesh::PoseStage{clip, frame, playing.weight});
                 }
               };
               addStages(drawn.legs);

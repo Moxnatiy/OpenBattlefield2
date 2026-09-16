@@ -100,7 +100,7 @@ std::vector<Mat4> poseSkeleton(const Skeleton& skeleton, const std::vector<PoseS
   struct Applied {
     const BoneAnimation* animation = nullptr;
     std::size_t track = 0;
-    std::uint32_t frame = 0;
+    float frame = 0.0f;
     float weight = 1.0f;
   };
   std::vector<std::vector<Applied>> perBone(skeleton.bones.size());
@@ -158,7 +158,8 @@ std::vector<Mat4> poseSkeleton(const Skeleton& skeleton, const std::vector<PoseS
 std::vector<Mat4> poseSkeleton(const Skeleton& skeleton, const BoneAnimation* animation,
                                std::uint32_t frame) {
   if (animation == nullptr) return poseSkeleton(skeleton, std::vector<PoseStage>{});
-  return poseSkeleton(skeleton, std::vector<PoseStage>{PoseStage{animation, frame, 1.0f}});
+  return poseSkeleton(skeleton,
+                      std::vector<PoseStage>{PoseStage{animation, static_cast<float>(frame), 1.0f}});
 }
 
 void rigPalette(const std::vector<Bone>& bones, const std::vector<Mat4>& boneWorld,
