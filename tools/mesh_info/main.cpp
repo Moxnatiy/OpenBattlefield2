@@ -50,8 +50,26 @@ void printOne(obf2::FileSystem& files, const std::string& path, std::size_t geom
   }
   std::putchar('\n');
 
+  // Every geometry and every lod, with its size and the first texture of its
+  // first material. A file holds several: a weapon's 1p and 3p models, a
+  // soldier's arms and body, a kit's seventeen pieces — and which is which can
+  // only be told apart by looking at them all.
   for (std::size_t g = 0; g < mesh->geometries.size(); ++g) {
     std::printf("  geom %zu: %zu lods\n", g, mesh->geometries[g].lods.size());
+    for (std::size_t l = 0; l < mesh->geometries[g].lods.size(); ++l) {
+      std::string lodError;
+      const auto piece = obf2::mesh::extract(*mesh, g, l, &lodError);
+      if (!piece) {
+        std::printf("    lod %zu: %s\n", l, lodError.c_str());
+        continue;
+      }
+      std::printf("    lod %zu: %zu vertices, %zu triangles, %zu ranges", l,
+                  piece->vertices.size(), piece->indices.size() / 3, piece->ranges.size());
+      if (!piece->ranges.empty() && !piece->ranges[0].maps.empty()) {
+        std::printf(", %s", piece->ranges[0].maps[0].c_str());
+      }
+      std::putchar('\n');
+    }
   }
 
   const auto render = obf2::mesh::extract(*mesh, geometryIndex, lodIndex, &error);

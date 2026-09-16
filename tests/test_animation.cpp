@@ -263,6 +263,55 @@ static void testSkinMovesVertexWithItsBone() {
 
 // A kit appended to a body keeps its own rig: its range points past the body's
 // rigs, and skinning it by its bone moves it, not the body.
+// A weapon: a bundled mesh whose parts ride bones 64 and up
+// (`Soldier::updateThirdPersonAnimations`, Linux 0x555020). Every vertex goes
+// whole onto its part's bone, and the pose then moves each part on its own.
+static void testWeaponPartsRideTheirBones() {
+  mesh::RenderMesh weapon;
+  weapon.vertices.resize(3);
+  weapon.indices = {0, 1, 2};
+  weapon.vertexPart = {0, 1, 1};
+  mesh::DrawRange range;
+  range.indexCount = 3;
+  weapon.ranges.push_back(range);
+
+  mesh::bindPartsToBones(weapon);
+  CHECK_EQ(weapon.rigs.size(), std::size_t(1));
+  CHECK_EQ(weapon.ranges[0].rig, 0);
+  if (weapon.rigs.empty()) return;
+  CHECK_EQ(weapon.rigs[0].bones.size(), std::size_t(2));
+  CHECK_EQ(weapon.rigs[0].bones[0].id, std::uint32_t(64));
+  CHECK_EQ(weapon.rigs[0].bones[1].id, std::uint32_t(65));
+  CHECK_EQ(weapon.skin[2].boneA, std::uint8_t(1));
+  CHECK(std::abs(weapon.skin[0].weight - 1.0f) < 0.001f);
+
+  // Bone 65 stands two along X, bone 64 at the origin: the second part moves and
+  // the first does not.
+  std::vector<mesh::Mat4> pose(66);
+  for (auto& bone : pose) bone.m[0] = bone.m[5] = bone.m[10] = bone.m[15] = 1.0f;
+  pose[65].m[12] = 2.0f;
+  mesh::RenderMesh posed = weapon;
+  mesh::skinMesh(weapon, pose, posed);
+  CHECK(std::abs(posed.vertices[0].position.x) < 0.001f);
+  CHECK(std::abs(posed.vertices[1].position.x - 2.0f) < 0.001f);
+
+  // Past the eighth part there are no bones left, so a ninth stays on the last.
+  mesh::RenderMesh many;
+  many.vertices.resize(10);
+  many.indices.resize(10);
+  many.vertexPart.resize(10);
+  for (std::size_t i = 0; i < 10; ++i) {
+    many.indices[i] = static_cast<std::uint32_t>(i);
+    many.vertexPart[i] = static_cast<std::uint8_t>(i);
+  }
+  mesh::DrawRange whole;
+  whole.indexCount = 10;
+  many.ranges.push_back(whole);
+  mesh::bindPartsToBones(many);
+  CHECK_EQ(many.rigs[0].bones.size(), mesh::kMaxWeaponParts);
+  CHECK_EQ(many.skin[9].boneA, std::uint8_t(mesh::kMaxWeaponParts - 1));
+}
+
 static void testAppendedMeshKeepsItsRig() {
   const auto oneVertexMesh = [](std::uint32_t boneId) {
     mesh::RenderMesh part;
@@ -425,6 +474,7 @@ static void testRigPaletteIsWorldTimesInverseBind() {
 
 TEST_MAIN({
   testRigPaletteIsWorldTimesInverseBind();
+  testWeaponPartsRideTheirBones();
   testAppendedMeshKeepsItsRig();
   testFullWeightStageClearsWhatWasBefore();
   testStageTouchesOnlyItsOwnBones();

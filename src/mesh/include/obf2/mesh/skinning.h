@@ -76,4 +76,31 @@ void skinMesh(const RenderMesh& bindPose, const std::vector<Mat4>& boneWorld, Re
 // their bindings.
 void appendSkinned(RenderMesh& target, const RenderMesh& source);
 
+// The bone a weapon's first part hangs on, and it is the engine's own number.
+// The tail of `Soldier::updateThirdPersonAnimations` (Linux server 0x555020)
+// takes the weapon out (`queryInterface(IID_IWeaponObject)`, 0x5560ba), asks it
+// for its geometry (vtable +0x2c0) and that for its number of parts (+0xc0),
+// **caps the count at eight** (0x5560eb), fills a list with `0x40 + i` for each
+// one (0x556110) and hands it to `Skeleton::transformUsedBones` (0x55614a).
+//
+// 0x40 is 64, which is `mesh1` in `3p_setup.ske`, and `mesh1`..`mesh8` are
+// exactly the eight the cap allows (`ske_info`). The weapons' own clips agree:
+// the M4's mesh has five parts and `3p_m4_crouchStill.baf` animates bones 64..68,
+// the knife has one and `3p_Knife_crouchStrafeLeft.baf` animates 64 alone
+// (`baf_info`).
+inline constexpr std::uint32_t kFirstWeaponBone = 64;
+
+// How many of a weapon's parts the skeleton can carry — the cap at 0x5560eb.
+inline constexpr std::size_t kMaxWeaponParts = 8;
+
+// A BundledMesh whose parts are carried by bones, given the bindings that let it
+// be posed like a skinned one: every vertex is tied whole (weight 1) to the bone
+// `firstBone + its part`, and every range gets a rig naming those bones with an
+// identity inverse bind — a part's vertices are already in its bone's own frame.
+//
+// This is how a weapon reaches the soldier's hands without a path of its own: it
+// is appended to his mesh (`appendSkinned`) and skinned by the same shader.
+// `vertexPart` empty leaves the mesh untouched.
+void bindPartsToBones(RenderMesh& mesh, std::uint32_t firstBone = kFirstWeaponBone);
+
 }  // namespace obf2::mesh

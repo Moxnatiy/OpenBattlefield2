@@ -39,7 +39,9 @@ std::optional<SoldierModel> soldierModel(const Registry& registry, std::string_v
     for (const ChildTemplate& child : kitTemplate->children) {
       const ObjectTemplate* item = registry.find(child.name);
       if (item == nullptr || item->number("itemindex") != 3.0f) continue;
-      model.weapon = partOf(*item, 0);
+      // The same sub-geometry as the body: the camera sets 1 on the object **and
+      // its children** for the third-person view (`Camera::changeSubGeometry`).
+      model.weapon = partOf(*item, kSoldierThirdPersonGeometry);
       model.weaponAnimationSystem3p = std::string(item->text("animationsystem3p"));
       break;
     }

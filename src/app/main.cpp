@@ -4587,6 +4587,17 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     if (bind && model->kit) {
       if (const auto kit = loadPart(*model->kit)) obf2::mesh::appendSkinned(*bind, *kit);
     }
+    // The weapon in his hands. It is a BundledMesh, not a skinned one: its parts
+    // are carried by the skeleton's bones 64 and up, one each, and the weapon's
+    // own third-person clips move exactly those
+    // (`obf2::mesh::bindPartsToBones`). Bound that way it is the same mesh and the
+    // same shader as the body.
+    if (bind && model->weapon) {
+      if (auto weapon = loadPart(*model->weapon)) {
+        obf2::mesh::bindPartsToBones(*weapon);
+        obf2::mesh::appendSkinned(*bind, *weapon);
+      }
+    }
     std::optional<obf2::mesh::Skeleton> skeleton;
     if (bind && !model->skeleton3p.empty()) {
       if (const auto bytes = files.read(obf2::normalizeAssetPath(model->skeleton3p))) {

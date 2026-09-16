@@ -37,6 +37,13 @@ int main(int argc, char** argv) {
               animation->version, animation->boneIds.size(), animation->frameCount,
               animation->precision, animation->duration());
 
+  // Every bone the clip touches, by number. A clip animates only its own list
+  // (`obf2::mesh::poseSkeleton`), and which bones that is answers what a weapon's
+  // third-person clip drives besides the arms.
+  std::printf("bones:");
+  for (const std::uint32_t bone : animation->boneIds) std::printf(" %u", bone);
+  std::putchar('\n');
+
   const std::uint32_t frame =
       argc > 3 ? static_cast<std::uint32_t>(std::atoi(argv[3])) : 0;
   std::printf("frame %u:\n", frame);

@@ -39,11 +39,18 @@ struct SoldierModel {
   std::string weaponAnimationSystem3p;
 };
 
-// The sub-geometry a soldier's body is drawn with from outside. The soldier meshes
-// carry two: 0 is textured `1p_*` (the first-person arms, one LOD) and 1 is
-// textured `*_3p_*` plus the head (three LODs) — read from
-// `soldiers/mec/meshes/mec_light_soldier.skinnedmesh`. The code in `RendDX9.dll`
-// that picks it is not found.
+// The sub-geometry anything held or worn is drawn with from outside, and it is
+// the engine's own number: `Camera::changeSubGeometry` (Linux server 0x5788b0)
+// walks the object and its children and, for the third-person message, calls the
+// geometry's setter (`IGeometry` vtable +0xe0) with a literal **1** and its
+// second one (+0xf8) with -1 (0x578b4a). The first-person branch asks the object
+// instead (`IObject` vtable +0x1e0 and +0x1d8). Objects carrying a single
+// sub-geometry are skipped, which is why a vehicle needs none of this.
+//
+// The data agrees on both counts: a soldier's 1 is textured `*_3p_*` plus the
+// head where 0 is `1p_*`, and a weapon's 1 is the low-detail model (the M4's is
+// 998 triangles against 4253, and it is the one textured `usrif_m4_mini_c.dds`)
+// where 0 carries the scope blur — `mesh_info`.
 inline constexpr int kSoldierThirdPersonGeometry = 1;
 
 std::optional<SoldierModel> soldierModel(const Registry& registry, std::string_view soldier,

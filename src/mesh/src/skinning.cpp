@@ -238,6 +238,49 @@ void skinMesh(const RenderMesh& bindPose, const std::vector<Mat4>& boneWorld, Re
   }
 }
 
+void bindPartsToBones(RenderMesh& mesh, std::uint32_t firstBone) {
+  if (mesh.vertexPart.size() != mesh.vertices.size() || mesh.vertices.empty()) return;
+
+  std::uint8_t parts = 0;
+  for (const std::uint8_t part : mesh.vertexPart) parts = std::max(parts, part);
+  // The engine carries eight at most (`kMaxWeaponParts`); a ninth part would read
+  // past `mesh8` into the kit's bones, so it stays on the last one it may have.
+  const std::size_t bones = std::min<std::size_t>(parts + 1u, kMaxWeaponParts);
+
+  Rig rig;
+  rig.bones.resize(bones);
+  for (std::size_t i = 0; i < bones; ++i) {
+    rig.bones[i].id = firstBone + static_cast<std::uint32_t>(i);
+    // The part's vertices are already in its bone's frame, so there is nothing
+    // to undo — the bind matrix is the identity.
+    rig.bones[i].transform = Mat4{};
+    rig.bones[i].transform.m[0] = 1.0f;
+    rig.bones[i].transform.m[5] = 1.0f;
+    rig.bones[i].transform.m[10] = 1.0f;
+    rig.bones[i].transform.m[15] = 1.0f;
+  }
+
+  mesh.skin.resize(mesh.vertices.size());
+  for (std::size_t i = 0; i < mesh.vertices.size(); ++i) {
+    // Whole to one bone: the same id twice with all the weight on the first, which
+    // is what the shader reads for an unblended vertex
+    // (`Shaders_client.zip:SkinnedMesh.fx:105`).
+    const auto bone =
+        static_cast<std::uint8_t>(std::min<std::size_t>(mesh.vertexPart[i], bones - 1));
+    mesh.skin[i].boneA = bone;
+    mesh.skin[i].boneB = bone;
+    mesh.skin[i].weight = 1.0f;
+  }
+
+  // Every range takes its own copy of the rig, because a rig belongs to a range
+  // and the numbering a vertex indexes by has to hold in each of them.
+  mesh.rigs.clear();
+  for (DrawRange& range : mesh.ranges) {
+    range.rig = static_cast<int>(mesh.rigs.size());
+    mesh.rigs.push_back(rig);
+  }
+}
+
 void appendSkinned(RenderMesh& target, const RenderMesh& source) {
   const auto vertexBase = static_cast<std::uint32_t>(target.vertices.size());
   const auto indexBase = static_cast<std::uint32_t>(target.indices.size());
