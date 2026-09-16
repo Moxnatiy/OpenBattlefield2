@@ -74,13 +74,166 @@ anim_info "Game Files/mods/bf2" objects/soldiers/Common/Animations/AnimationSyst
 At zero it picks `stand_rightFootBack` (`3p_stand.baf`); at 3.9 `stand_run`
 is added to it — exactly as it should be.
 
+## Every trigger type, reversed
+
+The factory is `TriggerManager::createTrigger` (`BF2.exe` 0x7fc620, the file
+name in its own error is `Animation\BoneAnimation\TriggerManager.cpp`). It knows
+twelve type names, each with its own constructor and vtable:
+
+| type | client ctor | vtable | `update` | `applyAnimations` |
+|---|---|---|---|---|
+| `Trigger` | 0x7ffa00 | 0x941c60 | 0x7feec0 | 0x7fe940 |
+| `PoseTrigger` | — | 0x941570 | 0x7fef20 | inherited |
+| `RandomTrigger` | 0x7fb9d0 | 0x9415c0 | inherited | **0x7fefa0** |
+| `MessageTrigger` | 0x7ffbb0 | 0x941408 | — | inherited |
+| `SwitchMessageTrigger` | 0x7fba40 | 0x941610 | — | inherited |
+| `MovementTrigger` | 0x7ffbe0 | 0x941468 | 0x7ff430 | 0x7ff490 |
+| `ForwardTrigger` | 0x7fbab0 | 0x941660 | 0x7ff680 | inherited |
+| `SideTrigger` | 0x7fbaf0 | 0x9416d0 | — | inherited |
+| `UpTrigger` | 0x7fbb30 | 0x941740 | — | inherited |
+| `TurnTrigger` | 0x7fbb70 | 0x9417b0 | — | inherited |
+| `LookAroundTrigger` | 0x7fbbb0 | 0x941820 | — | own |
+| `IdleTrigger` | 0x7ffb50 | 0x941cb0 | — | inherited |
+
+In the vtable `update` is slot 18 (offset 0x48), `applyAnimations` slot 19
+(0x4c) and `isWithinRange` slot 27 (0x6c). The dashes are the ones read in the
+Linux server instead, where the same classes carry their names:
+`dice::anim::<type>::update(AnimationSystem&)` — `Trigger` 0x6cd480,
+`LookAround` 0x6cd510, `Turn` 0x6cd530, `Up` 0x6cd580, `Side` 0x6cd5e0,
+`Movement` 0x6cd640, `Message` 0x6cd6d0, `Forward` 0x6cd740,
+`SwitchMessage` 0x6cd9e0, `Idle` 0x6ce370, `Pose` 0x6ce520.
+
+### The state the conditions read
+
+The conditions all read one object, the animation system itself. Its fields, by
+the client's offsets (32-bit; the Linux ones are 4 bytes further on from `pose`):
+
+| offset | what |
+|---|---|
+| +0x04 | pose: 0 stand, 1 crouch, 2 prone, 3 swim |
+| +0x08 | the message mask of this tick |
+| +0x0c | the message mask of the previous tick |
+| +0x14..+0x1c | the direction, a unit vector: x side, y up, z forward |
+| +0x20 | the speed |
+| +0x24..+0x2c | a second vector, taken instead when the trigger has `useDirection` |
+| +0x34 | the turn value |
+
+`AnimationSystem::setTriggerMovement(float, Vec3 const&, float, Vec3 const&)`
+(Linux 0x6b1920) is what fills them; who calls it in the client, and in what
+frame the direction is measured, is **not established** yet.
+
+### The conditions
+
+```
+Trigger::update(sys):                                   0x7feec0
+    if fadeInTime (+0x28) > 0: sys.setFadeInTime(this)
+    for every child: if not child.update(sys): return false
+    this.applyAnimations(sys); return true
+
+Trigger::applyAnimations(sys):                          0x7fe940
+    for every bundle: sys.playBundle(this, bundle, +0x24, -1.0, 1.0)
+
+RandomTrigger::applyAnimations(sys):                    0x7fefa0
+    plays one bundle, rand() % count
+
+PoseTrigger::update(sys):                               0x7fef20
+    child = children[min(sys.pose, count - 1)]
+    if not child.update(sys): return false
+    this.applyAnimations(sys); return true   // its own children are not walked
+
+MessageTrigger::update(sys):                            Linux 0x6cd6d0
+    mask = this (+0x30); if mask and (sys.messages & mask) == 0: return true
+    else: Trigger::update(sys)
+
+SwitchMessageTrigger::update(sys):                      Linux 0x6cd9e0
+    with two or more children: the child is [1] when (sys.messages & mask) == 0,
+    otherwise [0]; if its update returns false, so does this
+    then, with a bundle: if (mask & sys.messages) == (mask & sys.previous
+    messages) nothing happens; otherwise the bundle is played forwards (1.0) or
+    backwards (0.0) by whether the flag is set — the same clip run in reverse
+
+MovementTrigger::update(sys):                           0x7ff430
+    holder = this (+0x30)
+    if holder.required mask (+0x10) and not (sys.messages & it): return true
+    if holder.forbidden mask (+0x0c) and (sys.messages & it): return true
+    if not isWithinRange(sys.speed): return true
+    else Trigger::update(sys)
+
+ForwardTrigger::update(sys):                            0x7ff680
+    value = triggerOnAcceleration (+0x34) ? sys.second.z : sys.speed * sys.direction.z
+SideTrigger:   value = triggerOnAcceleration ? sys.second.x : sys.speed * sys.direction.x
+UpTrigger:     value = triggerOnAcceleration ? sys.second.y : sys.direction.y
+    each of the three takes |value| when `useDirection` (+0x35) is set,
+    then the same isWithinRange and Trigger::update
+TurnTrigger:   value = sys.turn (+0x34), then isWithinRange
+
+IdleTrigger::update(sys):                               Linux 0x6ce370
+    fields: minimum +0x30 = 5, maximum +0x34 = 10, next +0x38 = 5 (the ctor,
+    0x7ffb50)
+    if sys.idleTime != 0 and minimum < maximum:
+        if next > idleTime or idleTime > maximum: return true
+        next = minimum + (rand() % 100) / 100 * (maximum - minimum)
+        play one bundle, rand() % count
+    then Trigger::update(sys)
+
+LookAroundTrigger::update: nothing of its own; its applyAnimations (Linux
+0x6cd7d0) blends by the system's +0x34 and +0x38 — not reversed in full.
+```
+
+Two things are worth keeping in mind while reading this. **A false answer is
+rare**: a trigger whose condition does not hold returns *true* and simply plays
+nothing, so the tree goes on. Only a child that answers false stops its parent —
+which is what `PoseTrigger` and `SwitchMessageTrigger` use to pick a branch.
+And **`isWithinRange`** is the range of the trigger's value holder
+(docs above): no holder, or equal bounds, means "always".
+
+The two flags are named the other way round from what they do — the client's own
+`.con` writer (0x7ff330) prints `triggerOnAcceleration` for +0x34, the flag that
+switches to the second vector, and `useDirection` for +0x35, the one that takes
+the absolute value. Neither appears in a soldier's or a weapon's third-person
+system: in the whole of `Objects_client.zip` `useDirection` is set only on the
+ladder's `UpTrigger`s and `triggerOnAcceleration` only on the first-person
+`TurnTrigger`s (four each).
+
 ## What is still missing
 
-Conditions we do not model yet: messages (`MessageTrigger`), random choice
-(`RandomTrigger`), idling (`IdleTrigger`), direction (`ForwardTrigger` and
-`SideTrigger` look at a component of the velocity, not its magnitude).
-Because of that the selection sometimes includes stray bundles such as
-`skydive` — those are exactly what those conditions filter out.
+`BundlePlayer` (Linux `dice::anim::BundlePlayer::update(IObject*, float)`): the
+time, the fades and how several bundles are blended per bone.
+`AnimationSystem::playBundle` (Linux 0x6b25f0) takes `(trigger, bundle, an int
+from the trigger's +0x24, a float, a float)` — the base trigger passes -1.0 and
+1.0, `SwitchMessageTrigger` 1.0 or 0.0 with 10000 as the int; what each argument
+means is not established.
 
-Time is missing too: bundles have `fadeInTime`/`fadeOutTime` and their own
-length, and playback with transitions is driven by `BundlePlayer`.
+Who fills the state is not established either: `setTriggerMovement`'s caller in
+the client, the frame the direction is measured in, and where the idle time comes
+from.
+
+One message is named by the data itself. In `soldiers/Common/Animations/
+ValueHolders.inc` the walking range demands bit **4** and the running range
+forbids it:
+
+```
+AnimationSystem.createValueHolder 3p_stand_walk
+AnimationValueHolder.values 0.1 1.5 1.7
+AnimationValueHolder.passOnMessage 4
+AnimationSystem.createValueHolder 3p_stand_run
+AnimationValueHolder.values 0.1 3.9 5.8
+AnimationValueHolder.stopOnMessage 4
+```
+
+so bit 4 is "walking" — the two ranges overlap over 0.1..1.5 and nothing else
+separates them. What bits 1 and 2 are (the soldier's `face_anger` watches 1, a
+weapon's triggers 1, 2 and 4) is not established.
+
+## What the selection gives now
+
+`anim::System::select` walks the tree with every condition above
+(`src/anim/system.h`, tests in `tests/test_anim_system.cpp`). For a soldier
+standing it answers `stand_rightFootBack`, for one running `stand_run` beside it,
+and the parachute, the random hits and the idle faces no longer come out all at
+once.
+
+What it still answers with, and should not, is the one-shot subtrees: `hit`,
+`die`, `proneToStill`, `reviveOnBack`. They hang under `completeTree` as plain
+triggers with no condition at all, so the gate cannot be in the tree — it is in
+`playBundle` and `BundlePlayer`, which are the next thing to read.
