@@ -1326,6 +1326,34 @@ In our code: `obf2::level::PlacementIndex` (with a test), used by the client's
 draw loop — spawned objects get their vehicle's mesh, static ones are left to
 the level, anything else keeps the grey placeholder.
 
+## How long the server takes to answer an action: it keeps four
+
+`GameServer::update(int, float)` calls `GameServer::clearPlayerActions()` (Linux
+server 0x455780) every pass. For every client it takes the player
+(`connection->vtable[0x30]`) and its action buffer (`player->vtable[0x130]`), and
+**while the buffer holds more than four actions** it drops the oldest — copying
+its payload into the buffer's own head first (the node's `+0x10` int into
+buffer `+0x14`, the three qwords at `+0x10`, `+0x18`, `+0x20` into `+0x18`,
+`+0x20`, `+0x28`, and the int at `+0x28` into `+0x30`), then unhooking and
+deleting the node. After the loop it calls `player->vtable[0x1b8]()`.
+
+Two things follow, and both were open questions:
+
+* the answer to an action cannot come sooner than the buffer ahead of it is
+  played, and the server lets that queue stand four deep — 133 ms at 1/30 —
+  before it starts dropping. With a control-object state arriving about thirteen
+  times a second on top of that, the 186 ms average we measure from the inside
+  (and the six to eight unanswered actions) is what the design gives, not a fault
+  of our own send path. The original on the same server has the same floor;
+* the payload the loop saves is the buffer's "current" action, which is what the
+  server plays when nothing is left — the debt row about the server repeating our
+  last action. So what it repeats is **the newest action it threw away**, not the
+  last one it played.
+
+`ActionBuffer::add` (0x436120) numbers each action with the buffer's own counter
+(`buffer+0x10`, post-incremented) as it appends it, so the counter that comes back
+in the controlled-object state is the server's own index and not ours.
+
 ## How often the server sends: the connection type
 
 `ConnectionTypeEvent` (game event 3): the event type, then the connection type in
