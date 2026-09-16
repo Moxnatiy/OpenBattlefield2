@@ -189,4 +189,13 @@ std::optional<Mesh> load(std::span<const std::byte> bytes, Kind kind, std::strin
 std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex = 0,
                                   std::size_t lodIndex = 0, std::string* error = nullptr);
 
+// Drops the vertices no index points at, renumbering what is left.
+//
+// One file holds every geometry and every lod of a mesh in a single vertex
+// buffer, and `extract` unpacks that whole buffer whatever it takes out of it:
+// a kit's mesh has 17 geometries and 27 957 vertices, of which one kit uses a
+// fraction. That costs nothing while the mesh is only uploaded, and a great deal
+// when it is skinned every frame.
+void compactVertices(RenderMesh& mesh);
+
 }  // namespace obf2::mesh

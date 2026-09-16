@@ -45,9 +45,7 @@ What stands in for now, each one a stage below:
   weapon's `stand_still` at their first frame, chosen by bundle name;
 * the upper body's weapon is the kit's slot 3, not the one out;
 * no weapon mesh in the hands;
-* the skinned mesh is lit by the static mesh shader, not `SkinnedMesh.fx`;
-* the mesh keeps every vertex of the file's shared buffer (35 000 for a soldier with
-  a kit, of which the two pieces use a fraction).
+* the skinned mesh is lit by the static mesh shader, not `SkinnedMesh.fx`.
 
 ## Done — stage 2: the soldiers move
 
@@ -61,6 +59,41 @@ frame by the yaw the ghost carries — and the pose is skinned again every frame
 
 Measure: `--watch-soldier` with `--trace-frames` prints the clips, their times and
 their weights; the screenshots of the same run show the stride changing.
+
+### Where the deformation happens
+
+In the vertex shader, as in the original. `Shaders_client.zip:SkinnedMesh.fx:46`
+declares
+
+```
+mat4x3 mBoneArray[26] : BoneArray;//  : register(c15) < bool sparseArray = true; int arrayStart = 15; >;
+```
+
+and `skinSoldier` (`SkinnedMesh.fx:120`) moves the vertex by two of them:
+the position and the normal are each transformed by both bones, mixed by the
+weight — `BLENDWEIGHT` is the first bone's share and the second takes
+`1.0 - LastWeight` (`SkinnedMesh.fx:105`) — and the normal is normalised
+afterwards. The pair of ids comes in as `BLENDINDICES`, a `D3DCOLOR` the shader
+unpacks with `D3DCOLORtoUBYTE4` for hardware without UBYTE4
+(`SkinnedMesh.fx:88`).
+
+The array is 26 long because a vertex's ids index **its own material's rig**,
+not the skeleton: one draw call, one rig, at most 26 bones. So the geometry never
+changes and only the bones do — which is why one soldier template and kit is a
+single mesh on the GPU however many players wear it, each supplying his own
+skeleton.
+
+Ours: `obf2::mesh::rigPalette` builds one range's matrices
+(`world(bone) * inverse_bind`, the same product `skinMesh` uses), the renderer
+hands them to the vertex stage as three rows per bone, and `DrawItem::pose`
+carries the skeleton. `obf2::mesh::skinMesh` stays: it is the same answer on the
+processor, and it is what the test compares the palette against.
+
+The measure, on a live server with bots: skinning and re-uploading every
+soldier's vertices took 1187 samples of 5233 on the main thread (`sample`, 10 s,
+about 2 ms of every frame); through the shader the whole soldier path is 65
+samples of 3205 (8 s, about 0.14 ms). The picture is the same — the same
+mid-stride screenshot.
 
 What is still a stand-in here:
 

@@ -1,9 +1,11 @@
 #include "obf2/gfx/mesh_renderer.h"
 
+#include <algorithm>
 #include <cstring>
 
 #include "obf2/gfx/terrain_light.h"
 #include "obf2/mesh/material.h"
+#include "obf2/mesh/skinning.h"
 
 namespace obf2::gfx {
 namespace {
@@ -31,6 +33,34 @@ struct VertexIn {
     float3 tangent  [[attribute(6)]];
     float2 uvDirt   [[attribute(7)]];
     float2 uvCrack  [[attribute(8)]];
+};
+
+// The same vertex, plus what a skinned mesh needs: the pair of bones it hangs
+// on and the weight of the first. The original carries them in the vertex
+// itself — `scalar BlendWeights : BLENDWEIGHT; vec4 BlendIndices : BLENDINDICES`
+// (`Shaders_client.zip:SkinnedMesh.fx:74`) — and we in a second buffer, so that
+// the level's static geometry does not pay for them.
+struct SkinnedVertexIn {
+    float3 position [[attribute(0)]];
+    float3 normal   [[attribute(1)]];
+    float2 uv       [[attribute(2)]];
+    float2 uv2      [[attribute(3)]];
+    float2 uvLightmap [[attribute(4)]];
+    float  alpha    [[attribute(5)]];
+    float3 tangent  [[attribute(6)]];
+    float2 uvDirt   [[attribute(7)]];
+    float2 uvCrack  [[attribute(8)]];
+    // x: the first bone's place in the range's rig, y: the second's,
+    // z: the first one's weight. The second takes what is left, exactly as the
+    // original computes it (`SkinnedMesh.fx:105`, `LastWeight = 1.0 - LastWeight`).
+    float3 blend    [[attribute(9)]];
+};
+
+// One range's bones, three rows each — the transposed 4x3 the original keeps
+// its array in (`Shaders_client.zip:SkinnedMesh.fx:46`, `mat4x3
+// mBoneArray[26] : BoneArray`). 26 is the engine's limit and so ours.
+struct BonePalette {
+    float4 rows[78];
 };
 
 struct VertexOut {
@@ -182,8 +212,13 @@ struct TerrainMaterials {
 };
 
 
-vertex VertexOut vertex_main(VertexIn in [[stage_in]],
-                             constant Uniforms& uniforms [[buffer(0)]]) {
+// Everything a vertex carries besides where it is: the position, the normal and
+// the tangent come in as arguments, because for a skinned mesh they are not what
+// the file holds but what the bones made of it.
+static VertexOut placeVertex(float3 position, float3 normal, float3 tangent,
+                             float2 uv, float2 uv2, float2 uvLightmap, float2 uvDirt,
+                             float2 uvCrack, float alpha,
+                             constant Uniforms& uniforms) {
     VertexOut out;
     // The sky dome is projected with a w of 10 rather than 1 — the original's
     // own trick (`Shaders_client.zip:SkyDome.fx:100`,
@@ -194,14 +229,14 @@ vertex VertexOut vertex_main(VertexIn in [[stage_in]],
     // is the fog's end — 135 on Strike at Karkand — so without this the horizon
     // ring falls outside it.
     const float w = uniforms.material.z > 0.5 ? 10.0 : 1.0;
-    out.position = uniforms.modelViewProjection * float4(in.position, w);
-    out.normal = (uniforms.model * float4(in.normal, 0.0)).xyz;
-    out.uv = in.uv;
-    out.uv2 = in.uv2;
-    out.uvLightmap = in.uvLightmap;
-    out.uvDirt = in.uvDirt;
-    out.uvCrack = in.uvCrack;
-    out.vertexAlpha = in.alpha;
+    out.position = uniforms.modelViewProjection * float4(position, w);
+    out.normal = (uniforms.model * float4(normal, 0.0)).xyz;
+    out.uv = uv;
+    out.uv2 = uv2;
+    out.uvLightmap = uvLightmap;
+    out.uvDirt = uvDirt;
+    out.uvCrack = uvCrack;
+    out.vertexAlpha = alpha;
     // For a perspective projection w in clip space equals the distance along the
     // view — exactly what the fog needs.
     out.viewDepth = out.position.w;
@@ -222,7 +257,7 @@ vertex VertexOut vertex_main(VertexIn in [[stage_in]],
     out.treeAmbientColor = uniforms.treeAmbientColor;
     out.cameraPosition = uniforms.cameraPosition;
     out.staticSpecular = uniforms.staticSpecular;
-    out.worldPosition = (uniforms.model * float4(in.position, 1.0)).xyz;
+    out.worldPosition = (uniforms.model * float4(position, 1.0)).xyz;
     // The frame a normal map is read in. The game builds it the same way
     // (`Shaders_client.zip:RaShaderSTM.fx:130`, getTanBasisTranspose):
     //
@@ -231,10 +266,58 @@ vertex VertexOut vertex_main(VertexIn in [[stage_in]],
     // where `flip` comes from the w of the engine's own compressed position and
     // the file we read carries no such field. So the sign is left at +1 and
     // written down as the one guess here.
-    out.tangent = (uniforms.model * float4(in.tangent, 0.0)).xyz;
+    out.tangent = (uniforms.model * float4(tangent, 0.0)).xyz;
     out.binormal = cross(out.tangent, out.normal);
-    out.localY = in.position.y;
+    out.localY = position.y;
     return out;
+}
+
+vertex VertexOut vertex_main(VertexIn in [[stage_in]],
+                             constant Uniforms& uniforms [[buffer(0)]]) {
+    return placeVertex(in.position, in.normal, in.tangent, in.uv, in.uv2, in.uvLightmap,
+                       in.uvDirt, in.uvCrack, in.alpha, uniforms);
+}
+
+// A vertex moved by its two bones before anything else is done with it. The
+// original's own skinning, `skinSoldier` (`Shaders_client.zip:SkinnedMesh.fx:120`):
+// the position and the normal are each transformed by both bones and mixed by
+// the weight, and the normal is normalised afterwards. The matrices arrive
+// transposed, three rows to a bone, so a transform is three dot products.
+vertex VertexOut vertex_skinned_main(SkinnedVertexIn in [[stage_in]],
+                                     constant Uniforms& uniforms [[buffer(0)]],
+                                     constant BonePalette& palette [[buffer(1)]]) {
+    const uint first = uint(in.blend.x) * 3u;
+    const uint second = uint(in.blend.y) * 3u;
+    const float weightA = in.blend.z;
+    const float weightB = 1.0 - weightA;
+
+    const float4 point = float4(in.position, 1.0);
+    const float4 direction = float4(in.normal, 0.0);
+    const float4 along = float4(in.tangent, 0.0);
+
+    float3 position = weightA * float3(dot(palette.rows[first], point),
+                                       dot(palette.rows[first + 1u], point),
+                                       dot(palette.rows[first + 2u], point));
+    position += weightB * float3(dot(palette.rows[second], point),
+                                 dot(palette.rows[second + 1u], point),
+                                 dot(palette.rows[second + 2u], point));
+
+    float3 normal = weightA * float3(dot(palette.rows[first], direction),
+                                     dot(palette.rows[first + 1u], direction),
+                                     dot(palette.rows[first + 2u], direction));
+    normal += weightB * float3(dot(palette.rows[second], direction),
+                               dot(palette.rows[second + 1u], direction),
+                               dot(palette.rows[second + 2u], direction));
+
+    float3 tangent = weightA * float3(dot(palette.rows[first], along),
+                                      dot(palette.rows[first + 1u], along),
+                                      dot(palette.rows[first + 2u], along));
+    tangent += weightB * float3(dot(palette.rows[second], along),
+                                dot(palette.rows[second + 1u], along),
+                                dot(palette.rows[second + 2u], along));
+
+    return placeVertex(position, normalize(normal), tangent, in.uv, in.uv2, in.uvLightmap,
+                       in.uvDirt, in.uvCrack, in.alpha, uniforms);
 }
 
 fragment float4 fragment_main(VertexOut in [[stage_in]],
@@ -821,7 +904,8 @@ SDL_GPUShader* createOverlayShader(SDL_GPUDevice* gpu, SDL_GPUShaderStage stage,
   return SDL_CreateGPUShader(gpu, &info);
 }
 
-SDL_GPUShader* createShader(SDL_GPUDevice* gpu, SDL_GPUShaderStage stage, const char* entrypoint) {
+SDL_GPUShader* createShader(SDL_GPUDevice* gpu, SDL_GPUShaderStage stage, const char* entrypoint,
+                            int uniformBuffers = 1) {
   const bool isVertex = stage == SDL_GPU_SHADERSTAGE_VERTEX;
   SDL_GPUShaderCreateInfo info{};
   info.code = reinterpret_cast<const Uint8*>(kShaderSource);
@@ -831,8 +915,9 @@ SDL_GPUShader* createShader(SDL_GPUDevice* gpu, SDL_GPUShaderStage stage, const 
   info.stage = stage;
   // The fragment stage has a buffer of its own for the terrain's materials:
   // six tilings and six flags would cost twelve varyings otherwise, and the
-  // stage's inputs are nearly spent.
-  info.num_uniform_buffers = 1;
+  // stage's inputs are nearly spent. The skinned vertex stage asks for two:
+  // the frame's constants and the range's bones.
+  info.num_uniform_buffers = static_cast<Uint32>(uniformBuffers);
   // Colour, light map, detail, the ground's light and its texture, normal,
   // dirt, crack, the patch's two chart maps, and the six terrain materials.
   info.num_samplers = isVertex ? 0 : 16;
@@ -876,6 +961,22 @@ struct VertexUniforms {
   float staticSpecular[4]{};    // rgb: the colour, w: the gloss
 };
 
+// The second vertex buffer of a skinned mesh: a mirror of `SkinnedVertexIn`'s
+// `blend`. Floats rather than the file's bytes because a vertex attribute of
+// four bytes would have to be read as a colour, which is what the original's
+// own shader has to undo on hardware without UBYTE4
+// (`Shaders_client.zip:SkinnedMesh.fx:88`, `D3DCOLORtoUBYTE4`).
+struct SkinVertex {
+  float boneA = 0.0f;
+  float boneB = 0.0f;
+  float weight = 1.0f;
+};
+
+// A mirror of `BonePalette` in the shader: one range's bones, three rows each.
+struct BoneUniforms {
+  float rows[mesh::kMaxRigBones][3][4]{};
+};
+
 // A mirror of `TerrainMaterials` in the shader — the fragment stage's own
 // constant buffer, pushed once a frame because a level's six do not change.
 struct FragmentUniforms {
@@ -901,6 +1002,7 @@ MeshRenderer::~MeshRenderer() {
   if (overlayPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, overlayPipeline_);
   if (roadPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, roadPipeline_);
   if (skyPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, skyPipeline_);
+  if (skinnedPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, skinnedPipeline_);
   if (sampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, sampler_);
   if (normalSampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, normalSampler_);
   if (clampSampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, clampSampler_);
@@ -1016,17 +1118,48 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   skyInfo.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
   SDL_GPUGraphicsPipeline* skyPipeline = SDL_CreateGPUGraphicsPipeline(gpu, &skyInfo);
 
+  // A soldier: the same pass, with the vertex stage moving every vertex by its
+  // two bones first. That is where the original does it too — the engine hands
+  // the shader an array of bone matrices and the geometry itself never changes
+  // (`Shaders_client.zip:SkinnedMesh.fx:46`).
+  //
+  // The bones ride in a second vertex buffer, so the vertex a static mesh and a
+  // soldier share stays the same 80 bytes.
+  SDL_GPUShader* skinnedVertexShader =
+      createShader(gpu, SDL_GPU_SHADERSTAGE_VERTEX, "vertex_skinned_main", 2);
+  SDL_GPUVertexBufferDescription skinnedBuffers[2] = {
+      bufferDescription,
+      {1, static_cast<Uint32>(sizeof(SkinVertex)), SDL_GPU_VERTEXINPUTRATE_VERTEX, 0},
+  };
+  SDL_GPUVertexAttribute skinnedAttributes[10];
+  std::memcpy(skinnedAttributes, attributes, sizeof(attributes));
+  skinnedAttributes[9] = SDL_GPUVertexAttribute{9, 1, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, 0};
+
+  SDL_GPUGraphicsPipeline* skinnedPipeline = nullptr;
+  if (skinnedVertexShader != nullptr) {
+    SDL_GPUGraphicsPipelineCreateInfo skinnedInfo = info;
+    skinnedInfo.vertex_shader = skinnedVertexShader;
+    skinnedInfo.vertex_input_state.vertex_buffer_descriptions = skinnedBuffers;
+    skinnedInfo.vertex_input_state.num_vertex_buffers = 2;
+    skinnedInfo.vertex_input_state.vertex_attributes = skinnedAttributes;
+    skinnedInfo.vertex_input_state.num_vertex_attributes = 10;
+    skinnedPipeline = SDL_CreateGPUGraphicsPipeline(gpu, &skinnedInfo);
+    SDL_ReleaseGPUShader(gpu, skinnedVertexShader);
+  }
+
   SDL_ReleaseGPUShader(gpu, vertexShader);
   SDL_ReleaseGPUShader(gpu, fragmentShader);
   if (pipeline == nullptr) return fail("graphics pipeline");
   if (roadPipeline == nullptr) return fail("road pipeline");
   if (skyPipeline == nullptr) return fail("sky pipeline");
+  if (skinnedPipeline == nullptr) return fail("skinned pipeline");
 
   auto renderer = std::unique_ptr<MeshRenderer>(new MeshRenderer());
   renderer->device_ = &device;
   renderer->pipeline_ = pipeline;
   renderer->roadPipeline_ = roadPipeline;
   renderer->skyPipeline_ = skyPipeline;
+  renderer->skinnedPipeline_ = skinnedPipeline;
 
   // The ground's light. Its own pass, its own file: what it is and what the
   // game does with it is in `obf2/gfx/terrain_light.h`. A failure here is not
@@ -1186,6 +1319,21 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
   const Uint32 vertexBytes = static_cast<Uint32>(source.vertices.size() * sizeof(mesh::Vertex));
   const Uint32 indexBytes = static_cast<Uint32>(source.indices.size() * sizeof(std::uint32_t));
 
+  // A skinned mesh carries its bindings alongside: the pair of bones and the
+  // weight, one entry per vertex. `weight` is the first bone's share and the
+  // second takes the rest, which is how the file stores it and how the shader
+  // reads it (`Shaders_client.zip:SkinnedMesh.fx:105`).
+  std::vector<SkinVertex> skin;
+  if (source.skin.size() == source.vertices.size() && !source.rigs.empty()) {
+    skin.resize(source.skin.size());
+    for (std::size_t i = 0; i < source.skin.size(); ++i) {
+      skin[i].boneA = static_cast<float>(source.skin[i].boneA);
+      skin[i].boneB = static_cast<float>(source.skin[i].boneB);
+      skin[i].weight = source.skin[i].weight;
+    }
+  }
+  const Uint32 skinBytes = static_cast<Uint32>(skin.size() * sizeof(SkinVertex));
+
   SDL_GPUBufferCreateInfo vertexInfo{};
   vertexInfo.usage = SDL_GPU_BUFFERUSAGE_VERTEX;
   vertexInfo.size = vertexBytes;
@@ -1201,14 +1349,28 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
     return fail("index buffer");
   }
 
-  // One transfer buffer for both arrays: the vertices, then the indices.
+  SDL_GPUBuffer* skinBuffer = nullptr;
+  if (skinBytes != 0) {
+    SDL_GPUBufferCreateInfo skinInfo{};
+    skinInfo.usage = SDL_GPU_BUFFERUSAGE_VERTEX;
+    skinInfo.size = skinBytes;
+    skinBuffer = SDL_CreateGPUBuffer(gpu, &skinInfo);
+    if (skinBuffer == nullptr) {
+      SDL_ReleaseGPUBuffer(gpu, vertexBuffer);
+      SDL_ReleaseGPUBuffer(gpu, indexBuffer);
+      return fail("skin buffer");
+    }
+  }
+
+  // One transfer buffer for the arrays: the vertices, the indices, the skin.
   SDL_GPUTransferBufferCreateInfo transferInfo{};
   transferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-  transferInfo.size = vertexBytes + indexBytes;
+  transferInfo.size = vertexBytes + indexBytes + skinBytes;
   SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(gpu, &transferInfo);
   if (transfer == nullptr) {
     SDL_ReleaseGPUBuffer(gpu, vertexBuffer);
     SDL_ReleaseGPUBuffer(gpu, indexBuffer);
+    if (skinBuffer != nullptr) SDL_ReleaseGPUBuffer(gpu, skinBuffer);
     return fail("transfer buffer");
   }
 
@@ -1217,10 +1379,12 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
     SDL_ReleaseGPUTransferBuffer(gpu, transfer);
     SDL_ReleaseGPUBuffer(gpu, vertexBuffer);
     SDL_ReleaseGPUBuffer(gpu, indexBuffer);
+    if (skinBuffer != nullptr) SDL_ReleaseGPUBuffer(gpu, skinBuffer);
     return fail("mapping the transfer buffer");
   }
   std::memcpy(mapped, source.vertices.data(), vertexBytes);
   std::memcpy(mapped + vertexBytes, source.indices.data(), indexBytes);
+  if (skinBytes != 0) std::memcpy(mapped + vertexBytes + indexBytes, skin.data(), skinBytes);
   SDL_UnmapGPUTransferBuffer(gpu, transfer);
 
   SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(gpu);
@@ -1234,6 +1398,12 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
   SDL_GPUBufferRegion indexRegion{indexBuffer, 0, indexBytes};
   SDL_UploadToGPUBuffer(copy, &source1, &indexRegion, false);
 
+  if (skinBytes != 0) {
+    SDL_GPUTransferBufferLocation source2{transfer, vertexBytes + indexBytes};
+    SDL_GPUBufferRegion skinRegion{skinBuffer, 0, skinBytes};
+    SDL_UploadToGPUBuffer(copy, &source2, &skinRegion, false);
+  }
+
   SDL_EndGPUCopyPass(copy);
   SDL_SubmitGPUCommandBuffer(commands);
   SDL_ReleaseGPUTransferBuffer(gpu, transfer);
@@ -1241,6 +1411,7 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
   GpuMesh gpuMesh;
   gpuMesh.vertices = vertexBuffer;
   gpuMesh.indices = indexBuffer;
+  gpuMesh.skin = skinBuffer;
   gpuMesh.hasLightmapUv = source.hasLightmapUv;
 
   // A sphere around the mesh's bounds: the centre in the middle, the radius to a corner.
@@ -1258,6 +1429,15 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
     GpuMesh::Range range;
     range.indexStart = source_range.indexStart;
     range.indexCount = source_range.indexCount;
+
+    // The rig this range's vertices index. A rig longer than the shader's array
+    // cannot be drawn as one material in the original either, so the tail is cut
+    // rather than silently read past.
+    if (skinBuffer != nullptr && source_range.rig >= 0 &&
+        static_cast<std::size_t>(source_range.rig) < source.rigs.size()) {
+      range.rig = source.rigs[static_cast<std::size_t>(source_range.rig)].bones;
+      if (range.rig.size() > mesh::kMaxRigBones) range.rig.resize(mesh::kMaxRigBones);
+    }
 
     // One texture on the GPU per path, however many meshes name it. A level's
     // buildings share their walls, its vehicles share their dirt, and the
@@ -1380,6 +1560,7 @@ void MeshRenderer::release(GpuMesh& gpuMesh) {
   for (SDL_GPUTexture* texture : gpuMesh.ownedTextures) SDL_ReleaseGPUTexture(gpu, texture);
   if (gpuMesh.vertices != nullptr) SDL_ReleaseGPUBuffer(gpu, gpuMesh.vertices);
   if (gpuMesh.indices != nullptr) SDL_ReleaseGPUBuffer(gpu, gpuMesh.indices);
+  if (gpuMesh.skin != nullptr) SDL_ReleaseGPUBuffer(gpu, gpuMesh.skin);
   gpuMesh = GpuMesh{};
 }
 
@@ -1631,11 +1812,18 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
   // Three passes over the same list, each through its own pipeline: the sky is
   // the background, then everything solid, then the roads as a skin on the
   // terrain.
-  enum class Layer { Sky, Solid, Road };
+  enum class Layer { Sky, Solid, Skinned, Road };
   auto layerOf = [](const DrawItem& item) {
     if (item.sky) return Layer::Sky;
-    return item.road ? Layer::Road : Layer::Solid;
+    if (item.road) return Layer::Road;
+    const bool skinned =
+        item.pose != nullptr && item.mesh != nullptr && item.mesh->skin != nullptr;
+    return skinned ? Layer::Skinned : Layer::Solid;
   };
+  // One range's bones on their way to the shader. Kept out of the loop so the
+  // frame allocates it once instead of once per soldier.
+  std::vector<mesh::Mat4> palette;
+  BoneUniforms boneUniforms{};
   auto drawLayer = [&](Layer wanted) {
     for (const DrawItem& item : items) {
       if (layerOf(item) != wanted) continue;
@@ -1655,8 +1843,10 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
       }
       ++drawn_;
 
-      const SDL_GPUBufferBinding vertexBinding{item.mesh->vertices, 0};
-      SDL_BindGPUVertexBuffers(pass, 0, &vertexBinding, 1);
+      const bool skinned = wanted == Layer::Skinned;
+      const SDL_GPUBufferBinding vertexBindings[2] = {{item.mesh->vertices, 0},
+                                                      {item.mesh->skin, 0}};
+      SDL_BindGPUVertexBuffers(pass, 0, vertexBindings, skinned ? 2 : 1);
       const SDL_GPUBufferBinding indexBinding{item.mesh->indices, 0};
       SDL_BindGPUIndexBuffer(pass, &indexBinding, SDL_GPU_INDEXELEMENTSIZE_32BIT);
 
@@ -1757,6 +1947,25 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
         uniforms.fogShape[3] = range.crack != nullptr ? 1.0f : 0.0f;
         SDL_PushGPUVertexUniformData(frame.commands, 0, &uniforms, sizeof(uniforms));
 
+        // The range's own bones. Per range and not per mesh: a vertex's pair of
+        // ids indexes its material's rig (`obf2::mesh::rigPalette`). The rows go
+        // in transposed, which is the layout the original's array has and what
+        // makes a transform three dot products.
+        if (skinned) {
+          mesh::rigPalette(range.rig, *item.pose, palette);
+          const std::size_t bones = std::min(palette.size(), mesh::kMaxRigBones);
+          for (std::size_t b = 0; b < bones; ++b) {
+            const float* m = palette[b].m;
+            for (int row = 0; row < 3; ++row) {
+              boneUniforms.rows[b][row][0] = m[row];
+              boneUniforms.rows[b][row][1] = m[4 + row];
+              boneUniforms.rows[b][row][2] = m[8 + row];
+              boneUniforms.rows[b][row][3] = m[12 + row];
+            }
+          }
+          SDL_PushGPUVertexUniformData(frame.commands, 1, &boneUniforms, sizeof(boneUniforms));
+        }
+
         SDL_DrawGPUIndexedPrimitives(pass, range.indexCount, 1, range.indexStart, 0, 0);
       }
     }
@@ -1766,6 +1975,8 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
   drawLayer(Layer::Sky);
   SDL_BindGPUGraphicsPipeline(pass, pipeline_);
   drawLayer(Layer::Solid);
+  SDL_BindGPUGraphicsPipeline(pass, skinnedPipeline_);
+  drawLayer(Layer::Skinned);
   SDL_BindGPUGraphicsPipeline(pass, roadPipeline_);
   drawLayer(Layer::Road);
 

@@ -451,7 +451,38 @@ std::optional<RenderMesh> extract(const Mesh& mesh, std::size_t geometryIndex,
     if (range.indexCount > 0) out.ranges.push_back(std::move(range));
   }
 
+  compactVertices(out);
   return out;
+}
+
+void compactVertices(RenderMesh& mesh) {
+  if (mesh.vertices.empty() || mesh.indices.empty()) return;
+
+  constexpr std::uint32_t kUnused = 0xffffffffu;
+  std::vector<std::uint32_t> moved(mesh.vertices.size(), kUnused);
+  std::uint32_t next = 0;
+  for (std::uint32_t& index : mesh.indices) {
+    if (index >= mesh.vertices.size()) continue;
+    if (moved[index] == kUnused) moved[index] = next++;
+    index = moved[index];
+  }
+  if (next == mesh.vertices.size()) return;  // every vertex is used
+
+  std::vector<Vertex> vertices(next);
+  std::vector<SkinBinding> skin;
+  std::vector<std::uint8_t> parts;
+  if (!mesh.skin.empty()) skin.resize(next);
+  if (!mesh.vertexPart.empty()) parts.resize(next);
+  for (std::size_t from = 0; from < moved.size(); ++from) {
+    const std::uint32_t to = moved[from];
+    if (to == kUnused) continue;
+    vertices[to] = mesh.vertices[from];
+    if (!skin.empty() && from < mesh.skin.size()) skin[to] = mesh.skin[from];
+    if (!parts.empty() && from < mesh.vertexPart.size()) parts[to] = mesh.vertexPart[from];
+  }
+  mesh.vertices = std::move(vertices);
+  if (!skin.empty()) mesh.skin = std::move(skin);
+  if (!parts.empty()) mesh.vertexPart = std::move(parts);
 }
 
 }  // namespace obf2::mesh

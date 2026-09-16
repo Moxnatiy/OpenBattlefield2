@@ -52,6 +52,12 @@ struct GpuMesh {
     // level's six terrain materials owns which texel of this patch.
     SDL_GPUTexture* chartA = nullptr;
     SDL_GPUTexture* chartB = nullptr;
+    // The rig this range's vertices hang on: the bone's number in the skeleton
+    // and its inverse bind matrix. A vertex's pair of ids indexes **this** list
+    // and not the skeleton, which is why the palette is per range and not per
+    // mesh (`Shaders_client.zip:SkinnedMesh.fx:46`, one `mBoneArray` per
+    // material). Empty for everything that is not skinned.
+    std::vector<mesh::Bone> rig;
   };
 
   // Whether the geometry carried the light map's own UV set. Without it a baked
@@ -60,6 +66,12 @@ struct GpuMesh {
 
   SDL_GPUBuffer* vertices = nullptr;
   SDL_GPUBuffer* indices = nullptr;
+  // A skinned mesh's second vertex buffer: the pair of bone ids and the first
+  // one's weight, one entry per vertex. The original keeps the same three
+  // values in the vertex itself as BLENDINDICES and BLENDWEIGHT
+  // (`Shaders_client.zip:SkinnedMesh.fx:74`); they live in a buffer of their
+  // own here so that a level's static geometry does not carry them.
+  SDL_GPUBuffer* skin = nullptr;
   std::vector<Range> ranges;
   std::vector<SDL_GPUTexture*> ownedTextures;
 
@@ -133,6 +145,12 @@ class MeshRenderer {
     // scale means this object has none, which is normal for vegetation.
     SDL_GPUTexture* lightmap = nullptr;
     float lightmapOffset[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    // The pose a skinned mesh is drawn in: one world matrix per bone of the
+    // skeleton, as `obf2::mesh::poseSkeleton` gives them. The renderer turns it
+    // into each range's own palette and hands that to the vertex shader, which
+    // is where the deformation happens — the same division of labour as in the
+    // original. Null draws the mesh as it lies in the file.
+    const std::vector<mesh::Mat4>* pose = nullptr;
   };
 
   // The fog comes from the level's data (Sky.con). fogEnd == 0 disables it.
@@ -277,6 +295,9 @@ class MeshRenderer {
   SDL_GPUGraphicsPipeline* pipeline_ = nullptr;
   SDL_GPUGraphicsPipeline* roadPipeline_ = nullptr;
   SDL_GPUGraphicsPipeline* skyPipeline_ = nullptr;
+  // The same pass as `pipeline_`, with the vertex stage moving every vertex by
+  // its two bones first.
+  SDL_GPUGraphicsPipeline* skinnedPipeline_ = nullptr;
   SDL_GPUGraphicsPipeline* overlayPipeline_ = nullptr;
   SDL_GPUSampler* sampler_ = nullptr;
   // A separate sampler for the interface: there a texture is never tiled, and

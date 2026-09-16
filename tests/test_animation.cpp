@@ -370,7 +370,61 @@ static void testStageTouchesOnlyItsOwnBones() {
   CHECK(std::abs(pose[1].m[12] - 1.0f) < 0.01f);
 }
 
+// The palette the vertex shader is handed: one matrix per entry of the rig,
+// `world(bone) * inverse_bind`, and an entry whose bone the pose does not reach
+// keeps its place as the identity rather than shifting the numbering the
+// vertices index by.
+static void testRigPaletteIsWorldTimesInverseBind() {
+  mesh::Rig rig;
+  mesh::Bone first;
+  first.id = 1;
+  // An inverse bind that moves the vertex one back along X.
+  first.transform.m[0] = first.transform.m[5] = first.transform.m[10] = 1.0f;
+  first.transform.m[15] = 1.0f;
+  first.transform.m[12] = -1.0f;
+  rig.bones.push_back(first);
+  // A second entry naming a bone the pose does not have.
+  mesh::Bone missing;
+  missing.id = 9;
+  rig.bones.push_back(missing);
+
+  std::vector<mesh::Mat4> pose(2);
+  for (auto& bone : pose) bone.m[0] = bone.m[5] = bone.m[10] = bone.m[15] = 1.0f;
+  pose[1].m[12] = 4.0f;  // bone 1 stands four along X
+
+  std::vector<mesh::Mat4> palette;
+  mesh::rigPalette(rig.bones, pose, palette);
+  CHECK_EQ(palette.size(), std::size_t(2));
+  if (palette.size() != 2) return;
+  // 4 from the pose and -1 from the inverse bind.
+  CHECK(std::abs(palette[0].m[12] - 3.0f) < 0.001f);
+  // The bone that is not in the pose: the identity, in its own place.
+  CHECK(std::abs(palette[1].m[12]) < 0.001f);
+  CHECK(std::abs(palette[1].m[0] - 1.0f) < 0.001f);
+  CHECK(std::abs(palette[1].m[15] - 1.0f) < 0.001f);
+
+  // And it is the same matrix `skinMesh` moves a vertex by, which is what makes
+  // the two paths — ours on the processor and the shader's — one answer.
+  mesh::RenderMesh bind;
+  bind.vertices.resize(1);
+  bind.vertices[0].position = mesh::Vec3{0.0f, 0.0f, 0.0f};
+  bind.indices = {0};
+  bind.skin.resize(1);
+  bind.skin[0].boneA = 0;
+  bind.skin[0].boneB = 0;
+  bind.skin[0].weight = 1.0f;
+  bind.rigs.push_back(rig);
+  mesh::DrawRange range;
+  range.indexCount = 1;
+  range.rig = 0;
+  bind.ranges.push_back(range);
+  mesh::RenderMesh posed = bind;
+  mesh::skinMesh(bind, pose, posed);
+  CHECK(std::abs(posed.vertices[0].position.x - palette[0].m[12]) < 0.001f);
+}
+
 TEST_MAIN({
+  testRigPaletteIsWorldTimesInverseBind();
   testAppendedMeshKeepsItsRig();
   testFullWeightStageClearsWhatWasBefore();
   testStageTouchesOnlyItsOwnBones();

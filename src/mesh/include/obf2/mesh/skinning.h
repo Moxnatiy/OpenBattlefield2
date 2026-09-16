@@ -11,6 +11,7 @@
 //
 // The matrix a vertex is moved by:
 //   world(bone) * inverse_bind(rig)
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -46,6 +47,24 @@ std::vector<Mat4> poseSkeleton(const Skeleton& skeleton, const std::vector<PoseS
 // child), so one forward pass is enough.
 std::vector<Mat4> poseSkeleton(const Skeleton& skeleton, const BoneAnimation* animation,
                                std::uint32_t frame);
+
+// The matrices one rig's bones move their vertices by: for every entry of the
+// rig, `world(bone) * inverse_bind`. An entry whose bone is not in the pose
+// gets the identity rather than being dropped, so the numbering the vertices
+// index by is kept.
+//
+// This is what the original hands the vertex shader as `mBoneArray`
+// (`Shaders_client.zip:SkinnedMesh.fx:46`, `mat4x3 mBoneArray[26] :
+// BoneArray`) — one array per material, because a vertex's pair of bone ids
+// indexes its own material's rig and nothing else.
+// The result is written into `out` rather than returned: a frame asks for it
+// once per range per soldier, and the caller's vector is then allocated once.
+void rigPalette(const std::vector<Bone>& bones, const std::vector<Mat4>& boneWorld,
+                std::vector<Mat4>& out);
+
+// How many bones one rig may have. The engine's own limit, and the size of the
+// shader's array (`Shaders_client.zip:SkinnedMesh.fx:46`).
+inline constexpr std::size_t kMaxRigBones = 26;
 
 // Deforms the vertices by a pose. `bindPose` is the mesh as it lies in the file,
 // `out` receives the moved positions and normals. Both are the same size.

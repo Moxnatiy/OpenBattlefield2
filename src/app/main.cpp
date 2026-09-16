@@ -1259,6 +1259,19 @@ struct RemoteWorld {
       // answered, every ten seconds of ticks. A number that keeps growing is a
       // queue on the server that never drains.
       if (ourSoldier != 0 && actionTick % 300 == 0) {
+        // How long the server takes to answer an action, and how far our clock
+        // therefore runs ahead of the newest packet. The ghosts of other players
+        // are drawn at our clock minus `GSInterpolationTime` (100 ms), so a round
+        // trip above that is what turns their movement from interpolated into
+        // extrapolated — and extrapolation is what jerks when the next update
+        // disagrees.
+        if (roundTrips > 0) {
+          std::printf("  round trip: %.0f ms on average, at most %.0f ms, over %d answers\n",
+                      roundTripSum / static_cast<float>(roundTrips), roundTripMax, roundTrips);
+          roundTripSum = 0.0f;
+          roundTripMax = 0.0f;
+          roundTrips = 0;
+        }
         std::printf("  actions: tick %u, unanswered %zu, game tick %u, newest packet tick %u\n",
                     actionTick, sent.size(), world.gameTick(), world.newestPacketTick());
       }
@@ -1266,6 +1279,10 @@ struct RemoteWorld {
       if (ourSoldier == 0) continue;
       const std::uint32_t number = actionTick++;
       sent.push_back({number, action});
+      sentAt[number % sentAt.size()] =
+          std::chrono::duration<float, std::milli>(
+              std::chrono::steady_clock::now().time_since_epoch())
+              .count();
       // Nothing answers while there is no soldier; the list is not allowed to grow
       // for a whole spawn screen. Ours, not the binary's.
       while (sent.size() > 256) sent.pop_front();
@@ -1289,6 +1306,11 @@ struct RemoteWorld {
   // keeps in the player's action buffer (`FUN_005bc590` adds, `FUN_005bc530` drops
   // what the server has answered).
   std::deque<std::pair<std::uint32_t, obf2::net::bf2::PlayerAction>> sent;
+  // When each action was sent, by its tick — for the round trip the report prints.
+  std::array<float, 256> sentAt{};
+  float roundTripSum = 0.0f;
+  float roundTripMax = 0.0f;
+  int roundTrips = 0;
 
   // One action applied to our soldier: the look, then one tick of movement.
   void playAction(std::uint32_t number, const obf2::net::bf2::PlayerAction& played) {
@@ -1389,6 +1411,23 @@ struct RemoteWorld {
     // input reads.
     if (state.flag4000) sprint.sprinting = *state.flag4000;
     if (state.value4000) sprint.stamina = *state.value4000;
+
+    // How long this answer took: the action the counter names was sent by us, and
+    // the state that answers it is here now.
+    if (counter >= 0) {
+      const float sentMs = sentAt[static_cast<std::uint32_t>(counter) % sentAt.size()];
+      if (sentMs > 0.0f) {
+        const float now = std::chrono::duration<float, std::milli>(
+                              std::chrono::steady_clock::now().time_since_epoch())
+                              .count();
+        const float trip = now - sentMs;
+        if (trip >= 0.0f && trip < 5000.0f) {
+          roundTripSum += trip;
+          roundTripMax = std::max(roundTripMax, trip);
+          ++roundTrips;
+        }
+      }
+    }
 
     while (!sent.empty() && static_cast<std::int64_t>(sent.front().first) < counter) {
       sent.pop_front();
@@ -4445,6 +4484,11 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   // because his legs are at his own point in the run.
   struct SoldierLook {
     obf2::mesh::RenderMesh bind;
+    // The bind pose on the GPU, uploaded once. It is never written again: the
+    // pose reaches the vertex shader as the range's bone matrices, which is
+    // where the original deforms a soldier too
+    // (`Shaders_client.zip:SkinnedMesh.fx:46`).
+    obf2::gfx::GpuMesh gpu;
     obf2::mesh::Skeleton skeleton;
     std::optional<obf2::anim::System> legs;
     obf2::anim::System weapon;
@@ -4499,10 +4543,12 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           look.hasWeapon = true;
         }
       }
-      look.ready = true;
-      std::printf("  soldier look %s: %zu vertices, kit %s, legs %s, weapon %s\n", key.c_str(),
-                  look.bind.vertices.size(), model->kit ? "yes" : "no",
-                  look.legs ? "yes" : "no", look.hasWeapon ? "yes" : "no");
+      if (const auto uploaded = renderer->upload(look.bind, resolveTexture)) look.gpu = *uploaded;
+      look.ready = look.gpu.vertices != nullptr;
+      std::printf("  soldier look %s: %zu vertices, kit %s, legs %s, weapon %s, on the gpu %s\n",
+                  key.c_str(), look.bind.vertices.size(), model->kit ? "yes" : "no",
+                  look.legs ? "yes" : "no", look.hasWeapon ? "yes" : "no",
+                  look.gpu.skin != nullptr ? "skinned" : "unskinned");
     } else {
       std::printf("  soldier look %s: not assembled (model %d, mesh %d, skeleton %d)\n",
                   key.c_str(), model ? 1 : 0, bind ? 1 : 0, skeleton ? 1 : 0);
@@ -4515,8 +4561,9 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   // in the clips.
   struct DrawnSoldier {
     SoldierLook* look = nullptr;
-    obf2::mesh::RenderMesh posed;
-    obf2::gfx::GpuMesh gpu;
+    // His own pose: one world matrix per bone of the skeleton. The geometry is
+    // the look's and is shared with everyone wearing the same body and kit.
+    std::vector<obf2::mesh::Mat4> pose;
     obf2::anim::Player legs;
     obf2::anim::Player weapon;
     std::string key;
@@ -4613,6 +4660,7 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   }
 
   int frame = 0;
+  const auto firstFrameAt = std::chrono::steady_clock::now();
   bool execDone = false;  // --exec is run once
   // How much time passed since the previous frame. The movement prediction has to
   // count exactly that: with a fixed 1/60 the soldier would walk slower than the
@@ -5201,12 +5249,9 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
               // A soldier who respawned with another kit is another look, so his
               // mesh is built again.
               if (drawn.look != look || drawn.key != key) {
-                if (drawn.gpu.vertices != nullptr) renderer->release(drawn.gpu);
                 drawn = DrawnSoldier{};
                 drawn.look = look;
                 drawn.key = key;
-                drawn.posed = look->bind;
-                if (auto gpu = renderer->upload(drawn.posed, resolveTexture)) drawn.gpu = *gpu;
                 const auto length = [&](const std::string& path) {
                   const obf2::mesh::BoneAnimation* clip = clipAt(path);
                   return clip != nullptr ? clip->duration() : 0.0f;
@@ -5272,13 +5317,14 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
                 std::printf("\n");
               }
 
-              if (drawn.gpu.vertices != nullptr && !stages.empty()) {
-                const auto skeletonPose = obf2::mesh::poseSkeleton(look->skeleton, stages);
-                obf2::mesh::skinMesh(look->bind, skeletonPose, drawn.posed);
-                renderer->updateVertices(drawn.gpu, drawn.posed);
-              }
-              if (drawn.gpu.vertices != nullptr) {
-                withOthers.push_back(obf2::gfx::MeshRenderer::DrawItem{&drawn.gpu, place});
+              if (!stages.empty()) drawn.pose = obf2::mesh::poseSkeleton(look->skeleton, stages);
+              if (look->gpu.vertices != nullptr) {
+                obf2::gfx::MeshRenderer::DrawItem item{&look->gpu, place};
+                // With no clip to stand on he is drawn as the file holds him,
+                // which is the bind pose — the same as before any animation
+                // system was read.
+                if (!drawn.pose.empty()) item.pose = &drawn.pose;
+                withOthers.push_back(item);
                 continue;
               }
             }
@@ -5897,7 +5943,15 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   for (OwnedPiece& piece : spawnPieces) renderer->release(piece.mesh);
   for (auto& gpuMesh : gpuMeshes) renderer->release(gpuMesh);
   for (auto& gpuMesh : remoteMeshes) renderer->release(gpuMesh);
-  std::printf("frames drawn: %d\n", frame);
+  {
+    // Frames per second over everything after the first frame — the loading is
+    // not part of it. The measure for "the picture jerks": a number, not a feeling.
+    const float seconds = std::chrono::duration<float>(std::chrono::steady_clock::now() -
+                                                       firstFrameAt)
+                              .count();
+    std::printf("frames drawn: %d in %.1f s (%.1f per second)\n", frame, seconds,
+                seconds > 0.0f ? static_cast<float>(frame) / seconds : 0.0f);
+  }
   if (remote != nullptr) {
     std::printf("  game tick %u, newest packet tick %u at the end\n", remote->world.gameTick(),
                 remote->world.newestPacketTick());

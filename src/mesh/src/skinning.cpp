@@ -161,6 +161,20 @@ std::vector<Mat4> poseSkeleton(const Skeleton& skeleton, const BoneAnimation* an
   return poseSkeleton(skeleton, std::vector<PoseStage>{PoseStage{animation, frame, 1.0f}});
 }
 
+void rigPalette(const std::vector<Bone>& bones, const std::vector<Mat4>& boneWorld,
+                std::vector<Mat4>& out) {
+  out.resize(bones.size());
+  for (std::size_t i = 0; i < bones.size(); ++i) {
+    const Bone& entry = bones[i];
+    if (entry.id < boneWorld.size()) {
+      out[i] = multiply(boneWorld[entry.id], entry.transform);
+    } else {
+      out[i] = Mat4{};
+      out[i].m[0] = out[i].m[5] = out[i].m[10] = out[i].m[15] = 1.0f;
+    }
+  }
+}
+
 void skinMesh(const RenderMesh& bindPose, const std::vector<Mat4>& boneWorld, RenderMesh& out) {
   if (bindPose.skin.size() != bindPose.vertices.size() || bindPose.rigs.empty()) return;
   out.vertices = bindPose.vertices;
