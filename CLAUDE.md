@@ -195,7 +195,7 @@ instead of scrambling the source.
 selection, the frame loop. Everything else lives in its own module with
 its own header and its own test.
 
-The rule was not written out of tidiness: `main.cpp` grew to **3841
+The rule was not written out of tidiness: `main.cpp` grew past **6000
 lines**, and the network conversation, the spawn screen state, the HUD
 state table and geometry assembly all ended up inside it. The consequences
 are visible: the same logic was written twice in two places, lambdas read
@@ -347,16 +347,24 @@ third_party/    vendored single-file libraries: miniz, stb
 | `server` | local server, soldier physics, collision world |
 | `engine` | console, settings, key bindings |
 | `flash` | the Flash menu: Ruffle behind a C ABI |
+| `session` | the live link to a server: handshake, the world it keeps, our action stream |
 | `app` | the `openbf2` executable — and nothing else (rule 11) |
 
 ### Breaking up `main.cpp`
 
 In order of usefulness. Each item is a module with a test:
 
-1. **`net/bf2_session`** — `RemoteWorld` whole: the conversation with the
-   server, player and object state, the action stream. This is the
-   largest piece and the one best covered by tests (we already have
-   recorded traffic).
+1. ~~**`net/bf2_session`**~~ — **done**, as `obf2::session::RemoteWorld`
+   (`src/session/`). Not under `net/`: it needs `obf2::server` for the
+   soldier's physics and `obf2_server` already links `obf2_net`, so that
+   would close a cycle; the module sits above both instead. It took
+   `KnownObject`, `DrawStage`, `ContentHashes`, `buildRegistry`,
+   `buildKnownObjects`, `nearestKnown` and `contentHashes` with it, and
+   `main.cpp` lost 1495 lines. What it does **not** take is the
+   drawability check, which needs the mesh loaders and their flags: the
+   session asks for it through `drawabilityOf`. `Args` stopped being a
+   dependency — `session::Settings` holds the ten fields that mattered,
+   by value.
 2. **`app/spawn_screen`** — the spawn screen: selection state, clicks, DONE.
 3. **`app/frame_loop`** — camera, input, the prediction step.
 4. **`hud/ingame`** — assembling the battle HUD and its live values.
