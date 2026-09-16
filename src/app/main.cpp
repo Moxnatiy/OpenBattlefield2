@@ -152,6 +152,12 @@ struct Args {
   int team = 1;                        // --team, --kit, --group: the spawn choice
   int kit = 0;
   int spawnGroup = 1;
+  // Whether `--group` was actually given. The number above has a default because
+  // the headless probe has no spawn screen to choose with; in a windowed run the
+  // screen is the chooser, and a default acting on its own asked to spawn as team
+  // one at group one before the player had touched anything — and then DONE did
+  // nothing, because the join chain was already spent.
+  bool spawnGroupGiven = false;
   std::vector<std::string> animationPaths;  // --anim: several are allowed, they blend
   std::string skeletonPath;    // --skeleton: a .ske; the soldier's skeleton by default
   int frame = 0;               // --frame: which frame to show
@@ -273,7 +279,10 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--mouse-scale" && i + 1 < argc) args.mouseScale = std::atof(argv[++i]);
     else if (flag == "--team" && i + 1 < argc) args.team = std::atoi(argv[++i]);
     else if (flag == "--kit" && i + 1 < argc) args.kit = std::atoi(argv[++i]);
-    else if (flag == "--group" && i + 1 < argc) args.spawnGroup = std::atoi(argv[++i]);
+    else if (flag == "--group" && i + 1 < argc) {
+      args.spawnGroup = std::atoi(argv[++i]);
+      args.spawnGroupGiven = true;
+    }
     else if (flag == "--anim" && i + 1 < argc) args.animationPaths.emplace_back(argv[++i]);
     else if (flag == "--skeleton" && i + 1 < argc) args.skeletonPath = argv[++i];
     else if (flag == "--frame" && i + 1 < argc) args.frame = std::atoi(argv[++i]);
@@ -3302,6 +3311,19 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   // that is, already outside the level loading block. Keeping them inside is not
   // allowed: a reference in the lambda would become dangling.
   std::function<void()> applySpawnState;
+  // And the three the spawn screen's state asks for a side's name with. They are
+  // the same case once more: written inside the loading block, held by reference
+  // by `applySpawnState`, and called from the frame loop long after that block has
+  // gone. AddressSanitizer caught it as a stack-use-after-scope at the line that
+  // reads `level->teamNames`, and in the release build it was a plain crash on the
+  // first frame with `--level` — the rebuild called a lambda whose captures no
+  // longer existed, so the whole HUD came out with zero pieces before it died.
+  std::function<std::string(int)> teamName;
+  std::function<std::string(int)> teamLabel;
+  std::function<std::string(int)> teamFlagIcon;
+  // `--hud-rects`, and the same case a third time: the combat HUD's rebuild hands
+  // it to `buildIngame` as a callback, and that rebuild runs from the frame loop.
+  std::function<void(const char*, const std::vector<obf2::hud::DrawPiece>&)> reportRects;
   obf2::hud::Context spawnContext;
   // The same case as with spawnContext: the combat HUD is now rebuilt from the
   // frame loop, and the lambda holds the context by reference. While it was local
@@ -3424,6 +3446,14 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       // A transition rather than "set the state": in the game the first switch goes
       // on the old state, the second on the new one (0x786260).
       if (obf2::hud::applyState(hudVariables, hudStatePrevious, state)) hudDirty = true;
+      // The spawn screen is baked geometry we keep, and its nodes hang on the same
+      // variables: a state that changes them changes what it should be showing. The
+      // engine has no such problem — it walks the tree every frame — so this is our
+      // cache to invalidate, and forgetting it is what left the screen empty. The
+      // first build runs before the state is ever set to 1, so **every** piece of
+      // it was hidden, and on a round where nothing else asked for a rebuild it
+      // stayed that way and the player could not spawn.
+      if (hudStatePrevious != state) spawnDirty = true;
       hudStatePrevious = state;
     };
 
@@ -3687,14 +3717,14 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     // For Dalian_plant that is CH and US — in exactly that order, so team one is
     // Chinese. Across all 22 levels the set of names is exactly CH, EU, MEC, US, and
     // the icon directories in Menu_client.zip are called the same.
-    const auto teamName = [&](int team) -> std::string {
+    teamName = [&](int team) -> std::string {
       if (!level || team < 0 || team > 2) return {};
       return level->teamNames[team];
     };
     // The conversions from a side's name into keys and paths live in
     // `obf2/hud/spawn.h` together with their test.
-    const auto teamLabel = [&](int team) { return obf2::hud::armyLabelKey(teamName(team)); };
-    const auto teamFlagIcon = [&](int team) { return obf2::hud::teamFlagIcon(teamName(team)); };
+    teamLabel = [&](int team) { return obf2::hud::armyLabelKey(teamName(team)); };
+    teamFlagIcon = [&](int team) { return obf2::hud::teamFlagIcon(teamName(team)); };
 
     // The team tabs at the top of the spawn screen. In the data the TeamSelectInfo
     // branch hangs on Team1Selected, and inside are two blocks — Team1Selected and
@@ -4068,8 +4098,7 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     // BF2.exe (see docs/formats/hud-meme.md). While it is not taken apart, the health
     // bar would drive into the middle of the screen.
     // --hud-rects: the same format as in the original's frame dump.
-    const auto reportRects = [&](const char* where,
-                                 const std::vector<obf2::hud::DrawPiece>& pieces) {
+    reportRects = [&](const char* where, const std::vector<obf2::hud::DrawPiece>& pieces) {
       if (!args.hudRects) return;
       for (const obf2::hud::DrawPiece& piece : pieces) {
         if (piece.node == nullptr || piece.geometry.vertices.empty()) continue;
@@ -4253,29 +4282,12 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
                                               hudFont.atlasPath, hudScreen, spawnContext)) {
         built.push_back(std::move(piece));
       }
-      // `--hud-rects` for the spawn screen, written out here rather than
-      // through `reportRects`. That one is a lambda of the level-loading block,
-      // and this rebuild is called from the frame loop — after the block has
-      // exited, so a call into it reads a closure that is no longer there
-      // (CLAUDE.md, the first of the rakes). What this loop touches instead —
-      // `args`, `hudScreen`, and its own `built` — all outlive the frame.
-      if (args.hudRects) {
-        for (const obf2::hud::DrawPiece& piece : built) {
-          if (piece.node == nullptr || piece.geometry.vertices.empty()) continue;
-          float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
-          for (const auto& vertex : piece.geometry.vertices) {
-            const float px = (vertex.position.x + 1.0f) * 0.5f * hudScreen.width;
-            const float py = (1.0f - vertex.position.y) * 0.5f * hudScreen.height;
-            x0 = std::min(x0, px);
-            y0 = std::min(y0, py);
-            x1 = std::max(x1, px);
-            y1 = std::max(y1, py);
-          }
-          std::printf("RECT %-14s %-30s %7.1f %7.1f %7.1f %7.1f %-46s [%s]\n", "SpawnMenu",
-                      piece.node->name.c_str(), x0, y0, x1 - x0, y1 - y0, piece.texture.c_str(),
-                      piece.node->showVariable.c_str());
-        }
-      }
+      // `--hud-rects` for the spawn screen. It used to be written out again right
+      // here, because `reportRects` was a lambda of the level-loading block and a
+      // call into it from the frame loop read a closure that was no longer there
+      // (CLAUDE.md, the first of the rakes). It outlives the block now, so the one
+      // copy of the loop serves both.
+      if (reportRects) reportRects("SpawnMenu", built);
       ingameHud.setMapView(obf2::hud::MapView::Mini);
       // The map's rectangle was just moved — let the combat frame put its own back,
       // the one the animation computed.
@@ -4764,7 +4776,8 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       // own (it builds empty on some rounds), and without a soldier the client
       // sends the server nothing at all — which is a different measurement from
       // the one we want.
-      if (args.spawnGroup != 0 && !askedForGroup && !remote->spawnGroups.empty()) {
+      if (args.spawnGroupGiven && args.spawnGroup != 0 && !askedForGroup &&
+          !remote->spawnGroups.empty()) {
         std::printf("  --group %d: asking to spawn as team %d with kit %d\n", args.spawnGroup,
                     args.team, args.kit);
         remote->askSpawnGroup(args.team, args.kit, args.spawnGroup);
