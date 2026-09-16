@@ -1279,7 +1279,10 @@ struct RemoteWorld {
       // The measure of the action queue: how many of ours the server has not
       // answered, every ten seconds of ticks. A number that keeps growing is a
       // queue on the server that never drains.
-      if (actionTick % 300 == 0 || (ourSoldier == 0 && world.gameTick() % 300 == 0)) {
+      // Every ten seconds of ticks. Without a soldier `actionTick` stands at zero,
+      // and `0 % 300` is zero on every one of them — which turned this report into
+      // thirty lines a second in the frame loop.
+      if (ourSoldier != 0 ? actionTick % 300 == 0 : world.gameTick() % 300 == 0) {
         // How long the server takes to answer an action, and how far our clock
         // therefore runs ahead of the newest packet. The ghosts of other players
         // are drawn at our clock minus `GSInterpolationTime` (100 ms), so a round
@@ -3306,6 +3309,13 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   // the game (see obf2/hud/animation.h).
   obf2::hud::Animator hudAnimator;
   std::chrono::steady_clock::time_point lastAnimationTick = std::chrono::steady_clock::now();
+  // What the interface's rebuilds cost, in milliseconds and in number, split
+  // between building the geometry and putting it on the card.
+  int hudRebuilds = 0;
+  float hudRebuildMs = 0.0f;
+  float hudRebuildMax = 0.0f;
+  float hudUploadMs = 0.0f;
+  int hudUploaded = 0;
   std::function<void()> rebuildSpawn;
   // These two are needed by the rebuild, and it is called from the drawing loop —
   // that is, already outside the level loading block. Keeping them inside is not
@@ -4229,22 +4239,43 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     // alpha, move shifts the rectangle.
     spawnContext.showState = [&](const obf2::hud::Node& node) { return hudAnimator.state(node); };
     rebuildIngame = [&]() {
-      for (OwnedPiece& piece : ingamePieces) renderer->release(piece.mesh);
+      std::vector<OwnedPiece> reusable = std::move(ingamePieces);
+      std::size_t reuse = 0;
       ingamePieces.clear();
       for (const char* root : {"Global", "BottomLeftAnimate", "BottomLeftStatic",
                                "BottomRightAnimate", "BottomRightStatic"}) {
         obf2::hud::updateAnimator(ingameHud, root, hudAnimator, hudContext);
       }
-      for (auto& piece : buildIngamePieces()) {
+      auto ingameBuilt = buildIngamePieces();
+      const auto ingameUploadStart = std::chrono::steady_clock::now();
+      renderer->beginUploadBatch();
+      for (auto& piece : ingameBuilt) {
         if (piece.live) {
           // A live node's marker: there is no mesh here, only a place in the queue.
           ingamePieces.push_back(OwnedPiece{{}, piece.tint, piece.node});
           continue;
         }
+        if (reuse < reusable.size()) {
+          obf2::gfx::GpuMesh& older = reusable[reuse].mesh;
+          if (older.vertices != nullptr &&
+              renderer->refill(older, piece.geometry, resolveTexture)) {
+            ingamePieces.push_back(OwnedPiece{older, piece.tint, nullptr});
+            older = obf2::gfx::GpuMesh{};
+            ++reuse;
+            continue;
+          }
+          ++reuse;
+        }
         if (auto uploaded = renderer->upload(piece.geometry, resolveTexture)) {
           ingamePieces.push_back(OwnedPiece{*uploaded, piece.tint, nullptr});
+          ++hudUploaded;
         }
       }
+      renderer->endUploadBatch();
+      for (OwnedPiece& left : reusable) renderer->release(left.mesh);
+      hudUploadMs += std::chrono::duration<float, std::milli>(
+                         std::chrono::steady_clock::now() - ingameUploadStart)
+                         .count();
       if (ingameReported) {
         std::printf("  HUD: the combat one rebuilt, pieces %zu\n", ingamePieces.size());
       }
@@ -4262,7 +4293,13 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       // was invisible; when it came from a click alone — choosing a kit, a side,
       // the squad tab — nothing rebuilt it, and the combat HUD flickered over the
       // screen until the next animation frame.
-      for (OwnedPiece& piece : spawnPieces) renderer->release(piece.mesh);
+      // The pieces of the previous bake are kept, not freed: a rebuild writes the
+      // new geometry into the buffers that are already there and only falls back
+      // to making new ones when a piece has outgrown its own
+      // (`MeshRenderer::refill`). Creating a pair of buffers per piece is a trip
+      // into the driver each, and that was most of what a rebuild cost.
+      std::vector<OwnedPiece> reusable = std::move(spawnPieces);
+      std::size_t reuse = 0;
       spawnPieces.clear();
       applySpawnState();
       for (const char* root : {"SpawnMenu", "MapSplit", "TopLayer"}) {
@@ -4292,11 +4329,30 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       // The map's rectangle was just moved — let the combat frame put its own back,
       // the one the animation computed.
       mapRectStale = true;
+      const auto uploadStart = std::chrono::steady_clock::now();
+      // One command buffer for the whole screen instead of one per piece.
+      renderer->beginUploadBatch();
       for (auto& piece : built) {
+        if (reuse < reusable.size()) {
+          obf2::gfx::GpuMesh& older = reusable[reuse].mesh;
+          if (renderer->refill(older, piece.geometry, resolveTexture)) {
+            spawnPieces.push_back(OwnedPiece{older, piece.tint});
+            older = obf2::gfx::GpuMesh{};  // it belongs to the new list now
+            ++reuse;
+            continue;
+          }
+          ++reuse;  // it does not fit; it is freed below with the rest
+        }
         if (auto uploaded = renderer->upload(piece.geometry, resolveTexture)) {
           spawnPieces.push_back(OwnedPiece{*uploaded, piece.tint});
+          ++hudUploaded;
         }
       }
+      renderer->endUploadBatch();
+      for (OwnedPiece& left : reusable) renderer->release(left.mesh);
+      hudUploadMs += std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() -
+                                                              uploadStart)
+                         .count();
       std::printf("  HUD: the spawn screen rebuilt, pieces %zu (map %zu), circles %zu\n",
                   spawnPieces.size(), mapCount, spawnContext.spawnMarkers.size());
     };
@@ -5779,13 +5835,22 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           if (bottomRightX != wasRightX || bottomRightAlpha != wasRightAlpha) hudDirty = true;
         }
         // We rebuild the spawn screen only while it is on screen.
-        if (spawnDirty && spawnVisible && rebuildSpawn) {
-          spawnDirty = false;
-          rebuildSpawn();
-        }
-        if (hudDirty && rebuildIngame) {
-          hudDirty = false;
-          rebuildIngame();
+        if ((spawnDirty && spawnVisible && rebuildSpawn) || (hudDirty && rebuildIngame)) {
+          const auto before = std::chrono::steady_clock::now();
+          if (spawnDirty && spawnVisible && rebuildSpawn) {
+            spawnDirty = false;
+            rebuildSpawn();
+          }
+          if (hudDirty && rebuildIngame) {
+            hudDirty = false;
+            rebuildIngame();
+          }
+          const float spent =
+              std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - before)
+                  .count();
+          ++hudRebuilds;
+          hudRebuildMs += spent;
+          hudRebuildMax = std::max(hudRebuildMax, spent);
         }
         for (const KeyScreen& screen : keyScreens) {
           const bool forced = screen.group == args.hudScreenName;
@@ -6036,6 +6101,16 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
                               .count();
     std::printf("frames drawn: %d in %.1f s (%.1f per second)\n", frame, seconds,
                 seconds > 0.0f ? static_cast<float>(frame) / seconds : 0.0f);
+    // What baking the interface again costs. The engine walks its node tree every
+    // frame and writes the quads into a buffer; we build meshes and put them on
+    // the card, so a rebuild is the one place in the frame that can allocate
+    // hundreds of times. A number here says whether that is what freezes.
+    if (hudRebuilds > 0) {
+      std::printf("  hud rebuilds: %d in %.0f ms (%.2f ms each, at most %.2f); "
+                  "of that %.0f ms putting %d pieces on the card\n",
+                  hudRebuilds, hudRebuildMs, hudRebuildMs / static_cast<float>(hudRebuilds),
+                  hudRebuildMax, hudUploadMs, hudUploaded);
+    }
   }
   if (remote != nullptr) {
     std::printf("  game tick %u, newest packet tick %u at the end\n", remote->world.gameTick(),

@@ -1304,122 +1304,12 @@ SDL_GPUTexture* MeshRenderer::uploadTexture(const texture::Texture& source) {
   return gpuTexture;
 }
 
-std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
-                                            const TextureResolver& resolve, std::string* error) {
-  auto fail = [error](const char* what) -> std::optional<GpuMesh> {
-    if (error) *error = std::string(what) + ": " + SDL_GetError();
-    return std::nullopt;
-  };
-  if (source.vertices.empty() || source.indices.empty()) {
-    if (error) *error = "empty geometry";
-    return std::nullopt;
-  }
-
-  SDL_GPUDevice* gpu = device_->gpu();
-  const Uint32 vertexBytes = static_cast<Uint32>(source.vertices.size() * sizeof(mesh::Vertex));
-  const Uint32 indexBytes = static_cast<Uint32>(source.indices.size() * sizeof(std::uint32_t));
-
-  // A skinned mesh carries its bindings alongside: the pair of bones and the
-  // weight, one entry per vertex. `weight` is the first bone's share and the
-  // second takes the rest, which is how the file stores it and how the shader
-  // reads it (`Shaders_client.zip:SkinnedMesh.fx:105`).
-  std::vector<SkinVertex> skin;
-  if (source.skin.size() == source.vertices.size() && !source.rigs.empty()) {
-    skin.resize(source.skin.size());
-    for (std::size_t i = 0; i < source.skin.size(); ++i) {
-      skin[i].boneA = static_cast<float>(source.skin[i].boneA);
-      skin[i].boneB = static_cast<float>(source.skin[i].boneB);
-      skin[i].weight = source.skin[i].weight;
-    }
-  }
-  const Uint32 skinBytes = static_cast<Uint32>(skin.size() * sizeof(SkinVertex));
-
-  SDL_GPUBufferCreateInfo vertexInfo{};
-  vertexInfo.usage = SDL_GPU_BUFFERUSAGE_VERTEX;
-  vertexInfo.size = vertexBytes;
-  SDL_GPUBuffer* vertexBuffer = SDL_CreateGPUBuffer(gpu, &vertexInfo);
-  if (vertexBuffer == nullptr) return fail("vertex buffer");
-
-  SDL_GPUBufferCreateInfo indexInfo{};
-  indexInfo.usage = SDL_GPU_BUFFERUSAGE_INDEX;
-  indexInfo.size = indexBytes;
-  SDL_GPUBuffer* indexBuffer = SDL_CreateGPUBuffer(gpu, &indexInfo);
-  if (indexBuffer == nullptr) {
-    SDL_ReleaseGPUBuffer(gpu, vertexBuffer);
-    return fail("index buffer");
-  }
-
-  SDL_GPUBuffer* skinBuffer = nullptr;
-  if (skinBytes != 0) {
-    SDL_GPUBufferCreateInfo skinInfo{};
-    skinInfo.usage = SDL_GPU_BUFFERUSAGE_VERTEX;
-    skinInfo.size = skinBytes;
-    skinBuffer = SDL_CreateGPUBuffer(gpu, &skinInfo);
-    if (skinBuffer == nullptr) {
-      SDL_ReleaseGPUBuffer(gpu, vertexBuffer);
-      SDL_ReleaseGPUBuffer(gpu, indexBuffer);
-      return fail("skin buffer");
-    }
-  }
-
-  // One transfer buffer for the arrays: the vertices, the indices, the skin.
-  SDL_GPUTransferBufferCreateInfo transferInfo{};
-  transferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-  transferInfo.size = vertexBytes + indexBytes + skinBytes;
-  SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(gpu, &transferInfo);
-  if (transfer == nullptr) {
-    SDL_ReleaseGPUBuffer(gpu, vertexBuffer);
-    SDL_ReleaseGPUBuffer(gpu, indexBuffer);
-    if (skinBuffer != nullptr) SDL_ReleaseGPUBuffer(gpu, skinBuffer);
-    return fail("transfer buffer");
-  }
-
-  auto* mapped = static_cast<std::byte*>(SDL_MapGPUTransferBuffer(gpu, transfer, false));
-  if (mapped == nullptr) {
-    SDL_ReleaseGPUTransferBuffer(gpu, transfer);
-    SDL_ReleaseGPUBuffer(gpu, vertexBuffer);
-    SDL_ReleaseGPUBuffer(gpu, indexBuffer);
-    if (skinBuffer != nullptr) SDL_ReleaseGPUBuffer(gpu, skinBuffer);
-    return fail("mapping the transfer buffer");
-  }
-  std::memcpy(mapped, source.vertices.data(), vertexBytes);
-  std::memcpy(mapped + vertexBytes, source.indices.data(), indexBytes);
-  if (skinBytes != 0) std::memcpy(mapped + vertexBytes + indexBytes, skin.data(), skinBytes);
-  SDL_UnmapGPUTransferBuffer(gpu, transfer);
-
-  SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(gpu);
-  SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(commands);
-
-  SDL_GPUTransferBufferLocation source0{transfer, 0};
-  SDL_GPUBufferRegion vertexRegion{vertexBuffer, 0, vertexBytes};
-  SDL_UploadToGPUBuffer(copy, &source0, &vertexRegion, false);
-
-  SDL_GPUTransferBufferLocation source1{transfer, vertexBytes};
-  SDL_GPUBufferRegion indexRegion{indexBuffer, 0, indexBytes};
-  SDL_UploadToGPUBuffer(copy, &source1, &indexRegion, false);
-
-  if (skinBytes != 0) {
-    SDL_GPUTransferBufferLocation source2{transfer, vertexBytes + indexBytes};
-    SDL_GPUBufferRegion skinRegion{skinBuffer, 0, skinBytes};
-    SDL_UploadToGPUBuffer(copy, &source2, &skinRegion, false);
-  }
-
-  SDL_EndGPUCopyPass(copy);
-  SDL_SubmitGPUCommandBuffer(commands);
-  SDL_ReleaseGPUTransferBuffer(gpu, transfer);
-
-  GpuMesh gpuMesh;
-  gpuMesh.vertices = vertexBuffer;
-  gpuMesh.indices = indexBuffer;
-  gpuMesh.skin = skinBuffer;
-  gpuMesh.hasLightmapUv = source.hasLightmapUv;
-
-  // A sphere around the mesh's bounds: the centre in the middle, the radius to a corner.
-  const Vec3f minimum{source.bounds.min.x, source.bounds.min.y, source.bounds.min.z};
-  const Vec3f maximum{source.bounds.max.x, source.bounds.max.y, source.bounds.max.z};
-  gpuMesh.boundsCenter = (minimum + maximum) * 0.5f;
-  gpuMesh.boundsRadius = length(maximum - minimum) * 0.5f;
-
+// The draw ranges of a mesh already on the card: which piece of the index buffer
+// each material owns, the textures it reads and the rig it hangs on. Shared by
+// `upload` and `refill`, because a refilled mesh gets new materials too.
+void MeshRenderer::fillRanges(GpuMesh& gpuMesh, const mesh::RenderMesh& source,
+                             const TextureResolver& resolve) {
+  gpuMesh.ranges.clear();
   // Which slot holds what is named by the material's own technique — the
   // texture list follows its tokens in order (`obf2::mesh::materialLayout`).
   // The terrain is the exception: it is ours, not the game's, and
@@ -1433,7 +1323,7 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
     // The rig this range's vertices index. A rig longer than the shader's array
     // cannot be drawn as one material in the original either, so the tail is cut
     // rather than silently read past.
-    if (skinBuffer != nullptr && source_range.rig >= 0 &&
+    if (gpuMesh.skin != nullptr && source_range.rig >= 0 &&
         static_cast<std::size_t>(source_range.rig) < source.rigs.size()) {
       range.rig = source.rigs[static_cast<std::size_t>(source_range.rig)].bones;
       if (range.rig.size() > mesh::kMaxRigBones) range.rig.resize(mesh::kMaxRigBones);
@@ -1522,7 +1412,211 @@ std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
     gpuMesh.ranges.push_back(range);
   }
 
+}
+
+std::optional<GpuMesh> MeshRenderer::upload(const mesh::RenderMesh& source,
+                                            const TextureResolver& resolve, std::string* error) {
+  auto fail = [error](const char* what) -> std::optional<GpuMesh> {
+    if (error) *error = std::string(what) + ": " + SDL_GetError();
+    return std::nullopt;
+  };
+  if (source.vertices.empty() || source.indices.empty()) {
+    if (error) *error = "empty geometry";
+    return std::nullopt;
+  }
+
+  SDL_GPUDevice* gpu = device_->gpu();
+  const Uint32 vertexBytes = static_cast<Uint32>(source.vertices.size() * sizeof(mesh::Vertex));
+  const Uint32 indexBytes = static_cast<Uint32>(source.indices.size() * sizeof(std::uint32_t));
+
+  // A skinned mesh carries its bindings alongside: the pair of bones and the
+  // weight, one entry per vertex. `weight` is the first bone's share and the
+  // second takes the rest, which is how the file stores it and how the shader
+  // reads it (`Shaders_client.zip:SkinnedMesh.fx:105`).
+  std::vector<SkinVertex> skin;
+  if (source.skin.size() == source.vertices.size() && !source.rigs.empty()) {
+    skin.resize(source.skin.size());
+    for (std::size_t i = 0; i < source.skin.size(); ++i) {
+      skin[i].boneA = static_cast<float>(source.skin[i].boneA);
+      skin[i].boneB = static_cast<float>(source.skin[i].boneB);
+      skin[i].weight = source.skin[i].weight;
+    }
+  }
+  const Uint32 skinBytes = static_cast<Uint32>(skin.size() * sizeof(SkinVertex));
+
+  SDL_GPUBufferCreateInfo vertexInfo{};
+  vertexInfo.usage = SDL_GPU_BUFFERUSAGE_VERTEX;
+  vertexInfo.size = vertexBytes;
+  SDL_GPUBuffer* vertexBuffer = SDL_CreateGPUBuffer(gpu, &vertexInfo);
+  if (vertexBuffer == nullptr) return fail("vertex buffer");
+
+  SDL_GPUBufferCreateInfo indexInfo{};
+  indexInfo.usage = SDL_GPU_BUFFERUSAGE_INDEX;
+  indexInfo.size = indexBytes;
+  SDL_GPUBuffer* indexBuffer = SDL_CreateGPUBuffer(gpu, &indexInfo);
+  if (indexBuffer == nullptr) {
+    SDL_ReleaseGPUBuffer(gpu, vertexBuffer);
+    return fail("index buffer");
+  }
+
+  SDL_GPUBuffer* skinBuffer = nullptr;
+  if (skinBytes != 0) {
+    SDL_GPUBufferCreateInfo skinInfo{};
+    skinInfo.usage = SDL_GPU_BUFFERUSAGE_VERTEX;
+    skinInfo.size = skinBytes;
+    skinBuffer = SDL_CreateGPUBuffer(gpu, &skinInfo);
+    if (skinBuffer == nullptr) {
+      SDL_ReleaseGPUBuffer(gpu, vertexBuffer);
+      SDL_ReleaseGPUBuffer(gpu, indexBuffer);
+      return fail("skin buffer");
+    }
+  }
+
+  // One transfer buffer for the arrays: the vertices, the indices, the skin.
+  SDL_GPUTransferBufferCreateInfo transferInfo{};
+  transferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+  transferInfo.size = vertexBytes + indexBytes + skinBytes;
+  SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(gpu, &transferInfo);
+  if (transfer == nullptr) {
+    SDL_ReleaseGPUBuffer(gpu, vertexBuffer);
+    SDL_ReleaseGPUBuffer(gpu, indexBuffer);
+    if (skinBuffer != nullptr) SDL_ReleaseGPUBuffer(gpu, skinBuffer);
+    return fail("transfer buffer");
+  }
+
+  auto* mapped = static_cast<std::byte*>(SDL_MapGPUTransferBuffer(gpu, transfer, false));
+  if (mapped == nullptr) {
+    SDL_ReleaseGPUTransferBuffer(gpu, transfer);
+    SDL_ReleaseGPUBuffer(gpu, vertexBuffer);
+    SDL_ReleaseGPUBuffer(gpu, indexBuffer);
+    if (skinBuffer != nullptr) SDL_ReleaseGPUBuffer(gpu, skinBuffer);
+    return fail("mapping the transfer buffer");
+  }
+  std::memcpy(mapped, source.vertices.data(), vertexBytes);
+  std::memcpy(mapped + vertexBytes, source.indices.data(), indexBytes);
+  if (skinBytes != 0) std::memcpy(mapped + vertexBytes + indexBytes, skin.data(), skinBytes);
+  SDL_UnmapGPUTransferBuffer(gpu, transfer);
+
+  // In a batch the copies ride the caller's command buffer and are submitted once
+  // for all of them; on their own they get a command buffer of their own.
+  const bool batched = batchCommands_ != nullptr;
+  SDL_GPUCommandBuffer* commands = batched ? batchCommands_ : SDL_AcquireGPUCommandBuffer(gpu);
+  SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(commands);
+
+  SDL_GPUTransferBufferLocation source0{transfer, 0};
+  SDL_GPUBufferRegion vertexRegion{vertexBuffer, 0, vertexBytes};
+  SDL_UploadToGPUBuffer(copy, &source0, &vertexRegion, false);
+
+  SDL_GPUTransferBufferLocation source1{transfer, vertexBytes};
+  SDL_GPUBufferRegion indexRegion{indexBuffer, 0, indexBytes};
+  SDL_UploadToGPUBuffer(copy, &source1, &indexRegion, false);
+
+  if (skinBytes != 0) {
+    SDL_GPUTransferBufferLocation source2{transfer, vertexBytes + indexBytes};
+    SDL_GPUBufferRegion skinRegion{skinBuffer, 0, skinBytes};
+    SDL_UploadToGPUBuffer(copy, &source2, &skinRegion, false);
+  }
+
+  SDL_EndGPUCopyPass(copy);
+  if (batched) {
+    // The transfer buffer has to outlive the copy, so it is freed when the batch is.
+    batchTransfers_.push_back(transfer);
+  } else {
+    SDL_SubmitGPUCommandBuffer(commands);
+    SDL_ReleaseGPUTransferBuffer(gpu, transfer);
+  }
+
+  GpuMesh gpuMesh;
+  gpuMesh.vertices = vertexBuffer;
+  gpuMesh.indices = indexBuffer;
+  gpuMesh.skin = skinBuffer;
+  gpuMesh.vertexCapacity = vertexBytes;
+  gpuMesh.indexCapacity = indexBytes;
+  gpuMesh.hasLightmapUv = source.hasLightmapUv;
+
+  // A sphere around the mesh's bounds: the centre in the middle, the radius to a corner.
+  const Vec3f minimum{source.bounds.min.x, source.bounds.min.y, source.bounds.min.z};
+  const Vec3f maximum{source.bounds.max.x, source.bounds.max.y, source.bounds.max.z};
+  gpuMesh.boundsCenter = (minimum + maximum) * 0.5f;
+  gpuMesh.boundsRadius = length(maximum - minimum) * 0.5f;
+
+  fillRanges(gpuMesh, source, resolve);
   return gpuMesh;
+}
+
+bool MeshRenderer::refill(GpuMesh& gpuMesh, const mesh::RenderMesh& source,
+                          const TextureResolver& resolve) {
+  if (gpuMesh.vertices == nullptr || gpuMesh.indices == nullptr) return false;
+  // A skinned mesh carries a second vertex buffer whose contents belong to the
+  // bind pose; refilling one would leave the bindings behind.
+  if (gpuMesh.skin != nullptr || !source.skin.empty()) return false;
+  if (source.vertices.empty() || source.indices.empty()) return false;
+
+  const Uint32 vertexBytes = static_cast<Uint32>(source.vertices.size() * sizeof(mesh::Vertex));
+  const Uint32 indexBytes = static_cast<Uint32>(source.indices.size() * sizeof(std::uint32_t));
+  if (vertexBytes > gpuMesh.vertexCapacity || indexBytes > gpuMesh.indexCapacity) return false;
+
+  SDL_GPUDevice* gpu = device_->gpu();
+  SDL_GPUTransferBufferCreateInfo transferInfo{};
+  transferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+  transferInfo.size = vertexBytes + indexBytes;
+  SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(gpu, &transferInfo);
+  if (transfer == nullptr) return false;
+  auto* mapped = static_cast<std::byte*>(SDL_MapGPUTransferBuffer(gpu, transfer, false));
+  if (mapped == nullptr) {
+    SDL_ReleaseGPUTransferBuffer(gpu, transfer);
+    return false;
+  }
+  std::memcpy(mapped, source.vertices.data(), vertexBytes);
+  std::memcpy(mapped + vertexBytes, source.indices.data(), indexBytes);
+  SDL_UnmapGPUTransferBuffer(gpu, transfer);
+
+  const bool batched = batchCommands_ != nullptr;
+  SDL_GPUCommandBuffer* commands = batched ? batchCommands_ : SDL_AcquireGPUCommandBuffer(gpu);
+  SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(commands);
+  SDL_GPUTransferBufferLocation vertexSource{transfer, 0};
+  SDL_GPUBufferRegion vertexRegion{gpuMesh.vertices, 0, vertexBytes};
+  // Cycling: a buffer the previous frame is still drawing from is not written under it.
+  SDL_UploadToGPUBuffer(copy, &vertexSource, &vertexRegion, true);
+  SDL_GPUTransferBufferLocation indexSource{transfer, vertexBytes};
+  SDL_GPUBufferRegion indexRegion{gpuMesh.indices, 0, indexBytes};
+  SDL_UploadToGPUBuffer(copy, &indexSource, &indexRegion, true);
+  SDL_EndGPUCopyPass(copy);
+  if (batched) {
+    batchTransfers_.push_back(transfer);
+  } else {
+    SDL_SubmitGPUCommandBuffer(commands);
+    SDL_ReleaseGPUTransferBuffer(gpu, transfer);
+  }
+
+  // The textures the old ranges owned are the renderer's, not the mesh's — they
+  // live in `textureByPath_` and are shared — so there is nothing to free here.
+  gpuMesh.hasLightmapUv = source.hasLightmapUv;
+  const Vec3f minimum{source.bounds.min.x, source.bounds.min.y, source.bounds.min.z};
+  const Vec3f maximum{source.bounds.max.x, source.bounds.max.y, source.bounds.max.z};
+  gpuMesh.boundsCenter = (minimum + maximum) * 0.5f;
+  gpuMesh.boundsRadius = length(maximum - minimum) * 0.5f;
+  fillRanges(gpuMesh, source, resolve);
+  return true;
+}
+
+void MeshRenderer::beginUploadBatch() {
+  if (batchDepth_++ > 0) return;
+  batchCommands_ = SDL_AcquireGPUCommandBuffer(device_->gpu());
+}
+
+void MeshRenderer::endUploadBatch() {
+  if (batchDepth_ == 0) return;
+  if (--batchDepth_ > 0) return;
+  if (batchCommands_ != nullptr) {
+    SDL_SubmitGPUCommandBuffer(batchCommands_);
+    batchCommands_ = nullptr;
+  }
+  SDL_GPUDevice* gpu = device_->gpu();
+  for (SDL_GPUTransferBuffer* transfer : batchTransfers_) {
+    SDL_ReleaseGPUTransferBuffer(gpu, transfer);
+  }
+  batchTransfers_.clear();
 }
 
 bool MeshRenderer::updateVertices(GpuMesh& gpuMesh, const mesh::RenderMesh& source) {

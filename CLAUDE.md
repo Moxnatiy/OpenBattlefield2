@@ -502,6 +502,13 @@ data". Measure: the same dump, taken in a battle.
 * **A physics step as long as a frame.** The engine counts in 1/30 ticks
   (`WorldPref::mTickTime`); without that the jump differs at 60 and 120
   frames per second.
+* **A command buffer per small upload.** The interface is rebuilt whole every
+  time a node moves — 274 little meshes — and each one acquired a command
+  buffer, a transfer buffer and a submit of its own. That was 13.5 ms of the
+  21 ms a rebuild took, a frame and a half, and it looked exactly like a freeze.
+  Many small uploads go in one batch (`MeshRenderer::beginUploadBatch`), and
+  geometry that is rebuilt rather than loaded keeps its buffers
+  (`MeshRenderer::refill`).
 * **Reading the input twice in a frame.** `InputState::clicked` is an
   edge, and `readInput()` consumes it: the second call in the same frame
   always sees "not pressed". Read it once per frame and share it.

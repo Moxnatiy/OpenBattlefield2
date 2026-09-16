@@ -72,6 +72,11 @@ struct GpuMesh {
   // (`Shaders_client.zip:SkinnedMesh.fx:74`); they live in a buffer of their
   // own here so that a level's static geometry does not carry them.
   SDL_GPUBuffer* skin = nullptr;
+  // How many bytes those buffers hold, which is not the same as how many are in
+  // use: a mesh refilled with smaller geometry keeps the room it was given
+  // (`MeshRenderer::refill`).
+  std::uint32_t vertexCapacity = 0;
+  std::uint32_t indexCapacity = 0;
   std::vector<Range> ranges;
   std::vector<SDL_GPUTexture*> ownedTextures;
 
@@ -102,6 +107,27 @@ class MeshRenderer {
 
   std::optional<GpuMesh> upload(const mesh::RenderMesh& source, const TextureResolver& resolve,
                                 std::string* error = nullptr);
+
+  // The same geometry again in buffers that already exist. Returns false when the
+  // mesh has no room for it — the caller then releases it and uploads afresh.
+  //
+  // The interface is rebuilt whole every time a node moves, and creating a pair of
+  // buffers per piece means a trip into the driver for each: the pieces keep their
+  // buffers now and only their contents change. Skinned meshes are refused, since
+  // their bindings are uploaded once and never again.
+  bool refill(GpuMesh& gpuMesh, const mesh::RenderMesh& source, const TextureResolver& resolve);
+
+  // While a batch is open, every `upload` puts its copies into one command buffer
+  // instead of acquiring and submitting one of its own.
+  //
+  // The interface is the reason. It is rebuilt as a few hundred small meshes at
+  // once — 274 of them on a spawn screen — and a command buffer each cost 13.5 ms
+  // of the 21 ms a rebuild took, which is a frame and a half every time the
+  // animation moves a node. The copies themselves are nothing.
+  //
+  // Nested calls are counted, so a batch inside a batch is the outer one's.
+  void beginUploadBatch();
+  void endUploadBatch();
   void release(GpuMesh& gpuMesh);
 
   // New vertex positions for a mesh already uploaded — a skinned mesh posed again.
@@ -290,6 +316,8 @@ class MeshRenderer {
  private:
   MeshRenderer() = default;
   SDL_GPUTexture* uploadTexture(const texture::Texture& source);
+  void fillRanges(GpuMesh& gpuMesh, const mesh::RenderMesh& source,
+                  const TextureResolver& resolve);
 
   Device* device_ = nullptr;
   SDL_GPUGraphicsPipeline* pipeline_ = nullptr;
@@ -299,6 +327,12 @@ class MeshRenderer {
   // its two bones first.
   SDL_GPUGraphicsPipeline* skinnedPipeline_ = nullptr;
   SDL_GPUGraphicsPipeline* overlayPipeline_ = nullptr;
+  // The open upload batch: the command buffer every `upload` writes into, the
+  // transfer buffers to free once it has been submitted, and how deep the nesting
+  // goes.
+  SDL_GPUCommandBuffer* batchCommands_ = nullptr;
+  std::vector<SDL_GPUTransferBuffer*> batchTransfers_;
+  int batchDepth_ = 0;
   SDL_GPUSampler* sampler_ = nullptr;
   // A separate sampler for the interface: there a texture is never tiled, and
   // repeating at a quad's edge drags in the opposite edge and leaves a
