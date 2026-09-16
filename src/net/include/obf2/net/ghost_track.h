@@ -11,6 +11,11 @@
 // one first (the `memcpy` of 0x28 floats at the top of 0x62d4e0), so an update
 // that changes nothing still moves time forward.
 //
+// The whole of `SoldierNetworkable::predict` is in
+// docs/functions/network-events.md, read from the Linux server's named copy at
+// 0x5dc070 (the client's 0x62d130 is the same function). An update slot there is
+// +0x00 time, +0x08 position, +0x14 velocity, +0x44 yaw, +0x50 pitch.
+//
 // Drawing asks for the pose at `now - GSInterpolationTime`:
 //
 //   * inside the ring — the two updates around that moment (0x62bb10: the first

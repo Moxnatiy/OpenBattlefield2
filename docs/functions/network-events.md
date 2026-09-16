@@ -1398,6 +1398,68 @@ velocity for at most `GSExtrapolationTime` (1200 ms) past the newest, the newest
 otherwise. Defaults registered at 0x4077cd, read into the game object's
 +0x50/+0x54 by 0x6a5f60.
 
+### `SoldierNetworkable::predict`, whole
+
+`BF2.exe` 0x62d130, and the same with names in the Linux server at **0x5dc070**,
+which is the copy read here. One update slot (`SoldierNetworkable::UPDATE`, 0xa0
+bytes, four of them in a ring):
+
+| offset | what |
+|---|---|
+| +0x00 | the time, in milliseconds of the server's clock |
+| +0x08, +0x0c, +0x10 | the position |
+| +0x14, +0x18, +0x1c | the velocity, metres a second |
+| +0x44 | the yaw |
+| +0x50 | the pitch |
+
+```
+predict(now):
+  if this[+0x30]: return                                  0x5dc099
+  head = this[+0x3c]; this[+0x4c] = head
+  newest   = getUpdate(head)          null -> return      0x5dc0e3
+  previous = getUpdate((head + 3) & 3) null -> return     0x5dc0f0
+  gap = newest[+0] - previous[+0]                         0x5dc118
+  yawRate = gap > 0 ? (newest[+0x44] - previous[+0x44]) / (gap / 1000) : 0
+  now -= networkManager[+0x118]           GSInterpolationTime          0x5dc177
+
+  if now > newest[+0]:                    past the newest — extrapolate
+      ahead = now - newest[+0]
+      if networkManager[+0x11c] < ahead: -> the newest as it is    0x5dc211
+      if gap == 0: gap = that limit                                0x5dc228
+      if soldier[+0x50] or soldier[+0x3f0]: -> the newest as it is 0x5dc233
+      f = ahead / gap;  seconds = gap / 1000                       0x5dc25c
+      position = newest.position + newest.velocity * seconds * f   0x5dc278
+      the matrix is the identity with that translation             0x5dc2ac
+  else:                                   inside the ring — interpolate
+      walk the ring forward from the head for the first update not older than now
+      gap = later[+0] - earlier[+0]
+      if gap <= 0 or gap >= 500: -> the newest as it is            0x5dc3c6, 0x5dc3cf
+      f = gap > 1 ? (now - earlier[+0]) / gap : 1                  0x5dc3f0
+      setRotationZXY(mat, lerp(yaw, f), lerp(pitch, f), ...)       0x5dc467
+      mat translation = lerp(position, f)                          0x5dc4a4
+  predict_setSoldierTransformation(object, mat)                    0x5db080
+  setPredictedState(soldier, earlier, later, f)                    0x5dbce0
+```
+
+`seconds * f` is `ahead / 1000`, so the gap cancels: **the extrapolation is a
+plain line along the velocity for as many milliseconds as we are ahead**, the
+vertical included. That is what `obf2::net::bf2::GhostTrack::poseAt` already
+does, and the earlier note here — that the engine works in fractions of the gap
+and we run a free line — was a misreading of the client's decompilation, where
+the fastcall arguments are lost. The two agree.
+
+What does differ, and is written down rather than acted on: in the
+**extrapolation** branch the matrix the engine hands the object carries an
+identity rotation (0x5dc2ac writes only the diagonal and the translation), while
+the interpolation branch builds it from the two updates' yaw and pitch. Whether
+the facing comes back through `setPredictedState` is not established — the
+client's copy of that function has not been read. Ours keeps the newest yaw while
+extrapolating.
+
+`predict_setSoldierTransformation` (0x5db080) calls the object's `vtable[0x118]`
+(or `[0x1d8]` when `+0x50` is set), then hands the matrix to the object's physics
+at `+0x88` through its `vtable[0xa8]`.
+
 ### Who calls `predict`, and with what time
 
 `FUN_004d5460` walks every networkable of the world (skipping two objects it asks

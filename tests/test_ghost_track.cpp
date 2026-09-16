@@ -67,7 +67,37 @@ static void testLongGapTakesTheNewest() {
   CHECK(near(pose->position.x, 6.0f));
 }
 
+// The vertical is extrapolated like the rest: the engine's line is
+// `newest.position + velocity * ahead / 1000` with nothing left out
+// (Linux server 0x5dc070, 0x5dc278 — the gap it divides and multiplies by
+// cancels). A falling soldier is therefore drawn below his last update, and that
+// is the original's answer, not ours to smooth over.
+static void testExtrapolationCarriesTheVertical() {
+  GhostTrack track;
+  auto& a = track.push(1000.0f);
+  a.position = Vec3f{0.0f, 10.0f, 0.0f};
+  a.velocity = Vec3f{0.0f, -5.0f, 0.0f};
+  const auto pose = track.poseAt(1000.0f + 100.0f + 200.0f);  // 200 ms past it
+  CHECK(pose && pose->mode == GhostPrediction::Extrapolated);
+  CHECK(near(pose->position.y, 9.0f));
+}
+
+// Exactly at the extrapolation limit it is already the newest, not a line.
+static void testTheLimitIsNotIncluded() {
+  GhostTrack track;
+  auto& a = track.push(0.0f);
+  a.position = Vec3f{0.0f, 0.0f, 0.0f};
+  a.velocity = Vec3f{10.0f, 0.0f, 0.0f};
+  const auto just = track.poseAt(100.0f + kGhostExtrapolationMs - 1.0f);
+  CHECK(just && just->mode == GhostPrediction::Extrapolated);
+  const auto past = track.poseAt(100.0f + kGhostExtrapolationMs);
+  CHECK(past && past->mode == GhostPrediction::Newest);
+  CHECK(near(past->position.x, 0.0f));
+}
+
 TEST_MAIN({
+  testExtrapolationCarriesTheVertical();
+  testTheLimitIsNotIncluded();
   testInterpolatesBehindNow();
   testPushCopiesTheNewest();
   testExtrapolatesAlongVelocity();
