@@ -1041,6 +1041,18 @@ struct RemoteWorld {
   int blockOrdinal = 0;
   int pings = 0, dataPackets = 0, other = 0, challenges = 0;
   int eventCount = 0, objectCount = 0;
+  // When the first packet arrived, so the report can give a rate rather than a
+  // count. The server's send rate is the connection type's own number
+  // (`g_connectionTypes` column +4, 20 a second for type 5 — Linux server
+  // `GameServer::setConnectionType` 0x45f5c0), and a count alone cannot be held
+  // against it.
+  float firstPacketMs = 0.0f;
+  float lastPacketMs = 0.0f;
+  // The stream as the server actually paces it: the gap in **its** ticks between
+  // the packets we receive, because that is what the ghost samples are stamped
+  // with (ghost_track.h).
+  std::uint32_t previousPacketTick = 0;
+  int packetGapSum = 0, packetGaps = 0, packetGapMax = 0;
   std::vector<obf2::net::bf2::CreateSpawnGroup> spawnGroups;
   std::uint8_t lastServerSequence = 0;
   int ghostPackets = 0, ghostRecords = 0;
@@ -1816,6 +1828,19 @@ struct RemoteWorld {
         case obf2::net::bf2::PacketKind::Data: {
           ++dataPackets;
           dataBytes += more->size();
+          lastPacketMs = std::chrono::duration<float, std::milli>(
+                             std::chrono::steady_clock::now().time_since_epoch())
+                             .count();
+          if (firstPacketMs == 0.0f) firstPacketMs = lastPacketMs;
+          if (const auto paced = obf2::net::bf2::readGhostHeader(*more)) {
+            if (previousPacketTick != 0 && paced->time > previousPacketTick) {
+              const int gap = static_cast<int>(paced->time - previousPacketTick);
+              packetGapSum += gap;
+              packetGapMax = std::max(packetGapMax, gap);
+              ++packetGaps;
+            }
+            previousPacketTick = paced->time;
+          }
 
           if (const auto flag = obf2::net::bf2::ghostFlag(*more)) {
             if (*flag) ++ghostFlagSet; else ++ghostFlagClear;
@@ -2242,9 +2267,22 @@ struct RemoteWorld {
 
   void report() {
 
-    std::printf("  over 30 seconds: pings %d (all answered), data packets %d (%zu bytes), "
+    const float listenedMs = lastPacketMs - firstPacketMs;
+    const float listened = listenedMs > 0.0f ? listenedMs / 1000.0f : 0.0f;
+    std::printf("  over %.1f seconds: pings %d (all answered), data packets %d (%zu bytes), "
                 "other %d\n",
-                pings, dataPackets, dataBytes, other);
+                listened, pings, dataPackets, dataBytes, other);
+    // What the server's own pace is, in its ticks and in packets a second. The
+    // connection type asks for twenty a second (type 5, `g_connectionTypes`
+    // column +4), which is a gap of one and a half ticks.
+    if (listened > 0.0f) {
+      std::printf("  the server's pace: %.1f packets a second, %.1f ticks between them "
+                  "(at most %d), over %d packets\n",
+                  static_cast<float>(dataPackets) / listened,
+                  packetGaps > 0 ? static_cast<float>(packetGapSum) / static_cast<float>(packetGaps)
+                                 : -1.0f,
+                  packetGapMax, packetGaps);
+    }
     // If the challenge came once, the server accepted our reply. While the reply
     // does not satisfy it, it sends the challenge again and again.
     std::printf("  events parsed: %d, of them world objects: %d\n", eventCount, objectCount);

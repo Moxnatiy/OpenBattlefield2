@@ -1400,24 +1400,64 @@ therefore draws everyone 100 ms **past** the newest update — extrapolated, by
 design. Ours does the same (`world.setGameTick(header->time + sent.size())`), so
 this is no longer a stand-in.
 
-### What that clock does when the client does not spawn
+### Who gets records: relevance, and what a client without a soldier gets
 
-The server sends a client ghost updates at the rate its connection type says —
-but only while the client is sending. A client sitting on the spawn screen sends
-nothing but ping answers, and the stream collapses to about **one update per
-object per second**; the four-slot ring then holds samples seconds apart and
-every draw extrapolates along a velocity that is long out of date.
+The rate is not the question — the server keeps its pace whatever the client
+does. What changes is **which objects** get records in the packets it is already
+sending.
 
-Measured on the live server (`--watch-soldier`, 900 frames), the same soldier:
+`ServerConnection::updateGhostManager(float)` (Linux server 0x43ca90) runs this
+every pass:
 
-| | updates a second | newest sample at draw | largest step between frames |
-|---|---|---|---|
-| not spawned | ~1, in bursts of 28 | 1.4–3.9 s old | 10–22 m |
-| spawned (`--group 4`) | ~20 | 167–233 ms old | 0.33–0.40 m |
+1. `this->vtable[0x30]()` — the connection's player;
+2. `GhostManager::resetGhostStates(false)` (0x442c80);
+3. `this->vtable[0x40]()` — true for a connection that takes everything, and then
+   `getAllObjects()` (0x43bd30) and nothing else;
+4. **the player is null → return** (0x43cc60, a bare `retq`);
+5. `player->vtable[0x300]()` — the player's controlled object.
+   **It is null → the same return**;
+6. `object->vtable[0x20](0.0f)` — its transform, copied out as the Mat4 the pass
+   scores against;
+7. `player->vtable[0x188]()` — true takes the squad branch (0x43ccdd): the squad
+   leader from `squadManager` (+0xe8, with the player's squad from
+   `vtable[0x1d0]`), queried for `IID_ICameraObject`, and **his** transform is
+   used instead;
+8. `getRelevantObjects(mat, radius)` (0x43c790), which scores every descriptor
+   through `calculateObjectPriority` (0x43c220).
 
-0.33 m is a sprinting soldier's 7 m/s over one frame, which is the measure the
-debt row asks for. The extrapolation stays — the clock above says it should —
-and it no longer jumps, because the updates arrive.
+So a player who has not spawned has no controlled object, and step 5 returns
+before anything is scored at all. Nothing is marked relevant that pass; what the
+client still receives is the residue of the ghost manager's own active set,
+handed out in rotation.
+
+`ServerConnection::calculateObjectPriority` (0x43c220), as far as it is read:
+
+* counts itself in `connection+0x1e8`;
+* a null descriptor, or an object whose owner is this player, scores **0**
+  (0x43c31d);
+* the object's position comes from `getRootParent` (0x69a1e0) and its
+  `vtable[0xd8]`; the player's from the matrix's translation (`mat+0x30`);
+* **beyond a radius the score is 0**: the squared distance is tested against the
+  call's second-to-last float (0x43c318);
+* inside it, the distance is compared with `FLT_EPSILON` (0xb2bfb0), and the
+  direction to the object is dotted with the matrix's forward axis (`mat+0x20`) —
+  so where the player is looking counts. The constants around that dot are 0.001,
+  1000.0, 10.0 and 1.0 (0xb2f3c4, 0xb2f3c8, 0xb2f3cc, 0xb2f3bc); **how they
+  combine into the final score is not established**, only that distance and the
+  view direction are both in it.
+
+Measured on the live server (900 frames), the same soldier and the same server:
+
+| | the server's pace | the pace's worst gap | updates on one soldier | newest sample at draw | largest step between frames |
+|---|---|---|---|---|---|
+| not spawned | 9.8 packets a second, 1.9 ticks apart | 53 ticks | ~1 a second, in bursts of 28 | 1.4–3.9 s old | 10–22 m |
+| spawned (`--group 4`) | 14.2 a second, 1.5 ticks apart | 5 ticks | ~20 a second | 167–233 ms old | 0.33–0.40 m |
+
+1.5 ticks between packets is the twenty a second the connection type asks for, and
+the client gets it either way. It is the records inside them that the relevance
+pass decides, and 0.33 m is a sprinting soldier's 7 m/s over one frame — the
+measure the debt row asks for. The extrapolation stays (the clock above says it
+should) and it stops jumping, because the updates arrive.
 
 A simple object's own rotation (a quaternion in its update slot, slerped by
 0x6d9290 in its `predict`) is not read from its record: moving vehicles keep
