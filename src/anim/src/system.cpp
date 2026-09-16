@@ -187,6 +187,24 @@ std::optional<System> System::load(FileSystem& files, const std::string& scriptP
   return system;
 }
 
+const ValueHolder* System::holderForBundle(std::string_view bundle) const {
+  const std::string wanted = key(bundle);
+  for (const auto& [name, trigger] : triggers_) {
+    if (trigger.valueHolder.empty()) continue;
+    bool asks = false;
+    for (const std::string& asked : trigger.bundles) {
+      if (key(asked) == wanted) {
+        asks = true;
+        break;
+      }
+    }
+    if (!asks) continue;
+    const auto holder = valueHolders_.find(key(trigger.valueHolder));
+    if (holder != valueHolders_.end()) return &holder->second;
+  }
+  return nullptr;
+}
+
 std::vector<std::string> System::roots() const {
   std::set<std::string> children;
   for (const auto& [name, trigger] : triggers_) {
@@ -342,7 +360,23 @@ bool System::visit(const Trigger& trigger, const State& state, const Random& ran
 }
 
 std::vector<const Bundle*> System::select(const State& state, const Random& random) const {
+  // A tick walks two triggers by name and no others (`AnimationSystem::update`,
+  // `BF2.exe` 0x7f7390): the active one — `root`, or `startup` the first time —
+  // and then `postRoot`. Everything else in the file (`hit`, `die`,
+  // `specialMoves`) is reached only when something plays it by name, which is why
+  // `completeTree` listing them all is not a reason to play them.
   std::vector<const Bundle*> out;
+  const auto walk = [&](const char* name) {
+    const auto trigger = triggers_.find(key(name));
+    if (trigger != triggers_.end()) visit(trigger->second, state, random, out, 0);
+  };
+  if (triggers_.count(key("root")) != 0) {
+    walk("root");
+    walk("postRoot");
+    return out;
+  }
+  // A system without a `root` is not the engine's shape; walking whatever roots
+  // it has is ours, so that such a file still says something.
   for (const std::string& name : roots()) {
     const auto trigger = triggers_.find(key(name));
     if (trigger != triggers_.end()) visit(trigger->second, state, random, out, 0);

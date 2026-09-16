@@ -152,6 +152,11 @@ class System {
 
   const std::map<std::string, Animation>& animations() const { return animations_; }
   const std::map<std::string, Bundle>& bundles() const { return bundles_; }
+  // The value holder of the trigger that asks for this bundle, or null. The
+  // holder's third number is the speed a movement bundle's clips were animated
+  // at (`MovementTrigger::applyAnimations`, `BF2.exe` 0x7ff490).
+  const ValueHolder* holderForBundle(std::string_view bundle) const;
+
   const std::map<std::string, Trigger>& triggers() const { return triggers_; }
   const std::map<std::string, ValueHolder>& valueHolders() const { return valueHolders_; }
 

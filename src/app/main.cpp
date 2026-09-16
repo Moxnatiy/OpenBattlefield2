@@ -43,6 +43,7 @@
 #include "obf2/game/template_numbers.h"
 #include "obf2/game/soldier_model.h"
 #include "obf2/anim/system.h"
+#include "obf2/anim/player.h"
 #include "obf2/gfx/mesh_renderer.h"
 #include "obf2/level/gameplay.h"
 #include "obf2/level/level.h"
@@ -82,6 +83,8 @@ struct Args {
   int lodIndex = 0;
   int frames = 0;  // 0 = run until the window is closed
   std::string screenshot;
+  // --screenshot-at <frame>:<file>, as many as asked for.
+  std::vector<std::pair<int, std::string>> screenshotAt;
   std::string screen;  // menu | loading — for deterministic screenshots
   bool hosted = false; // --hosted: the world comes from a local server
   std::optional<obf2::Vec3f> focus;  // where the camera looks
@@ -219,6 +222,18 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--lod" && i + 1 < argc) args.lodIndex = std::atoi(argv[++i]);
     else if (flag == "--frames" && i + 1 < argc) args.frames = std::atoi(argv[++i]);
     else if (flag == "--screenshot" && i + 1 < argc) args.screenshot = argv[++i];
+    else if (flag == "--screenshot-at" && i + 1 < argc) {
+      // `<frame>:<file>` — a shot on a chosen frame, so several frames of the same
+      // run can be laid side by side (a moving soldier, a turning vehicle).
+      const std::string text = argv[++i];
+      const std::size_t colon = text.find(':');
+      if (colon == std::string::npos) {
+        std::fprintf(stderr, "--screenshot-at expects <frame>:<file>, not %s\n", text.c_str());
+        continue;
+      }
+      args.screenshotAt.push_back({std::atoi(text.substr(0, colon).c_str()),
+                                   text.substr(colon + 1)});
+    }
     else if (flag == "--screen" && i + 1 < argc) args.screen = argv[++i];
     else if (flag == "--hosted") args.hosted = true;
     else if (flag == "--topdown") args.topDown = true;
@@ -4419,20 +4434,45 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   // piece of the kits' mesh, skinned on the soldier's skeleton. One mesh per
   // soldier template and kit, kept in a deque so the draw list's pointers stay put.
   //
-  // The pose is standing: the legs from the soldier's `stand_rightFootBack`
-  // bundle and the upper body from the weapon's `stand_still` (both named in the
-  // animation systems' data), at their first frame. Which bundles the trigger tree
-  // picks from the soldier's state is not reversed yet (docs/functions/
-  // animation-system.md, "What is still missing"); until it is, every soldier stands.
-  std::deque<obf2::gfx::GpuMesh> soldierMeshes;
-  std::unordered_map<std::string, obf2::gfx::GpuMesh*> soldierMeshByLook;
-  const auto soldierMeshFor = [&](const std::string& soldierName,
-                                  const std::string& kitName) -> obf2::gfx::GpuMesh* {
-    const std::string key = soldierName + "|" + kitName;
-    if (const auto found = soldierMeshByLook.find(key); found != soldierMeshByLook.end()) {
-      return found->second;
+  // The pose comes from the animation systems the templates name: the legs from
+  // the soldier's `AnimationSystem3p.inc` and the upper body from the weapon's,
+  // walked by the state's speed and direction (`obf2::anim`). What the tick does
+  // with the bundles it picked — the times and the four-clip blend — is
+  // `obf2::anim::Player` (docs/functions/animation-system.md).
+  //
+  // One "look" per soldier template and kit holds the bind-pose mesh, the skeleton
+  // and the two systems; every soldier on screen then has his own posed copy,
+  // because his legs are at his own point in the run.
+  struct SoldierLook {
+    obf2::mesh::RenderMesh bind;
+    obf2::mesh::Skeleton skeleton;
+    std::optional<obf2::anim::System> legs;
+    obf2::anim::System weapon;
+    bool hasWeapon = false;
+    bool ready = false;
+  };
+  std::unordered_map<std::string, SoldierLook> soldierLooks;
+  // The clips, by the path the data names them with. A clip that could not be read
+  // is remembered as empty so it is not looked for every frame.
+  std::unordered_map<std::string, std::optional<obf2::mesh::BoneAnimation>> soldierClips;
+  const auto clipAt = [&](const std::string& path) -> const obf2::mesh::BoneAnimation* {
+    const std::string key = obf2::normalizeAssetPath(path);
+    auto found = soldierClips.find(key);
+    if (found == soldierClips.end()) {
+      std::optional<obf2::mesh::BoneAnimation> clip;
+      if (const auto bytes = files.read(key)) clip = obf2::mesh::loadBoneAnimation(*bytes);
+      found = soldierClips.emplace(key, std::move(clip)).first;
     }
-    obf2::gfx::GpuMesh* uploaded = nullptr;
+    return found->second ? &*found->second : nullptr;
+  };
+
+  const auto soldierLookFor = [&](const std::string& soldierName,
+                                  const std::string& kitName) -> SoldierLook* {
+    const std::string key = soldierName + "|" + kitName;
+    if (const auto found = soldierLooks.find(key); found != soldierLooks.end()) {
+      return found->second.ready ? &found->second : nullptr;
+    }
+    SoldierLook look;
     const auto model = obf2::game::soldierModel(registry, soldierName, kitName);
     const auto loadPart = [&](const obf2::game::SoldierPart& part) {
       const std::string path = resolveGeometryPath(files, part.templateFile, part.geometryName);
@@ -4448,50 +4488,42 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
         skeleton = obf2::mesh::loadSkeleton(*bytes);
       }
     }
-    // The first animation of a bundle, by the bundle's name in an animation system.
-    const auto clipOf = [&](const std::string& script,
-                            const char* bundleName) -> std::optional<obf2::mesh::BoneAnimation> {
-      if (script.empty()) return std::nullopt;
-      const auto system = obf2::anim::System::load(files, obf2::normalizeAssetPath(script));
-      if (!system) return std::nullopt;
-      // The system keys its names in lower case, as the engine compares them.
-      const auto lower = [](std::string text) {
-        std::transform(text.begin(), text.end(), text.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        return text;
-      };
-      const auto bundle = system->bundles().find(lower(bundleName));
-      if (bundle == system->bundles().end() || bundle->second.animations.empty()) return std::nullopt;
-      const auto animation = system->animations().find(lower(bundle->second.animations.front()));
-      const std::string path =
-          animation != system->animations().end() ? animation->second.path
-                                                  : bundle->second.animations.front();
-      const auto bytes = files.read(obf2::normalizeAssetPath(path));
-      return bytes ? obf2::mesh::loadBoneAnimation(*bytes) : std::nullopt;
-    };
     if (bind && skeleton) {
-      const auto legs = clipOf(model->animationSystem3p, "stand_rightFootBack");
-      const auto upper = clipOf(model->weaponAnimationSystem3p, "stand_still");
-      std::vector<obf2::mesh::PoseStage> stages;
-      if (legs) stages.push_back(obf2::mesh::PoseStage{&*legs, 0, 1.0f});
-      if (upper) stages.push_back(obf2::mesh::PoseStage{&*upper, 0, 1.0f});
-      const auto pose = obf2::mesh::poseSkeleton(*skeleton, stages);
-      obf2::mesh::RenderMesh posed = *bind;
-      obf2::mesh::skinMesh(*bind, pose, posed);
-      if (auto gpu = renderer->upload(posed, resolveTexture)) {
-        soldierMeshes.push_back(*gpu);
-        uploaded = &soldierMeshes.back();
+      look.bind = std::move(*bind);
+      look.skeleton = std::move(*skeleton);
+      look.legs = obf2::anim::System::load(files, obf2::normalizeAssetPath(model->animationSystem3p));
+      if (!model->weaponAnimationSystem3p.empty()) {
+        if (auto weapon = obf2::anim::System::load(
+                files, obf2::normalizeAssetPath(model->weaponAnimationSystem3p))) {
+          look.weapon = std::move(*weapon);
+          look.hasWeapon = true;
+        }
       }
-      std::printf("  soldier look %s: %zu vertices, kit %s, legs %s, upper body %s\n", key.c_str(),
-                  bind->vertices.size(), model->kit ? "yes" : "no", legs ? "yes" : "no",
-                  upper ? "yes" : "no");
+      look.ready = true;
+      std::printf("  soldier look %s: %zu vertices, kit %s, legs %s, weapon %s\n", key.c_str(),
+                  look.bind.vertices.size(), model->kit ? "yes" : "no",
+                  look.legs ? "yes" : "no", look.hasWeapon ? "yes" : "no");
     } else {
       std::printf("  soldier look %s: not assembled (model %d, mesh %d, skeleton %d)\n",
                   key.c_str(), model ? 1 : 0, bind ? 1 : 0, skeleton ? 1 : 0);
     }
-    soldierMeshByLook.emplace(key, uploaded);
-    return uploaded;
+    auto& stored = soldierLooks.emplace(key, std::move(look)).first->second;
+    return stored.ready ? &stored : nullptr;
   };
+
+  // One soldier on screen: his own posed copy of the look's mesh and his own place
+  // in the clips.
+  struct DrawnSoldier {
+    SoldierLook* look = nullptr;
+    obf2::mesh::RenderMesh posed;
+    obf2::gfx::GpuMesh gpu;
+    obf2::anim::Player legs;
+    obf2::anim::Player weapon;
+    std::string key;
+  };
+  std::map<std::uint16_t, DrawnSoldier> drawnSoldiers;
+  // Who `--watch-soldier` is holding on to.
+  std::uint16_t watchedSoldier = 0;
   if (remote != nullptr && level) {
     const std::string mode = remote->serverGameMode.empty() ? "gpm_cq" : remote->serverGameMode;
     const int size = remote->serverSize > 0 ? remote->serverSize : 16;
@@ -4784,24 +4816,59 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     // chest — so a screenshot shows how other players are drawn without anyone
     // having to be found by hand.
     if (args.watchSoldier && remote != nullptr) {
-      float nearest = 1e9f;
-      std::optional<obf2::Vec3f> target;
-      const obf2::Vec3f from = remoteSoldier ? *remoteSoldier : eye;
-      for (const auto& [id, object] : remote->world.objects()) {
-        if (id == remote->ourSoldier || object.netClass != obf2::net::bf2::GhostClass::Soldier) {
-          continue;
+      // The camera holds on to **one** soldier. Taking the nearest every frame
+      // made it jump from one to another as they passed each other, which reads
+      // as the watched soldier teleporting.
+      const auto& objects = remote->world.objects();
+      const auto stillThere = [&](std::uint16_t id) {
+        const auto found = objects.find(id);
+        return found != objects.end() &&
+               found->second.netClass == obf2::net::bf2::GhostClass::Soldier &&
+               id != remote->ourSoldier;
+      };
+      if (watchedSoldier != 0 && !stillThere(watchedSoldier)) watchedSoldier = 0;
+      if (watchedSoldier == 0) {
+        float nearest = 1e9f;
+        const obf2::Vec3f from = remoteSoldier ? *remoteSoldier : eye;
+        for (const auto& [id, object] : objects) {
+          if (!stillThere(id)) continue;
+          const auto pose =
+              remote->world.poseOf(id, remote->tick.pending / obf2::server::kTickTime);
+          const float away = obf2::length((pose ? pose->position : object.position) - from);
+          if (away < nearest) {
+            nearest = away;
+            watchedSoldier = id;
+          }
         }
-        const auto pose = remote->world.poseOf(id, remote->tick.pending / obf2::server::kTickTime);
-        const obf2::Vec3f at = pose ? pose->position : object.position;
-        const float away = obf2::length(at - from);
-        if (away < nearest) {
-          nearest = away;
-          target = at;
-        }
+        if (watchedSoldier != 0) std::printf("  watching soldier %u\n", watchedSoldier);
       }
-      if (target) {
-        lookTarget = *target;
-        eye = *target + obf2::Vec3f{2.8f, 0.6f, 2.8f};
+      if (watchedSoldier != 0) {
+        const auto& object = objects.at(watchedSoldier);
+        const auto pose =
+            remote->world.poseOf(watchedSoldier, remote->tick.pending / obf2::server::kTickTime);
+        const obf2::Vec3f at = pose ? pose->position : object.position;
+        lookTarget = at;
+        eye = at + obf2::Vec3f{2.8f, 0.6f, 2.8f};
+
+        // Whether the soldier stands still because he stands still, or because the
+        // server stopped telling us about him: the newest update's age against the
+        // ghost clock, and how the pose was made.
+        if (frame % 60 == 0) {
+          const auto* newest = object.track.newest();
+          const float nowMs = static_cast<float>(remote->world.gameTick()) *
+                              obf2::net::bf2::kGhostTickMs;
+          const float fromUs =
+              remoteSoldier ? obf2::length(at - *remoteSoldier) : -1.0f;
+          std::printf("  watched %u: updates %d, samples %zu, newest %.0f ms ago, mode %d, "
+                      "speed %.2f, %.0f m from our body, at %.2f %.2f %.2f\n",
+                      watchedSoldier, object.updates, object.track.count(),
+                      newest != nullptr ? nowMs - newest->timeMs : -1.0f,
+                      pose ? static_cast<int>(pose->mode) : -1,
+                      newest != nullptr && newest->velocity
+                          ? obf2::length(*newest->velocity)
+                          : -1.0f,
+                      fromUs, at.x, at.y, at.z);
+        }
       }
     }
 
@@ -5124,10 +5191,94 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
             const std::string* soldierName = remote->templateNumbers.nameOf(object.templateId);
             const std::uint32_t kit = remote->world.kitTemplateOf(id);
             const std::string* kitName = kit != 0 ? remote->templateNumbers.nameOf(kit) : nullptr;
-            if (soldierName != nullptr) {
-              if (obf2::gfx::GpuMesh* model =
-                      soldierMeshFor(*soldierName, kitName != nullptr ? *kitName : std::string())) {
-                withOthers.push_back(obf2::gfx::MeshRenderer::DrawItem{model, place});
+            SoldierLook* look =
+                soldierName != nullptr
+                    ? soldierLookFor(*soldierName, kitName != nullptr ? *kitName : std::string())
+                    : nullptr;
+            if (look != nullptr) {
+              const std::string key = *soldierName + "|" + (kitName != nullptr ? *kitName : "");
+              DrawnSoldier& drawn = drawnSoldiers[id];
+              // A soldier who respawned with another kit is another look, so his
+              // mesh is built again.
+              if (drawn.look != look || drawn.key != key) {
+                if (drawn.gpu.vertices != nullptr) renderer->release(drawn.gpu);
+                drawn = DrawnSoldier{};
+                drawn.look = look;
+                drawn.key = key;
+                drawn.posed = look->bind;
+                if (auto gpu = renderer->upload(drawn.posed, resolveTexture)) drawn.gpu = *gpu;
+                const auto length = [&](const std::string& path) {
+                  const obf2::mesh::BoneAnimation* clip = clipAt(path);
+                  return clip != nullptr ? clip->duration() : 0.0f;
+                };
+                drawn.legs.setLengthOf(length);
+                drawn.weapon.setLengthOf(length);
+              }
+
+              // The state the conditions read: the speed and the direction the
+              // server itself reports for this soldier, turned into his own frame.
+              // The yaw a ghost carries is the body's plus the aim's, which is the
+              // matrix the movement is built from (docs/functions/soldier-physics.md).
+              obf2::anim::State animState;
+              const auto* newest = object.track.newest();
+              const obf2::Vec3f velocity =
+                  newest != nullptr && newest->velocity ? *newest->velocity : obf2::Vec3f{};
+              const float planar =
+                  std::sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+              animState.speed = planar;
+              if (planar > 0.001f) {
+                const float yawRadians = pose->bodyYaw * 3.14159265358979323846f / 180.0f;
+                const float forward =
+                    (velocity.x * std::sin(yawRadians) + velocity.z * std::cos(yawRadians)) / planar;
+                const float side =
+                    (velocity.x * std::cos(yawRadians) - velocity.z * std::sin(yawRadians)) / planar;
+                animState.direction[0] = side;
+                animState.direction[1] = 0.0f;
+                animState.direction[2] = forward;
+              }
+              if (look->legs) drawn.legs.update(*look->legs, animState, frameStep);
+              if (look->hasWeapon) drawn.weapon.update(look->weapon, animState, frameStep);
+
+              // The legs first and the weapon over them: a clip touches only its
+              // own bones, and the weapon's clips own the upper body
+              // (`obf2::mesh::poseSkeleton`).
+              std::vector<obf2::mesh::PoseStage> stages;
+              const auto addStages = [&](const obf2::anim::Player& player) {
+                for (const obf2::anim::PlayingAnimation& playing : player.playing()) {
+                  if (playing.weight <= 0.001f) continue;
+                  const obf2::mesh::BoneAnimation* clip = clipAt(playing.path);
+                  if (clip == nullptr || clip->frameCount == 0) continue;
+                  const auto frame = static_cast<std::uint32_t>(
+                      playing.time * obf2::mesh::kAnimationFramesPerSecond);
+                  stages.push_back(obf2::mesh::PoseStage{clip, frame % clip->frameCount,
+                                                         playing.weight});
+                }
+              };
+              addStages(drawn.legs);
+              addStages(drawn.weapon);
+              if (frame >= args.traceFrom && frame < args.traceFrom + args.traceFrames) {
+                std::printf("    soldier %u anim: speed %.2f, direction %.2f %.2f, clips", id,
+                            animState.speed, animState.direction[0], animState.direction[2]);
+                for (const obf2::anim::Player* player : {&drawn.legs, &drawn.weapon}) {
+                  for (const obf2::anim::PlayingAnimation& playing : player->playing()) {
+                    if (playing.weight <= 0.001f) continue;
+                    const std::size_t slash = playing.path.find_last_of("/\\");
+                    std::printf(" %s@%.2f×%.2f",
+                                slash == std::string::npos ? playing.path.c_str()
+                                                           : playing.path.c_str() + slash + 1,
+                                playing.time, playing.weight);
+                  }
+                }
+                std::printf("\n");
+              }
+
+              if (drawn.gpu.vertices != nullptr && !stages.empty()) {
+                const auto skeletonPose = obf2::mesh::poseSkeleton(look->skeleton, stages);
+                obf2::mesh::skinMesh(look->bind, skeletonPose, drawn.posed);
+                renderer->updateVertices(drawn.gpu, drawn.posed);
+              }
+              if (drawn.gpu.vertices != nullptr) {
+                withOthers.push_back(obf2::gfx::MeshRenderer::DrawItem{&drawn.gpu, place});
                 continue;
               }
             }
@@ -5649,7 +5800,17 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     }
 
     const bool lastFrame = args.frames > 0 && frame + 1 >= args.frames;
-    if (lastFrame && !args.screenshot.empty()) {
+    const std::string* shotHere = nullptr;
+    for (const auto& [at, file] : args.screenshotAt) {
+      if (at == frame) shotHere = &file;
+    }
+    if (shotHere != nullptr) {
+      if (device->submitAndSave(*acquired, shotHere->c_str(), &error)) {
+        std::printf("screenshot: %s (frame %d)\n", shotHere->c_str(), frame);
+      } else {
+        std::fprintf(stderr, "%s\n", error.c_str());
+      }
+    } else if (lastFrame && !args.screenshot.empty()) {
       if (device->submitAndSave(*acquired, args.screenshot.c_str(), &error)) {
         std::printf("screenshot: %s\n", args.screenshot.c_str());
       } else {

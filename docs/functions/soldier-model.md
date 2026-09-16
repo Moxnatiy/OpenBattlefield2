@@ -49,17 +49,27 @@ What stands in for now, each one a stage below:
 * the mesh keeps every vertex of the file's shared buffer (35 000 for a soldier with
   a kit, of which the two pieces use a fraction).
 
-## Stage 2 — animation
+## Done — stage 2: the soldiers move
 
-The trigger tree walk (`anim::System::select`) takes too much: hit, death, face and
-skydive bundles all come out for a standing soldier, because `MessageTrigger`,
-`RandomTrigger`, `IdleTrigger`, `ForwardTrigger` and `SideTrigger` are not
-reversed, and neither is `BundlePlayer`'s timing (fade in and out, lengths). The
-state it needs is in the ghost: speed and direction from the velocity, pose, the
-sprint flag.
+Every trigger type is reversed (docs/functions/animation-system.md), a tick walks
+`root` and `postRoot` rather than the whole file, and `anim::Player` keeps each
+bundle's time, its playback speed and the four-clip blend. On `--connect` each
+soldier gets his own posed copy of the mesh: the state comes from his ghost — the
+speed and the direction of the velocity the server reports, turned into his own
+frame by the yaw the ghost carries — and the pose is skinned again every frame
+(`obf2::mesh::skinMesh`, `MeshRenderer::updateVertices`).
 
-Measure: a running bot's legs run and a standing one's stand, and a clip's length on
-screen matches its frame count at 24 frames per second (`kAnimationFramesPerSecond`).
+Measure: `--watch-soldier` with `--trace-frames` prints the clips, their times and
+their weights; the screenshots of the same run show the stride changing.
+
+What is still a stand-in here:
+
+* the pose is always standing — the ghost's own pose (crouch, prone, swim) is one
+  of the soldier state's unnamed fields and is not read yet;
+* `BundlePlayer::update` is not reversed, so there are no fades between clips and a
+  one-shot bundle is not carried to its end;
+* the weapon's system is asked with the same state, but the weapon's own messages
+  (firing, reloading, zooming) are not known, so the upper body only walks and runs.
 
 ## Stage 3 — weapon
 

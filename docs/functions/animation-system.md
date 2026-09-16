@@ -195,14 +195,92 @@ system: in the whole of `Objects_client.zip` `useDirection` is set only on the
 ladder's `UpTrigger`s and `triggerOnAcceleration` only on the first-person
 `TurnTrigger`s (four each).
 
+## A tick walks two triggers, not the whole tree
+
+`AnimationSystem::update` (`BF2.exe` 0x7f7390, Linux 0x6b3820):
+
+```
+if no active trigger yet:
+    "startup" is looked up and played once, if the file has one
+    the active trigger becomes "root"
+the post trigger is "postRoot", looked up once
+messages |= onceMessages; changed = (messages != previous)
+root.update(sys)
+postRoot.update(sys)                       // with a flag set while it runs
+messages &= ~onceMessages; previous = messages; onceMessages = 0
+then every bundle player is updated, and one that answers false is dropped
+```
+
+So a tick reaches only what hangs under `root` and `postRoot`. `hit`, `die` and
+`specialMoves` sit under `completeTree` beside them and are **never** walked by a
+tick: something has to play them by name (`playTrigger`, `playPostTrigger`). That
+is the gate the tree itself does not carry — and why a standing soldier does not
+die and get hit every frame.
+
+The idle time the IdleTrigger reads is counted in the same place: while exactly
+one player of a kind is alive, a timer grows by the frame's step; two or more
+reset it to zero. So "idle" means "nothing but the base pose is playing".
+
+## Playing a bundle
+
+`AnimationSystem::playBundle(trigger, bundle, priority, startTime, speed)`
+(`BF2.exe` 0x7f7a20): the system keeps its players in a list ordered by priority
+(the trigger's +0x24). A bundle that is already playing is **not** restarted —
+the call finds its player, sets the parameters on it and marks it as touched this
+tick. Otherwise a player is made and inserted before the first one of a higher
+priority.
+
+`setParameters(startTime, speed)` (0x7fdf40): a start time of 0 or more only
+takes effect on a looping bundle; the speed goes into the player unless the
+bundle has `jumpToLastAnimationAtStop`, and a non-looping bundle asked to play
+with a negative speed starts at its own end.
+
+`MovementTrigger::applyAnimations` (0x7ff490) is where a movement bundle gets its
+playback speed and its blend:
+
+```
+if the trigger has no value holder and exactly two bundles:
+    one of them is picked by the system's phase (+0x44) — the left or the right
+    foot forward — and played
+otherwise:
+    speed = holder ? sys.speed / holder.values[2] : 1      // the third number!
+    player = playBundle(trigger, bundle[0], priority, -1, speed)
+    if the bundle has exactly four animations:
+        factor = asin(clamp(|direction.z|, -1, 1)) * 2/pi   // 0.63661975
+        a = direction.x >= 0.01 ? 2 : 3
+        b = direction.z < -0.01 ? 1 : 0
+        setBlendAnimations(factor, a, b)                    // 0x7fe120
+        sys.phase (+0x44) = player.time / bundle.length
+```
+
+**The third number of `AnimationValueHolder.values` is the speed the clip was
+animated at.** `3p_stand_run 0.1 3.9 5.8` plays the run clips at `speed / 5.8`,
+so the legs' cadence follows the ground speed instead of running on the spot.
+
+**A bundle's animations are indexed from the end.** `Bundle::getAnimation(int)`
+(Linux 0x6b6460) walks the list forward from its head, and the list is built by
+pushing to the front — the client's own `.con` writer (0x7fa930) walks it the
+other way to print the file back in its original order. So for
+
+```
+animationBundle.addAnimation .../3p_strafeLeft.baf
+animationBundle.addAnimation .../3p_strafeRight.baf
+animationBundle.addAnimation .../3p_runBackward.baf
+animationBundle.addAnimation .../3p_runForward.baf
+```
+
+the indices are 0 runForward, 1 runBackward, 2 strafeRight, 3 strafeLeft — which
+is what makes the pair choice above read straight: `b` is the run clip by the
+sign of the forward component, `a` the strafe clip by the sign of the side one,
+and `factor` weighs the run clip against the strafe one.
+
 ## What is still missing
 
-`BundlePlayer` (Linux `dice::anim::BundlePlayer::update(IObject*, float)`): the
-time, the fades and how several bundles are blended per bone.
-`AnimationSystem::playBundle` (Linux 0x6b25f0) takes `(trigger, bundle, an int
-from the trigger's +0x24, a float, a float)` — the base trigger passes -1.0 and
-1.0, `SwitchMessageTrigger` 1.0 or 0.0 with 10000 as the int; what each argument
-means is not established.
+`BundlePlayer::update` (Linux 0x6b9150) in full: how the time advances through the
+bundle's own length, the fades in and out (`fadeInTime`, `fadeOutTime`), the
+events, and `playForever`, `abruptPlayback`, `jumpToLastAnimationAtStop`. And the
+blend of several players on one skeleton — `applyAnimationsOnSkeleton` with two
+animations and two floats, plus `getSlerpFactor`.
 
 Who fills the state is not established either: `setTriggerMovement`'s caller in
 the client, the frame the direction is measured in, and where the idle time comes
