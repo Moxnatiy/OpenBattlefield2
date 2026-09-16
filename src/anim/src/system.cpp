@@ -170,15 +170,24 @@ std::optional<System> System::load(FileSystem& files, const std::string& scriptP
   System system;
   con::Interpreter interpreter(files,
                                [&](const con::Command& command) { system.feed(command); });
-  interpreter.runFile(scriptPath);
 
-  // The ranges lie in a separate file next to it and are included nowhere — the
-  // engine reads them itself. We do the same: take the neighbouring ValueHolders.inc.
-  const std::size_t slash = scriptPath.find_last_of("/\\");
-  if (slash != std::string::npos) {
-    const std::string neighbour = scriptPath.substr(0, slash + 1) + "ValueHolders.inc";
-    if (files.exists(neighbour)) interpreter.runFile(neighbour);
-  }
+  // The ranges live in one file that no script mentions, and the engine names it
+  // itself: `AnimationSystemTemplate::loadScript` (Linux server 0x6b3310) calls
+  // `ValueHolderManager::loadValueHolders` (0x6d1700) at 0x6b339f before running
+  // the script, and that runs `dice::anim::valueHolderFilename` — the constant
+  // `Objects/Soldiers/Common/Animations/ValueHolders.inc` (its static initialiser
+  // at 0x6d148d, the literal at 0xb92768). A flag at the manager's +0x38 makes it
+  // happen once for the whole game, so **every** animation system sees the same
+  // holders.
+  //
+  // We used to take a ValueHolders.inc lying next to the script instead. One lies
+  // next to the soldier's, so the legs were right; none lies next to a weapon's,
+  // and `ValueHolderManager::get` (0x6d1500) answers null for a name it does not
+  // know, which `MovementTrigger::isWithinRange` (0x6cd370) reads as **always in
+  // range**. So every weapon trigger fired at once and the arms walked, ran and
+  // sprinted on top of each other while the soldier stood still.
+  interpreter.runFile(kValueHolderFile);
+  interpreter.runFile(scriptPath);
 
   if (system.triggers_.empty()) {
     if (error) *error = "the script has no triggers at all";

@@ -62,6 +62,13 @@ struct Bundle {
 // reads before the range (`BF2.exe` 0x7ff430, the fields at +0x10 and +0x0c):
 // `AnimationValueHolder.passOnMessage` has to be present in the state's messages
 // and `stopOnMessage` must not be.
+// The one file every animation system's ranges come from. The engine holds it as
+// `dice::anim::valueHolderFilename` and loads it once, before any script
+// (`ValueHolderManager::loadValueHolders`, Linux server 0x6d1700, called from
+// `AnimationSystemTemplate::loadScript` at 0x6b339f).
+inline constexpr const char* kValueHolderFile =
+    "Objects/Soldiers/Common/Animations/ValueHolders.inc";
+
 struct ValueHolder {
   std::string name;
   float low = 0.0f;

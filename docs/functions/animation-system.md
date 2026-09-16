@@ -122,6 +122,58 @@ the client's offsets (32-bit; the Linux ones are 4 bytes further on from `pose`)
 (Linux 0x6b1920) is what fills them; who calls it in the client, and in what
 frame the direction is measured, is **not established** yet.
 
+### Where the ranges come from: one file, loaded once
+
+No script mentions it, and the engine names it itself.
+`AnimationSystemTemplate::loadScript` (Linux server 0x6b3310) calls
+`ValueHolderManager::loadValueHolders` (0x6d1700) at 0x6b339f, before it runs the
+script at all, and that runs `dice::anim::valueHolderFilename` — the constant
+**`Objects/Soldiers/Common/Animations/ValueHolders.inc`** (its static initialiser
+at 0x6d148d, the literal at 0xb92768). The manager sets a flag at its own +0x38
+first (0x6d1763), so the file is read **once for the whole game** and every
+animation system template shares the 31 holders it creates.
+
+A name that is not among them is not an error and not a default:
+`ValueHolderManager::get` (0x6d1500) returns null, `MovementTrigger::setValueHolder`
+(0x6ce740) stores that null at the trigger's +0x48, and `isWithinRange` reads it
+as "always".
+
+`MovementTrigger::isWithinRange(float value)` (Linux 0x6cd370), whole:
+
+```
+holder = this[+0x48]
+if holder == null:      return true          0x6cd374
+a = holder[+0], b = holder[+4]
+if a == b:              return true          0x6cd382   equal bounds are "always"
+if a >= 0:                                   0x6cd38c
+    if a > value:       return false
+    return value <= b                        so a <= value <= b
+else:                                        0x6cd3a1
+    if b > value:       return false
+    return value <= a                        so b <= value <= a
+```
+
+The negative branch is why `1p_turn -1 -3 -10` reads as −3..−1: with a first
+number below zero the pair is (upper, lower). By the same reading `3p_turnLeft
+-0.05 1 -1000` asks for 1 <= value <= −0.05, which nothing satisfies; that is what
+the instructions say, and no claim is made here about what was intended.
+
+This is the bug that made a standing soldier's arms walk, run and sprint at once.
+We read a `ValueHolders.inc` lying **next to** the script instead of the engine's
+path: one lies beside the soldier's system, so the legs were gated correctly, and
+none lies beside a weapon's, so every weapon trigger held a null holder and was
+always in range. Measured with `--trace-frames` on the live server, one standing
+soldier before and after:
+
+```
+before  3p_stand, face_neutral, <w>_standTurnLeft, <w>_standTurnRight, <w>_stand,
+        <w>_walkForward, <w>_runForward, <w>_sprint          all at weight 1
+after   3p_stand, face_neutral, <w>_stand
+```
+
+and a running one now takes `runForward`/`strafeLeft` on the legs and the weapon's
+matching pair at the same two weights.
+
 ### The conditions
 
 ```
