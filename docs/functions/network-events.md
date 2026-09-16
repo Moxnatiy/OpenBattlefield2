@@ -1370,9 +1370,54 @@ velocity for at most `GSExtrapolationTime` (1200 ms) past the newest, the newest
 otherwise. Defaults registered at 0x4077cd, read into the game object's
 +0x50/+0x54 by 0x6a5f60.
 
-Not found: who calls `predict` every frame and with what time. Ours runs a clock
-that never lags the newest packet's time and advances with the frames
-(`WorldView::advanceClock`) — a stand-in, marked as such.
+### Who calls `predict`, and with what time
+
+`FUN_004d5460` walks every networkable of the world (skipping two objects it asks
+the player manager for — the controlled one and the one being entered) and calls
+slot +0x14 of each, `predict`, with **one** number: `FUN_004c4400() * 1000`.
+
+That number is the game clock, and it is two globals:
+
+| address | what |
+|---|---|
+| `DAT_009a7428` | the game tick, an int |
+| `_DAT_009a7420` | the same as seconds: `tick * _DAT_00970398` (the tick time, 1/30) |
+| `FUN_004c4400` | reads the seconds — the getter every caller uses |
+| `FUN_004c4440(tick)` | sets the tick outright, and the seconds with it |
+| `FUN_004c4470(n)` | adds `n` ticks |
+
+Who moves it:
+
+* `FUN_004d4b30` — the answer to a controlled-object state: `FUN_004c4440` at
+  0x4d4bc9 sets the clock to **the packet's server tick**, and `FUN_004c4470` at
+  0x4d4c15 adds one tick for every action replayed on top of it;
+* `FUN_004e0530` and `FUN_004e1f00` — a tick of the client's own loop, one each.
+
+So the client's clock is the newest packet's server tick plus the actions the
+server has not played yet, and the ghosts of other players are drawn at that
+minus `GSInterpolationTime`. A client whose actions are answered after 6 ticks
+therefore draws everyone 100 ms **past** the newest update — extrapolated, by
+design. Ours does the same (`world.setGameTick(header->time + sent.size())`), so
+this is no longer a stand-in.
+
+### What that clock does when the client does not spawn
+
+The server sends a client ghost updates at the rate its connection type says —
+but only while the client is sending. A client sitting on the spawn screen sends
+nothing but ping answers, and the stream collapses to about **one update per
+object per second**; the four-slot ring then holds samples seconds apart and
+every draw extrapolates along a velocity that is long out of date.
+
+Measured on the live server (`--watch-soldier`, 900 frames), the same soldier:
+
+| | updates a second | newest sample at draw | largest step between frames |
+|---|---|---|---|
+| not spawned | ~1, in bursts of 28 | 1.4–3.9 s old | 10–22 m |
+| spawned (`--group 4`) | ~20 | 167–233 ms old | 0.33–0.40 m |
+
+0.33 m is a sprinting soldier's 7 m/s over one frame, which is the measure the
+debt row asks for. The extrapolation stays — the clock above says it should —
+and it no longer jumps, because the updates arrive.
 
 A simple object's own rotation (a quaternion in its update slot, slerped by
 0x6d9290 in its `predict`) is not read from its record: moving vehicles keep

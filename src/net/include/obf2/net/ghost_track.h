@@ -22,6 +22,19 @@
 //     `GSExtrapolationTime`;
 //   * otherwise — the newest as it is.
 //
+// The clock those `now`s come from is one global, and it is not ours to invent:
+// `FUN_004d5460` walks the world's networkables and calls each one's `predict`
+// (vtable +0x14) with `FUN_004c4400() * 1000`. `FUN_004c4400` reads
+// `_DAT_009a7420`, which is the game tick `DAT_009a7428` times the tick time
+// (1/30, `_DAT_00970398`). The tick is set outright by `FUN_004c4440` — called
+// from `FUN_004d4b30` at 0x4d4bc9 with **the packet's server tick** — and
+// advanced by `FUN_004c4470`, once per action replayed over it (0x4d4c15) and
+// once per tick of the client's own loop (0x4e0530, 0x4e1f00).
+//
+// So the client draws other players at (the newest packet's tick + the actions
+// the server has not answered) minus 100 ms, and a client whose answers come
+// back after six ticks extrapolates by design. `WorldView` keeps the same clock.
+//
 // The two times are server settings registered with defaults at 0x4077cd:
 // `GSInterpolationTime` 100 ms and `GSExtrapolationTime` 1200 ms (0x4b0), read
 // into `+0x50` / `+0x54` of the game object by 0x6a5f60.

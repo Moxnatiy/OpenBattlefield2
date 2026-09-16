@@ -1258,7 +1258,7 @@ struct RemoteWorld {
       // The measure of the action queue: how many of ours the server has not
       // answered, every ten seconds of ticks. A number that keeps growing is a
       // queue on the server that never drains.
-      if (ourSoldier != 0 && actionTick % 300 == 0) {
+      if (actionTick % 300 == 0 || (ourSoldier == 0 && world.gameTick() % 300 == 0)) {
         // How long the server takes to answer an action, and how far our clock
         // therefore runs ahead of the newest packet. The ghosts of other players
         // are drawn at our clock minus `GSInterpolationTime` (100 ms), so a round
@@ -1852,7 +1852,18 @@ struct RemoteWorld {
               // The game tick: this packet's server tick plus one per action played
               // again (`FUN_004d4b30`, 0x4d4bc9 and 0x4d4c15; bf2_world.h).
               if (const auto header = obf2::net::bf2::readGhostHeader(*more); header && !sent.empty()) {
-                world.setGameTick(header->time + static_cast<std::uint32_t>(sent.size()));
+                const std::uint32_t wanted = header->time + static_cast<std::uint32_t>(sent.size());
+                // The measure for the jerking of other players: they are drawn at our
+                // clock minus `GSInterpolationTime`, so a clock that leaps forward
+                // drags every ghost along its velocity by the same leap.
+                const std::int64_t jump =
+                    static_cast<std::int64_t>(wanted) - static_cast<std::int64_t>(world.gameTick());
+                if (jump > 2 || jump < -2) {
+                  std::printf("  clock: %+lld ticks (%u -> %u, packet %u, unanswered %zu)\n",
+                              static_cast<long long>(jump), world.gameTick(), wanted, header->time,
+                              sent.size());
+                }
+                world.setGameTick(wanted);
               }
               // The look chain's measure (`--look-at`): the server's angles, our
               // prediction before the replay and after it. Printed when they change.
@@ -4571,6 +4582,8 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   std::map<std::uint16_t, DrawnSoldier> drawnSoldiers;
   // Who `--watch-soldier` is holding on to.
   std::uint16_t watchedSoldier = 0;
+  // Whether `--group` has already been asked for — it is a one-shot.
+  bool askedForGroup = false;
   if (remote != nullptr && level) {
     const std::string mode = remote->serverGameMode.empty() ? "gpm_cq" : remote->serverGameMode;
     const int size = remote->serverSize > 0 ? remote->serverSize : 16;
@@ -4708,6 +4721,16 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       // several seconds earlier.
       remote->pump(1);
       while (remote->pump(0)) {
+      }
+      // `--group <n>`: spawn without the screen. The spawn screen is a debt of its
+      // own (it builds empty on some rounds), and without a soldier the client
+      // sends the server nothing at all — which is a different measurement from
+      // the one we want.
+      if (args.spawnGroup != 0 && !askedForGroup && !remote->spawnGroups.empty()) {
+        std::printf("  --group %d: asking to spawn as team %d with kit %d\n", args.spawnGroup,
+                    args.team, args.kit);
+        remote->askSpawnGroup(args.team, args.kit, args.spawnGroup);
+        askedForGroup = true;
       }
       // The game tick runs whether we have a soldier or not; with one, the
       // soldier's branch below runs the same ticks.
