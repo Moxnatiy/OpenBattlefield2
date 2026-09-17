@@ -1474,9 +1474,35 @@ says**, and the soldier's own physics tick carries him from there — gravity an
 the floor included. The animation reads that node's speed too
 (`getAbsolutePositionalSpeed`, vtable 0x298, in `updateAnimationSystems`).
 
-That is the difference behind a teammate who drops and pops back: we draw the
-predicted line itself, so a downward velocity runs him into the ground until the
-next update; the original's physics stops him on it. Measured on one soldier
+That was the difference behind a teammate who drops and pops back: we drew the
+predicted line itself, so a downward velocity ran him into the ground until the
+next update; the original's physics stops him on it.
+
+`SoldierPhysicsNode::updatePositionalPhysics` (Linux 0x6f1de0), whole:
+
+```
+if !this[+0x14]: return                                        not active
+F = this[+0x38], A = this[+0xac]   each zeroed when past a limit (0xb94234, 0xb94238)
+this->vtable[0xe0](&this[+0x44]); this->vtable[0xe0](&((A + F) * step))    the forces in
+old = this[+0x2c]                                               the positional speed
+w = min(this[+0x68], 1)                                         the share under water
+damp = (1 - w) * g_globalPositionalDamping + w * g_globalPositionalDampingUnderWater
+this[+0x2c] = damp * this[+0x2c]
+position (vtable 0x90) += (old + this[+0x2c]) * 0.5 * step      set through vtable 0x98
+F, A, +0x44 = 0
+```
+
+There is no collision in it — the soldier's ground and wall passes run apart —
+and `setPositionalSpeed` (0x6ddd80) writes that same +0x2c, capped at `g_maxSpeed`
+(1500, 0x6dd7f9) with components under a small epsilon zeroed. The animation reads
+a different field, +0x84 (`getAbsolutePositionalSpeed`, 0x6dd440).
+
+Ours: `obf2::server::carryRemoteSoldier` puts the soldier where and moving as the
+prediction says, once per game tick, and runs the node step and the ground and wall
+passes our own soldier already takes (`moveSoldier` with `directVelocity`); the
+frame blends the last two ticks' results by how far into the tick it is. Measured
+over 2400 frames on the live server, frames with a soldier's feet more than 5 cm
+under the terrain: about 8500 as predicted, about 130 as drawn. Measured on one soldier
 standing on a roof, 800 frames: every frame extrapolated, the drawn height saws
 from 159.23 down to 159.13 at −0.48 m/s and snaps back on each update.
 

@@ -73,4 +73,19 @@ void moveSoldier(BodyState& body, SwimState& swim, const Vec3f& wish, float maxS
   }
 }
 
+void carryRemoteSoldier(BodyState& body, SwimState& swim, const Vec3f& feet,
+                        const Vec3f& velocity, const PhysicsConstants& physics,
+                        const level::Level* terrain, const CollisionWorld* collision,
+                        float step) {
+  // `setPrevTransformation` and `setPositionalSpeed`: where and how fast the
+  // network says (0x5dc314, 0x6f2310, 0x6ddd80).
+  body.position = feet;
+  body.velocity = velocity;
+  // The node takes the velocity it holds on this tick; on the ground that is the
+  // role our own soldier's `request` plays, so it is the network's velocity here.
+  body.request = Vec3f{velocity.x, 0.0f, velocity.z};
+  // No input: nothing is asked for, nothing jumps (0x6f1de0 runs without it).
+  moveSoldier(body, swim, Vec3f{}, 0.0f, false, physics, terrain, collision, step, true);
+}
+
 }  // namespace obf2::server

@@ -149,7 +149,40 @@ void testTickTakesThePreviousRequest() {
   CHECK(std::abs(body.position.z - 0.0126f) < 1e-4f);
 }
 
+// Another player's soldier, carried by the physics the way `predict` seeds it
+// (Linux 0x5dc314) and the node steps it (0x6f1de0).
+static void testRemoteSoldierStopsOnTheFloor() {
+  PhysicsConstants physics;
+  BodyState body;
+  SwimState swim;
+  body.onGround = true;
+  // The prediction has run him along a downward velocity to a tenth of a metre
+  // under the floor — exactly what the drawn line did between two updates.
+  carryRemoteSoldier(body, swim, Vec3f{0.0f, -0.1f, 0.0f}, Vec3f{0.0f, -0.48f, 0.0f}, physics,
+                     nullptr, nullptr, kTickTime);
+  CHECK(body.position.y >= 0.0f);
+  CHECK(body.velocity.y >= 0.0f);
+  CHECK(body.onGround);
+}
+
+// On the ground the node takes the velocity it was handed, damped by
+// `p-pos-damp`, and moves by the average of the two.
+static void testRemoteSoldierRunsWithTheNodeStep() {
+  PhysicsConstants physics;
+  BodyState body;
+  SwimState swim;
+  body.onGround = true;
+  const float speed = 6.92f;
+  carryRemoteSoldier(body, swim, Vec3f{0.0f, 0.0f, 0.0f}, Vec3f{speed, 0.0f, 0.0f}, physics,
+                     nullptr, nullptr, kTickTime);
+  const float damped = speed * physics.positionalDamping;
+  CHECK(std::abs(body.velocity.x - damped) < 0.001f);
+  CHECK(std::abs(body.position.x - (speed + damped) * 0.5f * kTickTime) < 0.001f);
+}
+
 TEST_MAIN({
+  testRemoteSoldierStopsOnTheFloor();
+  testRemoteSoldierRunsWithTheNodeStep();
   testAxesRampLikeTheServer();
   testTickTakesThePreviousRequest();
   testMovementDoesNotDependOnFrameRate();

@@ -59,4 +59,30 @@ void moveSoldier(BodyState& body, SwimState& swim, const Vec3f& wish, float maxS
                  const PhysicsConstants& physics, const level::Level* terrain,
                  const CollisionWorld* collision, float step, bool directVelocity = false);
 
+// One tick of a soldier whose motion comes from the network rather than from
+// input — another player seen from this client.
+//
+// The original does not draw the predicted point. `SoldierNetworkable::predict`
+// (Linux server 0x5dc070) asks the soldier's physics node `getIsMobile()`
+// (0x5dc15c) and seeds a mobile one with the newest update: its velocity through
+// `setPositionalSpeed` (vtable 0xd0, which stores it at +0x2c capped at
+// `g_maxSpeed` 1500, 0x6ddd80) and the predicted matrix through
+// `setPrevTransformation` (vtable 0xa8, 0x6f2310). The node's own tick,
+// `SoldierPhysicsNode::updatePositionalPhysics` (0x6f1de0), then damps that
+// velocity by `p-pos-damp` and moves by the average of the old and the new one,
+// and the soldier's ground and wall passes run after it — so a soldier whose
+// update points down stops on the floor instead of running into it.
+//
+// That node step is the same one our own soldier takes (`stepSoldier` with
+// `directVelocity`), with the network's velocity standing where the input's
+// request stands: on the ground the node takes the velocity it was given, damped,
+// either way. `feet` is the predicted position less `coll-soldier-pivot-height`.
+//
+// Not read: the forces the physics manager accumulates into the node (+0x38,
+// +0xac); gravity in the air is the one `stepSoldier` already applies.
+void carryRemoteSoldier(BodyState& body, SwimState& swim, const Vec3f& feet,
+                        const Vec3f& velocity, const PhysicsConstants& physics,
+                        const level::Level* terrain, const CollisionWorld* collision,
+                        float step);
+
 }  // namespace obf2::server

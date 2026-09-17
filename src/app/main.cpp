@@ -3083,8 +3083,23 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     obf2::Vec3f last;
     bool seen = false;
     float largestStep = 0.0f;
+    // A soldier's feet under the terrain by more than 5 cm: as predicted, and as
+    // drawn. The measure for "drops through the floor and pops back".
+    int predictedUnder = 0;
+    int drawnUnder = 0;
   };
   std::map<std::uint16_t, DrawStat> drawStats;
+  // Other players' soldiers as their physics carries them
+  // (`obf2::server::carryRemoteSoldier`): the body, the game tick it was last
+  // carried to, and where it stood before that tick, which the frame blends from.
+  struct CarriedSoldier {
+    obf2::server::BodyState body;
+    obf2::server::SwimState swim;
+    std::uint32_t tick = 0;
+    obf2::Vec3f from;
+    bool ready = false;
+  };
+  std::unordered_map<std::uint16_t, CarriedSoldier> carriedSoldiers;
   std::set<std::uint16_t> boxReported;
 
   // Other players' soldiers, drawn as the game assembles them
@@ -3785,7 +3800,50 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           // update left it.
           const auto pose =
               remote->world.poseOf(id, remote->tick.pending / obf2::server::kTickTime);
-          const obf2::Vec3f drawAt = pose ? pose->position : object.position;
+          obf2::Vec3f drawAt = pose ? pose->position : object.position;
+          // A soldier is not drawn from the predicted point but carried by his
+          // physics from it, once per game tick: `predict` seeds the node with the
+          // position and the velocity (Linux 0x5dc314) and the node's tick and the
+          // ground pass move him (0x6f1de0). Between ticks the frame blends the
+          // last two results by how far into the tick it is — the engine's own
+          // frame interpolator (`FUN_0045c190`, docs/functions/soldier-physics.md).
+          if (soldier && pose) {
+            CarriedSoldier& carried = carriedSoldiers[id];
+            const std::uint32_t nowTick = remote->world.gameTick();
+            const float pivot = remote->physics.pivotHeight;
+            const obf2::Vec3f feet{pose->position.x, pose->position.y - pivot, pose->position.z};
+            const auto* newestUpdate = object.track.newest();
+            const obf2::Vec3f velocity = newestUpdate && newestUpdate->velocity
+                                             ? *newestUpdate->velocity
+                                             : obf2::Vec3f{};
+            if (!carried.ready || nowTick < carried.tick || nowTick - carried.tick > 8) {
+              // First sight, or a gap too long to replay: stand him where the
+              // network says.
+              carried.body = obf2::server::BodyState{};
+              carried.body.position = feet;
+              carried.body.onGround = true;
+              carried.from = feet;
+              carried.tick = nowTick;
+              carried.ready = true;
+            }
+            while (carried.tick < nowTick) {
+              carried.from = carried.body.position;
+              obf2::server::carryRemoteSoldier(carried.body, carried.swim, feet, velocity,
+                                               remote->physics, remote->terrain,
+                                               remote->collision, obf2::server::kTickTime);
+              ++carried.tick;
+            }
+            const float fraction =
+                std::clamp(remote->tick.pending / obf2::server::kTickTime, 0.0f, 1.0f);
+            const obf2::Vec3f blended =
+                carried.from + (carried.body.position - carried.from) * fraction;
+            drawAt = obf2::Vec3f{blended.x, blended.y + pivot, blended.z};
+            if (remote->terrain != nullptr) {
+              auto& stat = drawStats[id];
+              if (feet.y < remote->terrain->groundHeightAt(feet) - 0.05f) ++stat.predictedUnder;
+              if (blended.y < remote->terrain->groundHeightAt(blended) - 0.05f) ++stat.drawnUnder;
+            }
+          }
           // The measure of smoothness: how the pose was made, and the largest
           // step between two frames for an object that is moving.
           if (pose && object.track.count() >= 2) {
@@ -3874,10 +3932,9 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           if (soldier && pose && id == watchedSoldier && remote->terrain != nullptr &&
               frame >= args.traceFrom && frame < args.traceFrom + args.traceFrames) {
             const auto* newestUpdate = object.track.newest();
-            std::printf("    drawn %u: frame %d, mode %d, y %.2f, above the ground %.2f, "
+            std::printf("    drawn %u: frame %d, mode %d, predicted y %.2f, drawn y %.2f, "
                         "velocity y %.2f, newest y %.2f\n",
-                        id, frame, static_cast<int>(pose->mode), pose->position.y,
-                        pose->position.y - remote->terrain->groundHeightAt(pose->position),
+                        id, frame, static_cast<int>(pose->mode), pose->position.y, drawAt.y,
                         newestUpdate && newestUpdate->velocity ? newestUpdate->velocity->y : 0.0f,
                         newestUpdate ? newestUpdate->position.y : 0.0f);
           }
@@ -4649,8 +4706,9 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   for (const auto& [id, stat] : drawStats) {
     if (stat.largestStep < 0.01f) continue;  // standing still: nothing to measure
     std::printf("  drawn object %u: interpolated %d, extrapolated %d, newest %d frames, "
-                "largest step between frames %.2f m\n",
-                id, stat.frames[2], stat.frames[1], stat.frames[0], stat.largestStep);
+                "largest step between frames %.2f m, under the terrain: predicted %d, drawn %d\n",
+                id, stat.frames[2], stat.frames[1], stat.frames[0], stat.largestStep,
+                stat.predictedUnder, stat.drawnUnder);
   }
   if (nextLevel != nullptr) *nextLevel = requestedLevel;
   return 0;
