@@ -24,6 +24,7 @@
 #include "obf2/core/math.h"
 #include "obf2/core/platform.h"
 #include "obf2/engine/engine.h"
+#include "obf2/game/object_mesh.h"
 #include "obf2/game/object_template.h"
 #include "obf2/game/template_numbers.h"
 #include "obf2/level/level.h"
@@ -66,15 +67,11 @@ struct KnownObject {
   obf2::Vec3f position;
 };
 
-enum class DrawStage {
-  Drawn,            // it arrived: the geometry is assembled
-  NoTemplate,       // the template is not in the registry
-  NoTree,           // the child tree did not assemble
-  NoGeometryName,   // neither the root nor the children have geometry
-  GeometryInChild,  // there is geometry, but in a child — we take only the root's
-  NoGeometryFile,   // there is a name but the file was not found
-  NoMesh,           // there is a file but the mesh did not parse
-};
+// Why an object is or is not drawn. It belongs to the geometry rather than to
+// the network, so it lives with the mesh assembly (`obf2/game/object_mesh.h`);
+// the session only reports what it is told.
+using game::DrawStage;
+using game::drawStageName;
 
 struct ContentHashes {
   std::array<std::byte, 16> misc{};
@@ -83,7 +80,6 @@ struct ContentHashes {
 };
 std::vector<KnownObject> buildKnownObjects(FileSystem& files, const std::string& levelName,
                                           std::string* error);
-std::string_view drawStageName(DrawStage stage);
 // The named object standing at a point, if one does within `tolerance` metres.
 const KnownObject* nearestKnown(const std::vector<KnownObject>& known, const Vec3f& at,
                                 float tolerance = 2.0f);

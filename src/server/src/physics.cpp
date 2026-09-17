@@ -3,7 +3,18 @@
 #include <algorithm>
 #include <cmath>
 
+#include "obf2/con/interpreter.h"
+
 namespace obf2::server {
+
+PhysicsConstants loadPhysicsConstants(FileSystem& files) {
+  PhysicsConstants constants;
+  engine::Console console;
+  constants.bind(console);
+  con::Interpreter interpreter(files, [&](const con::Command& c) { console.execute(c); });
+  interpreter.runFile("objects/soldiers/common/common.con");
+  return constants;
+}
 
 void PhysicsConstants::bind(engine::Console& console) {
   // `Vars.Set <name> <value>` — the first argument is the variable's name.

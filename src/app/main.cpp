@@ -24,7 +24,9 @@
 #include "obf2/core/path.h"
 #include "obf2/core/platform.h"
 #include "obf2/engine/engine.h"
+#include "obf2/font/font_file.h"
 #include "obf2/font/text.h"
+#include "obf2/game/object_mesh.h"
 #include "obf2/hud/bottom_left.h"
 #include "obf2/hud/ingame.h"
 #include "obf2/hud/combat_area.h"
@@ -386,237 +388,31 @@ double secondsSince(std::chrono::steady_clock::time_point start) {
   return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 }
 
-// A vehicle's .bundledmesh holds several geoms: the cockpit view, the outside
-// view and the wreckage. There is no explicit marker in the file, but there is a
-// reliable sign: **the cockpit view has exactly one lod** — the player is always
-// close, so it needs no detail chain, while the outside view has 3-4 levels.
-std::size_t pickGeometry(const obf2::mesh::Mesh& mesh, std::size_t lodIndex) {
-  std::size_t best = 0;
-  std::size_t bestLods = 0;
-  std::size_t bestTriangles = 0;
+// The pieces that used to live here and now have modules of their own. Only the
+// names are kept, so that the command line's two overrides are applied in one
+// place rather than at every call.
+using obf2::font::LoadedFont;
+using obf2::font::loadFont;
+using obf2::game::resolveGeometryPath;
+using obf2::mesh::buildScreenQuad;
 
-  for (std::size_t g = 0; g < mesh.geometries.size(); ++g) {
-    const auto& lods = mesh.geometries[g].lods;
-    if (lodIndex >= lods.size()) continue;
-
-    std::size_t triangles = 0;
-    for (const auto& material : lods[lodIndex].materials) triangles += material.indexCount / 3;
-
-    if (lods.size() > bestLods || (lods.size() == bestLods && triangles > bestTriangles)) {
-      bestLods = lods.size();
-      bestTriangles = triangles;
-      best = g;
-    }
-  }
-  return best;
+obf2::game::DrawStage checkDrawable(obf2::FileSystem& files, const obf2::game::Registry& registry,
+                                    const std::string& templateName, const Args& args) {
+  return obf2::game::checkDrawable(files, registry, templateName, args.geometryIndex,
+                                   args.lodIndex);
 }
 
 std::optional<obf2::mesh::RenderMesh> loadMesh(obf2::FileSystem& files, const std::string& path,
                                                int geometryOverride, int lodIndex, bool verbose) {
-  const std::string normalized = obf2::normalizeAssetPath(path);
-  const auto kind = obf2::mesh::kindFromExtension(obf2::assetExtension(normalized));
-  if (!kind) return std::nullopt;
-
-  const auto bytes = files.read(normalized);
-  if (!bytes) {
-    if (verbose) std::fprintf(stderr, "mesh not found in the VFS: %s\n", normalized.c_str());
-    return std::nullopt;
-  }
-
-  std::string error;
-  const auto parsed = obf2::mesh::load(*bytes, *kind, &error);
-  if (!parsed) {
-    if (verbose) std::fprintf(stderr, "could not parse %s: %s\n", normalized.c_str(), error.c_str());
-    return std::nullopt;
-  }
-
-  const std::size_t lod = static_cast<std::size_t>(std::max(0, lodIndex));
-  const std::size_t geometry = geometryOverride >= 0 ? static_cast<std::size_t>(geometryOverride)
-                                                     : pickGeometry(*parsed, lod);
-
-  auto render = obf2::mesh::extract(*parsed, geometry, lod, &error);
-  if (!render) {
-    if (verbose) std::fprintf(stderr, "could not unpack %s: %s\n", normalized.c_str(), error.c_str());
-    return std::nullopt;
-  }
-
-  // Whether this mesh is vegetation is decided by its path, and by nothing
-  // else — that is the engine's own test (`obf2::mesh::isVegetationPath`).
-  obf2::mesh::markVegetationLeaves(*render, normalized);
-
-  if (verbose) {
-    std::printf("mesh: %s\n  version %u, geom %zu/%zu, lod %zu, vertices %zu, triangles %zu, "
-                "materials %zu\n",
-                normalized.c_str(), parsed->header.version, geometry, parsed->geometries.size(),
-                lod, render->vertices.size(), render->indices.size() / 3, render->ranges.size());
-  }
-  return render;
+  return obf2::game::loadMesh(files, path, geometryOverride, lodIndex, verbose);
 }
 
-// A geometry name from an ObjectTemplate is not a path. The file lies next to the
-// .con, in a meshes subdirectory: objects/vehicles/land/apc_btr90/meshes/apc_btr90.bundledmesh.
-std::string resolveGeometryPath(obf2::FileSystem& files, const std::string& templateFile,
-                                const std::string& geometryName) {
-  if (geometryName.empty()) return {};
-  const std::string_view dir = obf2::assetParentDir(templateFile);
-  for (const char* extension : {".staticmesh", ".bundledmesh", ".skinnedmesh"}) {
-    for (const char* subdirectory : {"meshes/", ""}) {
-      const std::string candidate =
-          obf2::joinAssetPath(dir, std::string(subdirectory) + geometryName + extension);
-      if (files.exists(candidate)) return candidate;
-    }
-  }
-  return {};
-}
-
-// Runs every .con/.tweak of the game through the interpreter and collects the template registry.
-
-// Template -> assembled geometry: the child tree plus the placement of the
-// BundledMesh's parts by geometryPart.
-// Adds a mesh transformed by a matrix to the target. The indices are shifted by
-// the vertices already present, the materials' ranges by the indices already present.
-void appendMesh(obf2::mesh::RenderMesh& target, const obf2::mesh::RenderMesh& source,
-                const obf2::Mat4& transform) {
-  const auto vertexBase = static_cast<std::uint32_t>(target.vertices.size());
-  const auto indexBase = static_cast<std::uint32_t>(target.indices.size());
-
-  for (const auto& vertex : source.vertices) {
-    obf2::mesh::Vertex moved = vertex;
-    const obf2::Vec3f at = transformPoint(
-        transform, obf2::Vec3f{vertex.position.x, vertex.position.y, vertex.position.z});
-    moved.position = {at.x, at.y, at.z};
-    // The normals are rotated without translation: these transforms have no
-    // scale, so an ordinary multiplication by the upper 3x3 block is enough.
-    const obf2::Vec3f n = transformDirection(
-        transform, obf2::Vec3f{vertex.normal.x, vertex.normal.y, vertex.normal.z});
-    moved.normal = {n.x, n.y, n.z};
-    target.vertices.push_back(moved);
-  }
-  for (const auto index : source.indices) target.indices.push_back(index + vertexBase);
-  for (auto range : source.ranges) {
-    range.indexStart += indexBase;
-    target.ranges.push_back(std::move(range));
-  }
-}
-
-// Template -> assembled geometry: the child tree plus the placement of the
-// BundledMesh's parts by geometryPart.
-//
-// When the root has no mesh of its own, the object is assembled from the
-// children's meshes. Control points are built that way: the template itself has
-// no geometry, and the flag arrives through `ObjectTemplate.addTemplate flagpole`.
 std::optional<obf2::mesh::RenderMesh> buildObjectMesh(obf2::FileSystem& files,
                                                       const obf2::game::Registry& registry,
                                                       const std::string& templateName,
                                                       const Args& args, bool verbose) {
-  const auto* root = registry.find(templateName);
-  if (root == nullptr) return std::nullopt;
-
-  const auto instance = obf2::game::flattenObject(registry, templateName);
-  if (!instance) return std::nullopt;
-
-  if (instance->geometryName.empty()) {
-    obf2::mesh::RenderMesh merged;
-    int added = 0;
-    for (const auto& part : instance->parts) {
-      if (part.geometryName.empty()) continue;
-      const std::string path = resolveGeometryPath(files, part.file, part.geometryName);
-      if (path.empty()) continue;
-      const auto piece = loadMesh(files, path, args.geometryIndex, args.lodIndex, false);
-      if (!piece) continue;
-      appendMesh(merged, *piece, part.transform);
-      ++added;
-    }
-    if (added == 0) return std::nullopt;
-    // The bounds are computed by us: the meshes came from different files, and
-    // each brought its own, in its own coordinates.
-    if (!merged.vertices.empty()) {
-      merged.bounds.min = merged.bounds.max = merged.vertices.front().position;
-      for (const auto& vertex : merged.vertices) {
-        merged.bounds.min.x = std::min(merged.bounds.min.x, vertex.position.x);
-        merged.bounds.min.y = std::min(merged.bounds.min.y, vertex.position.y);
-        merged.bounds.min.z = std::min(merged.bounds.min.z, vertex.position.z);
-        merged.bounds.max.x = std::max(merged.bounds.max.x, vertex.position.x);
-        merged.bounds.max.y = std::max(merged.bounds.max.y, vertex.position.y);
-        merged.bounds.max.z = std::max(merged.bounds.max.z, vertex.position.z);
-      }
-    }
-    if (verbose) {
-      std::printf("  root without geometry: assembled from %d child meshes, vertices %zu\n", added,
-                  merged.vertices.size());
-    }
-    return merged;
-  }
-
-  const std::string path = resolveGeometryPath(files, root->file, instance->geometryName);
-  if (path.empty()) return std::nullopt;
-
-  auto render = loadMesh(files, path, args.geometryIndex, args.lodIndex, verbose);
-  if (!render) return std::nullopt;
-
-  const auto transforms = obf2::game::partTransformMap(*instance);
-  const std::size_t moved = obf2::game::applyPartTransforms(*render, transforms);
-  if (verbose) {
-    std::printf("  nodes in the tree: %zu, depth: %d, cycles: %d\n"
-                "  parts with a transform: %zu, vertices moved: %zu of %zu\n",
-                instance->parts.size(), instance->maxDepth, instance->cycles, transforms.size(),
-                moved, render->vertices.size());
-  }
-  return render;
-}
-
-// A full-screen rectangle in NDC coordinates: with an identity matrix the vertex
-// shader leaves them as they are.
-//
-// The normal is set exactly along the light source from the fragment shader —
-// then the half-Lambert factor equals one and the picture comes out without
-// darkening. A temporary trick: as soon as there is a separate pipeline for the
-// interface it will become unnecessary.
-obf2::mesh::RenderMesh buildScreenQuad(const std::string& imagePath) {
-  const obf2::Vec3f light = obf2::normalize(obf2::Vec3f{0.4f, 0.9f, 0.35f});
-  const obf2::mesh::Vec3 normal{light.x, light.y, light.z};
-
-  obf2::mesh::RenderMesh quad;
-  quad.vertices = {
-      obf2::mesh::Vertex{{-1.0f, -1.0f, 0.0f}, normal, {0.0f, 1.0f}},
-      obf2::mesh::Vertex{{1.0f, -1.0f, 0.0f}, normal, {1.0f, 1.0f}},
-      obf2::mesh::Vertex{{-1.0f, 1.0f, 0.0f}, normal, {0.0f, 0.0f}},
-      obf2::mesh::Vertex{{1.0f, 1.0f, 0.0f}, normal, {1.0f, 0.0f}},
-  };
-  quad.indices = {0, 1, 2, 2, 1, 3};
-
-  obf2::mesh::DrawRange range;
-  range.indexCount = static_cast<std::uint32_t>(quad.indices.size());
-  if (!imagePath.empty()) range.maps.push_back(imagePath);
-  quad.ranges.push_back(std::move(range));
-  return quad;
-}
-
-// The font: a pair of .dif (metrics) + .dds (atlas) from Fonts_client.zip.
-struct LoadedFont {
-  obf2::font::Font font;
-  std::string atlasPath;
-  bool valid = false;
-};
-
-LoadedFont loadFont(obf2::FileSystem& files, const std::string& base) {
-  LoadedFont out;
-  const auto metrics = files.read(base + ".dif");
-  if (!metrics) return out;
-
-  const std::string text(reinterpret_cast<const char*>(metrics->data()), metrics->size());
-  std::string error;
-  auto parsed = obf2::font::parseDif(text, &error);
-  if (!parsed) {
-    std::fprintf(stderr, "font %s: %s\n", base.c_str(), error.c_str());
-    return out;
-  }
-
-  out.font = std::move(*parsed);
-  out.atlasPath = base + ".dds";
-  out.valid = files.exists(out.atlasPath);
-  if (!out.valid) std::fprintf(stderr, "no font atlas: %s\n", out.atlasPath.c_str());
-  return out;
+  return obf2::game::buildObjectMesh(files, registry, templateName, args.geometryIndex,
+                                     args.lodIndex, verbose);
 }
 
 // The main menu's background. In the game the menu is Flash, which the engine
@@ -633,54 +429,6 @@ std::string findMenuBackground(obf2::FileSystem& files) {
 }
 
 }  // namespace
-
-// One session: the menu or the game. Returns the exit code; if a level was chosen
-// in the menu, its name lands in nextLevel and the main loop starts a session
-// again — this time in the game.
-// Everything we know about a level: a template's name and where it stands.
-// The server sends objects without names, only numbers, so we recognise them by position.
-// The soldier's movement constants from the game's data. Both paths need them:
-// our own server and the movement prediction on a real one — otherwise our
-// prediction would diverge from what the server computes.
-obf2::server::PhysicsConstants loadPhysics(obf2::FileSystem& files) {
-  obf2::server::PhysicsConstants constants;
-  obf2::engine::Console console;
-  constants.bind(console);
-  obf2::con::Interpreter interpreter(files,
-                                     [&](const obf2::con::Command& c) { console.execute(c); });
-  interpreter.runFile("objects/soldiers/common/common.con");
-  return constants;
-}
-
-
-// At which step an object is lost on its way to the screen.
-
-// Walks the same path as `buildObjectMesh` but says where exactly it stopped.
-// Without that, "the object is not visible" explains nothing.
-DrawStage checkDrawable(obf2::FileSystem& files, const obf2::game::Registry& registry,
-                        const std::string& templateName, const Args& args) {
-  const auto* root = registry.find(templateName);
-  if (root == nullptr) return DrawStage::NoTemplate;
-
-  const auto instance = obf2::game::flattenObject(registry, templateName);
-  if (!instance) return DrawStage::NoTree;
-  if (instance->geometryName.empty()) {
-    // A tree may carry its geometry somewhere other than the root: a control point
-    // has no mesh of its own, and the flag arrives from `addTemplate flagpole`.
-    // Such objects are assembled from the children's meshes.
-    // We do not merely look for the file but really assemble the mesh: otherwise
-    // "assembled" would only mean "it looks as though it should assemble".
-    const auto merged = buildObjectMesh(files, registry, templateName, args, false);
-    if (merged && !merged->vertices.empty()) return DrawStage::GeometryInChild;
-    return DrawStage::NoGeometryName;
-  }
-
-  const std::string path = resolveGeometryPath(files, root->file, instance->geometryName);
-  if (path.empty()) return DrawStage::NoGeometryFile;
-
-  if (!loadMesh(files, path, args.geometryIndex, args.lodIndex, false)) return DrawStage::NoMesh;
-  return DrawStage::Drawn;
-}
 
 // Matches template numbers to names.
 //
@@ -977,11 +725,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
 
       // The movement constants come from the game's data rather than from our heads:
       // the same file the original reads.
-      obf2::engine::Console physicsConsole;
-      serverSettings.physics.bind(physicsConsole);
-      obf2::con::Interpreter physicsInterpreter(
-          files, [&](const obf2::con::Command& c) { physicsConsole.execute(c); });
-      physicsInterpreter.runFile("objects/soldiers/common/common.con");
+      serverSettings.physics = obf2::server::loadPhysicsConstants(files);
       std::printf("  physics: acceleration %.2f, deceleration %.2f, air control %.2f\n",
                   serverSettings.physics.acceleration, serverSettings.physics.deceleration,
                   serverSettings.physics.airMovementFactor);
@@ -3194,7 +2938,7 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       remote->world.setGroundProbe(
           [terrain](const obf2::Vec3f& at) { return terrain->groundHeightAt(at); });
     }
-    remote->physics = loadPhysics(files);
+    remote->physics = obf2::server::loadPhysicsConstants(files);
     remote->maxSpeed = remote->physics.runSpeed;
     if (level) {
       collisionLibrary = std::make_unique<obf2::server::CollisionLibrary>(files, registry);

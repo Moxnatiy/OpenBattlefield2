@@ -1,5 +1,7 @@
 #include "obf2/mesh/primitives.h"
 
+#include "obf2/core/math.h"
+
 namespace obf2::mesh {
 
 RenderMesh buildBox(const Vec3& size, const std::string& map) {
@@ -45,6 +47,26 @@ RenderMesh buildBox(const Vec3& size, const std::string& map) {
   range.maps.push_back(map);
   out.ranges.push_back(range);
   return out;
+}
+
+RenderMesh buildScreenQuad(const std::string& map) {
+  const Vec3f light = normalize(Vec3f{0.4f, 0.9f, 0.35f});
+  const Vec3 normal{light.x, light.y, light.z};
+
+  RenderMesh quad;
+  quad.vertices = {
+      Vertex{{-1.0f, -1.0f, 0.0f}, normal, {0.0f, 1.0f}},
+      Vertex{{1.0f, -1.0f, 0.0f}, normal, {1.0f, 1.0f}},
+      Vertex{{-1.0f, 1.0f, 0.0f}, normal, {0.0f, 0.0f}},
+      Vertex{{1.0f, 1.0f, 0.0f}, normal, {1.0f, 0.0f}},
+  };
+  quad.indices = {0, 1, 2, 2, 1, 3};
+
+  DrawRange range;
+  range.indexCount = static_cast<std::uint32_t>(quad.indices.size());
+  if (!map.empty()) range.maps.push_back(map);
+  quad.ranges.push_back(std::move(range));
+  return quad;
 }
 
 }  // namespace obf2::mesh

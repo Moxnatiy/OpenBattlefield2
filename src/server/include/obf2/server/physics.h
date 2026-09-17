@@ -22,6 +22,7 @@
 
 #include "obf2/core/math.h"
 #include "obf2/engine/console.h"
+#include "obf2/vfs/filesystem.h"
 
 namespace obf2::server {
 
@@ -175,6 +176,12 @@ struct PhysicsConstants {
   // Registers the Vars.Set handlers in the console: the values come from the game's .con.
   void bind(engine::Console& console);
 };
+
+// The constants as the game's own data gives them: the file the original reads,
+// `objects/soldiers/common/common.con`, run through the console the same way.
+// Both paths need it — our own server and the movement prediction on a real one,
+// which would otherwise diverge from what the server computes.
+PhysicsConstants loadPhysicsConstants(FileSystem& files);
 
 // The movement state of one body.
 struct BodyState {

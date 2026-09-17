@@ -15,4 +15,14 @@ namespace obf2::mesh {
 // `#RRGGBB` is drawn as a solid colour — the same as the water's colour.
 RenderMesh buildBox(const Vec3& size, const std::string& map);
 
+// A full-screen rectangle in NDC coordinates: with an identity matrix the vertex
+// shader leaves the vertices as they are. The intro fill, the loading screen and
+// the menu's Flash frame are all drawn with it.
+//
+// The normal is set exactly along the light source the fragment shader uses —
+// then the half-Lambert factor equals one and the picture comes out without
+// darkening. A temporary trick: as soon as there is a separate pipeline for the
+// interface it will become unnecessary.
+RenderMesh buildScreenQuad(const std::string& map);
+
 }  // namespace obf2::mesh

@@ -83,19 +83,6 @@ std::vector<KnownObject> buildKnownObjects(obf2::FileSystem& files, const std::s
   return known;
 }
 
-std::string_view drawStageName(DrawStage stage) {
-  switch (stage) {
-    case DrawStage::Drawn: return "drawn";
-    case DrawStage::NoTemplate: return "no template";
-    case DrawStage::NoTree: return "the tree did not assemble";
-    case DrawStage::NoGeometryName: return "no geometry anywhere";
-    case DrawStage::GeometryInChild: return "assembled from children";
-    case DrawStage::NoGeometryFile: return "file not found";
-    case DrawStage::NoMesh: return "the mesh did not parse";
-  }
-  return "?";
-}
-
 std::optional<ContentHashes> contentHashes(obf2::FileSystem& files, const std::string& levelName,
                                            int ordinal) {
   ContentHashes out;
