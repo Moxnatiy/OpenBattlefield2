@@ -23,6 +23,7 @@
 #include "obf2/app/hosted_game.h"
 #include "obf2/app/render_context.h"
 #include "obf2/app/scene_build.h"
+#include "obf2/app/world_view.h"
 #include "obf2/core/math.h"
 #include "obf2/core/parallel.h"
 #include "obf2/core/path.h"
@@ -924,192 +925,20 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   obf2::gfx::GpuMesh& skyMesh = uploaded.sky;
   const bool skyReady = uploaded.skyReady;
 
-  // The placeholder for other players' soldiers. The size is not by eye: it is the
-  // soldier's collision shape from the game's data (`coll-soldier-radius` 0.25 and
-  // `coll-soldier-stand-height` 1.7), that is 0.5 x 1.7 x 0.5.
-  // Three placeholders: another player's soldier, our own and everything else. The
-  // colours here are **ours**, not the game's: they are a marker for as long as we
-  // cannot take the real geometry. The size, though, is not ours — it is the
-  // (`coll-soldier-radius` 0.25, `coll-soldier-stand-height` 1.7).
-  obf2::gfx::GpuMesh boxes[3];
-  bool boxesReady = false;
-
-  // What the server's created objects are, by where they stand
-  // (obf2/level/placement_index.h). A spawner's object is drawn as the vehicle it
-  // issues; a static placement is skipped, because the level draws it already —
-  // until now every barrel and fence the server created got a grey box on top of
-  // itself, and every jeep, tank and machine gun got nothing but a grey box.
-  //
-  // The meshes are built the first time a vehicle type is seen and kept in a
-  // deque, whose elements stay put: the frame's draw list holds pointers to them
-  // while new ones are still being added in the same loop.
-  std::optional<obf2::level::PlacementIndex> remotePlacement;
-  std::deque<obf2::gfx::GpuMesh> remoteMeshes;
-  std::unordered_map<std::string, obf2::gfx::GpuMesh*> remoteMeshByName;
-  struct RemoteResolved {
-    obf2::Vec3f at;
-    obf2::level::PlacedAt placed;
-  };
-  std::unordered_map<std::uint16_t, RemoteResolved> remoteResolved;
-  struct DrawStat {
-    int frames[3] = {0, 0, 0};  // GhostPrediction: newest, extrapolated, interpolated
-    obf2::Vec3f last;
-    bool seen = false;
-    float largestStep = 0.0f;
-    // A soldier's feet under the terrain by more than 5 cm: as predicted, and as
-    // drawn. The measure for "drops through the floor and pops back".
-    int predictedUnder = 0;
-    int drawnUnder = 0;
-  };
-  std::map<std::uint16_t, DrawStat> drawStats;
-  // Other players' soldiers as their physics carries them
-  // (`obf2::server::carryRemoteSoldier`): the body, the game tick it was last
-  // carried to, and where it stood before that tick, which the frame blends from.
-  struct CarriedSoldier {
-    obf2::server::BodyState body;
-    obf2::server::SwimState swim;
-    std::uint32_t tick = 0;
-    obf2::Vec3f from;
-    bool ready = false;
-  };
-  std::unordered_map<std::uint16_t, CarriedSoldier> carriedSoldiers;
-  std::set<std::uint16_t> boxReported;
-
-  // Other players' soldiers, drawn as the game assembles them
-  // (obf2/game/soldier_model.h): the body's third-person geometry and the kit's
-  // piece of the kits' mesh, skinned on the soldier's skeleton. One mesh per
-  // soldier template and kit, kept in a deque so the draw list's pointers stay put.
-  //
-  // The pose comes from the animation systems the templates name: the legs from
-  // the soldier's `AnimationSystem3p.inc` and the upper body from the weapon's,
-  // walked by the state's speed and direction (`obf2::anim`). What the tick does
-  // with the bundles it picked — the times and the four-clip blend — is
-  // `obf2::anim::Player` (docs/functions/animation-system.md).
-  //
-  // One "look" per soldier template and kit holds the bind-pose mesh, the skeleton
-  // and the two systems; every soldier on screen then has his own posed copy,
-  // because his legs are at his own point in the run.
-  struct SoldierLook {
-    obf2::mesh::RenderMesh bind;
-    // The bind pose on the GPU, uploaded once. It is never written again: the
-    // pose reaches the vertex shader as the range's bone matrices, which is
-    // where the original deforms a soldier too
-    // (`Shaders_client.zip:SkinnedMesh.fx:46`).
-    obf2::gfx::GpuMesh gpu;
-    obf2::mesh::Skeleton skeleton;
-    std::optional<obf2::anim::System> legs;
-    obf2::anim::System weapon;
-    bool hasWeapon = false;
-    bool ready = false;
-  };
-  std::unordered_map<std::string, SoldierLook> soldierLooks;
-  // The clips, by the path the data names them with. A clip that could not be read
-  // is remembered as empty so it is not looked for every frame.
-  std::unordered_map<std::string, std::optional<obf2::mesh::BoneAnimation>> soldierClips;
-  const auto clipAt = [&](const std::string& path) -> const obf2::mesh::BoneAnimation* {
-    const std::string key = obf2::normalizeAssetPath(path);
-    auto found = soldierClips.find(key);
-    if (found == soldierClips.end()) {
-      std::optional<obf2::mesh::BoneAnimation> clip;
-      if (const auto bytes = files.read(key)) clip = obf2::mesh::loadBoneAnimation(*bytes);
-      found = soldierClips.emplace(key, std::move(clip)).first;
-    }
-    return found->second ? &*found->second : nullptr;
-  };
-
-  const auto soldierLookFor = [&](const std::string& soldierName,
-                                  const std::string& kitName) -> SoldierLook* {
-    const std::string key = soldierName + "|" + kitName;
-    if (const auto found = soldierLooks.find(key); found != soldierLooks.end()) {
-      return found->second.ready ? &found->second : nullptr;
-    }
-    SoldierLook look;
-    const auto model = obf2::game::soldierModel(registry, soldierName, kitName);
-    const auto loadPart = [&](const obf2::game::SoldierPart& part) {
-      const std::string path = resolveGeometryPath(files, part.templateFile, part.geometryName);
-      return path.empty() ? std::nullopt : loadMesh(files, path, part.geometry, 0, false);
-    };
-    std::optional<obf2::mesh::RenderMesh> bind = model ? loadPart(model->body) : std::nullopt;
-    if (bind && model->kit) {
-      if (const auto kit = loadPart(*model->kit)) obf2::mesh::appendSkinned(*bind, *kit);
-    }
-    // The weapon in his hands. It is a BundledMesh, not a skinned one: its parts
-    // are carried by the skeleton's bones 64 and up, one each, and the weapon's
-    // own third-person clips move exactly those
-    // (`obf2::mesh::bindPartsToBones`). Bound that way it is the same mesh and the
-    // same shader as the body.
-    if (bind && model->weapon) {
-      if (auto weapon = loadPart(*model->weapon)) {
-        obf2::mesh::bindPartsToBones(*weapon);
-        obf2::mesh::appendSkinned(*bind, *weapon);
-      }
-    }
-    std::optional<obf2::mesh::Skeleton> skeleton;
-    if (bind && !model->skeleton3p.empty()) {
-      if (const auto bytes = files.read(obf2::normalizeAssetPath(model->skeleton3p))) {
-        skeleton = obf2::mesh::loadSkeleton(*bytes);
-      }
-    }
-    if (bind && skeleton) {
-      look.bind = std::move(*bind);
-      look.skeleton = std::move(*skeleton);
-      look.legs = obf2::anim::System::load(files, obf2::normalizeAssetPath(model->animationSystem3p));
-      if (!model->weaponAnimationSystem3p.empty()) {
-        if (auto weapon = obf2::anim::System::load(
-                files, obf2::normalizeAssetPath(model->weaponAnimationSystem3p))) {
-          look.weapon = std::move(*weapon);
-          look.hasWeapon = true;
-        }
-      }
-      if (const auto uploaded = renderer->upload(look.bind, resolveTexture)) look.gpu = *uploaded;
-      look.ready = look.gpu.vertices != nullptr;
-      std::printf("  soldier look %s: %zu vertices, kit %s, legs %s, weapon %s, on the gpu %s\n",
-                  key.c_str(), look.bind.vertices.size(), model->kit ? "yes" : "no",
-                  look.legs ? "yes" : "no", look.hasWeapon ? "yes" : "no",
-                  look.gpu.skin != nullptr ? "skinned" : "unskinned");
-    } else {
-      std::printf("  soldier look %s: not assembled (model %d, mesh %d, skeleton %d)\n",
-                  key.c_str(), model ? 1 : 0, bind ? 1 : 0, skeleton ? 1 : 0);
-    }
-    auto& stored = soldierLooks.emplace(key, std::move(look)).first->second;
-    return stored.ready ? &stored : nullptr;
-  };
-
-  // One soldier on screen: his own posed copy of the look's mesh and his own place
-  // in the clips.
-  struct DrawnSoldier {
-    SoldierLook* look = nullptr;
-    // His own pose: one world matrix per bone of the skeleton. The geometry is
-    // the look's and is shared with everyone wearing the same body and kit.
-    std::vector<obf2::mesh::Mat4> pose;
-    obf2::anim::Player legs;
-    obf2::anim::Player weapon;
-    std::string key;
-  };
-  std::map<std::uint16_t, DrawnSoldier> drawnSoldiers;
-  // Who `--watch-soldier` is holding on to.
-  std::uint16_t watchedSoldier = 0;
+  // Other players and the server's own objects on screen (`obf2/app/world_view.h`).
+  obf2::app::WorldView worldView;
   // Whether `--group` has already been asked for — it is a one-shot.
   bool askedForGroup = false;
-  if (remote != nullptr && level) {
-    const std::string mode = remote->serverGameMode.empty() ? "gpm_cq" : remote->serverGameMode;
-    const int size = remote->serverSize > 0 ? remote->serverSize : 16;
-    if (const auto gameplay = obf2::level::loadGameplayObjects(files, level->name, mode, size)) {
-      remotePlacement.emplace(*gameplay, *level);
-      std::printf("  server objects are matched against %s/%d: %zu spawners\n", mode.c_str(), size,
-                  gameplay->spawners.size());
-    }
-  }
   if (remote != nullptr) {
-    const obf2::server::PhysicsConstants& shape = remote->physics;
-    const obf2::mesh::Vec3 size{shape.radius * 2.0f, shape.standHeight, shape.radius * 2.0f};
-    const char* colors[3] = {"#909090", "#3060c0", "#c03030"};  // nobody, ours, theirs
-    boxesReady = true;
-    for (int i = 0; i < 3; ++i) {
-      auto uploaded = renderer->upload(obf2::mesh::buildBox(size, colors[i]), resolveTexture);
-      if (!uploaded) { boxesReady = false; break; }
-      boxes[i] = *uploaded;
-    }
+    obf2::app::WorldView::Options viewOptions;
+    viewOptions.drawPredicted = args.drawPredicted;
+    viewOptions.showOwnBox = args.showOwnBox;
+    viewOptions.geometryIndex = args.geometryIndex;
+    viewOptions.lodIndex = args.lodIndex;
+    viewOptions.traceFrom = args.traceFrom;
+    viewOptions.traceFrames = args.traceFrames;
+    worldView.init(files, registry, *renderer, resolveTexture, *remote, level ? &*level : nullptr,
+                   viewOptions);
   }
 
   std::vector<obf2::gfx::MeshRenderer::DrawItem> items;
@@ -1424,39 +1253,13 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     // chest — so a screenshot shows how other players are drawn without anyone
     // having to be found by hand.
     if (args.watchSoldier && remote != nullptr) {
-      // The camera holds on to **one** soldier. Taking the nearest every frame
-      // made it jump from one to another as they passed each other, which reads
-      // as the watched soldier teleporting.
+      const std::uint16_t watched =
+          worldView.watchSoldier(remoteSoldier ? *remoteSoldier : eye);
       const auto& objects = remote->world.objects();
-      const auto stillThere = [&](std::uint16_t id) {
-        const auto found = objects.find(id);
-        return found != objects.end() &&
-               found->second.netClass == obf2::net::bf2::GhostClass::Soldier &&
-               id != remote->ourSoldier;
-      };
-      if (watchedSoldier != 0 && !stillThere(watchedSoldier)) watchedSoldier = 0;
-      if (watchedSoldier == 0) {
-        float nearest = 1e9f;
-        const obf2::Vec3f from = remoteSoldier ? *remoteSoldier : eye;
-        for (const auto& [id, object] : objects) {
-          if (!stillThere(id)) continue;
-          const auto pose =
-              remote->world.poseOf(id, remote->tick.pending / obf2::server::kTickTime);
-          const float away = obf2::length((pose ? pose->position : object.position) - from);
-          if (away < nearest) {
-            nearest = away;
-            watchedSoldier = id;
-          }
-        }
-        if (watchedSoldier != 0) {
-          std::printf("  watching soldier %u\n", watchedSoldier);
-          remote->world.setTraceObject(watchedSoldier);
-        }
-      }
-      if (watchedSoldier != 0) {
-        const auto& object = objects.at(watchedSoldier);
+      if (watched != 0 && objects.count(watched) != 0) {
+        const auto& object = objects.at(watched);
         const auto pose =
-            remote->world.poseOf(watchedSoldier, remote->tick.pending / obf2::server::kTickTime);
+            remote->world.poseOf(watched, remote->tick.pending / obf2::server::kTickTime);
         const obf2::Vec3f at = pose ? pose->position : object.position;
         lookTarget = at;
         eye = at + obf2::Vec3f{2.8f, 0.6f, 2.8f};
@@ -1466,18 +1269,16 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         // ghost clock, and how the pose was made.
         if (frame % 60 == 0) {
           const auto* newest = object.track.newest();
-          const float nowMs = static_cast<float>(remote->world.gameTick()) *
-                              obf2::net::bf2::kGhostTickMs;
-          const float fromUs =
-              remoteSoldier ? obf2::length(at - *remoteSoldier) : -1.0f;
+          const float nowMs =
+              static_cast<float>(remote->world.gameTick()) * obf2::net::bf2::kGhostTickMs;
+          const float fromUs = remoteSoldier ? obf2::length(at - *remoteSoldier) : -1.0f;
           std::printf("  watched %u: updates %d, samples %zu, newest %.0f ms ago, mode %d, "
                       "speed %.2f, %.0f m from our body, at %.2f %.2f %.2f\n",
-                      watchedSoldier, object.updates, object.track.count(),
+                      watched, object.updates, object.track.count(),
                       newest != nullptr ? nowMs - newest->timeMs : -1.0f,
                       pose ? static_cast<int>(pose->mode) : -1,
-                      newest != nullptr && newest->velocity
-                          ? obf2::length(*newest->velocity)
-                          : -1.0f,
+                      newest != nullptr && newest->velocity ? obf2::length(*newest->velocity)
+                                                            : -1.0f,
                       fromUs, at.x, at.y, at.z);
         }
       }
@@ -1688,290 +1489,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         toDraw = &withOthers;
       }
 
-      if (remote != nullptr && boxesReady && !remote->world.objects().empty()) {
+      if (remote != nullptr && !remote->world.objects().empty()) {
         if (withOthers.empty()) withOthers = items;
-        for (const auto& [id, object] : remote->world.objects()) {
-          if (id == remote->ourSoldier && !args.showOwnBox) continue;  // we do not draw ourselves from inside
-          // Not a player's soldier: find out what stands there. Resolved once per
-          // object and again only if it has moved off the spot it was matched on.
-          // By class, not by team: a jeep a player entered has a team and is still
-          // a jeep, and a soldier whose `EnterVehicleEvent` came before we joined
-          // has none and is still a soldier.
-          const bool soldier = object.netClass == obf2::net::bf2::GhostClass::Soldier;
-          // Drawn where its track puts it now (ghost_track.h), not where the last
-          // update left it.
-          const auto pose =
-              remote->world.poseOf(id, remote->tick.pending / obf2::server::kTickTime);
-          obf2::Vec3f drawAt = pose ? pose->position : object.position;
-          // A soldier is not drawn from the predicted point but carried by his
-          // physics from it, once per game tick: `predict` seeds the node with the
-          // position and the velocity (Linux 0x5dc314) and the node's tick and the
-          // ground pass move him (0x6f1de0). Between ticks the frame blends the
-          // last two results by how far into the tick it is — the engine's own
-          // frame interpolator (`FUN_0045c190`, docs/functions/soldier-physics.md).
-          if (soldier && pose && !args.drawPredicted) {
-            CarriedSoldier& carried = carriedSoldiers[id];
-            const std::uint32_t nowTick = remote->world.gameTick();
-            const float pivot = remote->physics.pivotHeight;
-            const obf2::Vec3f feet{pose->position.x, pose->position.y - pivot, pose->position.z};
-            const auto* newestUpdate = object.track.newest();
-            const obf2::Vec3f velocity = newestUpdate && newestUpdate->velocity
-                                             ? *newestUpdate->velocity
-                                             : obf2::Vec3f{};
-            if (!carried.ready || nowTick < carried.tick || nowTick - carried.tick > 8) {
-              // First sight, or a gap too long to replay: stand him where the
-              // network says.
-              carried.body = obf2::server::BodyState{};
-              carried.body.position = feet;
-              carried.body.onGround = true;
-              carried.from = feet;
-              carried.tick = nowTick;
-              carried.ready = true;
-            }
-            while (carried.tick < nowTick) {
-              carried.from = carried.body.position;
-              obf2::server::carryRemoteSoldier(carried.body, carried.swim, feet, velocity,
-                                               pose->bodyYaw, remote->physics, remote->terrain,
-                                               remote->collision, obf2::server::kTickTime);
-              ++carried.tick;
-            }
-            const float fraction =
-                std::clamp(remote->tick.pending / obf2::server::kTickTime, 0.0f, 1.0f);
-            const obf2::Vec3f blended =
-                carried.from + (carried.body.position - carried.from) * fraction;
-            drawAt = obf2::Vec3f{blended.x, blended.y + pivot, blended.z};
-            if (remote->terrain != nullptr) {
-              auto& stat = drawStats[id];
-              if (feet.y < remote->terrain->groundHeightAt(feet) - 0.05f) ++stat.predictedUnder;
-              if (blended.y < remote->terrain->groundHeightAt(blended) - 0.05f) ++stat.drawnUnder;
-            }
-          }
-          // The measure of smoothness: how the pose was made, and the largest
-          // step between two frames for an object that is moving.
-          if (pose && object.track.count() >= 2) {
-            auto& stat = drawStats[id];
-            ++stat.frames[static_cast<int>(pose->mode)];
-            if (stat.seen) {
-              stat.largestStep = std::max(stat.largestStep, obf2::length(drawAt - stat.last));
-            }
-            stat.last = drawAt;
-            stat.seen = true;
-          }
-          if (!soldier && remotePlacement) {
-            // What it is, by the spot it was **created** on — a jeep that drove off
-            // stays a jeep. The template number is stable per template, so a match
-            // is remembered by number too, for objects first seen away from their
-            // spawner.
-            auto resolved = remoteResolved.find(id);
-            if (resolved == remoteResolved.end()) {
-              obf2::level::PlacedAt placed = remotePlacement->at(object.createdAt);
-              if (placed.kind == obf2::level::PlacedAt::Kind::Unknown) {
-                // Not on a placement: the template number names it
-                // (obf2/game/template_numbers.h).
-                if (const std::string* name = remote->templateNumbers.nameOf(object.templateId);
-                    name != nullptr && object.templateId != 0) {
-                  placed.kind = obf2::level::PlacedAt::Kind::Spawned;
-                  placed.templateName = *name;
-                  placed.hasRotation = false;
-                }
-              }
-              resolved =
-                  remoteResolved.insert_or_assign(id, RemoteResolved{object.createdAt, placed}).first;
-            }
-            const obf2::level::PlacedAt& placed = resolved->second.placed;
-            if (placed.kind == obf2::level::PlacedAt::Kind::Static) continue;
-            if (placed.kind == obf2::level::PlacedAt::Kind::Spawned) {
-              auto mesh = remoteMeshByName.find(placed.templateName);
-              if (mesh == remoteMeshByName.end()) {
-                obf2::gfx::GpuMesh* uploaded = nullptr;
-                if (auto built = buildObjectMesh(files, registry, placed.templateName, args, false)) {
-                  if (auto gpu = renderer->upload(*built, resolveTexture)) {
-                    remoteMeshes.push_back(*gpu);
-                    uploaded = &remoteMeshes.back();
-                  }
-                }
-                std::printf("  server object %u is %s%s\n", id, placed.templateName.c_str(),
-                            uploaded != nullptr ? "" : " (no geometry)");
-                mesh = remoteMeshByName.emplace(placed.templateName, uploaded).first;
-              }
-              if (mesh->second != nullptr) {
-                // The rotation is the spawner's: a simple object's own rotation
-                // travels in its record and is not read yet.
-                obf2::Mat4 place = obf2::translation(drawAt);
-                if (placed.hasRotation) {
-                  place = place * obf2::rotationYawPitchRoll(placed.rotation.x, placed.rotation.y,
-                                                             placed.rotation.z);
-                }
-                withOthers.push_back(obf2::gfx::MeshRenderer::DrawItem{mesh->second, place});
-                continue;
-              }
-            }
-          }
-          // Every object that ends up a box says why, once: a box is a debt.
-          if (!soldier && boxReported.insert(id).second) {
-            const auto resolved = remoteResolved.find(id);
-            const int kind = resolved == remoteResolved.end()
-                                 ? -1
-                                 : static_cast<int>(resolved->second.placed.kind);
-            std::printf("  box: object %u, template %u, class %d, created at %.1f %.1f %.1f, "
-                        "now %.1f %.1f %.1f, placement kind %d\n",
-                        id, object.templateId, static_cast<int>(object.netClass),
-                        object.createdAt.x, object.createdAt.y, object.createdAt.z, drawAt.x,
-                        drawAt.y, drawAt.z, kind);
-          }
-          // Whose soldier this is the server knows: the team came from
-          // `CreatePlayerEvent` and the object from `EnterVehicleEvent`. Zero means "not a player".
-          const int which =
-              object.team == 0 ? 0 : (object.team == remote->world.ownTeam() ? 1 : 2);
-          // A soldier's networked position is its pivot, `coll-soldier-pivot-height`
-          // above the feet (`FUN_006ed4c0`); the box stands on its base.
-          obf2::Vec3f base = drawAt;
-          if (soldier) base.y -= remote->physics.pivotHeight;
-          // The watched soldier's height as drawn, every frame: the pose the track
-          // gave, how it was made, the ground under it and the newest update's
-          // vertical velocity — which the extrapolation runs along
-          // (`SoldierNetworkable::predict`, Linux 0x5dc278).
-          if (soldier && pose && id == watchedSoldier && remote->terrain != nullptr &&
-              frame >= args.traceFrom && frame < args.traceFrom + args.traceFrames) {
-            const auto* newestUpdate = object.track.newest();
-            std::printf("    drawn %u: frame %d, mode %d, predicted y %.2f, drawn y %.2f, "
-                        "velocity y %.2f, newest y %.2f\n",
-                        id, frame, static_cast<int>(pose->mode), pose->position.y, drawAt.y,
-                        newestUpdate && newestUpdate->velocity ? newestUpdate->velocity->y : 0.0f,
-                        newestUpdate ? newestUpdate->position.y : 0.0f);
-          }
-          obf2::Mat4 place = obf2::translation(base);
-          if (soldier && pose) {
-            place = place * obf2::rotationY(pose->bodyYaw * 3.14159265f / 180.0f);
-          }
-          if (soldier && pose && frame >= args.traceFrom &&
-              frame < args.traceFrom + args.traceFrames) {
-            const auto* newest = object.track.newest();
-            std::printf("    soldier %u: at %.4f %.4f %.4f yaw %.3f mode %d, samples %zu, newest "
-                        "%.4f %.4f %.4f at tick %.1f\n",
-                        id, base.x, base.y, base.z, pose->bodyYaw, static_cast<int>(pose->mode),
-                        object.track.count(), newest ? newest->position.x : 0.0f,
-                        newest ? newest->position.y : 0.0f, newest ? newest->position.z : 0.0f,
-                        newest ? newest->timeMs / obf2::net::bf2::kGhostTickMs : 0.0f);
-          }
-          if (soldier) {
-            const std::string* soldierName = remote->templateNumbers.nameOf(object.templateId);
-            const std::uint32_t kit = remote->world.kitTemplateOf(id);
-            const std::string* kitName = kit != 0 ? remote->templateNumbers.nameOf(kit) : nullptr;
-            SoldierLook* look =
-                soldierName != nullptr
-                    ? soldierLookFor(*soldierName, kitName != nullptr ? *kitName : std::string())
-                    : nullptr;
-            if (look != nullptr) {
-              const std::string key = *soldierName + "|" + (kitName != nullptr ? *kitName : "");
-              DrawnSoldier& drawn = drawnSoldiers[id];
-              // A soldier who respawned with another kit is another look, so his
-              // mesh is built again.
-              if (drawn.look != look || drawn.key != key) {
-                drawn = DrawnSoldier{};
-                drawn.look = look;
-                drawn.key = key;
-                const auto length = [&](const std::string& path) {
-                  const obf2::mesh::BoneAnimation* clip = clipAt(path);
-                  return clip != nullptr ? clip->duration() : 0.0f;
-                };
-                drawn.legs.setLengthOf(length);
-                drawn.weapon.setLengthOf(length);
-              }
-
-              // The state the conditions read: the speed and the direction the
-              // server itself reports for this soldier, turned into his own frame.
-              // The yaw a ghost carries is the body's plus the aim's, which is the
-              // matrix the movement is built from (docs/functions/soldier-physics.md).
-              obf2::anim::State animState;
-              const auto* newest = object.track.newest();
-              const obf2::Vec3f velocity =
-                  newest != nullptr && newest->velocity ? *newest->velocity : obf2::Vec3f{};
-              const float planar =
-                  std::sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
-              animState.speed = planar;
-              if (planar > 0.001f) {
-                const float yawRadians = pose->bodyYaw * 3.14159265358979323846f / 180.0f;
-                const float forward =
-                    (velocity.x * std::sin(yawRadians) + velocity.z * std::cos(yawRadians)) / planar;
-                const float side =
-                    (velocity.x * std::cos(yawRadians) - velocity.z * std::sin(yawRadians)) / planar;
-                animState.direction[0] = side;
-                animState.direction[1] = 0.0f;
-                animState.direction[2] = forward;
-              }
-              if (look->legs) drawn.legs.update(*look->legs, animState, frameStep);
-              if (look->hasWeapon) drawn.weapon.update(look->weapon, animState, frameStep);
-
-              // The legs first and the weapon over them: a clip touches only its
-              // own bones, and the weapon's clips own the upper body
-              // (`obf2::mesh::poseSkeleton`).
-              std::vector<obf2::mesh::PoseStage> stages;
-              const auto addStages = [&](const obf2::anim::Player& player) {
-                for (const obf2::anim::PlayingAnimation& playing : player.playing()) {
-                  if (playing.weight <= 0.001f) continue;
-                  const obf2::mesh::BoneAnimation* clip = clipAt(playing.path);
-                  if (clip == nullptr || clip->frameCount == 0) continue;
-                  // Fractional, and not wrapped here: the clip is sampled between
-                  // two frames and wraps itself, the way the engine does
-                  // (`BoneAnimation::sample`). Rounding this down to a whole frame
-                  // is what made a soldier at sixty frames a second look like ten.
-                  const float frame = playing.time * obf2::mesh::kAnimationFramesPerSecond;
-                  stages.push_back(obf2::mesh::PoseStage{clip, frame, playing.weight});
-                }
-              };
-              addStages(drawn.legs);
-              addStages(drawn.weapon);
-              if (frame >= args.traceFrom && frame < args.traceFrom + args.traceFrames) {
-                // The yaw the direction is measured against, next to the heading of
-                // the velocity itself. A sprinting soldier cannot strafe
-                // (`updateSoldierSpeed`, soldier-physics.md), so above sprint speed
-                // the two have to agree — the difference is the error in our yaw.
-                const float heading =
-                    std::atan2(velocity.x, velocity.z) * 180.0f / 3.14159265358979323846f;
-                // What the original's animation would read instead: the node's
-                // displacement over the last tick times 30
-                // (`PointPhysicsNode::postFrameUpdate`, Linux 0x6ddca0).
-                float nodeSpeed = -1.0f;
-                if (const auto carriedIt = carriedSoldiers.find(id);
-                    carriedIt != carriedSoldiers.end() && carriedIt->second.ready) {
-                  const obf2::Vec3f moved =
-                      carriedIt->second.body.position - carriedIt->second.from;
-                  nodeSpeed = std::sqrt(moved.x * moved.x + moved.z * moved.z) * 30.0f;
-                }
-                std::printf("    soldier %u node speed %.2f\n", id, nodeSpeed);
-                std::printf("    soldier %u anim: speed %.2f, direction %.2f %.2f, yaw %.1f, "
-                            "heading %.1f, angles body %.1f aim %.1f 0x8 %.1f pitch %.1f, clips",
-                            id, animState.speed, animState.direction[0], animState.direction[2],
-                            pose->bodyYaw, heading, object.lastBodyYaw, object.lastAimYaw,
-                            object.lastAngle8, object.lastPitch);
-                for (const obf2::anim::Player* player : {&drawn.legs, &drawn.weapon}) {
-                  for (const obf2::anim::PlayingAnimation& playing : player->playing()) {
-                    if (playing.weight <= 0.001f) continue;
-                    const std::size_t slash = playing.path.find_last_of("/\\");
-                    std::printf(" %s@%.2f×%.2f",
-                                slash == std::string::npos ? playing.path.c_str()
-                                                           : playing.path.c_str() + slash + 1,
-                                playing.time, playing.weight);
-                  }
-                }
-                std::printf("\n");
-              }
-
-              if (!stages.empty()) drawn.pose = obf2::mesh::poseSkeleton(look->skeleton, stages);
-              if (look->gpu.vertices != nullptr) {
-                obf2::gfx::MeshRenderer::DrawItem item{&look->gpu, place};
-                // With no clip to stand on he is drawn as the file holds him,
-                // which is the bind pose — the same as before any animation
-                // system was read.
-                if (!drawn.pose.empty()) item.pose = &drawn.pose;
-                withOthers.push_back(item);
-                continue;
-              }
-            }
-          }
-          withOthers.push_back(obf2::gfx::MeshRenderer::DrawItem{&boxes[which], place});
-        }
+        worldView.collect(withOthers, frame, frameStep);
         toDraw = &withOthers;
       }
       // The specular is the one thing that depends on where the eye is.
@@ -2253,7 +1773,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
 
   for (OwnedPiece& piece : spawnPieces) renderer->release(piece.mesh);
   for (auto& gpuMesh : gpuMeshes) renderer->release(gpuMesh);
-  for (auto& gpuMesh : remoteMeshes) renderer->release(gpuMesh);
+  worldView.release(*renderer);
   {
     // Frames per second over everything after the first frame — the loading is
     // not part of it. The measure for "the picture jerks": a number, not a feeling.
@@ -2277,13 +1797,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     std::printf("  game tick %u, newest packet tick %u at the end\n", remote->world.gameTick(),
                 remote->world.newestPacketTick());
   }
-  for (const auto& [id, stat] : drawStats) {
-    if (stat.largestStep < 0.01f) continue;  // standing still: nothing to measure
-    std::printf("  drawn object %u: interpolated %d, extrapolated %d, newest %d frames, "
-                "largest step between frames %.2f m, under the terrain: predicted %d, drawn %d\n",
-                id, stat.frames[2], stat.frames[1], stat.frames[0], stat.largestStep,
-                stat.predictedUnder, stat.drawnUnder);
-  }
+  worldView.report();
   if (nextLevel != nullptr) *nextLevel = requestedLevel;
   return 0;
 }
