@@ -121,6 +121,10 @@ struct Args {
   // needed in the game itself, but without it the other players' placeholder
   // cannot be checked on an empty server.
   bool showOwnBox = false;
+  // --draw-predicted: draw other soldiers from the predicted point, as before
+  // `carryRemoteSoldier`. A measuring switch — for holding the two side by side,
+  // not a way to play.
+  bool drawPredicted = false;
   // --watch-soldier: the camera looks at the nearest other soldier (ours, for
   // screenshots of how other players are drawn).
   bool watchSoldier = false;
@@ -269,6 +273,7 @@ Args parseArgs(int argc, char** argv) {
       args.cameraPitch = static_cast<float>(std::atof(argv[++i]));
     }
     else if (flag == "--own-box") args.showOwnBox = true;
+    else if (flag == "--draw-predicted") args.drawPredicted = true;
     else if (flag == "--watch-soldier") args.watchSoldier = true;
     else if (flag == "--flash" && i + 1 < argc) args.flashSwf = argv[++i];
     else if (flag == "--connect" && i + 1 < argc) args.connectTo = argv[++i];
@@ -3807,7 +3812,7 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           // ground pass move him (0x6f1de0). Between ticks the frame blends the
           // last two results by how far into the tick it is — the engine's own
           // frame interpolator (`FUN_0045c190`, docs/functions/soldier-physics.md).
-          if (soldier && pose) {
+          if (soldier && pose && !args.drawPredicted) {
             CarriedSoldier& carried = carriedSoldiers[id];
             const std::uint32_t nowTick = remote->world.gameTick();
             const float pivot = remote->physics.pivotHeight;
