@@ -3947,8 +3947,17 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
               addStages(drawn.legs);
               addStages(drawn.weapon);
               if (frame >= args.traceFrom && frame < args.traceFrom + args.traceFrames) {
-                std::printf("    soldier %u anim: speed %.2f, direction %.2f %.2f, clips", id,
-                            animState.speed, animState.direction[0], animState.direction[2]);
+                // The yaw the direction is measured against, next to the heading of
+                // the velocity itself. A sprinting soldier cannot strafe
+                // (`updateSoldierSpeed`, soldier-physics.md), so above sprint speed
+                // the two have to agree — the difference is the error in our yaw.
+                const float heading =
+                    std::atan2(velocity.x, velocity.z) * 180.0f / 3.14159265358979323846f;
+                std::printf("    soldier %u anim: speed %.2f, direction %.2f %.2f, yaw %.1f, "
+                            "heading %.1f, angles body %.1f aim %.1f 0x8 %.1f pitch %.1f, clips",
+                            id, animState.speed, animState.direction[0], animState.direction[2],
+                            pose->bodyYaw, heading, object.lastBodyYaw, object.lastAimYaw,
+                            object.lastAngle8, object.lastPitch);
                 for (const obf2::anim::Player* player : {&drawn.legs, &drawn.weapon}) {
                   for (const obf2::anim::PlayingAnimation& playing : player->playing()) {
                     if (playing.weight <= 0.001f) continue;

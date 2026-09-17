@@ -122,6 +122,67 @@ the client's offsets (32-bit; the Linux ones are 4 bytes further on from `pose`)
 (Linux 0x6b1920) is what fills them; who calls it in the client, and in what
 frame the direction is measured, is **not established** yet.
 
+### What the soldier hands the system every tick
+
+`Soldier::updateAnimationSystems(float)` (Linux server 0x5545e0), the on-foot path:
+
+```
+v = physics node's velocity (+0x88, vtable[0x298]) - getCollidingMeshTangentSpeed()   0x5546e4
+speed = sqrt(v.x^2 + v.z^2)                     planar; the vertical is left out   0x554792
+if speed <= 0.001: direction = 0, speed = 0                                         0x554796
+m = getMovementMatrix()   = getSoldierCamera() -> getAbsoluteTransformation()       0x54ac70
+forward = m[+0x20]*v.x + m[+0x28]*v.z                                               0x554bde
+side    = getIsSprinting() ? 0 : m[+0x00]*v.x + m[+0x08]*v.z     (vtable 0x468)     0x554c0d, 0x554e2c
+direction = (side, 0, forward) normalised to one; its y is then the relative v.y    0x554f1b, 0x5547b8
+by the soldier's pose (+0x3c8):
+  crouch (1): speed *= soldierAnim1pSpeedCrouch, then min(speed, getSoldierSpeed(3))  0x554e58
+  prone  (2): speed *= soldierAnim1pSpeedProne,  then min(speed, getSoldierSpeed(3))  0x554ea9
+  stand:  if !getCanFireWeapon() (vtable 0x600):                                     0x5548b4
+              speed = getSoldierSpeed(4), direction = (0, 0, 1)                      0x554dc1
+systems[+0x470] (at +0x430, 16 bytes apart)->setTriggerMovement(dt, direction, speed, second)   0x5548f0
+setTriggerPose(+0x3c8)                                                               0x55490f
+```
+
+`getSoldierSpeed(state)` (0x54eac0) reads `dice::hfe::world::soldierSpeed[state]`
+(0x108e900; state 7 means the soldier's own +0x490), times `getMouseSpeedMod()`
+when crouching with a player. The array is filled at start-up from the
+`phy-soldier-*-speed` variables, whose defaults are sprint **7.0**, run **3.9**,
+walk **1.5** (read at 0x5477f7, 0x547815, 0x547833); the game's data sets only
+`phy-soldier-speed-factor 1.0` (`soldiers/Common/Common.con`).
+
+`AnimationSystem::setTriggerMovement(dt, dir, speed, second)` — client 0x7f6370
+(vtable slot 14 of 0x940d80), Linux 0x6b1920:
+
+```
+if dt <= 0: store speed (+0x20), second (+0x30), dir (+0x14) as they are; return
+if dir.x == 0 and dir.z == 0, or speed == 0:            dir stored as it is
+elif |dir.z| > 0.9 or |dir.x| > 0.9 and its sign flipped: dir stored as it is
+else:  k = clamp(dt * *DAT_00a33a9c, 0, 1)
+       dir.x, dir.z = mix(previous, new, k); dir.y = new    — the direction is smoothed
+speed (+0x20) = speed                                    — the speed is not
++0x24..+0x2c = (previousSpeed * previousDir - speed * dir) / dt
+```
+
+`ForwardTrigger::update` (client 0x7ff680) tests `sys[+0x20] * sys[+0x1c]` —
+speed times the forward component — through `isWithinRange` (client 0x7fe720,
+the ForwardTrigger vtable at 0x941660, slot 27), which is the same test the
+Linux copy makes: `a <= value <= b`, reversed for a negative `a`.
+
+**An open contradiction.** A standing soldier who cannot fire — which is what a
+sprinting one is — is handed speed 7.0 straight ahead, and `stand_sprint` is a
+`ForwardTrigger` on `3p_sprint 5.5 6.3 100` (`ValueHolder::makeScript` at
+0x6d1c80 confirms the stored order is as written). By every function read here
+7.0 is out of that range and no sprint clip plays. Measured on our side, 11% of
+the frames a soldier moves are frames with no movement clip at all, every one of
+them at 6–7 m/s: the sprinters stand still while they glide. Either something
+upstream of `setTriggerMovement` hands the original a smaller number, or the
+original shows the same — which only the original can say.
+
+What differs from ours and is **not** implemented yet, because none of it moves a
+7.0 sprint into range: the direction is smoothed, the side is zeroed while
+sprinting, a sprinter is forced straight ahead at the sprint speed, the ground's
+own speed is subtracted, crouch and prone are scaled and clamped.
+
 ### A clip is sampled between its frames
 
 `BoneAnimation::getValue(int bone, float time, Quat&, Vec3&, float)` (Linux

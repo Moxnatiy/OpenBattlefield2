@@ -140,6 +140,15 @@ void WorldView::feed(std::span<const std::byte> packet) {
       if (record.position) sample.position = *record.position;
       if (soldier) {
         const SoldierState& state = *record.soldier;
+        ++object.soldierRecords;
+        if (state.bodyYaw) ++object.withYaw;
+        if (state.velocity) ++object.withVelocity;
+        if (state.complete) ++object.complete;
+        if (state.bodyYaw) object.lastBodyYaw = *state.bodyYaw;
+        if (state.aimYaw) object.lastAimYaw = *state.aimYaw;
+        if (state.angle8) object.lastAngle8 = *state.angle8;
+        if (state.pitch) object.lastPitch = *state.pitch;
+        if (state.velocity) object.lastVelocity = *state.velocity;
         if (state.velocity) sample.velocity = *state.velocity;
         if (state.bodyYaw) sample.bodyYaw = *state.bodyYaw + state.aimYaw.value_or(0.0f);
         if (state.pitch) sample.pitch = -*state.pitch;

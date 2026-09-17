@@ -53,6 +53,18 @@ struct RemoteObject {
   int updates = 0;
   float travelled = 0.0f;    // the largest displacement from the first position
   float aboveGround = 0.0f;  // the sum of the heights above the terrain
+  // How many of a soldier's records carried each thing the animation needs: the
+  // yaw (0x2), the velocity (0x80), and how many were read to their end. A yaw
+  // that never arrives leaves the soldier facing north while he runs, and the
+  // movement direction the triggers read is then measured against the wrong axis.
+  int soldierRecords = 0;
+  int withYaw = 0;
+  int withVelocity = 0;
+  int complete = 0;
+  // The last value of each angle the soldier's records carried (soldier_state.h),
+  // kept whether or not the newest record had it: 0x2, 0x4, 0x8, 0x10.
+  float lastBodyYaw = 0.0f, lastAimYaw = 0.0f, lastAngle8 = 0.0f, lastPitch = 0.0f;
+  Vec3f lastVelocity;
 
   // The last four updates stamped with the server's time, to draw from
   // (ghost_track.h). `position` above is the newest as it arrived.

@@ -1437,9 +1437,12 @@ struct RemoteWorld {
     for (const auto& [id, object] : world.objects()) {
       if (object.team == 0 || object.updates == 0) continue;
       std::printf("  soldier %u's track: updates %d, travelled %.1f m, above the ground on average "
-                  "%.2f m\n",
+                  "%.2f m; records %d, with yaw %d, with velocity %d, read to the end %d, "
+                  "yaw now %.1f\n",
                   id, object.updates, object.travelled,
-                  object.aboveGround / static_cast<float>(object.updates));
+                  object.aboveGround / static_cast<float>(object.updates), object.soldierRecords,
+                  object.withYaw, object.withVelocity, object.complete,
+                  object.yaw.value_or(-999.0f));
     }
     for (const auto& [object, player] : objectOwner) {
       std::printf("  player %u -> object %u: in the ghost records %s\n", player, object,
