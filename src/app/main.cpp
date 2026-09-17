@@ -21,6 +21,7 @@
 
 #include "obf2/app/command_line.h"
 #include "obf2/app/hosted_game.h"
+#include "obf2/app/main_menu.h"
 #include "obf2/app/render_context.h"
 #include "obf2/app/scene_build.h"
 #include "obf2/app/world_view.h"
@@ -397,131 +398,24 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
 
   obf2::engine::Engine engine;
   const bool bootMode = args.levelName.empty() && args.objectName.empty() && args.meshPath.empty();
-  std::string requestedLevel;
-  bool menuQuit = false;
-  int introQuad = -1;
-  int loadingQuad = -1;
-  std::vector<int> loadingTextQuads;
+  // The screens before a round (`obf2/app/main_menu.h`): the intro, the loading
+  // screen and the game's own Flash menu.
+  obf2::app::MainMenu menu;
+  obf2::app::MainMenu::Options menuOptions;
+  menuOptions.screen = args.screen;
+  menuOptions.flashSwf = args.flashSwf;
+  menuOptions.mouseX = args.mouseX;
+  menuOptions.mouseY = args.mouseY;
+  menuOptions.click = args.click;
+  menuOptions.width = args.width;
+  menuOptions.height = args.height;
+  for (const auto& click : args.clicks) {
+    menuOptions.clicks.push_back(
+        obf2::app::MainMenu::Options::Click{click.frame, click.x, click.y});
+  }
 
   if (bootMode) {
-    engine.boot(files, args.modDir);
-    const auto& settings = engine.settings();
-
-    std::printf("engine start\n  read: ");
-    for (const auto& file : engine.bootFiles()) std::printf("%s ", file.c_str());
-    std::printf("\n  player: \"%s\", fullscreen: %d, field of view: %.2f\n",
-                settings.general.playerName.c_str(), settings.video.fullScreen ? 1 : 0,
-                settings.video.fieldOfView);
-    // The ten the options screen has. Printed because they were bound to a
-    // name the game never writes and nobody noticed for months
-    // (docs/TODO-graphics.md).
-    const obf2::engine::VideoSettings& v = settings.video;
-    std::printf("  quality: terrain %d, effects %d, geometry %d, texture %d, lighting %d\n"
-                "           dynamic shadows %d, dynamic lights %d, antialiasing %d,"
-                " filtering %d, view distance %.2f\n",
-                v.terrainQuality, v.effectsQuality, v.geometryQuality, v.textureQuality,
-                v.lightingQuality, v.dynamicShadowsQuality, v.dynamicLightingQuality,
-                v.antialiasing, v.textureFilteringQuality,
-                static_cast<double>(v.viewDistanceScale));
-    std::printf("  show the intro: %d, movies found: %zu\n",
-                settings.general.viewIntroMovie ? 1 : 0, engine.movies().size());
-    for (const auto& movie : engine.movies()) {
-      std::printf("    %s (%.1f MB)\n", movie.path.c_str(),
-                  static_cast<double>(movie.sizeBytes) / (1024.0 * 1024.0));
-    }
-    // We do not decode Bink, so each movie is a black screen for a second and a
-    // half. Said out loud, because otherwise the first thing the program does
-    // is show six seconds of nothing and look hung.
-    if (settings.general.viewIntroMovie && !engine.movies().empty()) {
-      std::printf("    the movies are not decoded — %.1f s of black, Space skips one\n",
-                  1.5 * static_cast<double>(engine.movies().size()));
-    }
-
-    const auto& console = engine.console();
-    std::printf("  console: handlers %zu, aliases %zu, commands run %lld, "
-                "unknown %lld\n",
-                console.handlerCount(), console.aliasCount(), console.executedCount(),
-                console.unknownCount());
-    int shown = 0;
-    for (const auto& [name, count] : console.unknownCommands()) {
-      if (shown++ >= 24) break;
-      std::printf("    without a handler: %s (x%d)\n", name.c_str(), count);
-    }
-
-    // The commands the menu's buttons run. The interface drives the game through the
-    // console — the same as in the original.
-    engine.console().bind("openbf2.startLevel", [&](const obf2::con::Command& command) {
-      const std::string_view level = command.argStr(0);
-      requestedLevel = level.empty() && !engine.levels().empty()
-                           ? engine.levels().front().directory
-                           : std::string(level);
-      std::printf("menu: launching level %s\n", requestedLevel.c_str());
-    });
-    engine.console().bind("openbf2.quit", [&](const obf2::con::Command&) {
-      std::printf("menu: quit\n");
-      menuQuit = true;
-    });
-    const std::string background = findMenuBackground(files);
-    std::printf("  state: %s, the menu's background: %s\n",
-                std::string(obf2::engine::stateName(engine.state())).c_str(),
-                background.empty() ? "(none)" : background.c_str());
-
-    scene.meshes.push_back(buildScreenQuad("#000000"));
-    introQuad = static_cast<int>(scene.meshes.size()) - 1;
-    // The menu is `mainMenu.swf` played by `obf2::flash`, the same movie
-    // the original opens; the engine only supplies the background it is
-    // drawn over (docs/research/11-ruffle-menu.md).
-    (void)background;
-
-    std::printf("  localisation: %zu strings, levels: %zu\n", engine.lexicon().size(),
-                engine.levels().size());
-
-    // --- loading screen ---
-    //
-    // Not part of the menu: the original draws it with the engine too,
-    // out of the level's own `Info/<level>.desc` and `loadmap.png`.
-    const LoadedFont screenFont = loadFont(files, "Fonts/800/dynamicText_13");
-    const auto* first = engine.levels().empty() ? nullptr : &engine.levels().front();
-    if (screenFont.valid && first != nullptr) {
-      obf2::font::TextLayout layout;
-      layout.screenWidth = 1280;
-      layout.screenHeight = 720;
-      auto addText = [&](std::string_view text, float x, float y, float scale) {
-        layout.x = x;
-        layout.y = y;
-        layout.scale = scale;
-        auto geometry = obf2::font::buildText(screenFont.font, text, layout, screenFont.atlasPath);
-        if (geometry.indices.empty()) return -1;
-        scene.meshes.push_back(std::move(geometry));
-        return static_cast<int>(scene.meshes.size()) - 1;
-      };
-
-      const std::string image = first->loadImage.empty() ? std::string("#101418") : first->loadImage;
-      scene.meshes.push_back(buildScreenQuad(image));
-      loadingQuad = static_cast<int>(scene.meshes.size()) - 1;
-
-      loadingTextQuads.push_back(addText(first->displayName, 64.0f, 520.0f, 2.0f));
-
-      // The map's description is the same lexicon string the game shows
-      // (the locid from <briefing> in the .desc).
-      if (!first->briefingKey.empty()) {
-        const std::string_view briefing = engine.lexicon().text(first->briefingKey);
-        float y = 570.0f;
-        for (const auto& line : obf2::font::wrapText(screenFont.font, briefing, 900.0f, 1.1f)) {
-          if (y > 690.0f) break;
-          loadingTextQuads.push_back(addText(line, 64.0f, y, 1.1f));
-          y += 18.0f;
-        }
-      }
-      loadingTextQuads.erase(std::remove(loadingTextQuads.begin(), loadingTextQuads.end(), -1),
-                             loadingTextQuads.end());
-    }
-
-    if (args.screen == "menu") engine.skipAllMovies();
-    if (args.screen == "loading" && !engine.levels().empty()) {
-      engine.skipAllMovies();
-      engine.startLoading(engine.levels().front().directory);
-    }
+    menu.boot(files, engine, args.modDir, scene, menuOptions);
   } else if (args.levelName.empty()) {
     std::optional<obf2::mesh::RenderMesh> single;
     if (!args.objectName.empty()) {
@@ -620,75 +514,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   const auto cacheTexture = [&](const std::string& path) { return textureCache.cache(path); };
 
 
-#if OBF2_HAVE_FLASH
-  // The menu's movie. A frame from it is handed to the resolver under the name
-  // `#flash` — the same as colour fills: it is not a file but an image we made
-  // ourselves.
-  obf2::flash::Movie flashMovie;
-  obf2::texture::Texture flashTexture;
-  // The background under the movie. `mainMenu.swf` holds no reference to
-  // `images/background/` — the engine draws it, and Flash lands on top with a
-  // transparent stage. We take the same picture as our own menu did.
-  std::string flashBackground;
-  obf2::gfx::GpuMesh flashBackgroundMesh;
-  bool flashBackgroundReady = false;
-  // The menu is the game's own movie. `--flash` only overrides which one:
-  // in boot mode we open `mainMenu.swf` out of the mod, exactly what the
-  // original opens (docs/functions/menu-bridge.md).
-  //
-  // It lives in `Menu_client.zip`, mounted as `Menu`, and nothing is unpacked
-  // (rule 5) — so the player is given a reader over the same file system the
-  // rest of the engine uses, and the movie is opened from bytes. Its pictures
-  // and the movies it loads next to itself come through the same reader.
-  const std::string menuMoviePath = "Menu/External/FlashMenu/mainMenu.swf";
-  std::string flashPath = args.flashSwf;
-  if (!flashPath.empty() || bootMode) {
-    flashBackground = findMenuBackground(files);
-    obf2::flash::Movie::setFileReader(
-        [&files](const std::string& path) { return files.read(path); });
+  // The menu's movie is opened here, before the texture resolver below: the
+  // resolver hands its current frame out under `#flash`.
+  if (!args.flashSwf.empty() || bootMode) menu.openMovie(files, menuOptions);
 
-    bool opened = false;
-    if (!flashPath.empty()) {
-      opened = flashMovie.open(flashPath);
-    } else if (files.exists(menuMoviePath)) {
-      flashPath = menuMoviePath;
-      const auto movie = files.read(menuMoviePath);
-      opened = movie && flashMovie.openFromMemory(*movie, menuMoviePath);
-    } else {
-      std::printf("Flash: the menu's movie is not in the archives — %s\n",
-                  menuMoviePath.c_str());
-    }
-
-    if (opened) {
-      std::printf("Flash: %s, stage %u x %u\n", flashPath.c_str(), flashMovie.width(),
-                  flashMovie.height());
-      flashTexture.format = obf2::texture::Format::Bgra8;
-      flashTexture.width = flashMovie.width();
-      flashTexture.height = flashMovie.height();
-      flashTexture.mips.push_back(obf2::texture::MipLevel{
-          flashTexture.width, flashTexture.height, 0,
-          static_cast<std::uint32_t>(flashTexture.width * flashTexture.height * 4)});
-      flashTexture.data.assign(static_cast<std::size_t>(flashTexture.width) * flashTexture.height * 4,
-                               std::byte{0});
-    } else if (!flashPath.empty()) {
-      std::printf("Flash: did not open — %s\n", flashPath.c_str());
-    }
-  }
-  // A step of the movie and the transfer of the frame into a texture. RGBA -> BGRA:
-  // our texture loader expects the channel order of a DDS.
-  auto flashStep = [&]() {
-    if (!flashMovie.isOpen()) return;
-    flashMovie.advance();
-    const auto& rgba = flashMovie.render();
-    if (rgba.size() != flashTexture.data.size()) return;
-    for (std::size_t i = 0; i + 3 < rgba.size(); i += 4) {
-      flashTexture.data[i + 0] = static_cast<std::byte>(rgba[i + 2]);
-      flashTexture.data[i + 1] = static_cast<std::byte>(rgba[i + 1]);
-      flashTexture.data[i + 2] = static_cast<std::byte>(rgba[i + 0]);
-      flashTexture.data[i + 3] = static_cast<std::byte>(rgba[i + 3]);
-    }
-  };
-#endif
   auto resolveTexture =
       [&](const std::string& mapName) -> std::optional<obf2::texture::Texture> {
     // Names starting with '#' are not files but colours: the game sometimes gives a
@@ -698,9 +527,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       const obf2::Vec3f color = level->terrain.waterColor;
       return obf2::texture::solidColor(color.x, color.y, color.z);
     }
-#if OBF2_HAVE_FLASH
-    if (mapName == "#flash" && flashMovie.isOpen()) return flashTexture;
-#endif
+    if (mapName == "#flash") return menu.flashFrame();
     // The spawn screen's red hatch, under `#combatarea` — like `#flash`, a picture
     // we make rather than a file: the game's own `map_CombatArea32.dds` with the
     // alpha cleared inside the level's combat area. The manager builds it.
@@ -1319,158 +1146,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     const obf2::Mat4 view = obf2::lookAt(eye, lookTarget, up);
 
     if (bootMode) {
-      engine.update(1.0f / 60.0f);
-      if (device->consumeSkip()) engine.skipMovie();
-
-      // --- interaction with the menu ---
-      obf2::gfx::Device::InputState menuInput = frameInput;
-      // --mouse sets the cursor directly: in a screenshot the window may have no
-      // focus, and SDL then does not give the real position.
-      if (args.mouseX >= 0.0f) {
-        menuInput.mouseX = args.mouseX;
-        menuInput.mouseY = args.mouseY;
-        if (args.click && frame == 1) menuInput.clicked = true;
-      }
-      // Screens the engine still draws itself: the intro fill and the
-      // loading screen. The menu proper is the Flash movie below.
-      const bool loading = engine.state() == obf2::engine::State::Loading;
-      const int quad = engine.state() == obf2::engine::State::Intro ? introQuad
-                       : loading                                    ? loadingQuad
-                                                                    : -1;
-
-      std::vector<obf2::gfx::MeshRenderer::DrawItem> screen;
-      auto push = [&](int index) {
-        if (index < 0 || !uploadedOk[static_cast<std::size_t>(index)]) return;
-        screen.push_back(obf2::gfx::MeshRenderer::DrawItem{
-            &gpuMeshes[static_cast<std::size_t>(index)], obf2::Mat4::identity()});
-      };
-      push(quad);
-      if (loading) {
-        for (const int index : loadingTextQuads) push(index);
-      }
-#if OBF2_HAVE_FLASH
-      // The menu's movie is drawn instead of our screen: one rectangle over the whole
-      // frame with the texture `#flash`. Every frame of the movie is its own, so the
-      // mesh is reloaded each time; for the menu that is cheap.
-      static obf2::gfx::GpuMesh flashMesh;
-      static bool flashUploaded = false;
-      std::vector<obf2::gfx::MeshRenderer::DrawItem> flashItems;
-      if (flashMovie.isOpen()) {
-        // The background is loaded once: it does not change.
-        if (!flashBackgroundReady && !flashBackground.empty()) {
-          if (auto uploaded = renderer->upload(buildScreenQuad(flashBackground), resolveTexture)) {
-            flashBackgroundMesh = std::move(*uploaded);
-            flashBackgroundReady = true;
-          }
-        }
-        if (flashBackgroundReady) {
-          flashItems.push_back(obf2::gfx::MeshRenderer::DrawItem{&flashBackgroundMesh,
-                                                                 obf2::Mat4::identity(),
-                                                                 {1, 1, 1, 1}});
-        }
-        // Input. The menu is buttons, so without a mouse it stays a picture.
-        // The coordinates are converted from the window into the movie's stage: the
-        // window may be a different size.
-        // We take the same input as our own menu rather than reading it twice:
-        // `clicked` is a **transition** from released to pressed, and `readInput()`
-        // eats it. A second call within a frame always saw "not pressed", so in a
-        // window none of the movie's buttons worked — even though the synthetic
-        // `--click-at` did work, because it set the flag itself.
-        auto flashInput = menuInput;
-        // `--mouse` and `--click` are the same path as for the other screens: without
-        // them a click cannot be checked without a person at the keyboard.
-        if (args.mouseX >= 0.0f) {
-          flashInput.mouseX = args.mouseX;
-          flashInput.mouseY = args.mouseY;
-        }
-        if (args.click && frame == 20) flashInput.clicked = true;
-        // `--click-at <frame>:<x>:<y>` — a schedule of clicks. The menu leads the
-        // player through several steps, and one click will not get through it.
-        for (const auto& scheduled : args.clicks) {
-          if (frame != scheduled.frame) continue;
-          flashInput.mouseX = scheduled.x;
-          flashInput.mouseY = scheduled.y;
-          flashInput.clicked = true;
-        }
-        // Convert from window to stage using the **actual** window size,
-        // not the one asked for: the two differ whenever the window
-        // manager gives us something else (`window 1221x916 (asked for
-        // 1600x1200)`), and the cursor then lands a third of a screen off.
-        // SDL reports mouse position in window points, and the movie is
-        // stretched across the whole window, so this is a plain ratio.
-        int windowWidth = args.width, windowHeight = args.height;
-        SDL_GetWindowSize(device->window(), &windowWidth, &windowHeight);
-        if (windowWidth <= 0) windowWidth = args.width;
-        if (windowHeight <= 0) windowHeight = args.height;
-        double stageX = 0.0, stageY = 0.0;
-        flashMovie.toStage(windowWidth, windowHeight, flashInput.mouseX, flashInput.mouseY, &stageX,
-                           &stageY);
-        flashMovie.mouseMove(stageX, stageY);
-        // A click is sent as two events, as it should be: down first, and the release
-        // on the next frame. Flash does not manage to separate them when both come at
-        // once, and the button does not fire.
-        // We release **in the same place** we pressed: by the next frame the cursor is
-        // somewhere else, and Flash would count that as "released outside the button"
-        // — the button would not fire.
-        static bool flashPressed = false;
-        static double flashPressX = 0.0, flashPressY = 0.0;
-        if (flashPressed) {
-          flashMovie.mouseMove(flashPressX, flashPressY);
-          flashMovie.mouseButton(flashPressX, flashPressY, false);
-          flashPressed = false;
-        } else if (flashInput.clicked) {
-          flashMovie.mouseButton(stageX, stageY, true);
-          flashPressX = stageX;
-          flashPressY = stageY;
-          flashPressed = true;
-        }
-        // Orders the menu gives us. The movie cannot start a level by
-        // itself — in the original the engine hosts the player, so the
-        // calls land in the engine directly. Here they arrive as lines
-        // and go through the console, the same path our own menu uses.
-        for (std::string order = flashMovie.takeCommand(); !order.empty();
-             order = flashMovie.takeCommand()) {
-          std::printf("Flash menu: %s\n", order.c_str());
-          if (order == "quit") {
-            menuQuit = true;
-            continue;
-          }
-          if (order.rfind("level ", 0) != 0) continue;
-          const std::size_t from = 6;
-          const std::size_t to = order.find(' ', from);
-          const std::string path = order.substr(from, to == std::string::npos ? to : to - from);
-          // The menu spells level paths in lower case (`dalian_plant`),
-          // the directories are not (`Dalian_plant`).
-          for (const auto& level : engine.levels()) {
-            if (level.directory.size() != path.size()) continue;
-            const bool same = std::equal(
-                level.directory.begin(), level.directory.end(), path.begin(),
-                [](char a, char b) { return std::tolower(a) == std::tolower(b); });
-            if (same) {
-              requestedLevel = level.directory;
-              break;
-            }
-          }
-          if (requestedLevel.empty()) {
-            std::printf("  the level %s is not among those found\n", path.c_str());
-          }
-        }
-        flashStep();
-        if (flashUploaded) renderer->release(flashMesh);
-        flashUploaded = false;
-        if (auto uploaded = renderer->upload(buildScreenQuad("#flash"), resolveTexture)) {
-          flashMesh = std::move(*uploaded);
-          flashUploaded = true;
-          flashItems.push_back(
-              obf2::gfx::MeshRenderer::DrawItem{&flashMesh, obf2::Mat4::identity(), {1, 1, 1, 1}});
-        }
-      }
-      const std::vector<obf2::gfx::MeshRenderer::DrawItem>& overlayItems =
-          flashItems.empty() ? screen : flashItems;
-#else
-      const std::vector<obf2::gfx::MeshRenderer::DrawItem>& overlayItems = screen;
-#endif
-      renderer->renderOverlay(*acquired, overlayItems, obf2::gfx::Color{0.0f, 0.0f, 0.0f, 1.0f});
+      const auto overlay =
+          menu.frame(engine, *device, *renderer, resolveTexture, frameInput, frame, menuOptions,
+                     gpuMeshes, uploadedOk);
+      renderer->renderOverlay(*acquired, overlay, obf2::gfx::Color{0.0f, 0.0f, 0.0f, 1.0f});
     } else {
       // Foreign objects are added on top of the ready list: the level's scene is
       // assembled once, while these appear and disappear during the game.
@@ -1753,9 +1432,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
                   renderer->drawnLastFrame(), renderer->culledLastFrame(), items.size());
     }
 
-    if (menuQuit) break;
+    if (menu.quit()) break;
     // A level from the menu: we end the menu's session and pass the choice upwards.
-    if (!requestedLevel.empty()) break;
+    if (!menu.requestedLevel().empty()) break;
 
     ++frame;
     if (args.frames > 0 && frame >= args.frames) break;
@@ -1798,7 +1477,8 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
                 remote->world.newestPacketTick());
   }
   worldView.report();
-  if (nextLevel != nullptr) *nextLevel = requestedLevel;
+  menu.release(*renderer);
+  if (nextLevel != nullptr) *nextLevel = menu.requestedLevel();
   return 0;
 }
 
