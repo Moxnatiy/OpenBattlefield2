@@ -21,6 +21,24 @@ namespace obf2::server {
 struct CollisionTriangle {
   Vec3f a, b, c;
   Vec3f normal;
+  // Which layer (placed object) the triangle came from: the engine asks each
+  // object's mesh on its own, and whether the edges are tried depends on that
+  // mesh's faces alone.
+  std::uint32_t object = 0;
+  // The collision mesh's own material index of the face; the template's mapping
+  // to a global material (`CollisionMeshTemplate` `+0x28`) is not read.
+  std::uint16_t material = 0;
+};
+
+// One contact of a sphere with a mesh — what
+// `CollisionMeshTemplate::getDistanceToSphere` (Linux server 0x71a500) pushes
+// into its result vectors. docs/functions/soldier-physics.md, "Contacts with objects".
+struct MeshContact {
+  Vec3f point;
+  Vec3f normal;
+  float depth = 0.0f;   // not above zero
+  float travel = 0.0f;  // along the motion, past the surface
+  std::uint16_t material = 0;
 };
 
 class CollisionWorld {
@@ -31,6 +49,15 @@ class CollisionWorld {
 
   // Adds a collision layer transformed into world coordinates.
   void addLayer(const mesh::CollisionLayer& layer, const Mat4& transform);
+
+  // A sphere of `radius` moving from `from` by `motion`, against every object's
+  // mesh near it, the engine's way (`getDistanceToSphere`): a resting sphere
+  // (motion no longer than `g_coll_use_fast_sphere_at_length` 0.01) against the
+  // faces, their edges and corners; a moving one against the faces moved out by
+  // the radius, and, for an object none of whose faces it met, against the
+  // edges. Contacts are appended.
+  void sphereContacts(const Vec3f& from, const Vec3f& motion, float radius,
+                      std::vector<MeshContact>& out) const;
 
   // Pushes a sphere out of the geometry. Returns how many times it had to push —
   // zero means the way is clear.
@@ -58,6 +85,7 @@ class CollisionWorld {
                      const std::function<void(const CollisionTriangle&)>& visit) const;
 
   float cellSize_;
+  std::uint32_t layers_ = 0;
   std::vector<CollisionTriangle> triangles_;
   std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> cells_;
 };

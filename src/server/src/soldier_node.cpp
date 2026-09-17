@@ -109,8 +109,8 @@ void resetSoldierContacts(BodyState& body, const PhysicsConstants& physics) {
   body.groundNormal = Vec3f{0.0f, physics.feetContactNormal, 0.0f};
 }
 
-void soldierImpulse(BodyState& body, float depth, const Vec3f& normal, bool feet) {
-  setAdjust(body.positionAdjust, normal * (-depth * normal.y));
+void soldierImpulse(BodyState& body, float strength, const Vec3f& normal, bool feet) {
+  setAdjust(body.positionAdjust, normal * -strength);
   const float nn = lengthSquared(normal);
   Vec3f speed{};
   if (std::abs(nn) > 1.1920929e-7f) speed = normal * (dot(body.velocity * -1.0f, normal) / nn);
@@ -134,6 +134,36 @@ void solveSoldierImpulse(BodyState& body) {
   body.speedAdjust = Vec3f{};
 }
 
+void soldierVsMeshes(BodyState& body, const Vec3f& previous, const PhysicsConstants& physics,
+                     const CollisionWorld& collision) {
+  // 0x6f4662..0x6f4bf4 (`BF2.exe` `FUN_006ee4d0`).
+  const Vec3f d = body.position - previous;
+  const float dd = lengthSquared(d);
+  Vec3f dir{};
+  if (dd > 1.1920929e-7f) dir = d * (1.0f / std::sqrt(dd));
+  const float radius = physics.radius;
+  const float extend = radius * physics.extendRay * 0.5f;
+  const Vec3f back = dir * extend;
+  // The sphere column (`getSoldierHeight`, 0x6f39f0): standing, five spheres
+  // `(stand height - 2r) / 4` apart, the lowest one radius above the feet.
+  const std::vector<float> centres = soldierSphereHeights(physics);
+
+  std::vector<MeshContact> contacts;
+  for (const float centre : centres) {
+    const Vec3f from = Vec3f{previous.x, previous.y + centre, previous.z} - back;
+    collision.sphereContacts(from, d + back, radius, contacts);
+  }
+
+  // 0x6f4d78..: every contact with a depth under zero.
+  const float feetBelow = previous.y + radius + physics.feetLevel;
+  for (const MeshContact& contact : contacts) {
+    if (!(contact.depth < 0.0f)) continue;
+    // A static object moves not at all: the relative speed is the soldier's own.
+    const bool feet = contact.point.y < feetBelow;
+    soldierImpulse(body, contact.depth, contact.normal, feet);
+  }
+}
+
 void soldierVsTerrain(BodyState& body, float yaw,
                       const std::function<TerrainSample(const Vec3f&)>& terrainAt) {
   const float radians = yaw * (3.14159265358979323846f / 180.0f);
@@ -145,7 +175,8 @@ void soldierVsTerrain(BodyState& body, float yaw,
     const TerrainSample ground = terrainAt(point);
     const float depth = point.y - ground.height;
     if (depth > 0.0f) continue;
-    soldierImpulse(body, depth, ground.normal, i == 0);
+    // The terrain's strength is the depth times the normal's y (0x6f639d).
+    soldierImpulse(body, depth * ground.normal.y, ground.normal, i == 0);
   }
 }
 

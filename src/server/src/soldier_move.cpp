@@ -81,14 +81,17 @@ Vec3f pushOutOfWalls(BodyState& body, const PhysicsConstants& physics,
 }
 
 // The collision pass of the engine's tick (`GameServer::simulatePlayersCollisions`,
-// Linux 0x4543e0) and the friction it ends with. The geometry — where the ground
-// and the walls are — is ours; what a contact does to the node is the engine's
-// (soldier_node.h).
-void collideSoldier(BodyState& body, float yaw, const PhysicsConstants& physics,
-                    const level::Level* terrain, const CollisionWorld* collision) {
+// Linux 0x4543e0) as `ResponsePhysicsManager::updateAllObjects` runs it for a
+// soldier: the objects (`checkSoldierObjectVsObjects`, 0x6edc92), then the terrain
+// (`checkVsTerrain`, response vtable 0x58, 0x6edca3), then the impulse and the
+// friction (vtable 0x68, 0x70). `previous` is where the tick began (the node's
+// previous transformation).
+void collideSoldier(BodyState& body, const Vec3f& previous, float yaw,
+                    const PhysicsConstants& physics, const level::Level* terrain,
+                    const CollisionWorld* collision) {
   resetSoldierContacts(body, physics);
-  // The terrain, the engine's way (soldier_node.h). With no terrain the ground is
-  // the level plane at zero.
+  if (collision != nullptr) soldierVsMeshes(body, previous, physics, *collision);
+  // With no terrain the ground is the level plane at zero.
   soldierVsTerrain(body, yaw, [terrain](const Vec3f& point) {
     TerrainSample sample;
     if (terrain != nullptr) {
@@ -98,21 +101,6 @@ void collideSoldier(BodyState& body, float yaw, const PhysicsConstants& physics,
     }
     return sample;
   });
-  // The objects: ours, not the engine's (`checkSoldierVsMesh` 0x6f44a0 is not
-  // reversed). A floor under the feet counts as a level contact at the feet,
-  // a wall's push as a contact along the push.
-  if (collision != nullptr) {
-    Vec3f from = body.position;
-    from.y += physics.stepHeight();
-    float surface = 0.0f;
-    if (collision->groundHeight(from, physics.stepHeight() + 2.0f, physics.feetContactNormal,
-                                &surface) &&
-        body.position.y <= surface) {
-      soldierImpulse(body, body.position.y - surface, Vec3f{0.0f, 1.0f, 0.0f}, true);
-    }
-    const Vec3f offset = pushOutOfWalls(body, physics, collision);
-    if (length(offset) > 1e-4f) soldierImpulse(body, 0.0f, normalize(offset), false);
-  }
   solveSoldierImpulse(body);
   soldierFriction(body, physics);
 }
@@ -214,8 +202,9 @@ bool tickSoldier(BodyState& body, SwimState& swim, const SoldierIntent& intent, 
   }
   // `GameServer::simulateFrame` (0x45af70): the input, the node, the collision.
   const bool jumped = soldierInput(body, intent, physics, step);
+  const Vec3f previous = body.position;
   stepSoldierNode(body, matrixYaw, physics, step);
-  collideSoldier(body, matrixYaw, physics, terrain, collision);
+  collideSoldier(body, previous, matrixYaw, physics, terrain, collision);
   countDown(body.fireDelay, step);
   countDown(body.proneDelay, step);
   countDown(body.jumpDelay, step);
@@ -241,7 +230,7 @@ void carryRemoteSoldier(BodyState& body, SwimState& swim, const Vec3f& feet,
   // the node. What surface speed the original's ghost has is not established;
   // ours is the network's velocity along the ground.
   body.surfaceSpeed = Vec3f{velocity.x, 0.0f, velocity.z};
-  collideSoldier(body, yaw, physics, terrain, collision);
+  collideSoldier(body, feet, yaw, physics, terrain, collision);
 }
 
 }  // namespace obf2::server

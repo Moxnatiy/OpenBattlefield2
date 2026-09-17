@@ -184,7 +184,77 @@ static void testFacesWithBadIndicesAreSkipped() {
   CHECK_EQ(world.triangleCount(), std::size_t(1));
 }
 
+// `getDistanceToSphere` (Linux server 0x71a500), the moving sphere against a face
+// moved out by the radius (`checkShiftedFaceCollision` 0x724e40): the wall faces
+// -X, the sphere of 0.25 goes from x -0.5 to -0.1, meeting the moved face at -0.25.
+static void testMovingSphereMeetsTheFace() {
+  server::CollisionWorld world;
+  world.addLayer(makeWall(0.0f), Mat4::identity());
+  std::vector<server::MeshContact> contacts;
+  world.sphereContacts(Vec3f{-0.5f, 0.0f, 0.0f}, Vec3f{0.4f, 0.0f, 0.0f}, 0.25f, contacts);
+  CHECK(!contacts.empty());
+  if (contacts.empty()) return;
+  const auto& c = contacts[0];
+  CHECK(std::abs(c.normal.x + 1.0f) < 1e-5f);
+  CHECK(std::abs(c.depth + 0.15f) < 1e-5f);
+  CHECK(std::abs(c.travel + 0.15f) < 1e-5f);
+  CHECK(std::abs(c.point.x) < 1e-5f);
+}
+
+// The resting sphere (`checkSphereTriCollision` 0x7254a0): 0.2 from the wall, a
+// radius of 0.25 is 0.05 deep. Moving away from the wall nothing is met: faces are
+// single sided (0x724bb6).
+static void testRestingSphereAndTheFacesSide() {
+  server::CollisionWorld world;
+  world.addLayer(makeWall(0.0f), Mat4::identity());
+  std::vector<server::MeshContact> contacts;
+  world.sphereContacts(Vec3f{-0.2f, 0.0f, 0.0f}, Vec3f{}, 0.25f, contacts);
+  CHECK_EQ(contacts.size(), std::size_t(2));  // both of the wall's triangles
+  if (!contacts.empty()) CHECK(std::abs(contacts[0].depth + 0.05f) < 1e-5f);
+
+  contacts.clear();
+  world.sphereContacts(Vec3f{-0.1f, 0.0f, 0.0f}, Vec3f{-0.4f, 0.0f, 0.0f}, 0.25f, contacts);
+  CHECK(contacts.empty());
+}
+
+// The moving sphere passing a floor's edge without meeting the face
+// (`checkExpandedEdgesCollision` 0x7266e0): the edge along Z at x = 0, the centre
+// 0.2 above it moving along X. It meets the edge's capsule at x = -0.15; the normal
+// points from the edge to the centre, the depth is the end's along it. Under the
+// floor the same contact has its normal flattened (0x71bb24).
+static void testMovingSphereMeetsAnEdge() {
+  mesh::CollisionLayer layer;
+  layer.vertices = {mesh::Vec3{0.0f, 0.0f, 1.0f}, mesh::Vec3{0.0f, 0.0f, -1.0f},
+                    mesh::Vec3{1.0f, 0.0f, 0.0f}};
+  layer.faces = {mesh::CollisionFace{0, 1, 2, 0}};
+  server::CollisionWorld world;
+  world.addLayer(layer, Mat4::identity());
+
+  std::vector<server::MeshContact> contacts;
+  world.sphereContacts(Vec3f{-0.5f, 0.2f, 0.0f}, Vec3f{0.4f, 0.0f, 0.0f}, 0.25f, contacts);
+  CHECK_EQ(contacts.size(), std::size_t(1));
+  if (!contacts.empty()) {
+    const auto& c = contacts[0];
+    CHECK(std::abs(c.normal.x + 0.6f) < 1e-4f);
+    CHECK(std::abs(c.normal.y - 0.8f) < 1e-4f);
+    CHECK(std::abs(c.depth + 0.03f) < 1e-4f);
+    CHECK(std::abs(c.travel + 0.05f) < 1e-4f);
+    CHECK(length(c.point) < 1e-4f);
+  }
+
+  contacts.clear();
+  world.sphereContacts(Vec3f{-0.5f, -0.2f, 0.0f}, Vec3f{0.4f, 0.0f, 0.0f}, 0.25f, contacts);
+  CHECK_EQ(contacts.size(), std::size_t(1));
+  if (!contacts.empty()) {
+    CHECK(std::abs(contacts[0].normal.x + 1.0f) < 1e-4f);
+    CHECK(std::abs(contacts[0].normal.y) < 1e-6f);
+  }
+}
+
 TEST_MAIN({
+  testMovingSphereMeetsTheFace();
+  testRestingSphereAndTheFacesSide();
+  testMovingSphereMeetsAnEdge();
   testParseVersion10();
   testVersion8HasNoLayerType();
   testTruncatedFileIsRejected();

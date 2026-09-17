@@ -470,8 +470,172 @@ What the states show of it: the velocity is left as it was and the local linear
 speed takes back its part along the normal — 0.486 up while standing, 6.449 on a
 landing, (0.149, 0.799, 0.391) on a slope.
 
-**Not reversed yet:** `checkSoldierVsMesh` (0x6f44a0), the objects; the terrain
-material map; the water half of `internal_checkVsTerrain`.
+**Not reversed yet:** the terrain material map; the water half of
+`internal_checkVsTerrain`.
+
+### Contacts with objects
+
+`ResponsePhysicsManager::checkSoldierObjectVsObjects` (Linux 0x6ed080) gathers the
+objects near the soldier (`getCollisionObjects`, their collision LOD 2 — the
+soldier layer — present, bounding spheres overlapping) and hands each to the
+soldier's response physics' `checkObjectVsObject` (vtable 0x50; Linux 0x6f5bf0,
+`BF2.exe` `FUN_006efa70`), which for static and plain response objects calls
+`checkSoldierVsMesh(soldier, object, step, 1.0, true)` (Linux 0x6f44a0, `BF2.exe`
+`FUN_006ee4d0`), another soldier `checkSoldierVsSoldier` (0x6f4150, `FUN_006ed4c0`),
+a point object `checkSoldierVsPoint` (0x6f57f0).
+
+`checkSoldierVsMesh(soldier, object, step, scale, useFaceNormals)`:
+
+```
+return if the soldier is attached (+0x50) or either mesh lacks its LOD (1 soldier, 2 object)
+prev = the soldier node's previous transformation's position (vtable 0xa0, +0x30)
+objectMove = the object's own displacement this tick, when its response class is
+             CID_ResponsePhysics (a moving body), else 0
+d = position - prev - objectMove              the soldier's motion this tick
+start = position - d
+count, spacing = getSoldierHeight(pose)       standing: 5 and (1.7 - 2r) / 4
+r = the soldier's radius (template vtable 0x68 in BF2.exe) — coll-soldier-radius
+low = r - coll-soldier-pivot-height           the lowest sphere's centre off the pivot
+dir = normalize(d), zero when |d|² is under epsilon
+e = r * coll-soldier-extend-ray (0.9) * scale * 0.5
+for i in 0..count-1:
+  centre = (start.x, start.y + low + i * spacing, start.z)
+  object mesh->getDistanceToSphere(lod 2, false, object matrix, its inverse,
+      from = centre - dir * e, motion = d + dir * e, radius = r * scale,
+      → normals, points, depths, travel, materials)
+for every hit j with depth < 0:
+  deepest = min(deepest, depth)
+  normal, strength = useFaceNormals ? normals[j], depths[j] : -dir, travel[j]
+  scale < 1: strength *= coll-soldier-collision-adjust-mod / scale
+  v = soldier node's speed at the point - object node's speed at the point
+  (fall damage and the hit-by-moving-object callbacks here, when v is not zero)
+  feet = point.y < start.y + low + phy-soldier-feet-level (-0.04)
+         → setCollidingMeshTangentSpeed(object's speed)
+  internalImpulseOn(v, normal, strength, soldier material, object material, feet)
+  feet and normal.y > groundNormal.y: groundNormal = normal, on the ground
+```
+
+`CollisionMeshTemplate::getDistanceToSphere` (Linux 0x71a500) works in the mesh's
+own space (`from` and `motion` through the inverse matrix, results back through
+the matrix). Its switches, registered in the static initialiser 0x718d42..0x718de7:
+
+| variable | default |
+|---|---|
+| `g_coll_use_face` | 1 |
+| `g_coll_use_cyl` | 1 |
+| `g_coll_use_cyl_normal` | 1 |
+| `g_coll_use_fast_sphere_at_length` | 0.01 (`0x3c23d70a`) |
+| `g_edgeCollisionLimit` | 0.866 (`0x3f5db22d`) |
+
+```
+fast = |motion| <= 0.01
+faces = Bsp::getCollidingFacesInsideCapsule(from, from + motion,
+                                            fast ? r * 1.5 : r)      0x708f40
+for each face (use_face):
+  fast:     checkSphereTriCollision(face, from + motion, r)          0x7254a0
+  not fast: checkShiftedFaceCollision(face, from, from + motion, r)  0x724e40
+  a hit with depth <= 0: push normal, point, depth, travel, the face's material
+not fast and no face hit (use_cyl): checkExpandedEdgesCollision      0x7266e0
+```
+
+`checkShiftedFaceCollision(v0, v1, v2, n, from, to, r)` (0x724e40): nothing when
+`|to - from|²` is under epsilon; otherwise the triangle moved out along its normal
+by `r` goes to `checkFaceAndEdgeCollision`, and the point it returns is moved back
+by `n r`.
+
+`checkFaceAndEdgeCollision(v0, v1, v2, n, from, to, out point, out depth, out
+travel, doubleSided)` (0x724ae0):
+
+```
+D = to - from; nothing when D is zero
+depth = dot(to - v0, n);   nothing when depth > 0          the end is in front
+dFrom = dot(from - v0, n); nothing when dFrom < 0          the start is behind
+dn = dot(n, D); single sided: nothing when dn >= 0
+t = dFrom / -dn
+axes: |n.y| >= 0.7 (0xb35e38) → x, z;  else |n.z| > 0.3 (0xb2f3d4) → x, y;  else y, z
+p = from + D t on those two axes
+e0 = (p.u - v0.u)(v1.v - v0.v) - (p.v - v0.v)(v1.u - v0.u)
+e1 = (p.u - v1.u)(v2.v - v1.v) - (p.v - v1.v)(v2.u - v1.u)
+e2 = (p.u - v2.u)(v0.v - v2.v) - (p.v - v2.v)(v0.u - v2.u)
+nothing when e0 < -eps and (e1 > eps or e2 > eps),
+          or e0 > eps and (e1 < -eps or e2 < -eps)          eps 1.19e-7
+p on the third axis; out depth = depth; out travel = (t - 1) |D|
+```
+
+A face hit of the moving sphere is pushed as (point, the face's normal, depth,
+travel, the face's material through the template's mapping `+0x28`) — 0x71b569.
+
+The resting sphere, `checkSphereTriCollision(v, n, c, r, out point, out normal,
+out depth)` (0x7254a0):
+
+```
+dist = dot(c - v0, n); nothing when |dist| > r
+p = c - n dist
+inside = classifyPointToTriEdges(v, n, p)
+inside == 7:  point = p, normal = n, depth = dist - r
+otherwise, for i = 0, 1, 2 with bit i clear, prev starting at 2 then i:
+  checkSphereLineCollision(c, r, v[i], v[prev]) → a hit is the answer
+  a miss past an end remembers that end's vertex (side 0: v[i], side 1: v[prev])
+no edge hit and a vertex remembered: checkSpherePointCollision(c, r, that vertex)
+```
+
+`classifyPointToTriEdges(v, n, p)` (0x723b70): the same axis choice (0.7, 0.3);
+bit 0 when `(p.u − v2.u)(v0.v − v2.v) − (p.v − v2.v)(v0.u − v2.u) >= 0`, bit 1 for
+the edge v0→v1, bit 2 for v1→v2; all three bits flipped when the centroid (the mean
+of the vertices, `1/3` at 0xb4a5d8) tests negative against the edge v1→v2 — so 7
+is "inside" whatever the winding.
+
+`checkSphereLineCollision(c, r, a, b, out point, out normal, out depth, out side)`
+(0x7251c0): `L = b − a`; `s = dot(c − a, L) / |L|`; `s < 0` → side 0, nothing;
+`s > |L|` → side 1, nothing; `point = a + L s / |L|`, `normal = c − point`,
+nothing when `|normal| > r`, else normalised and `depth = |normal| − r`.
+
+`checkSpherePointCollision(c, r, p, ...)` (0x723a70): `d = c − p`, nothing when
+`|d| > r`; point `p`, normal `d / |d|`, depth `|d| − r`.
+
+The moving sphere against a mesh none of whose faces it met,
+`checkExpandedEdgesCollision(flags, v0, v1, v2, n, from, to, r, out point, out
+normal, out depth, out travel)` (0x7266e0, decompiled in Ghidra from the imported
+Linux server):
+
+```
+for the edges (v0, v2), (v1, v0), (v2, v1):
+  getIntersectionOfCapsAndEdgeNew(from, to - from, a, b - a, r)     0x726540
+    nothing when getClosestDistanceBetweenLines(from..to, a..b) > r (0x723cf0)
+    getIntersectionOfCapsAndEdgeInternal → the centre's path against the capsule
+      of r around the edge (0x725b90): the cylinder's roots within the edge's
+      length, then each cap's beyond its end — the entry and the exit
+    keeps the roots within [0, 1]
+  t = the smaller of the two kept (the one kept when there is one)
+  the smallest t over the edges wins; centre = from + (to - from) t
+point = the edge's closest point to the centre (clamped to its ends)
+normal = normalize(centre - point)
+depth = dot(normal, to - centre);  travel = -|to - centre|
+```
+
+`getDistanceToSphere` pushes such a hit when its depth is under zero (0x71b549),
+after flattening a normal that points down: `normal.y = 0`, renormalised, and the
+hit dropped when nothing is left (0x71bb24). The normal pushed is the edge's
+(`g_coll_use_cyl_normal` 1); the depth and travel go into the result vectors in
+the order depth, travel (0x71b90b, 0x71b94b).
+
+Ours: `CollisionWorld::sphereContacts` (collision_world.h) and
+`soldierVsMeshes` (soldier_node.h). The object meshes are the placed objects'
+soldier layers flattened into world space; the engine's BSP capsule query is a
+candidate filter only, and ours is the world grid. The face's material is not
+mapped to a global material yet.
+
+Measured on the live server, strafing into a wall on Dalian Plant, standing
+against it, jumping at it and running along it: 138 states with the wall's push
+in the local linear speed, every one within 1 mm of our prediction; the one state
+off (8 cm) moved twice one tick's distance on the server (0.148 m at 1.8–2.5 m/s),
+which no single tick of this physics gives — what the server played there is the
+action buffer's question, not the collision's.
+
+`getSoldierHeight(out count, out spacing)` (0x6f39f0) by pose (`Soldier::getPose`):
+standing 5 spheres, `spacing = (coll-soldier-stand-height − 2r) / 4` = 0.3; crouching
+3 over `coll-soldier-crouch-height`; prone 1, spacing 0 (the −2.0 at 0xb3e814).
+The radius is `Soldier::getSoldierRadius`, `coll-soldier-radius` (0x5467e0).
 
 Measured with all of the above on the live server (`--trace-own-state`, a run
 with a standing jump, steering in the air, a sprint jump and a run jump): of 590

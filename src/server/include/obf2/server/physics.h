@@ -152,6 +152,10 @@ struct PhysicsConstants {
   // How gentle a surface still holds: 0.5 is a slope of up to 60 degrees.
   float feetContactNormal = 0.5f;  // phy-soldier-feet-contact-normal
   float feetLevel = -0.04f;        // phy-soldier-feet-level
+  // How far back the object sweep starts, as a share of the radius times one half
+  // (`checkSoldierVsMesh`, Linux 0x6f4976, `BF2.exe` `DAT_00a08a34`); the engine's
+  // default, docs/reference/soldier-vars.txt.
+  float extendRay = 0.9f;          // coll-soldier-extend-ray
 
   // The share of the soldier's height in water at which he floats up and at which
   // he stands on the bottom again. Hysteresis, so he does not jitter at the boundary.

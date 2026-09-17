@@ -12,6 +12,7 @@
 #include <functional>
 
 #include "obf2/core/math.h"
+#include "obf2/server/collision_world.h"
 #include "obf2/server/physics.h"
 
 namespace obf2::server {
@@ -34,11 +35,11 @@ void stepSoldierNode(BodyState& body, float matrixYaw, const PhysicsConstants& p
 // The surface speed is kept.
 void resetSoldierContacts(BodyState& body, const PhysicsConstants& physics);
 
-// One contact, `internalImpulseOn` (0x6f26f0): `depth` is how far the contact
-// point is under the surface along the vertical (not above zero), `normal` the
-// surface's. It collects
+// One contact, `internalImpulseOn` (0x6f26f0): `strength` is how far the body is
+// under the surface (not above zero) — the terrain hands its depth times the
+// normal's y, a mesh its depth — and `normal` the surface's. It collects
 //
-//   positionAdjust  <- normal * (-depth * normal.y)          (0x6f27dd)
+//   positionAdjust  <- normal * -strength                    (0x6f27dd)
 //   speedAdjust     <- -(dot(velocity, normal) / |normal|²) normal  (0x6f27ee)
 //   contactSpeed     = the mean of the contacts' velocities   (0x6f2803)
 //
@@ -46,7 +47,7 @@ void resetSoldierContacts(BodyState& body, const PhysicsConstants& physics);
 // the value, same signs keep the larger, opposite signs add. `feet` is the
 // collision mesh's first point: that one, on a surface whose normal is steeper
 // up than the ground's so far, becomes the ground (0x6f63ca..0x6f6433).
-void soldierImpulse(BodyState& body, float depth, const Vec3f& normal, bool feet);
+void soldierImpulse(BodyState& body, float strength, const Vec3f& normal, bool feet);
 
 // `solveImpulse` (0x6f7690), its first half: the position takes the position
 // adjustment (0x6f77b7), and a speed adjustment goes into the local linear speed
@@ -69,6 +70,16 @@ struct TerrainSample {
 };
 void soldierVsTerrain(BodyState& body, float yaw,
                       const std::function<TerrainSample(const Vec3f&)>& terrainAt);
+
+// The objects' pass, `checkSoldierVsMesh(soldier, object, step, 1.0, true)` (Linux
+// 0x6f44a0, `BF2.exe` `FUN_006ee4d0`) for every object near: the soldier's column
+// of spheres (`getSoldierHeight`, 0x6f39f0) swept from where the tick started,
+// `previous` (feet), to where the node put him, extended backwards by
+// `radius * coll-soldier-extend-ray * 0.5`, each contact an impulse of its depth
+// along the face's normal; a contact below the lowest sphere's centre less
+// `phy-soldier-feet-level` is at the feet.
+void soldierVsMeshes(BodyState& body, const Vec3f& previous, const PhysicsConstants& physics,
+                     const CollisionWorld& collision);
 
 // `addFriction`: on the ground, the surface speed the input asked for, less the
 // contacts' velocity, along the ground, becomes the node's friction for the next
