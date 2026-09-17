@@ -1733,12 +1733,12 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   // send, and a NESelectSpawnGroup event with zero means "not chosen" to the server
   // (`Player::getSpawnGroup() > 0`). **Source not found:** which group the game
   // substitutes by default we have not reversed. Debt.
-  int selectedSpawn = 0;
+  int& selectedSpawn = spawnScreen.mutableChoice().marker;
   // The control point's id for every circle, in the same order. It is exactly what
   // the server expects: in the engine the player sends not coordinates but a
   // group's number, and a group is the set of points of one flag
   // (docs/functions/spawn.md).
-  std::vector<int> spawnMarkerPoints;
+  // They live in the module (`SpawnInterface::markerPoints`), set on every rebuild.
   bool spawnDirty = false;
   struct OwnedPiece {
     obf2::gfx::GpuMesh mesh;
@@ -2028,45 +2028,18 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     selectedTeam = args.team == 2 ? 2 : 1;
     {
       obf2::engine::Console& console = engine.console();
-      console.bind("spawnManager.setPlayerKit", [&](const obf2::con::Command& command) {
-        selectedKit = command.argInt(0).value_or(selectedKit);
-        spawnDirty = true;
-      });
-      console.bind("spawnManager.setPlayerTeam", [&](const obf2::con::Command& command) {
-        selectedTeam = command.argInt(0).value_or(selectedTeam);
-        spawnDirty = true;
-      });
-      console.bind("SpawnManager.toggleMembers", [&](const obf2::con::Command& command) {
-        membersTab = command.argInt(0).value_or(0) != 0;
-        spawnDirty = true;
-      });
-      console.bind("hudManager.setDone", [&](const obf2::con::Command& command) {
-        if (command.argInt(0).value_or(1) == 0) {
-          spawnScreen.setRequested(false);
-          return;
-        }
-        // The spawn group's number is the control point's id for the chosen circle.
-        const bool haveMarker =
-            selectedSpawn >= 0 && selectedSpawn < static_cast<int>(spawnMarkerPoints.size());
-        const int group =
-            haveMarker ? spawnMarkerPoints[static_cast<std::size_t>(selectedSpawn)] : 0;
-        std::printf("  spawn screen: DONE — team %d, kit %d, point %d\n", selectedTeam,
-                    selectedKit, group);
-
-        // **We close the screen only when the request really went out.**
-        // We used to set `spawnScreen.requested()` first, and when no point turned
-        // out to be chosen the request did not go — while the screen was already
-        // gone. The result was a frozen picture with no player and no way out: that
-        // is "it hung after DONE".
-        if (!haveMarker || !requestSpawn) {
-          std::printf("    no spawn point chosen — the request did not go, the screen stays\n");
-          return;
-        }
-        spawnScreen.setRequested(requestSpawn(selectedTeam, selectedKit, group));
-        if (!spawnScreen.requested()) {
-          std::printf("    the request did not go — the screen stays\n");
-        }
-      });
+      // The screen's own commands are the module's, the one the test covers
+      // (`obf2/hud/spawn_interface.h`). They used to be written out a second time
+      // right here — the same logic in two places, and the tested copy was not the
+      // one that ran.
+      spawnScreen.bind(
+          console,
+          [&](int team, int kit, int group) {
+            return requestSpawn ? requestSpawn(team, kit, group) : false;
+          },
+          [&]() {
+            if (remote != nullptr) remote->commitSuicide();
+          });
       console.bind("hudItems.setBool", [&](const obf2::con::Command& command) {
         // `hudItems.setBool <name> <0|1>` — this is how the interface turns its own
         // flags on, SetSpawnPoint among them.
@@ -2120,12 +2093,6 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
         yaw = command.argFloat(0).value_or(0.0f);
         std::printf("  view: angle %.1f\n", static_cast<double>(yaw));
       });
-      console.bind("openbf2.selectSpawn", [&](const obf2::con::Command& command) {
-        selectedSpawn = command.argInt(0).value_or(0);
-        spawnDirty = true;
-        std::printf("  spawn screen: circle %d of %zu chosen\n", selectedSpawn,
-                    spawnMarkerPoints.size());
-      });
       // The scoreboard's three tabs. The buttons in the data run
       // `scoreboard.setToggleShow 0|1|2` (`HudElementsScoreboard.con`), and the
       // three flags they pick between are neighbours in the Scoreboard object —
@@ -2140,10 +2107,6 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
         hudVariables["ToggleManage"] = tab == 2;
         hudDirty = true;
         std::printf("  scoreboard: tab %d\n", tab);
-      });
-      console.bind("spawnManager.selectNextUnlock", [](const obf2::con::Command&) {});
-      console.bind("spawnManager.commitSuicide", [&](const obf2::con::Command&) {
-        if (remote != nullptr) remote->commitSuicide();
       });
       console.bind("sound.playSound", [](const obf2::con::Command&) {});
     }
@@ -2260,7 +2223,7 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       // another team's or a neutral one is not allowed.
       spawnContext.mapMarkers.clear();
       spawnContext.spawnMarkers.clear();
-      spawnMarkerPoints.clear();
+      std::vector<int> markerPoints;
       for (const auto& point : hudControlPoints) {
         obf2::hud::Context::MapMarker marker;
         marker.worldX = point.position.x;
@@ -2274,9 +2237,10 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
               static_cast<int>(spawnContext.spawnMarkers.size()) == selectedSpawn;
           spawnContext.spawnMarkers.push_back(
               obf2::hud::Context::SpawnMarker{point.position.x, point.position.z, chosen});
-          spawnMarkerPoints.push_back(point.id);
+          markerPoints.push_back(point.id);
         }
       }
+      spawnScreen.setMarkerPoints(std::move(markerPoints));
       // The vehicles and the strategic objects come after the flags, the way the
       // original's batch has them.
       spawnContext.mapMarkers.insert(spawnContext.mapMarkers.end(), assetMapMarkers.begin(),
@@ -4206,7 +4170,6 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
         if (remote != nullptr && remote->world.ownTeam() > 0 &&
             selectedTeam != remote->world.ownTeam()) {
           spawnScreen.setTeamFromServer(remote->world.ownTeam());
-          selectedSpawn = spawnScreen.choice().marker;
           spawnDirty = true;
           std::printf("  spawn screen: the server gave team %d\n", selectedTeam);
         }
@@ -4240,7 +4203,7 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           }
         }
         if (!args.execLines.empty() && spawnVisible && !spawnPieces.empty() &&
-            !spawnMarkerPoints.empty() && teamKnown && !execDone) {
+            !spawnScreen.markerPoints().empty() && teamKnown && !execDone) {
           execDone = true;
           for (const std::string& line : args.execLines) {
             std::printf("  console: %s\n", line.c_str());
@@ -4436,6 +4399,11 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           // The right region is driven by the graph — see above. All that is left here
           // is to say that it moved.
           if (bottomRightX != wasRightX || bottomRightAlpha != wasRightAlpha) hudDirty = true;
+        }
+        // A choice changed by the screen's own commands (the module marks itself).
+        if (spawnScreen.dirty()) {
+          spawnDirty = true;
+          spawnScreen.clearDirty();
         }
         // We rebuild the spawn screen only while it is on screen.
         if ((spawnDirty && spawnVisible && rebuildSpawn) || (hudDirty && rebuildIngame)) {

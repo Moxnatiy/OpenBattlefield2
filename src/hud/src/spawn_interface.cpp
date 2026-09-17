@@ -18,7 +18,8 @@ int SpawnInterface::chosenPoint() const {
   return markerPoints_[static_cast<std::size_t>(choice_.marker)];
 }
 
-void SpawnInterface::bind(engine::Console& console, std::function<bool(int, int, int)> request) {
+void SpawnInterface::bind(engine::Console& console, std::function<bool(int, int, int)> request,
+                          std::function<void()> commitSuicide) {
   requestSpawn_ = std::move(request);
 
   // The command names come from the screen's own buttons' `setButtonNodeConCmd`
@@ -42,6 +43,8 @@ void SpawnInterface::bind(engine::Console& console, std::function<bool(int, int,
       return;
     }
     const int point = chosenPoint();
+    std::printf("  spawn screen: DONE — team %d, kit %d, point %d\n", choice_.team, choice_.kit,
+                point);
     // **We close the screen only when the request really went out.** The flag used
     // to be set first, and when no spawn point had been chosen the request did not
     // go — while the screen was already gone. The result was a frozen picture with
@@ -61,12 +64,16 @@ void SpawnInterface::bind(engine::Console& console, std::function<bool(int, int,
   console.bind("openbf2.selectSpawn", [this](const con::Command& command) {
     choice_.marker = command.argInt(0).value_or(0);
     dirty_ = true;
+    std::printf("  spawn screen: circle %d of %zu chosen\n", choice_.marker, markerPoints_.size());
   });
 
   // These two have nothing to work on yet, but the command has to be eaten —
   // otherwise the console will consider it unknown.
   console.bind("spawnManager.selectNextUnlock", [](const con::Command&) {});
-  console.bind("spawnManager.commitSuicide", [](const con::Command&) {});
+  console.bind("spawnManager.commitSuicide", [suicide = std::move(commitSuicide)](
+                                                 const con::Command&) {
+    if (suicide) suicide();
+  });
 }
 
 }  // namespace obf2::hud

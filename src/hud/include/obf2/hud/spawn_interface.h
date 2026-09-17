@@ -33,7 +33,10 @@ class SpawnInterface {
   // (team, kit, control point id) and returns whether the request really went to
   // the server: if not, the screen stays where it is. Otherwise the result was a
   // frozen picture with no player.
-  void bind(engine::Console& console, std::function<bool(int, int, int)> requestSpawn);
+  // `commitSuicide` is the SUICIDE button's `spawnManager.commitSuicide`; empty
+  // eats the command without doing anything.
+  void bind(engine::Console& console, std::function<bool(int, int, int)> requestSpawn,
+            std::function<void()> commitSuicide = {});
 
   const SpawnChoice& choice() const { return choice_; }
   // While the spawn screen is still half in `main.cpp`, it needs direct access.

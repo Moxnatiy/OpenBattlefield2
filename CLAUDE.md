@@ -366,6 +366,12 @@ In order of usefulness. Each item is a module with a test:
    dependency — `session::Settings` holds the ten fields that mattered,
    by value.
 2. **`app/spawn_screen`** — the spawn screen: selection state, clicks, DONE.
+   **Begun:** the state and the screen's commands (kit, team, tab, DONE, the
+   chosen circle and its control points, SUICIDE) run through
+   `obf2::hud::SpawnInterface::bind`, the module the test covers. They had been
+   written out a second time in `main.cpp`, so the tested copy was not the one
+   that ran. What is left in `main.cpp`: the rebuild of the screen's geometry,
+   the map markers and the click hit-testing.
 3. **`app/frame_loop`** — camera, input, the prediction step.
 4. **`hud/ingame`** — assembling the battle HUD and its live values.
 5. **`app/scene_build`** — loading a level into the scene and uploading it
