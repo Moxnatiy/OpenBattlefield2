@@ -4,7 +4,6 @@
 #include <limits>
 
 namespace obf2::game {
-namespace {
 
 Mat4 childTransform(const ChildTemplate& child) {
   Mat4 transform = Mat4::identity();
@@ -16,6 +15,8 @@ Mat4 childTransform(const ChildTemplate& child) {
   }
   return transform;
 }
+
+namespace {
 
 void walk(const Registry& registry, const ObjectTemplate& object, const Mat4& parentTransform,
           int depth, int maxDepth, ObjectInstance& instance,

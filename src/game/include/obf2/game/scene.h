@@ -47,6 +47,9 @@ struct ObjectInstance {
   int maxDepth = 0;
 };
 
+// A child's place in its parent: `setPosition` after `setRotation`.
+Mat4 childTransform(const ChildTemplate& child);
+
 // A walk of the child tree accumulating the transforms.
 std::optional<ObjectInstance> flattenObject(const Registry& registry, std::string_view rootName,
                                             int maxDepth = 16);

@@ -621,7 +621,8 @@ the order depth, travel (0x71b90b, 0x71b94b).
 
 Ours: `CollisionWorld::sphereContacts` (collision_world.h) and
 `soldierVsMeshes` (soldier_node.h). The object meshes are the placed objects'
-soldier layers flattened into world space; the engine's BSP capsule query is a
+soldier layers flattened into world space, plus the spawned objects (below); the
+engine's BSP capsule query is a
 candidate filter only, and ours is the world grid. The face's material is not
 mapped to a global material yet.
 
@@ -631,6 +632,77 @@ in the local linear speed, every one within 1 mm of our prediction; the one stat
 off (8 cm) moved twice one tick's distance on the server (0.148 m at 1.8–2.5 m/s),
 which no single tick of this physics gives — what the server played there is the
 action buffer's question, not the collision's.
+
+#### Which collision a soldier meets
+
+**The lod.** `CollisionManager::load` (Linux 0x712e00) reads the file's two
+version numbers and a part count, then one `CollisionMeshTemplate` per part
+(`load`, 0x71f600). Per part: a geom count; per geom: a lod count, and per lod its
+type (from version 0.9; before it the order) and its data. A geom keeps a vector
+of lods and a five-slot table (Geom +0x18..+0x28, all -1 to start):
+
+* a lod read with type `t` writes `t` into slot `t` and resizes the vector to
+  `t + 1` — erasing past it if it was longer — and stands at position `t`;
+* a lod of type 3 (AI navigation) is skipped whole unless the setting `keepAINav`
+  is on, and its slot goes back to -1;
+* after the geom: an empty slot 2 (soldier) takes slot 1's (vehicle), an empty
+  slot 3 takes slot 2's.
+
+`load` returns whether any geom had a lod count above zero. Back in the manager,
+the parts from the first one that returned false after one that returned true are
+deleted, unless that is part 0. If no part has lods in geom 0
+(`isGeomValid(0)`, 0x718f00), every part gets
+`setUseCollisionAsFirstPerson` (0x719670): its geoms move down one and the last
+goes — a vehicle's file keeps an empty first-person geom 0, so its third-person
+geom becomes 0 and its wreck 1.
+
+`CollisionMesh::hasLod(t)` (0x717e70 → `isLodValid` 0x7194e0) is true when the
+object's geom's slot `t`, compared unsigned, is inside the vector and that lod is
+not a null. `getValidLod(geom, t)` (0x719810) takes the same slot clamped to the
+last lod and to 0. A `CollisionMesh` starts on geom 0 (its constructor, 0x717dc0,
++0x24); `setGeometry(wreck)` (0x718650) moves it to 1 when there are two geoms.
+
+Measured on the game's files: the olive trees (`me_olivebig01`) have lods of types
+0, 1, 3 and 4 and no soldier lod — by the table above a soldier meets their
+vehicle lod, and with it 159 more placed objects on Strike at Karkand collide
+(1197 against 1038). Type 4 is one triangle there; its purpose is not established.
+
+**The parts.** The root takes part 0 of its template's mesh
+(`ObjectSpawner::getCollisionMesh`, 0x52f8e7, asks
+`CollisionManager::getCollisionMeshPart(name, 0)` — vtable 0x58, 0x713b50 — for
+the template it spawns). `Bundle::init` (0x574860) hands the bundle's mesh name
+to `setChildPartCollisionMeshes` (0x574760): for every child that has no mesh yet,
+a template with `collisionPart` (`SimpleObjectTemplate` +0x78, set at 0x507830)
+above 0 gets that part of the same mesh; it recurses into the child's children and
+goes on to the next sibling, and stops at the first child that already has a mesh.
+The LW155 howitzer: part 0 the carriage (30 faces), the barrel base's part 2
+(6 faces, 6.8 m long); the saddle's and the barrel's parts have no soldier lod.
+
+**Spawned objects.** `ObjectSpawner::spawnObject` (0x52ff50) creates its template
+at the spawner's position plus its offset (+0x300) with the spawner's rotation,
+negated ZXY angles passed to `gameLogic` vtable 0x238; they stand in the world like
+any object. The client learns them from `CreateObjectEvent` (position, rotation,
+template number) and the ghost stream (position).
+
+Ours: `CollisionMesh::validLayer` (collision.h), `CollisionLibrary` and
+`buildCollisionWorld` (collision_objects.h), movable objects in `CollisionWorld`,
+and `RemoteWorld::syncMovableCollision`, which adds every object the server
+created whose template is not the placed static at its creation point, moves it
+with its newest position and removes it with its ghost. The rotation is the create
+event's; the quaternion in the object's own update is not read, and the create
+rotation's sign against the level's was seen only on zero rotations.
+
+Measured on the live server, the same 5000-frame run (strafes, jumps, sprints,
+turns) before and after: a sprint along an LW155's barrel drew 29 states over 1 cm
+with our local linear speed never showing its push — the server's did, along
+(0.997, 0, 0.079), the barrel's taper. With the lod table, the parts and the
+spawned objects: 5 states over 1 cm of 986, and every one of them is the action
+buffer's — the server moved the soldier exactly two ticks for one state (486, 703,
+940), or ~16 through a stall of our client (323).
+
+A respawn used to add a few: our replay restored the previous life's records
+(its air-control timers) into the new soldier's first ticks. The new body now
+starts from nothing, as `Soldier::resetInstance` (0x549df0) leaves the timers.
 
 `getSoldierHeight(out count, out spacing)` (0x6f39f0) by pose (`Soldier::getPose`):
 standing 5 spheres, `spacing = (coll-soldier-stand-height − 2r) / 4` = 0.3; crouching

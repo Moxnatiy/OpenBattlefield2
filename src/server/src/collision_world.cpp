@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace obf2::server {
 namespace {
@@ -399,6 +400,23 @@ void CollisionWorld::sphereContacts(const Vec3f& from, const Vec3f& motion, floa
     }
     it->faces.push_back(&tri);
   });
+  for (const Movable& movable : movables_) {
+    if (!movable.alive) continue;
+    if (middle.x + reach < movable.minimum.x || middle.x - reach > movable.maximum.x ||
+        middle.y + reach < movable.minimum.y || middle.y - reach > movable.maximum.y ||
+        middle.z + reach < movable.minimum.z || middle.z - reach > movable.maximum.z) {
+      continue;
+    }
+    for (const CollisionTriangle& tri : movable.triangles) {
+      auto it = std::find_if(objects.begin(), objects.end(),
+                             [&](const PerObject& o) { return o.object == tri.object; });
+      if (it == objects.end()) {
+        objects.push_back({tri.object, false, {}});
+        it = objects.end() - 1;
+      }
+      it->faces.push_back(&tri);
+    }
+  }
 
   for (PerObject& object : objects) {
     for (const CollisionTriangle* tri : object.faces) {
@@ -450,14 +468,16 @@ std::uint64_t CollisionWorld::cellKey(int x, int y, int z) {
   return (ux << 42) | (uy << 21) | uz;
 }
 
-void CollisionWorld::addLayer(const mesh::CollisionLayer& layer, const Mat4& transform) {
-  const std::uint32_t object = layers_++;
+namespace {
+
+// The layer's faces in world space, degenerate and corrupt ones left out.
+void worldTriangles(const mesh::CollisionLayer& layer, const Mat4& transform,
+                    std::uint32_t object, std::vector<CollisionTriangle>& out) {
   for (const mesh::CollisionFace& face : layer.faces) {
     if (face.a >= layer.vertices.size() || face.b >= layer.vertices.size() ||
         face.c >= layer.vertices.size()) {
       continue;  // a corrupt face — skipped rather than fatal
     }
-
     CollisionTriangle triangle;
     auto toWorld = [&](const mesh::Vec3& v) {
       return transformPoint(transform, Vec3f{v.x, v.y, v.z});
@@ -465,22 +485,76 @@ void CollisionWorld::addLayer(const mesh::CollisionLayer& layer, const Mat4& tra
     triangle.a = toWorld(layer.vertices[face.a]);
     triangle.b = toWorld(layer.vertices[face.b]);
     triangle.c = toWorld(layer.vertices[face.c]);
-
-    const Vec3f edge1 = triangle.b - triangle.a;
-    const Vec3f edge2 = triangle.c - triangle.a;
     // The normal follows the engine's left-handed convention, that is the
     // opposite of the usual right-handed cross product. That is visible in
     // Dalian Plant's own data: with this sign 12081 triangles face up against
     // 5999 down, which is what one expects of a world of roads, roofs and stairs.
-    const Vec3f normal = cross(edge2, edge1);
+    const Vec3f normal = cross(triangle.c - triangle.a, triangle.b - triangle.a);
     const float area = length(normal);
     if (area < 1e-6f) continue;  // a degenerate triangle
     triangle.normal = normal * (1.0f / area);
     triangle.object = object;
     triangle.material = face.material;
+    out.push_back(triangle);
+  }
+}
 
-    const auto index = static_cast<std::uint32_t>(triangles_.size());
-    triangles_.push_back(triangle);
+}  // namespace
+
+std::uint32_t CollisionWorld::addMovable(std::vector<CollisionPiece> pieces,
+                                         const Mat4& transform) {
+  Movable movable;
+  movable.pieces = std::move(pieces);
+  for (std::size_t i = 0; i < movable.pieces.size(); ++i) movable.objects.push_back(layers_++);
+  movable.alive = true;
+  placeTriangles(movable, transform);
+  movables_.push_back(std::move(movable));
+  return static_cast<std::uint32_t>(movables_.size() - 1);
+}
+
+void CollisionWorld::placeMovable(std::uint32_t handle, const Mat4& transform) {
+  if (handle >= movables_.size() || !movables_[handle].alive) return;
+  placeTriangles(movables_[handle], transform);
+}
+
+void CollisionWorld::removeMovable(std::uint32_t handle) {
+  if (handle >= movables_.size()) return;
+  movables_[handle].alive = false;
+  movables_[handle].triangles.clear();
+}
+
+std::size_t CollisionWorld::movableCount() const {
+  return static_cast<std::size_t>(std::count_if(movables_.begin(), movables_.end(),
+                                                [](const Movable& m) { return m.alive; }));
+}
+
+void CollisionWorld::placeTriangles(Movable& movable, const Mat4& transform) {
+  movable.triangles.clear();
+  for (std::size_t i = 0; i < movable.pieces.size(); ++i) {
+    const CollisionPiece& piece = movable.pieces[i];
+    if (piece.layer == nullptr) continue;
+    worldTriangles(*piece.layer, transform * piece.local, movable.objects[i], movable.triangles);
+  }
+  const float big = std::numeric_limits<float>::max();
+  movable.minimum = Vec3f{big, big, big};
+  movable.maximum = Vec3f{-big, -big, -big};
+  for (const CollisionTriangle& t : movable.triangles) {
+    for (const Vec3f& p : {t.a, t.b, t.c}) {
+      movable.minimum = Vec3f{std::min(movable.minimum.x, p.x), std::min(movable.minimum.y, p.y),
+                              std::min(movable.minimum.z, p.z)};
+      movable.maximum = Vec3f{std::max(movable.maximum.x, p.x), std::max(movable.maximum.y, p.y),
+                              std::max(movable.maximum.z, p.z)};
+    }
+  }
+}
+
+void CollisionWorld::addLayer(const mesh::CollisionLayer& layer, const Mat4& transform) {
+  const std::uint32_t object = layers_++;
+  const std::size_t first = triangles_.size();
+  worldTriangles(layer, transform, object, triangles_);
+  for (std::size_t i = first; i < triangles_.size(); ++i) {
+    const CollisionTriangle& triangle = triangles_[i];
+    const auto index = static_cast<std::uint32_t>(i);
 
     // A triangle goes into every cell its bounding box crosses.
     const Vec3f minimum{std::min({triangle.a.x, triangle.b.x, triangle.c.x}),

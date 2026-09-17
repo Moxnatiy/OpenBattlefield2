@@ -534,6 +534,35 @@ int main(int argc, char** argv) {
   // compare the geometric normal (the cross product of the edges) with the
   // vertex normals the artist set explicitly. When they look the same way the
   // walk is counter-clockwise, and those are the faces that face us.
+  // One collision mesh, layer by layer: its purpose, faces, vertices and bounds.
+  if (obf2::assetExtension(what) == "collisionmesh") {
+    const std::string path{what};
+    const auto bytes = files.read(path);
+    if (!bytes) { std::fprintf(stderr, "not found: %s\n", path.c_str()); return 1; }
+    std::string error;
+    const auto mesh = obf2::mesh::loadCollisionMesh(*bytes, &error);
+    if (!mesh) { std::fprintf(stderr, "%s: %s\n", path.c_str(), error.c_str()); return 1; }
+    std::printf("%s: version %u.%u, %zu layers\n", path.c_str(), mesh->versionMajor,
+                mesh->versionMinor, mesh->layers.size());
+    for (std::size_t i = 0; i < mesh->layers.size(); ++i) {
+      const auto& layer = mesh->layers[i];
+      std::printf("  layer %zu: type %u, %zu faces, %zu vertices, bounds %.2f %.2f %.2f .. %.2f %.2f %.2f\n",
+                  i, static_cast<unsigned>(layer.type), layer.faces.size(), layer.vertices.size(),
+                  layer.bounds.min.x, layer.bounds.min.y, layer.bounds.min.z, layer.bounds.max.x,
+                  layer.bounds.max.y, layer.bounds.max.z);
+    }
+    for (std::size_t part = 0; part < mesh->parts.size(); ++part) {
+      for (std::size_t geom = 0; geom < mesh->parts[part].geometries.size(); ++geom) {
+        const auto& lods = mesh->parts[part].geometries[geom];
+        std::printf("  part %zu geom %zu: lods", part, geom);
+        for (const int index : lods.lods) std::printf(" %d", index);
+        std::printf(", table %d %d %d %d %d\n", lods.table[0], lods.table[1], lods.table[2],
+                    lods.table[3], lods.table[4]);
+      }
+    }
+    return 0;
+  }
+
   // A regression of the collision parser on every .collisionmesh in the game.
   if (what == "--collision") {
     int parsed = 0, failed = 0;

@@ -41,6 +41,12 @@ struct MeshContact {
   std::uint16_t material = 0;
 };
 
+// One collision layer of an object's tree, in the root's space.
+struct CollisionPiece {
+  const mesh::CollisionLayer* layer = nullptr;
+  Mat4 local = Mat4::identity();
+};
+
 class CollisionWorld {
  public:
   // The grid cell's size. 8 metres is a compromise: a finer grid means more
@@ -49,6 +55,17 @@ class CollisionWorld {
 
   // Adds a collision layer transformed into world coordinates.
   void addLayer(const mesh::CollisionLayer& layer, const Mat4& transform);
+
+  // An object whose place the server gives and takes back — a vehicle an
+  // ObjectSpawner made. It stays out of the grid and is searched by its bounds.
+  // Every piece is an object of its own, the way each part of a bundle gets its
+  // own CollisionMesh (`setChildPartCollisionMeshes`, Linux 0x574760): a face met
+  // on one part does not turn off the edges of another. The layers are not
+  // copied and have to outlive the world.
+  std::uint32_t addMovable(std::vector<CollisionPiece> pieces, const Mat4& transform);
+  void placeMovable(std::uint32_t handle, const Mat4& transform);
+  void removeMovable(std::uint32_t handle);
+  std::size_t movableCount() const;
 
   // A sphere of `radius` moving from `from` by `motion`, against every object's
   // mesh near it, the engine's way (`getDistanceToSphere`): a resting sphere
@@ -88,6 +105,16 @@ class CollisionWorld {
   std::uint32_t layers_ = 0;
   std::vector<CollisionTriangle> triangles_;
   std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> cells_;
+
+  struct Movable {
+    std::vector<CollisionPiece> pieces;
+    std::vector<std::uint32_t> objects;  // one object number per piece
+    std::vector<CollisionTriangle> triangles;
+    Vec3f minimum, maximum;
+    bool alive = false;
+  };
+  void placeTriangles(Movable& movable, const Mat4& transform);
+  std::vector<Movable> movables_;
 };
 
 }  // namespace obf2::server

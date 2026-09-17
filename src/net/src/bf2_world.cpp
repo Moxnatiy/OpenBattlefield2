@@ -64,6 +64,7 @@ void WorldView::feed(std::span<const std::byte> packet) {
       // The position from the create event is the initial one; the stream refines it later.
       if (!object.fromGhostStream) object.position = *event.object->position;
       object.createdAt = *event.object->position;
+      object.createdRotation = event.object->rotation;
       object.templateId = event.object->templateId;
     }
     if (event.enter) {

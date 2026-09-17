@@ -30,6 +30,8 @@ namespace obf2::net::bf2 {
 struct RemoteObject {
   Vec3f position;
   Vec3f createdAt;  // the position `CreateObjectEvent` gave it
+  // The rotation it gave, when it gave one (bf2_events.h, CreateObject::rotation).
+  std::optional<Vec3f> createdRotation;
   std::optional<float> yaw;  // degrees, when a yaw arrived: body yaw plus aim (soldier_state.h)
   // What the object is on the network, from its first full ghost record
   // (bf2_events.h, GhostClass). A soldier is a soldier by class — a jeep with a

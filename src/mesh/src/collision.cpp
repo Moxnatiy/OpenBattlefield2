@@ -155,6 +155,19 @@ const CollisionLayer* CollisionMesh::layer(ColType type) const {
   return nullptr;
 }
 
+const CollisionLayer* CollisionMesh::validLayer(std::size_t part, std::size_t geometry,
+                                                ColType type) const {
+  if (part >= parts.size() || geometry >= parts[part].geometries.size()) return nullptr;
+  const CollisionGeometry& lods = parts[part].geometries[geometry];
+  const auto slot = static_cast<std::size_t>(type);
+  if (slot >= 5) return nullptr;
+  // isLodValid (0x7194e0) compares the slot unsigned, so -1 is past the end.
+  const int lod = lods.table[slot];
+  if (lod < 0 || static_cast<std::size_t>(lod) >= lods.lods.size()) return nullptr;
+  const int index = lods.lods[static_cast<std::size_t>(lod)];
+  return index < 0 ? nullptr : &layers[static_cast<std::size_t>(index)];
+}
+
 std::optional<CollisionMesh> loadCollisionMesh(std::span<const std::byte> bytes,
                                                std::string* error) {
   Reader reader(bytes);
@@ -179,15 +192,75 @@ std::optional<CollisionMesh> loadCollisionMesh(std::span<const std::byte> bytes,
         reader.fail("implausible layer count");
         break;
       }
+      CollisionGeometry lods;
+      lods.colCount = layerCount;
+      // Before 0.9 the vector is the lod count up front (0x71f600).
+      if (mesh.versionMinor < 9) lods.lods.assign(layerCount, -1);
       for (std::uint32_t index = 0; index < layerCount && reader.ok(); ++index) {
         mesh.layers.push_back(readLayer(reader, mesh.versionMinor, index));
+        const auto type = static_cast<std::uint32_t>(mesh.layers.back().type);
+        if (type > 4) {
+          // The engine writes the slot at +0x18 + type * 4 unchecked; a type past
+          // the five slots is not in the game's files.
+          reader.fail("collision lod type past the engine's table");
+          break;
+        }
+        lods.table[type] = static_cast<int>(type);
+        // An AI lod is skipped whole with keepAINav off, its slot back to -1.
+        if (type == static_cast<std::uint32_t>(ColType::Ai)) {
+          lods.table[type] = -1;
+          if (mesh.versionMinor < 9) lods.lods[index] = -1;
+          continue;
+        }
+        if (mesh.versionMinor >= 9) lods.lods.resize(type + 1, -1);
+        lods.lods[type] = static_cast<int>(mesh.layers.size() - 1);
       }
+      if (lods.table[2] == -1) lods.table[2] = lods.table[1];
+      if (lods.table[3] == -1) lods.table[3] = lods.table[2];
+      if (mesh.parts.size() == part) mesh.parts.emplace_back();
+      mesh.parts[part].geometries.push_back(std::move(lods));
     }
+    if (mesh.parts.size() == part) mesh.parts.emplace_back();
   }
 
   if (!reader.ok()) {
     if (error) *error = reader.error();
     return std::nullopt;
+  }
+
+  // CollisionManager::load (Linux 0x712e00) after every part is read. A part
+  // whose geoms hold no lod at all fails its load (0x71f600 returns whether any
+  // geom had a lod); the parts from the first failure after a success on are
+  // dropped, unless that failure is the very first part.
+  int firstFailed = -1;
+  for (std::size_t part = 0; part < mesh.parts.size(); ++part) {
+    bool any = false;
+    for (const CollisionGeometry& geometry : mesh.parts[part].geometries) {
+      // `local_22d |= colCount != 0`: a geom counts even when its only lod was
+      // an AI one that was skipped.
+      any = any || geometry.colCount != 0;
+    }
+    if (any) {
+      firstFailed = -1;
+    }
+    else if (firstFailed == -1) {
+      firstFailed = static_cast<int>(part);
+    }
+  }
+  if (firstFailed > 0) mesh.parts.resize(static_cast<std::size_t>(firstFailed));
+
+  // No part with a geom 0 that holds lods (`isGeomValid(0)`, 0x718f00): every
+  // part's geoms move down by one and the last goes
+  // (`setUseCollisionAsFirstPerson`, 0x719670). A vehicle's file keeps an empty
+  // first-person geom 0, so its third-person geom becomes 0 and its wreck 1.
+  bool geometryZero = false;
+  for (const CollisionPart& part : mesh.parts) {
+    geometryZero = geometryZero || (!part.geometries.empty() && !part.geometries[0].lods.empty());
+  }
+  if (!geometryZero) {
+    for (CollisionPart& part : mesh.parts) {
+      if (!part.geometries.empty()) part.geometries.erase(part.geometries.begin());
+    }
   }
   return mesh;
 }

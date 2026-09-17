@@ -69,6 +69,7 @@
 #include "obf2/mesh/collision.h"
 #include "obf2/mesh/primitives.h"
 #include "obf2/mesh/skinning.h"
+#include "obf2/server/collision_objects.h"
 #include "obf2/server/collision_world.h"
 #include "obf2/texture/dds.h"
 #include "obf2/vfs/filesystem.h"
@@ -110,6 +111,10 @@ struct Args {
   // most of what is being compared. `tools/bf2_run.sh` puts the original at the
   // same place.
   std::optional<obf2::Vec3f> camera;
+  // --collision-near x/y/z: the placed objects within 15 m of a point, with the
+  // collision mesh each one's template and children name and what of it loaded —
+  // the measure for "the server stops us at a wall our world does not have".
+  std::optional<obf2::Vec3f> collisionNear;
   float cameraYaw = 0.0f;    // degrees; 0 looks along +Z, as the engine counts
   float cameraPitch = 0.0f;  // degrees; positive is up
   bool noHud = false;
@@ -270,6 +275,13 @@ Args parseArgs(int argc, char** argv) {
       command.args.emplace_back(argv[++i]);
       if (const auto point = command.argVec3(0)) {
         args.camera = obf2::Vec3f{point->x, point->y, point->z};
+      }
+    }
+    else if (flag == "--collision-near" && i + 1 < argc) {
+      obf2::con::Command command;
+      command.args.emplace_back(argv[++i]);
+      if (const auto point = command.argVec3(0)) {
+        args.collisionNear = obf2::Vec3f{point->x, point->y, point->z};
       }
     }
     else if (flag == "--angles" && i + 2 < argc) {
@@ -457,19 +469,6 @@ std::string resolveGeometryPath(obf2::FileSystem& files, const std::string& temp
   return {};
 }
 
-// The collision mesh lies next to the visible one, in the same meshes subdirectory.
-std::string resolveCollisionPath(obf2::FileSystem& files, const std::string& templateFile,
-                                 const std::string& name) {
-  if (name.empty()) return {};
-  const std::string_view dir = obf2::assetParentDir(templateFile);
-  for (const char* subdirectory : {"meshes/", ""}) {
-    const std::string candidate =
-        obf2::joinAssetPath(dir, std::string(subdirectory) + name + ".collisionmesh");
-    if (files.exists(candidate)) return candidate;
-  }
-  return {};
-}
-
 // Runs every .con/.tweak of the game through the interpreter and collects the template registry.
 
 // Template -> assembled geometry: the child tree plus the placement of the
@@ -651,66 +650,6 @@ obf2::server::PhysicsConstants loadPhysics(obf2::FileSystem& files) {
                                      [&](const obf2::con::Command& c) { console.execute(c); });
   interpreter.runFile("objects/soldiers/common/common.con");
   return constants;
-}
-
-// The collision world from the placed objects.
-//
-// Both paths need it: our own server, to move bodies, and the client on a real
-// server, so that movement prediction does not fall through a building's floor.
-// While it lived inside the `--hosted` branch, the client knew only the terrain.
-std::unique_ptr<obf2::server::CollisionWorld> buildCollisionWorld(
-    obf2::FileSystem& files, const obf2::game::Registry& registry,
-    const std::vector<obf2::level::StaticObject>& objects) {
-  auto world = std::make_unique<obf2::server::CollisionWorld>();
-  int withCollision = 0, withoutCollision = 0;
-  std::unordered_map<std::string, std::shared_ptr<obf2::mesh::CollisionMesh>> cache;
-
-  for (const auto& object : objects) {
-    auto cached = cache.find(object.templateName);
-    if (cached == cache.end()) {
-      std::shared_ptr<obf2::mesh::CollisionMesh> loaded;
-      if (const auto* root = registry.find(object.templateName)) {
-        // The collision mesh's name is a separate property of the template.
-        const std::string_view name = root->text("collisionMesh");
-        if (!name.empty()) {
-          const std::string path = resolveCollisionPath(files, root->file, std::string(name));
-          if (!path.empty()) {
-            if (const auto bytes = files.read(path)) {
-              if (auto mesh = obf2::mesh::loadCollisionMesh(*bytes)) {
-                loaded = std::make_shared<obf2::mesh::CollisionMesh>(std::move(*mesh));
-              }
-            }
-          }
-        }
-      }
-      cached = cache.emplace(object.templateName, std::move(loaded)).first;
-    }
-    if (cached->second == nullptr) {
-      ++withoutCollision;
-      continue;
-    }
-    const auto* layer = cached->second->layer(obf2::mesh::ColType::Soldier);
-    if (layer == nullptr) {
-      ++withoutCollision;
-      continue;
-    }
-
-    // Vegetation arrives as a ready matrix, the rest as a position with angles.
-    obf2::Mat4 transform = object.transform;
-    if (!object.hasTransform) {
-      transform = obf2::translation(object.position);
-      if (object.hasRotation) {
-        transform = transform * obf2::rotationYawPitchRoll(object.rotation.x, object.rotation.y,
-                                                           object.rotation.z);
-      }
-    }
-    world->addLayer(*layer, transform);
-    ++withCollision;
-  }
-
-  std::printf("  collision: %d objects, %zu triangles in %zu cells (without geometry %d)\n",
-              withCollision, world->triangleCount(), world->cellCount(), withoutCollision);
-  return world;
 }
 
 
@@ -947,6 +886,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
 
   std::optional<obf2::level::Level> level;
   obf2::game::Registry registry;
+  // The collision meshes every world's layers point into: declared before the
+  // worlds, so it outlives them.
+  std::unique_ptr<obf2::server::CollisionLibrary> collisionLibrary;
   // The server and the client live all the time, not only during loading: in a
   // single-player game it is they that move the world.
   std::unique_ptr<obf2::server::GameServer> hostedServer;
@@ -1119,7 +1061,8 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         collisionObjects.push_back(std::move(vehicle));
       }
 
-      gameServer.setCollision(buildCollisionWorld(files, registry, collisionObjects));
+      collisionLibrary = std::make_unique<obf2::server::CollisionLibrary>(files, registry);
+      gameServer.setCollision(obf2::server::buildCollisionWorld(*collisionLibrary, collisionObjects));
 
       auto [clientSide, serverSide] = obf2::net::LoopbackConnection::createPair();
       gameServer.accept(std::move(serverSide));
@@ -3254,8 +3197,34 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     remote->physics = loadPhysics(files);
     remote->maxSpeed = remote->physics.runSpeed;
     if (level) {
-      remoteCollision = buildCollisionWorld(files, registry, level->objects);
+      collisionLibrary = std::make_unique<obf2::server::CollisionLibrary>(files, registry);
+      remoteCollision = obf2::server::buildCollisionWorld(*collisionLibrary, level->objects);
       remote->collision = remoteCollision.get();
+      remote->collisionLibrary = collisionLibrary.get();
+      if (args.collisionNear) {
+        const obf2::Vec3f at = *args.collisionNear;
+        for (const auto& object : level->objects) {
+          const float dx = object.position.x - at.x;
+          const float dz = object.position.z - at.z;
+          if (dx * dx + dz * dz > 15.0f * 15.0f) continue;
+          const auto* root = registry.find(object.templateName);
+          std::printf("  near: %s at %.2f %.2f %.2f rot %.1f %.1f %.1f, collisionMesh '%s'\n",
+                      object.templateName.c_str(), object.position.x, object.position.y,
+                      object.position.z, object.rotation.x, object.rotation.y, object.rotation.z,
+                      root ? std::string(root->text("collisionMesh")).c_str() : "(no template)");
+          if (root == nullptr) continue;
+          for (const auto& child : root->children) {
+            const auto* childTemplate = registry.find(child.name);
+            std::printf("    child %s at %.2f %.2f %.2f, collisionMesh '%s'\n", child.name.c_str(),
+                        child.position.x, child.position.y, child.position.z,
+                        childTemplate ? std::string(childTemplate->text("collisionMesh")).c_str()
+                                      : "(no template)");
+          }
+        }
+        std::vector<obf2::server::MeshContact> contacts;
+        remoteCollision->sphereContacts(at, obf2::Vec3f{}, 1.0f, contacts);
+        std::printf("  near: %zu contacts of a 1 m sphere at the point\n", contacts.size());
+      }
     }
     std::printf("  connection: the level is loaded, the conversation continues\n");
   }

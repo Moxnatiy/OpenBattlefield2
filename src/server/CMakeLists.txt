@@ -7,6 +7,7 @@ add_library(obf2_server
   src/soldier_move.cpp
   src/soldier_node.cpp
   src/collision_world.cpp
+  src/collision_objects.cpp
 )
 add_library(obf2::server ALIAS obf2_server)
 

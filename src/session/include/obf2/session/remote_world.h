@@ -7,7 +7,9 @@
 // plan there says, and for a plain reason: it needs `obf2::server` for the
 // soldier's physics, and `obf2_server` already links `obf2_net`, so putting it
 // there would close a cycle. It sits above all of them instead.
+#include <algorithm>
 #include <array>
+#include <cctype>
 #include <utility>
 #include <cstdio>
 #include <deque>
@@ -31,6 +33,7 @@
 #include "obf2/net/bf2_world.h"
 #include "obf2/net/md5.h"
 #include "obf2/net/udp.h"
+#include "obf2/server/collision_objects.h"
 #include "obf2/server/collision_world.h"
 #include "obf2/server/physics.h"
 #include "obf2/server/soldier_move.h"
@@ -257,8 +260,97 @@ struct RemoteWorld {
   float correctionMax = 0.0f;
   obf2::Vec3f correctionAxis{};
   const obf2::level::Level* terrain = nullptr;
-  const obf2::server::CollisionWorld* collision = nullptr;
+  obf2::server::CollisionWorld* collision = nullptr;
+  // Where a created object's collision comes from; nothing is added without it.
+  obf2::server::CollisionLibrary* collisionLibrary = nullptr;
   obf2::server::PhysicsConstants physics;
+
+  // The objects the server created that the level's placement does not already
+  // hold — a vehicle an ObjectSpawner made — kept in the collision world as long
+  // as the server keeps them, at the place their newest update gives.
+  struct MovableCollision {
+    std::uint32_t handle = 0;
+    obf2::Vec3f position;
+  };
+  std::map<std::uint16_t, MovableCollision> movableCollision;
+  // Networked ids decided to have nothing to add, so they are not asked again.
+  std::set<std::uint16_t> noMovableCollision;
+
+  void syncMovableCollision() {
+    if (collision == nullptr || collisionLibrary == nullptr) return;
+    const auto& objects = world.objects();
+    for (auto it = movableCollision.begin(); it != movableCollision.end();) {
+      if (objects.count(it->first) == 0) {
+        collision->removeMovable(it->second.handle);
+        it = movableCollision.erase(it);
+      }
+      else {
+        ++it;
+      }
+    }
+    for (auto it = noMovableCollision.begin(); it != noMovableCollision.end();) {
+      it = objects.count(*it) == 0 ? noMovableCollision.erase(it) : std::next(it);
+    }
+    for (const auto& [id, object] : objects) {
+      if (object.templateId == 0 || noMovableCollision.count(id) != 0) continue;
+      // A soldier meets another soldier by `checkSoldierVsSoldier` (Linux 0x6f4150),
+      // not by his mesh.
+      if (object.netClass == obf2::net::bf2::GhostClass::Soldier) {
+        noMovableCollision.insert(id);
+        continue;
+      }
+      const obf2::Mat4 transform = [&] {
+        obf2::Mat4 m = obf2::translation(object.position);
+        // The create event's rotation, in the level's yaw/pitch/roll form
+        // (bf2_events.h). Its sign convention against the level's is checked only
+        // on a zero rotation; the object's own quaternion (0x1 in its update) is
+        // not read, so a turned vehicle keeps it.
+        if (object.createdRotation) {
+          m = m * obf2::rotationYawPitchRoll(object.createdRotation->x, object.createdRotation->y,
+                                             object.createdRotation->z);
+        }
+        return m;
+      }();
+      const auto found = movableCollision.find(id);
+      if (found != movableCollision.end()) {
+        const obf2::Vec3f& was = found->second.position;
+        if (was.x != object.position.x || was.y != object.position.y ||
+            was.z != object.position.z) {
+          collision->placeMovable(found->second.handle, transform);
+          found->second.position = object.position;
+        }
+        continue;
+      }
+      const std::string* name = templateNumbers.nameOf(object.templateId);
+      if (name == nullptr) continue;  // the numbers may not be built yet
+      // A placed static the server networks (a destructible fence) is in the grid
+      // already, from the level's placement.
+      const KnownObject* placed = nearestKnown(known, object.createdAt);
+      const auto sameName = [](const std::string& a, const std::string& b) {
+        return a.size() == b.size() &&
+               std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+                 return std::tolower(static_cast<unsigned char>(x)) ==
+                        std::tolower(static_cast<unsigned char>(y));
+               });
+      };
+      if (placed != nullptr && sameName(placed->name, *name)) {
+        noMovableCollision.insert(id);
+        continue;
+      }
+      const auto& pieces = collisionLibrary->soldierPieces(*name);
+      if (pieces.empty()) {
+        noMovableCollision.insert(id);
+        continue;
+      }
+      const std::uint32_t handle = collision->addMovable(pieces, transform);
+      movableCollision[id] = {handle, object.position};
+      std::printf("  collision: object %u %s at %.2f %.2f %.2f rotation %.1f %.1f %.1f, %zu pieces\n",
+                  id, name->c_str(), object.position.x, object.position.y, object.position.z,
+                  object.createdRotation ? object.createdRotation->x : 0.0f,
+                  object.createdRotation ? object.createdRotation->y : 0.0f,
+                  object.createdRotation ? object.createdRotation->z : 0.0f, pieces.size());
+    }
+  }
   float maxSpeed = 3.9f;  // phy-soldier-run-speed; filled in from the game's data
 
   // A correction from the server: we put the body where the server sees it.
@@ -647,9 +739,13 @@ struct RemoteWorld {
     const BodyRecord& ours = bodyAt[static_cast<std::uint32_t>(counter) % bodyAt.size()];
     if (ours.number != static_cast<std::uint32_t>(counter)) return;
     const obf2::Vec3f pivot = ours.body.position + obf2::Vec3f{0.0f, physics.pivotHeight, 0.0f};
-    std::printf("  ours  %d: pos %.4f %.4f %.4f vel %.4f %.4f %.4f ground %d (off %.4f %.4f %.4f)\n",
+    std::printf("  ours  %d: pos %.4f %.4f %.4f vel %.4f %.4f %.4f acc %.4f %.4f %.4f fric %.4f "
+                "%.4f %.4f lin %.4f %.4f %.4f ground %d (off %.4f %.4f %.4f)\n",
                 counter, pivot.x, pivot.y, pivot.z, ours.body.velocity.x, ours.body.velocity.y,
-                ours.body.velocity.z, ours.body.onGround ? 1 : 0, pivot.x - s.position->x,
+                ours.body.velocity.z, ours.body.acceleration.x, ours.body.acceleration.y,
+                ours.body.acceleration.z, ours.body.friction.x, ours.body.friction.y,
+                ours.body.friction.z, ours.body.linearSpeed.x, ours.body.linearSpeed.y,
+                ours.body.linearSpeed.z, ours.body.onGround ? 1 : 0, pivot.x - s.position->x,
                 pivot.y - s.position->y, pivot.z - s.position->z);
   }
 
@@ -1123,6 +1219,12 @@ struct RemoteWorld {
                 // of fall from feet 1.0 under the creation point. Our body is the feet.
                 obf2::Vec3f feet = born->second;
                 feet.y -= physics.pivotHeight;
+                // A new soldier starts from nothing: `Soldier::resetInstance` (Linux
+                // 0x549df0) puts the air timers to -1, and the node starts with no
+                // forces. The previous life's records must not be replayed into him:
+                // on a respawn they carried its air steering into his first ticks.
+                body = obf2::server::BodyState{};
+                bodyAt.fill(BodyRecord{UINT32_MAX, obf2::server::BodyState{}});
                 correct(feet);
                 std::printf("  the body was placed at %.1f %.1f %.1f (the soldier's creation position), "
                             "terrain %.2f\n",
@@ -1151,6 +1253,7 @@ struct RemoteWorld {
             const int before = world.positionUpdates();
             world.feed(*more);
             positionUpdates += world.positionUpdates() - before;
+            syncMovableCollision();
           }
 
           // We parse every event in the packet: by the size table each can be

@@ -3,6 +3,7 @@
 //   object_info <modDir> --all          — gather everything and show statistics
 //   object_info <modDir> <name>          — show one template
 //   object_info <modDir> --tree <name>   — a template with its child hierarchy
+//   object_info <modDir> --collision <name> — the soldier's collision pieces of its tree
 
 #include <algorithm>
 #include <cstdio>
@@ -11,6 +12,7 @@
 
 #include "obf2/core/path.h"
 #include "obf2/game/object_template.h"
+#include "obf2/server/collision_objects.h"
 #include "obf2/vfs/filesystem.h"
 
 namespace {
@@ -127,6 +129,20 @@ int main(int argc, char** argv) {
     std::sort(sorted.begin(), sorted.end(), [](auto& a, auto& b) { return a.second > b.second; });
     for (std::size_t i = 0; i < sorted.size() && i < 15; ++i) {
       std::printf("  %-28s %d\n", sorted[i].first.c_str(), sorted[i].second);
+    }
+    return 0;
+  }
+
+  // What a soldier collides with in a template's tree (obf2/server/collision_objects.h).
+  if (what == "--collision" && argc > 3) {
+    obf2::server::CollisionLibrary library(files, registry);
+    const auto* root = registry.find(argv[3]);
+    const auto* mesh = root ? library.meshOf(*root) : nullptr;
+    std::printf("%s: template %s, collision mesh %s\n", argv[3], root ? root->file.c_str() : "-",
+                mesh ? "loaded" : "none");
+    for (const auto& piece : library.soldierPieces(argv[3])) {
+      std::printf("  piece: %zu faces, at %.3f %.3f %.3f\n", piece.layer->faces.size(),
+                  piece.local.m[12], piece.local.m[13], piece.local.m[14]);
     }
     return 0;
   }

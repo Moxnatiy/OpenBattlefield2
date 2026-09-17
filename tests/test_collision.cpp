@@ -14,12 +14,22 @@ namespace {
 // present and also fixes the format's layout in code.
 class CollisionBuilder {
  public:
-  explicit CollisionBuilder(std::uint32_t versionMinor) : versionMinor_(versionMinor) {
+  // `emptyFirstGeometry`: the part has two geoms and the first holds no lod, the
+  // way a vehicle's file leaves its first-person geom.
+  explicit CollisionBuilder(std::uint32_t versionMinor, std::uint32_t layers = 1,
+                            bool emptyFirstGeometry = false)
+      : versionMinor_(versionMinor) {
     u32(0);              // versionMajor
     u32(versionMinor_);  // versionMinor
     u32(1);              // geometryPartCount
-    u32(1);              // geometryCount
-    u32(1);              // colCount
+    if (emptyFirstGeometry) {
+      u32(2);            // geometryCount
+      u32(0);            // the first geom's colCount
+    }
+    else {
+      u32(1);            // geometryCount
+    }
+    u32(layers);         // colCount
   }
 
   // One layer of one triangle.
@@ -106,6 +116,86 @@ static void testVersion8HasNoLayerType() {
   CHECK_EQ(mesh->layers.size(), std::size_t(1));
   // The first layer gets its type by index.
   if (!mesh->layers.empty()) CHECK(mesh->layers[0].type == mesh::ColType::Projectile);
+}
+
+static void testSoldierFallsBackToTheVehicleLod() {
+  // The olive tree's mesh: lods of types 0, 1, 3 and 4 and no soldier lod. The
+  // engine hands a soldier the vehicle lod and skips the AI one
+  // (CollisionMeshTemplate::load, Linux 0x71f600).
+  CollisionBuilder builder(10, 4);
+  for (const auto type : {0u, 1u, 3u, 4u}) {
+    builder.addLayer(static_cast<mesh::ColType>(type), mesh::Vec3{0, 0, 0},
+                     mesh::Vec3{1, 0, 0}, mesh::Vec3{0, 1, 0});
+  }
+  const auto mesh = mesh::loadCollisionMesh(builder.bytes());
+  CHECK(mesh.has_value());
+  if (!mesh) return;
+  CHECK_EQ(mesh->layers.size(), std::size_t(4));
+  CHECK(mesh->layer(mesh::ColType::Soldier) == nullptr);
+  CHECK(mesh->validLayer(0, 0, mesh::ColType::Soldier) == &mesh->layers[1]);
+  CHECK(mesh->validLayer(0, 0, mesh::ColType::Ai) == &mesh->layers[1]);
+  CHECK(mesh->validLayer(0, 0, mesh::ColType::Projectile) == &mesh->layers[0]);
+  CHECK(mesh->validLayer(0, 1, mesh::ColType::Soldier) == nullptr);
+
+  // A projectile lod alone: the soldier slot stays empty and nothing answers.
+  CollisionBuilder alone(10);
+  alone.addLayer(mesh::ColType::Projectile, mesh::Vec3{0, 0, 0}, mesh::Vec3{1, 0, 0},
+                 mesh::Vec3{0, 1, 0});
+  const auto bare = mesh::loadCollisionMesh(alone.bytes());
+  CHECK(bare.has_value());
+  if (bare) CHECK(bare->validLayer(0, 0, mesh::ColType::Soldier) == nullptr);
+
+  // A lod read with a smaller type after a larger one erases past itself.
+  CollisionBuilder shrink(10, 2);
+  shrink.addLayer(mesh::ColType::Soldier, mesh::Vec3{0, 0, 0}, mesh::Vec3{1, 0, 0},
+                  mesh::Vec3{0, 1, 0});
+  shrink.addLayer(mesh::ColType::Projectile, mesh::Vec3{0, 0, 0}, mesh::Vec3{1, 0, 0},
+                  mesh::Vec3{0, 1, 0});
+  const auto shrunk = mesh::loadCollisionMesh(shrink.bytes());
+  CHECK(shrunk.has_value());
+  if (shrunk) CHECK(shrunk->validLayer(0, 0, mesh::ColType::Soldier) == nullptr);
+}
+
+// No part with lods in geom 0: every part's geoms move down by one
+// (`CollisionMeshTemplate::setUseCollisionAsFirstPerson`, Linux 0x719670), so a
+// vehicle's third-person geom answers geom 0.
+static void testEmptyFirstPersonGeomMovesDown() {
+  CollisionBuilder builder(10, 1, true);
+  builder.addLayer(mesh::ColType::Soldier, mesh::Vec3{0, 0, 0}, mesh::Vec3{1, 0, 0},
+                   mesh::Vec3{0, 1, 0});
+  const auto mesh = mesh::loadCollisionMesh(builder.bytes());
+  CHECK(mesh.has_value());
+  if (!mesh) return;
+  CHECK_EQ(mesh->parts.size(), std::size_t(1));
+  if (mesh->parts.empty()) return;
+  CHECK_EQ(mesh->parts[0].geometries.size(), std::size_t(1));
+  CHECK(mesh->validLayer(0, 0, mesh::ColType::Soldier) == &mesh->layers[0]);
+}
+
+// A movable object is met where it is placed, moves with its placement and is
+// gone once removed; each piece is its own object.
+static void testMovableObjectComesAndGoes() {
+  server::CollisionWorld world;
+  const mesh::CollisionLayer wall = makeWall(0.0f);
+  const std::uint32_t handle =
+      world.addMovable({server::CollisionPiece{&wall, Mat4::identity()}}, Mat4::identity());
+  CHECK_EQ(world.movableCount(), std::size_t(1));
+  std::vector<server::MeshContact> contacts;
+  world.sphereContacts(Vec3f{-0.2f, 0.0f, 0.0f}, Vec3f{}, 0.25f, contacts);
+  CHECK_EQ(contacts.size(), std::size_t(2));
+
+  world.placeMovable(handle, translation(Vec3f{5.0f, 0.0f, 0.0f}));
+  contacts.clear();
+  world.sphereContacts(Vec3f{-0.2f, 0.0f, 0.0f}, Vec3f{}, 0.25f, contacts);
+  CHECK(contacts.empty());
+  world.sphereContacts(Vec3f{4.8f, 0.0f, 0.0f}, Vec3f{}, 0.25f, contacts);
+  CHECK_EQ(contacts.size(), std::size_t(2));
+
+  world.removeMovable(handle);
+  contacts.clear();
+  world.sphereContacts(Vec3f{4.8f, 0.0f, 0.0f}, Vec3f{}, 0.25f, contacts);
+  CHECK(contacts.empty());
+  CHECK_EQ(world.movableCount(), std::size_t(0));
 }
 
 static void testTruncatedFileIsRejected() {
@@ -257,6 +347,9 @@ TEST_MAIN({
   testMovingSphereMeetsAnEdge();
   testParseVersion10();
   testVersion8HasNoLayerType();
+  testSoldierFallsBackToTheVehicleLod();
+  testEmptyFirstPersonGeomMovesDown();
+  testMovableObjectComesAndGoes();
   testTruncatedFileIsRejected();
   testSphereIsPushedOutOfWall();
   testSphereFarFromWallIsUntouched();
