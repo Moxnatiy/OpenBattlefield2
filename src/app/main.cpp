@@ -21,6 +21,7 @@
 
 #include "obf2/app/command_line.h"
 #include "obf2/app/hosted_game.h"
+#include "obf2/app/render_context.h"
 #include "obf2/app/scene_build.h"
 #include "obf2/core/math.h"
 #include "obf2/core/parallel.h"
@@ -595,80 +596,22 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
 
   // --- GPU --------------------------------------------------------------
 
-  obf2::gfx::WindowDesc desc;
-  desc.title = "OpenBattlefield2";
-  desc.width = args.width;
-  desc.height = args.height;
   std::string error;
-  auto device = obf2::gfx::Device::create(desc, &error);
-  if (!device) {
-    std::fprintf(stderr, "could not create the device: %s\n", error.c_str());
+  obf2::app::RenderContext render = obf2::app::createRenderContext(args.width, args.height, &error);
+  if (!render.device || !render.renderer) {
+    std::fprintf(stderr, "%s\n", error.c_str());
     return 1;
   }
-  {
-    // In pixels, not in points: on a Retina display the two differ by two, and
-    // what we draw into is the pixels.
-    int windowWidth = 0, windowHeight = 0;
-    SDL_GetWindowSizeInPixels(device->window(), &windowWidth, &windowHeight);
-    std::printf("GPU backend: %s | window %dx%d (asked for %dx%d)\n",
-                std::string(device->driver()).c_str(), windowWidth, windowHeight, args.width,
-                args.height);
-  }
-
-  auto renderer = obf2::gfx::MeshRenderer::create(*device, &error);
-  if (!renderer) {
-    std::fprintf(stderr, "renderer: %s\n", error.c_str());
-    return 1;
-  }
+  obf2::gfx::Device* device = render.device.get();
+  obf2::gfx::MeshRenderer* renderer = render.renderer.get();
 
   if (level) {
-    // In map mode the fog only gets in the way: from above it eats the whole level.
-    const float fogEnd = args.topDown ? 0.0f : level->terrain.fogEnd;
-    renderer->setFog(obf2::gfx::MeshRenderer::Fog{
-        obf2::gfx::Color{level->terrain.fogColor.x, level->terrain.fogColor.y,
-                         level->terrain.fogColor.z, 1.0f},
-        level->terrain.fogStart, fogEnd, level->terrain.fogBase,
-        level->terrain.fogFloor});
-    renderer->setTerrainLighting(
-        obf2::gfx::Color{level->terrain.terrainSunColor.x, level->terrain.terrainSunColor.y,
-                         level->terrain.terrainSunColor.z, 1.0f},
-        obf2::gfx::Color{level->terrain.terrainSkyColor.x, level->terrain.terrainSkyColor.y,
-                         level->terrain.terrainSkyColor.z, 1.0f});
-    const obf2::level::Lighting& lighting = level->lighting;
-    // The world's samplers follow the profile's texture-filtering level.
-    renderer->setTextureFiltering(engine.settings().video.textureFilteringQuality);
-    renderer->setStaticSpecular(
-        obf2::gfx::Color{lighting.staticSpecularColor.x, lighting.staticSpecularColor.y,
-                         lighting.staticSpecularColor.z, 1.0f},
-        // `StaticGloss` as the engine gives it, measured in a frame dump of the
-        // original (`psc c2` = 0.2 on 678 draws of one Karkand frame). No level
-        // sets it; a material can, and we do not read that yet.
-        0.2f);
-    renderer->setVegetationLighting(
-        obf2::gfx::Color{lighting.treeSunColor.x, lighting.treeSunColor.y, lighting.treeSunColor.z,
-                         1.0f},
-        obf2::gfx::Color{lighting.treeAmbientColor.x, lighting.treeAmbientColor.y,
-                         lighting.treeAmbientColor.z, 1.0f});
-    renderer->setStaticLighting(
-        obf2::gfx::Color{lighting.staticSunColor.x, lighting.staticSunColor.y,
-                         lighting.staticSunColor.z, 1.0f},
-        obf2::gfx::Color{lighting.staticSkyColor.x, lighting.staticSkyColor.y,
-                         lighting.staticSkyColor.z, 1.0f},
-        lighting.sunDirection,
-        obf2::gfx::Color{lighting.singlePointColor.x, lighting.singlePointColor.y,
-                         lighting.singlePointColor.z, 1.0f});
-    std::printf("  static lighting: sun %.2f/%.2f/%.2f, sky %.2f/%.2f/%.2f, from %.2f/%.2f/%.2f\n",
-                lighting.staticSunColor.x, lighting.staticSunColor.y, lighting.staticSunColor.z,
-                lighting.staticSkyColor.x, lighting.staticSkyColor.y, lighting.staticSkyColor.z,
-                lighting.sunDirection.x, lighting.sunDirection.y, lighting.sunDirection.z);
+    obf2::app::applyLevelLighting(*renderer, *level, args.topDown,
+                                  engine.settings().video.textureFilteringQuality);
   }
 
-  int texturesLoaded = 0, texturesMissing = 0;
-  std::unordered_map<std::string, std::optional<obf2::texture::Texture>> textureCache;
-  // The cache is filled from several threads before the upload — see
-  // `cacheTexture` below. The lock is held only around the map itself, never
-  // around the unpacking and the decoding, which is the part worth spreading.
-  std::mutex textureCacheMutex;
+  obf2::app::TextureCache textureCache(files);
+  const auto cacheTexture = [&](const std::string& path) { return textureCache.cache(path); };
 
   // The spawn screen's red hatch, handed to the resolver under `#combatarea` —
   // like `#flash`, a picture we make rather than a file. It is the game's own
@@ -747,61 +690,6 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     }
   };
 #endif
-  // The half of `resolveTexture` that touches files, kept apart so that it can
-  // be called from several threads at once — filling the cache before the
-  // upload is the one place where that pays. It hands back a pointer into the
-  // cache, which an unordered_map keeps valid however much it grows, so a
-  // texture that is only being cached is never copied.
-  auto cacheTexture =
-      [&](const std::string& path) -> const std::optional<obf2::texture::Texture>* {
-    {
-      const std::lock_guard<std::mutex> lock(textureCacheMutex);
-      if (const auto cached = textureCache.find(path); cached != textureCache.end()) {
-        return &cached->second;
-      }
-    }
-
-    auto bytes = files.read(path);
-    // In the game the paths point at `.tga` while the archives hold `.dds` — that is
-    // how it is with the level's map, for instance: BF2.exe asks for
-    // `Levels/%s/Hud/Minimap/ingameMap.tga` while client.zip has only
-    // `ingameMap.dds`. So we try the compressed variant by the same path.
-    std::string swapped;
-    if (path.size() > 4 && path.compare(path.size() - 4, 4, ".tga") == 0) {
-      swapped = path.substr(0, path.size() - 4) + ".dds";
-      if (!bytes) bytes = files.read(swapped);
-    }
-    if (!bytes) bytes = files.read(obf2::joinAssetPath("objects", path));
-    if (!bytes && !swapped.empty()) bytes = files.read(obf2::joinAssetPath("objects", swapped));
-    // The HUD's paths are counted from the interface texture directory — the same as
-    // is visible in `nametags.setTexture Menu/HUD/Texture/...`.
-    if (!bytes) bytes = files.read(obf2::joinAssetPath("menu/hud/texture", path));
-    if (!bytes && !swapped.empty()) {
-      bytes = files.read(obf2::joinAssetPath("menu/hud/texture", swapped));
-    }
-
-    std::optional<obf2::texture::Texture> decoded;
-    std::string textureError;
-    if (bytes) decoded = obf2::texture::loadImage(*bytes, &textureError);
-
-    const std::lock_guard<std::mutex> lock(textureCacheMutex);
-    // Two threads may have asked for the same texture at once; the first one in
-    // wins and the second's copy is dropped.
-    const auto [where, inserted] = textureCache.emplace(path, std::move(decoded));
-    if (inserted) {
-      if (where->second) {
-        ++texturesLoaded;
-      } else {
-        ++texturesMissing;
-        if (bytes && texturesMissing <= 6) {
-          std::printf("    the texture does not read: %s (%s)\n", path.c_str(),
-                      textureError.c_str());
-        }
-      }
-    }
-    return &where->second;
-  };
-
   auto resolveTexture =
       [&](const std::string& mapName) -> std::optional<obf2::texture::Texture> {
     // Names starting with '#' are not files but colours: the game sometimes gives a
@@ -2015,132 +1903,15 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     }
   }
 
-  std::vector<obf2::gfx::GpuMesh> gpuMeshes(scene.meshes.size());
-  std::vector<bool> uploadedOk(scene.meshes.size(), false);
-
   const auto uploadStarted = std::chrono::steady_clock::now();
-
-  // Every texture the scene names, unpacked and decoded before the upload
-  // begins. The upload itself has to stay on this thread — SDL's GPU device is
-  // not shared — but the work in front of it is inflate and a DXT header per
-  // file, and that is what the other cores are for. Afterwards the loop below
-  // finds all of them in the cache.
-  {
-    std::vector<std::string> wanted;
-    std::unordered_set<std::string> seen;
-    for (const obf2::mesh::RenderMesh& mesh : scene.meshes) {
-      for (const obf2::mesh::DrawRange& range : mesh.ranges) {
-        for (const std::string& map : range.maps) {
-          // The `#` names are colours rather than files, and the cache is not
-          // where they come from.
-          if (map.empty() || map.front() == '#') continue;
-          if (seen.insert(map).second) wanted.push_back(obf2::normalizeAssetPath(map));
-        }
-      }
-    }
-    obf2::parallelFor(wanted.size(), [&](std::size_t i) { cacheTexture(wanted[i]); });
-  }
-
-  long long triangles = 0;
-  for (std::size_t i = 0; i < scene.meshes.size(); ++i) {
-    auto uploaded = renderer->upload(scene.meshes[i], resolveTexture, &error);
-    if (!uploaded) continue;
-    gpuMeshes[i] = *uploaded;
-    uploadedOk[i] = true;
-    triangles += static_cast<long long>(scene.meshes[i].indices.size() / 3);
-  }
-
-  // The atlas pages, uploaded once. Only the pages some object actually points
-  // at are loaded; a level has up to 21 and a small map uses few of them.
-  std::vector<SDL_GPUTexture*> lightmapPages(
-      static_cast<std::size_t>(std::max(levelScene.objectLightmaps.atlasCount(), 0)), nullptr);
-  {
-    std::vector<bool> wanted(lightmapPages.size(), false);
-    for (const obf2::app::Scene::Instance& instance : scene.instances) {
-      if (instance.lightmapAtlas >= 0 &&
-          static_cast<std::size_t>(instance.lightmapAtlas) < wanted.size()) {
-        wanted[static_cast<std::size_t>(instance.lightmapAtlas)] = true;
-      }
-    }
-    int loaded = 0;
-    for (std::size_t i = 0; i < lightmapPages.size(); ++i) {
-      if (!wanted[i]) continue;
-      if (auto decoded = resolveTexture(levelScene.objectLightmaps.atlasPath(static_cast<int>(i)))) {
-        lightmapPages[i] = renderer->uploadSharedTexture(*decoded);
-        if (lightmapPages[i] != nullptr) ++loaded;
-      }
-    }
-    if (!lightmapPages.empty()) {
-      std::printf("  light map atlas pages loaded: %d of %zu\n", loaded, lightmapPages.size());
-    }
-  }
-
-  // The ground's own structure: one texture for the whole level, tiled over the
-  // terrain from three directions. Where it shows is a map per patch, and that
-  // one travels with the patch's geometry.
-  if (level) {
-    const std::string lowDetail = obf2::level::lowDetailTexturePath(*level, files);
-    SDL_GPUTexture* uploaded = nullptr;
-    if (!lowDetail.empty()) {
-      if (auto decoded = resolveTexture(lowDetail)) {
-        uploaded = renderer->uploadSharedTexture(*decoded);
-      }
-    }
-    renderer->setTerrainDetail(uploaded, level->terrain.farSideTiling,
-                               level->terrain.farTopTilingHi, level->terrain.farYOffset,
-                               level->terrain.lowDetailmapSize);
-    std::printf("  terrain detail: %s, tiling %.0f/%.0f side, %.0f top\n",
-                uploaded != nullptr ? lowDetail.c_str() : "none",
-                static_cast<double>(level->terrain.farSideTiling[0]),
-                static_cast<double>(level->terrain.farSideTiling[1]),
-                static_cast<double>(level->terrain.farTopTilingHi));
-    // And the near detail: the six materials out of the compiled terrain, and
-    // the chart maps that say which of them owns which texel of a patch.
-    obf2::gfx::MeshRenderer::TerrainMaterial materials[
-        obf2::gfx::MeshRenderer::kTerrainMaterials];
-    const std::size_t count =
-        std::min(level->terrain.materials.size(),
-                 static_cast<std::size_t>(obf2::gfx::MeshRenderer::kTerrainMaterials));
-    for (std::size_t i = 0; i < count; ++i) {
-      const obf2::level::TerrainMaterial& material = level->terrain.materials[i];
-      // The file names the texture without an extension, and the archives hold
-      // it as `.dds` like every other texture in the game.
-      if (auto decoded = resolveTexture(material.texture + ".dds")) {
-        materials[i].texture = renderer->uploadSharedTexture(*decoded);
-      }
-      materials[i].sideTiling[0] = material.sideTilingX;
-      materials[i].sideTiling[1] = material.sideTilingY;
-      materials[i].topTiling = material.topTiling;
-      materials[i].yOffset = material.yOffset;
-      materials[i].triPlanar = material.triPlanar;
-      std::printf("  terrain material %zu: %-44s top %g, side %g/%g%s%s\n", i,
-                  material.texture.c_str(), static_cast<double>(material.topTiling),
-                  static_cast<double>(material.sideTilingX),
-                  static_cast<double>(material.sideTilingY),
-                  material.triPlanar ? ", tri-planar" : "",
-                  materials[i].texture != nullptr ? "" : ", not loaded");
-    }
-    // The chart maps' size for the half-texel correction, taken from the first
-    // patch that has one — the engine takes it the same way (`RendDX9.dll`,
-    // 0x100d9c30) rather than from `terrain.detailmapSize`, which on Karkand
-    // says 512 where the files are 256.
-    int chartSize = 0;
-    if (!levelScene.firstChartMap.empty()) {
-      if (auto decoded = resolveTexture(levelScene.firstChartMap)) {
-        chartSize = static_cast<int>(decoded->width);
-      }
-    }
-    renderer->setTerrainMaterials(materials, chartSize);
-  }
-
-  obf2::gfx::GpuMesh skyMesh;
-  bool skyReady = false;
-  if (levelScene.skyDome) {
-    if (auto uploaded = renderer->upload(*levelScene.skyDome, resolveTexture, &error)) {
-      skyMesh = *uploaded;
-      skyReady = true;
-    }
-  }
+  obf2::app::UploadedScene uploaded = obf2::app::uploadScene(
+      *renderer, textureCache, resolveTexture, scene, levelScene, level ? &*level : nullptr, files);
+  std::vector<obf2::gfx::GpuMesh>& gpuMeshes = uploaded.meshes;
+  const std::vector<bool>& uploadedOk = uploaded.ok;
+  const long long triangles = uploaded.triangles;
+  const std::vector<SDL_GPUTexture*>& lightmapPages = uploaded.lightmapPages;
+  obf2::gfx::GpuMesh& skyMesh = uploaded.sky;
+  const bool skyReady = uploaded.skyReady;
 
   // The placeholder for other players' soldiers. The size is not by eye: it is the
   // soldier's collision shape from the game's data (`coll-soldier-radius` 0.25 and
@@ -2403,8 +2174,8 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
 
   std::printf("in the GPU: %zu unique meshes (%lld triangles), %zu instances "
               "(%lld triangles per frame)\n  textures %d, not found %d (%.2f s)\n",
-              gpuMeshes.size(), triangles, items.size(), drawnTriangles, texturesLoaded,
-              texturesMissing, secondsSince(uploadStarted));
+              gpuMeshes.size(), triangles, items.size(), drawnTriangles, textureCache.loaded(),
+              textureCache.missing(), secondsSince(uploadStarted));
 
   // --- the loop ---------------------------------------------------------
 
