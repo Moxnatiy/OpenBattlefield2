@@ -101,6 +101,12 @@ class WorldView {
   const std::map<std::uint16_t, RemoteObject>& objects() const { return objects_; }
   const Vec3f& compressionReference() const { return compressionReference_; }
 
+  // Every record of one object printed as it is read: the packet's tick, the
+  // position, the ground under it, and the compression reference the position
+  // was decoded against — and whether this packet moved that reference. The
+  // measure for a soldier who jumps up and down between records.
+  void setTraceObject(std::uint16_t id) { traceObject_ = id; }
+
   // The kit's template a soldier picked up: `CreateKitEvent` names the kit and
   // `HandlePickupEvent` the object that took it (bf2_events.h). Zero when none is
   // known — a soldier that spawned before we joined.
@@ -158,6 +164,7 @@ class WorldView {
   std::map<std::uint16_t, CreateKit> kits_;        // kit network id -> its creation
   std::map<std::uint16_t, std::uint32_t> kitOf_;   // object -> kit template
   Vec3f compressionReference_;
+  std::uint16_t traceObject_ = 0;
   std::function<float(const Vec3f&)> ground_;
   int positionUpdates_ = 0;
   int rejected_ = 0;

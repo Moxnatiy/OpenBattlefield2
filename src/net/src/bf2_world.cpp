@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 namespace obf2::net::bf2 {
 
@@ -97,8 +98,11 @@ void WorldView::feed(std::span<const std::byte> packet) {
   // 2. The controlled-object state: the compression reference point for the whole
   //    packet (`BF2.exe` / the Linux server, GhostManager::readControlObjectState,
   //    0x445c30 — the three numbers before the network id).
+  const Vec3f referenceBefore = compressionReference_;
+  bool referenceMoved = false;
   if (const auto state = readControlObjectState(packet)) {
     compressionReference_ = state->compressionReference;
+    referenceMoved = true;
   }
 
   // 3. The ghost stream's records: where everything is moving.
@@ -155,6 +159,20 @@ void WorldView::feed(std::span<const std::byte> packet) {
       }
     }
 
+    if (traceObject_ != 0 && record.networkId == traceObject_ && record.position) {
+      const float ground = ground_ ? ground_(*record.position) : 0.0f;
+      std::printf("    trace %u: tick %u, at %.2f %.2f %.2f, above the ground %.2f, reference %.2f %.2f "
+                  "%.2f%s\n",
+                  record.networkId, header ? header->time : 0u, record.position->x,
+                  record.position->y, record.position->z, record.position->y - ground,
+                  compressionReference_.x, compressionReference_.y, compressionReference_.z,
+                  referenceMoved ? (compressionReference_.x == referenceBefore.x &&
+                                            compressionReference_.y == referenceBefore.y &&
+                                            compressionReference_.z == referenceBefore.z
+                                        ? ", reference set (same)"
+                                        : ", REFERENCE MOVED this packet")
+                                 : "");
+    }
     if (!record.position) continue;
     RemoteObject& object = objects_[record.networkId];
     if (soldier && record.soldier && record.soldier->bodyYaw) {

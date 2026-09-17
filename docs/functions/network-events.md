@@ -1456,6 +1456,30 @@ the facing comes back through `setPredictedState` is not established — the
 client's copy of that function has not been read. Ours keeps the newest yaw while
 extrapolating.
 
+**The soldier is not drawn from that matrix directly — his physics is.** At the top
+of `predict` the soldier's physics node (`object+0x88`) is asked
+`getIsMobile()` (`SoldierPhysicsNode` vtable 0x268, 0x5dc15c), and a mobile one is
+handed the newest update before anything else (0x5dc314):
+
+```
+physics->setPositionalSpeed(newest.velocity)        vtable 0xd0 (PointPhysicsNode)
+physics->setRotationalSpeed((0, yawRate, 0))        vtable 0xd8 (SoldierPhysicsNode)
+```
+
+and the matrix built afterwards goes in through `predict_setSoldierTransformation`
+as `SoldierPhysicsNode::setPrevTransformation` (vtable 0xa8, Linux 0x6f2310),
+which only stores it at `+0xcc..+0x10c` and clears the flag at `+0x10c`. So each
+predict puts a remote soldier **where the network says, moving as the network
+says**, and the soldier's own physics tick carries him from there — gravity and
+the floor included. The animation reads that node's speed too
+(`getAbsolutePositionalSpeed`, vtable 0x298, in `updateAnimationSystems`).
+
+That is the difference behind a teammate who drops and pops back: we draw the
+predicted line itself, so a downward velocity runs him into the ground until the
+next update; the original's physics stops him on it. Measured on one soldier
+standing on a roof, 800 frames: every frame extrapolated, the drawn height saws
+from 159.23 down to 159.13 at −0.48 m/s and snaps back on each update.
+
 `predict_setSoldierTransformation` (0x5db080) calls the object's `vtable[0x118]`
 (or `[0x1d8]` when `+0x50` is set), then hands the matrix to the object's physics
 at `+0x88` through its `vtable[0xa8]`.

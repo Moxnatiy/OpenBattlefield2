@@ -3531,7 +3531,10 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
             watchedSoldier = id;
           }
         }
-        if (watchedSoldier != 0) std::printf("  watching soldier %u\n", watchedSoldier);
+        if (watchedSoldier != 0) {
+          std::printf("  watching soldier %u\n", watchedSoldier);
+          remote->world.setTraceObject(watchedSoldier);
+        }
       }
       if (watchedSoldier != 0) {
         const auto& object = objects.at(watchedSoldier);
@@ -3864,6 +3867,20 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           // above the feet (`FUN_006ed4c0`); the box stands on its base.
           obf2::Vec3f base = drawAt;
           if (soldier) base.y -= remote->physics.pivotHeight;
+          // The watched soldier's height as drawn, every frame: the pose the track
+          // gave, how it was made, the ground under it and the newest update's
+          // vertical velocity — which the extrapolation runs along
+          // (`SoldierNetworkable::predict`, Linux 0x5dc278).
+          if (soldier && pose && id == watchedSoldier && remote->terrain != nullptr &&
+              frame >= args.traceFrom && frame < args.traceFrom + args.traceFrames) {
+            const auto* newestUpdate = object.track.newest();
+            std::printf("    drawn %u: frame %d, mode %d, y %.2f, above the ground %.2f, "
+                        "velocity y %.2f, newest y %.2f\n",
+                        id, frame, static_cast<int>(pose->mode), pose->position.y,
+                        pose->position.y - remote->terrain->groundHeightAt(pose->position),
+                        newestUpdate && newestUpdate->velocity ? newestUpdate->velocity->y : 0.0f,
+                        newestUpdate ? newestUpdate->position.y : 0.0f);
+          }
           obf2::Mat4 place = obf2::translation(base);
           if (soldier && pose) {
             place = place * obf2::rotationY(pose->bodyYaw * 3.14159265f / 180.0f);
