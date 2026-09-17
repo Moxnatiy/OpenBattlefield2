@@ -35,6 +35,7 @@
 #include "obf2/hud/ingame.h"
 #include "obf2/hud/combat_area.h"
 #include "obf2/hud/kit_list.h"
+#include "obf2/hud/manager.h"
 #include "obf2/hud/map_node.h"
 #include "obf2/meme/graph.h"
 #include "obf2/hud/render.h"
@@ -610,16 +611,13 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
                                   engine.settings().video.textureFilteringQuality);
   }
 
+  // The interface itself (`obf2/hud/manager.h`). It is declared before the
+  // texture resolver: the resolver asks it for the combat-area hatch, and it is
+  // called from the frame loop, so neither may outlive the other.
+  obf2::hud::Manager hudManager;
   obf2::app::TextureCache textureCache(files);
   const auto cacheTexture = [&](const std::string& path) { return textureCache.cache(path); };
 
-  // The spawn screen's red hatch, handed to the resolver under `#combatarea` —
-  // like `#flash`, a picture we make rather than a file. It is the game's own
-  // `map_CombatArea32.dds` with the alpha cleared inside the level's combat area
-  // (obf2/hud/combat_area.h). It is declared here, at the outer level, because
-  // the resolver below is called from the frame loop: kept inside the level
-  // block it would be dead memory by then (CLAUDE.md, the first of the rakes).
-  std::optional<obf2::texture::Texture> combatAreaOverlay;
 
 #if OBF2_HAVE_FLASH
   // The menu's movie. A frame from it is handed to the resolver under the name
@@ -702,7 +700,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
 #if OBF2_HAVE_FLASH
     if (mapName == "#flash" && flashMovie.isOpen()) return flashTexture;
 #endif
-    if (mapName == obf2::hud::kCombatAreaTexture) return combatAreaOverlay;
+    // The spawn screen's red hatch, under `#combatarea` — like `#flash`, a picture
+    // we make rather than a file: the game's own `map_CombatArea32.dds` with the
+    // alpha cleared inside the level's combat area. The manager builds it.
+    if (mapName == obf2::hud::kCombatAreaTexture) return hudManager.combatAreaOverlay();
     if (mapName.size() == 7 && mapName[0] == '#') {
       const auto channel = [&](std::size_t offset) {
         return static_cast<float>(std::stoi(mapName.substr(offset, 2), nullptr, 16)) / 255.0f;
@@ -717,115 +718,24 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
 
   // --- the in-game HUD ---------------------------------------------
   //
-  // The same hudBuilder as the menu, but the tree comes from the game's files:
-  // Global -> GlobalHud -> IngameHud -> dozens of sub-groups through `split`.
-  obf2::hud::Builder ingameHud;
-  std::vector<int> hudQuads;
-  // A node's colour by mesh index: in the game setNodeColor multiplies the texture,
-  // and without it the yellow captions, the tabs' highlight and the coloured bars
-  // come out plain white.
-  std::map<int, obf2::hud::Color> hudTints;
-  // A copy of the context for rebuilding the live nodes in the drawing loop:
-  // hudContext itself lives in the level loading block.
-  obf2::hud::Context hudDynamicContext;
-  // The spawn screen's state and its geometry. It is the only one rebuilt on the
-  // fly: its contents depend on the chosen kit, the team and the tab.
-  // The spawn screen's state and commands live in the module
-  // `obf2/hud/spawn_interface.h` — the name comes from the original
-  // (`Code/BF2/Menu/Hud/SpawnInterface.cpp`).
-  obf2::hud::SpawnInterface spawnScreen;
-  int& selectedKit = spawnScreen.mutableChoice().kit;
-  int& selectedTeam = spawnScreen.mutableChoice().team;
-  bool& membersTab = spawnScreen.mutableChoice().membersTab;
-  // The chosen spawn point — the circle's index in spawnContext.spawnMarkers.
-  //
-  // By default the first of ours is chosen — otherwise DONE would have nothing to
-  // send, and a NESelectSpawnGroup event with zero means "not chosen" to the server
-  // (`Player::getSpawnGroup() > 0`). **Source not found:** which group the game
-  // substitutes by default we have not reversed. Debt.
-  int& selectedSpawn = spawnScreen.mutableChoice().marker;
-  // The control point's id for every circle, in the same order. It is exactly what
-  // the server expects: in the engine the player sends not coordinates but a
-  // group's number, and a group is the set of points of one flag
-  // (docs/functions/spawn.md).
-  // They live in the module (`SpawnInterface::markerPoints`), set on every rebuild.
-  bool spawnDirty = false;
+  // The interface itself lives in `obf2::hud::Manager` — the tree from the game's
+  // files, the variables, the state machine, the spawn screen and the animation
+  // (the engine keeps it in `BF2HudManager` too). What stays here is the graphics
+  // side of it: the geometry the manager gives back, put on the card.
   struct OwnedPiece {
     obf2::gfx::GpuMesh mesh;
     obf2::hud::Color tint;
     // Not a mesh of ours but a live node's place: its pieces are substituted here
-    // while the frame is assembled (see `hudDynamic`).
+    // while the frame is assembled.
     const obf2::hud::Node* live = nullptr;
   };
   std::vector<OwnedPiece> spawnPieces;
   // The combat HUD: not baked once and for all but rebuildable — its variables are
   // written by the engine every frame (0x78d0f0), not once at the level's start.
   std::vector<OwnedPiece> ingamePieces;
-  std::function<std::vector<obf2::hud::DrawPiece>()> buildIngamePieces;
-  std::function<void()> rebuildIngame;
-  bool hudDirty = false;
-  bool ingameReported = false;
-  std::function<void(bool, bool)> updateHudVariables;
-  std::function<void(int)> applyHudState;
-  // What DONE does. In our own game it is a direct request to our server, in a
-  // network one three engine events in a row (NESelectTeam, NESelectKit,
-  // NESelectSpawnGroup, docs/functions/network-events.md).
-  // Returns whether the request really went to the server: if not, the spawn screen
-// has to stay where it is (otherwise the result is a frozen picture).
-std::function<bool(int team, int kit, int group)> requestSpawn;
-  // The moving corner regions. In `Menu/Ingame` their X is not a constant but a
-  // graph variable, and what the file holds is precisely the **hidden** position:
-  // BottomLeft_XPos = -295, BottomRight_XPos = 503. The shown one for the right is
-  // there too — BottomRight_oldXPos = 201. They are driven by
-  // SetVariableSineAction at speed 600.
-  //
-  // That is why in the original no wide plate under the health is visible behind
-  // the spawn screen: the node BottomLeftBar (400x39, healthBackGround.tga) has no
-  // show variable at all, and it is the region driving away that hides it.
-  // The left region is a state machine from the client (obf2/hud/bottom_left.h).
-  obf2::hud::BottomLeftPanel bottomLeft;
-  float& bottomLeftX = bottomLeft.x;
-  float bottomRightX = obf2::hud::kBottomRightHiddenX;
-  // The right region's alpha is driven by the same graph: `BottomRight_alpha` is
-  // bound to the HUD object's field +0x10, and that same field is registered as the
-  // HUD variable `BottomRightAlpha` (`BF2.exe`, 0x7a62c0). Half the right corner's
-  // nodes hang on it (`HudElementsPlayer.con`).
-  float bottomRightAlpha = 0.0f;
-  obf2::hud::BottomLeftMode bottomLeftMode = obf2::hud::BottomLeftMode::Hidden;
-  // The map: its size is driven by its own animation, and MapFullSize and
-  // MapMinSize are derived from the size (obf2/hud/map_node.h).
-  obf2::hud::MapNode mapNode;
-  // The minimap compass's angle — two smoothers in a row (the same place).
-  obf2::hud::MapAngle mapAngle;
-  // The `Menu/Ingame` graph — the very system the engine animates the HUD with. The
-  // corner regions travel by it, and every speed lies in the file rather than here.
-  obf2::meme::Graph ingameGraph;
-  // The map's rectangle on the node was moved by someone else (a spawn screen
-  // rebuild, a screenshot on a key) — the next frame has to put its own back.
-  bool mapRectStale = true;
-  // The map's window at zoom 0 is a square around the combat area. That is what was
-  // measured from the original's frame dump (docs/research/03-frame-dump.md);
-  // magnification divides its half-side by `pow(2.3, zoom)`.
-  float mapBaseCentreU = 0.5f, mapBaseCentreV = 0.5f;
-  float mapBaseHalfU = 0.0f, mapBaseHalfV = 0.0f;
-  // The look angle lives between frames: the mouse gives only a delta. It is
-  // declared here because the console command `openbf2.look` reads it too.
-  float yaw = 0.0f;
-  // The map key (`c_GIMapSize`, constant 0x23 in BF2.exe's control table at
-  // 0x690244) is a toggle, not "hold". In combat it moves the HUD from state 0 into
-  // state 2, where the data leaves the map alone on screen.
-  bool bigMap = false;
-  bool mapKeyWasDown = false;
-  bool zoomKeyWasDown = false;
-  // There was no state yet: -1 leads into the first switch's `default` branch, that
-  // is "clear absolutely everything" (0x78653c).
-  int hudStatePrevious = -1;
-  bool bottomRightShow = false;
-  float bottomRightShownX = obf2::hud::kBottomRightShownX;
-  // Nodes appearing and disappearing over time — what the MemeFile graph governs in
-  // the game (see obf2/hud/animation.h).
-  obf2::hud::Animator hudAnimator;
-  std::chrono::steady_clock::time_point lastAnimationTick = std::chrono::steady_clock::now();
+  // The screens on a key, baked once, and the live nodes, each rebuilt on its own.
+  std::vector<std::vector<OwnedPiece>> keyScreenPieces;
+  std::vector<std::vector<OwnedPiece>> dynamicPieces;
   // What the interface's rebuilds cost, in milliseconds and in number, split
   // between building the geometry and putting it on the card.
   int hudRebuilds = 0;
@@ -833,359 +743,50 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   float hudRebuildMax = 0.0f;
   float hudUploadMs = 0.0f;
   int hudUploaded = 0;
+  // The look angle lives between frames: the mouse gives only a delta. It is
+  // declared here because the console command `openbf2.look` reads it too.
+  float yaw = 0.0f;
+  // These three are called from the frame loop, so they live at the outer level:
+  // a lambda of an inner block would hold references to variables that no longer
+  // exist by then (CLAUDE.md, the first of the rakes).
+  std::function<void(std::vector<obf2::hud::DrawPiece>&, std::vector<OwnedPiece>&)> putOnCard;
+  std::function<void()> rebuildIngame;
   std::function<void()> rebuildSpawn;
-  // These two are needed by the rebuild, and it is called from the drawing loop —
-  // that is, already outside the level loading block. Keeping them inside is not
-  // allowed: a reference in the lambda would become dangling.
-  std::function<void()> applySpawnState;
-  // And the three the spawn screen's state asks for a side's name with. They are
-  // the same case once more: written inside the loading block, held by reference
-  // by `applySpawnState`, and called from the frame loop long after that block has
-  // gone. AddressSanitizer caught it as a stack-use-after-scope at the line that
-  // reads `level->teamNames`, and in the release build it was a plain crash on the
-  // first frame with `--level` — the rebuild called a lambda whose captures no
-  // longer existed, so the whole HUD came out with zero pieces before it died.
-  std::function<std::string(int)> teamName;
-  std::function<std::string(int)> teamLabel;
-  std::function<std::string(int)> teamFlagIcon;
-  // `--hud-rects`, and the same case a third time: the combat HUD's rebuild hands
-  // it to `buildIngame` as a callback, and that rebuild runs from the frame loop.
-  std::function<void(const char*, const std::vector<obf2::hud::DrawPiece>&)> reportRects;
-  obf2::hud::Context spawnContext;
-  // The same case as with spawnContext: the combat HUD is now rebuilt from the
-  // frame loop, and the lambda holds the context by reference. While it was local
-  // to the setup block, after the block exited rebuildIngame read dead memory — the
-  // path to the map's picture arrived as rubbish, and the minimap was not drawn.
-  obf2::hud::Context hudContext;
-  // The level's capture points — the map's markers are rebuilt from them every
-  // time: a flag stands on each, while a spawn selection circle stands only on our own.
-  std::vector<obf2::level::ControlPoint> hudControlPoints;
-  // The map's vehicles and strategic objects. They do not depend on the player's
-  // side, so they are built once with the level and re-seeded into the spawn
-  // screen's context every time it is rebuilt.
-  std::vector<obf2::hud::Context::MapMarker> assetMapMarkers;
-  // The screens visible only while a key is held: the scoreboard, the radio, the spawn.
-  // The geometry is baked in advance — it does not change, only whether to draw it
-  // this frame does.
-  struct KeyScreen {
-    std::string group;
-    std::string action;  // the action's name in the ControlMap, not a key
-    std::vector<int> quads;
-    // The HUD state this screen belongs to (docs/functions/hud-states.md).
-    // The spawn screen is state 1, and in the game it is **not held with a key**: it
-    // stands until the player has spawned. The scoreboard is state 9, and that one
-    // really is on a key.
-    int state = -1;
-    bool heldByKey = true;
-  };
-  std::vector<KeyScreen> keyScreens;
-  obf2::game::ControlMap controls;
-  obf2::hud::VariableMap hudVariables;
-  std::map<std::string, std::string> hudStrings;
-  std::map<std::string, float> hudValues;
-  // The plates' alpha. This is not our invention and not zero: BF2.exe takes the
-  // alpha from the player's profile (GeneralSettings.setHUDTransparency /
-  // setMinimapTransparency, 204 by default), multiplies it by 1/255 — the constant
-  // at 0x8a4a64 — and puts it into the variables MenuBackgroundAlpha and
-  // MenuMapAlpha (0x4b68d3 and 0x4b6907). Until now we set zero, and the wide plates
-  // under the health, the stamina and the ammo were not drawn at all.
-  // The plates' alpha from the profile — also the "base" for the dimmed variants in
-  // 0x78b600.
-  const float backgroundAlpha =
-      static_cast<float>(engine.settings().general.hudTransparency) / 255.0f;
-  const std::map<std::string, float> hudAlpha = {
-      {"MenuBackgroundAlpha",
-       static_cast<float>(engine.settings().general.hudTransparency) / 255.0f},
-      {"MenuMapAlpha",
-       static_cast<float>(engine.settings().general.minimapTransparency) / 255.0f},
-  };
-  // The nodes whose contents change in the game: captions and bars. We rebuild the
-  // geometry for them, but only when a value really changed.
-  struct DynamicNode {
-    const obf2::hud::Node* node = nullptr;
-    std::string shownText;
-    float shownValue = -1.0f;
-    // A picture's rotation angle (`setPictureNodeRotateVariable`). The minimap's
-    // compass turns every frame, and rebaking **the whole** HUD through it
-    // is not allowed: 91 meshes per frame is exactly the stutter one can see.
-    float shownAngle = 0.0f;
-    // A node may give more than one piece: the map also draws the capture points'
-    // icons and their captions.
-    std::vector<OwnedPiece> pieces;
-    // Whether we built at all. Without this the compass would not appear until the
-    // player turned the mouse: its angle equals the shown one from the very start.
-    bool built = false;
-  };
-  std::vector<DynamicNode> hudDynamic;
-  const LoadedFont hudFont = bootMode ? LoadedFont{} : loadFont(files, "Fonts/800/dynamicText_13");
-  // The nodes' fonts, by their style. Loaded on demand: the HUD has a dozen of
-  // them, and there is no need to read all 358 from the archive.
-  std::map<std::string, LoadedFont> hudFonts;
-  obf2::hud::Screen hudScreen;
-  if (!bootMode && hudFont.valid) {
-    // The dictionary: without it the HUD shows keys ("HUD_TEXT_MENU_SCORE_ROUNDSWON")
-    // instead of text. In the menu boot loads it, while in combat nobody loaded it —
-    // hence the keys on screen.
-    engine.loadLexicon(files);
+  std::chrono::steady_clock::time_point lastAnimationTick = std::chrono::steady_clock::now();
 
-    obf2::con::Interpreter hudInterpreter(
-        files, [&](const obf2::con::Command& command) { ingameHud.feed(command); });
-    hudInterpreter.runFile("Menu/HUD/HudSetup/HudSetupMain.con");
+  if (!bootMode) {
+    obf2::hud::Manager::Setup hudSetup;
+    hudSetup.screenWidth = args.width;
+    hudSetup.screenHeight = args.height;
+    // We measure the HUD with the **real** window rather than the requested one:
+    // the screen may have turned out smaller, and the window would slide with the
+    // request.
+    SDL_GetWindowSize(device->window(), &hudSetup.screenWidth, &hudSetup.screenHeight);
+    hudSetup.kit = args.kit;
+    hudSetup.team = args.team;
+    hudSetup.levelName = args.levelName;
 
-    // The HUD's animation system is the file `Menu/Ingame`, not code: it holds the
-    // corner regions with their variable bindings, the show conditions and the
-    // actions that move those variables (obf2/meme/graph.h).
-    if (const auto memeData = files.read("Menu/Ingame")) {
-      std::string memeError;
-      if (ingameGraph.load(*memeData, &memeError)) {
-        std::printf("  the Ingame graph: nodes %zu, variables %zu\n",
-                    ingameGraph.file().objects().size(),
-                    ingameGraph.variables().all().size());
-      } else {
-        std::printf("  the Ingame graph was not read: %s\n", memeError.c_str());
-      }
-    }
-    // Link the tree: until then the nodes' coordinates stay relative to their parent
-    // and the HUD scatters over the screen.
-    ingameHud.finish();
-
-    // The control layout comes from the game's data. We ask about an action, and
-    // which key it is `Settings/Controls.con` decides.
-    obf2::con::Interpreter controlInterpreter(
-        files, [&](const obf2::con::Command& command) { controls.feed(command); });
-    controlInterpreter.runFile("Settings/Controls.con");
-
-    // The state table and the derived variables live in `obf2/hud/states.h`
-    // together with their test: both the table from BF2.exe and the addresses of the
-    // places that write each variable.
-    // The map's rectangles come from the data (`setMiniPos`/`setMaxiSize` and the
-    // rest); the animation takes them from the assembled tree so as not to parse twice.
-    for (const obf2::hud::Node& node : ingameHud.nodes()) {
-      if (node.type == obf2::hud::NodeType::Map || node.type == obf2::hud::NodeType::MiniMap) {
-        mapNode.takeRects(node);
-        break;
-      }
-    }
-
-    applyHudState = [&](int state) {
-      // The map changes its target by the state number — verbatim 0x777dc0.
-      mapNode.applyState(state);
-      // A transition rather than "set the state": in the game the first switch goes
-      // on the old state, the second on the new one (0x786260).
-      if (obf2::hud::applyState(hudVariables, hudStatePrevious, state)) hudDirty = true;
-      // The spawn screen is baked geometry we keep, and its nodes hang on the same
-      // variables: a state that changes them changes what it should be showing. The
-      // engine has no such problem — it walks the tree every frame — so this is our
-      // cache to invalidate, and forgetting it is what left the screen empty. The
-      // first build runs before the state is ever set to 1, so **every** piece of
-      // it was hidden, and on a round where nothing else asked for a rebuild it
-      // stayed that way and the player could not spawn.
-      if (hudStatePrevious != state) spawnDirty = true;
-      hudStatePrevious = state;
-    };
-
-    // The combat HUD is state 0.
-    applyHudState(0);
-
-    // ToggleScore is the scoreboard's "Players" tab. That it is the default is
-    // visible in the binary: the flag field (Scoreboard+0x365) has exactly one
-    // constant store, `movb $0x1, 0x365(%esi)` at 0x7a48f7.
-    hudVariables["ToggleScore"] = true;
-    hudVariables["ToggleSquads"] = false;
-    hudVariables["ToggleManage"] = false;
-
-    // Source not found: CPInterfaceEnabled (the HUD object's field 0xa8) is written
-    // by many places in the game, and which of them is ours is not established.
-    // Without it the capture points' bars are not visible. Debt.
-    hudVariables["CPInterfaceEnabled"] = true;
-
-    // The bar across the top of the spawn screen — `SpawnInfo` in
-    // `HudElementsSpawn.con`: the plate `TopMiddleBar` at 250,0 270x19 and the
-    // caption `TimeToSpawn` on `SpawnInfoString` over it.
-    //
-    // Both come from `HudInformationLayer`'s per-frame update (`BF2.exe`,
-    // 0x4668d0). `SpawnInfoShow` (+0x1d3) is on unless the HUD state is 11 or 12
-    // (0x467381 sets one, 0x467391 zero). The caption is `presstospawn` when the
-    // state is 13 or 17 **and** a list the game keeps is not empty (0x4672c2 and
-    // 0x4672eb), and `selectspawnpoint` otherwise — which is the branch the spawn
-    // screen takes. The other two keys the same function writes,
-    // `invalidspawnpoint` and `timetospawn`, belong to states we do not model yet.
-    // The caption. The same function chooses between four keys by the HUD's state
-    // and a list it keeps: `presstospawn` in the states 1, 13, 17 and 18 when that
-    // list is not empty (0x46729c through 0x4672eb), `selectspawnpoint` otherwise,
-    // and `timetospawn` / `instantspawn` in branches of their own. The spawn screen
-    // with nothing chosen takes `selectspawnpoint`, which is what the original
-    // draws; the other three are debt, because what the list holds is not
-    // established. `SpawnInfoShow` is set per frame, see `updateHudVariables`.
-    hudStrings["SpawnInfoString"] = "HUD_CENTERINFOBOX_selectspawnpoint";
-
-    // --- the spawn screen: seven kits -------------------------------
-    //
-    // The nodes Kit0..Kit6 in HudElementsSpawn.con show nothing by themselves: each
-    // hangs on its own variable, and the contents arrive as variables too —
-    // KitName<N>String (the caption's key) and KitIcon<N>Path (the icon). The rows
-    // themselves come from the level and from the kits' templates
-    // (`obf2/hud/kit_list.h`); they are filled in by `applySpawnState` below,
-    // because the list belongs to the side and the side can change.
-
-    // --- the spawn screen's backend --------------------------------
-    //
-    // A button in the HUD has no logic of its own: it runs a console command from
-    // `setButtonNodeConCmd` (docs/functions/hud-commands.md). This screen has seven
-    // of them, and here they are. The state is kept right here, and a change requires
-    // a rebuild — we bake the geometry in advance.
-    selectedKit = args.kit;
-    selectedTeam = args.team == 2 ? 2 : 1;
-    {
-      obf2::engine::Console& console = engine.console();
-      // The screen's own commands are the module's, the one the test covers
-      // (`obf2/hud/spawn_interface.h`). They used to be written out a second time
-      // right here — the same logic in two places, and the tested copy was not the
-      // one that ran.
-      spawnScreen.bind(
-          console,
-          [&](int team, int kit, int group) {
-            return requestSpawn ? requestSpawn(team, kit, group) : false;
-          },
-          [&]() {
-            if (remote != nullptr) remote->commitSuicide();
-          });
-      console.bind("hudItems.setBool", [&](const obf2::con::Command& command) {
-        // `hudItems.setBool <name> <0|1>` — this is how the interface turns its own
-        // flags on, SetSpawnPoint among them.
-        if (command.args.size() >= 2) {
-          hudVariables[std::string(command.argStr(0))] = command.argInt(1).value_or(0) != 0;
-          spawnDirty = true;
-        }
-      });
-      // These two have nothing to work on yet, but the command has to be eaten —
-      // otherwise the console will consider it unknown.
-      // Our own command, not the engine's: the spawn circles have no nodes in the
-      // data, the map catches them itself, so the game has no console name for them.
-      // It is needed for the checks — so a spawn point can be chosen by a command
-      // rather than by pointing the mouse at a pixel.
-      // `openbf2.spawnAt <group number>` — ask to spawn straight by the group number
-      // the server named (`CreateSpawnGroupEvent`, type 57). Needed for the checks:
-      // we still place the circles on the map from the level's data, and they do not
-      // always agree with whose group it really is — while the server spawns only in
-      // its own.
-      console.bind("openbf2.spawnAt", [&](const obf2::con::Command& command) {
-        const int group = command.argInt(0).value_or(0);
-        if (remote == nullptr || group <= 0) return;
-        std::printf("  spawn screen: a direct spawn in group %d\n", group);
-        remote->askSpawnGroup(selectedTeam, selectedKit, group);
-        spawnScreen.setRequested(true);
-      });
-      // `openbf2.toggleMap [0|1]` — the same as the map key. Ours, not the engine's:
-      // in the original the big map is governed only by the `c_GIMapSize` action from
-      // the layout, which has no console name. Needed for the checks — so the map can
-      // be captured by a command rather than by holding a key.
-      console.bind("openbf2.toggleMap", [&](const obf2::con::Command& command) {
-        bigMap = command.args.empty() ? !bigMap : command.argInt(0).value_or(0) != 0;
-        std::printf("  map: the big presentation %s\n", bigMap ? "on" : "off");
-      });
-      // `MiniMap.setZoom <index>` — the engine's command, not ours: in the data it
-      // hangs on the `MapZoom` button (HudElementsMapMenu.con), and in the client
-      // 0x57a97e writes the number straight into the map node's field +0x6d0.
-      // With no argument — the next zoom in a cycle, because that is how
-      // the button behaves: the data passes it 0 while it toggles.
-      console.bind("MiniMap.setZoom", [&](const obf2::con::Command& command) {
-        const int next = command.args.empty()
-                             ? (mapNode.zoomIndex() + 1) % obf2::hud::kMapZoomLevels
-                             : command.argInt(0).value_or(0);
-        mapNode.setZoomIndex(next);
-        std::printf("  map: zoom %d\n", mapNode.zoomIndex());
-      });
-      // `openbf2.look <angle>` — turn the view to the given angle in degrees.
-      // Ours too, for the checks: otherwise the minimap's compass cannot be captured
-      // in a screenshot, because the angle comes from the mouse.
-      console.bind("openbf2.look", [&](const obf2::con::Command& command) {
-        yaw = command.argFloat(0).value_or(0.0f);
-        std::printf("  view: angle %.1f\n", static_cast<double>(yaw));
-      });
-      // The scoreboard's three tabs. The buttons in the data run
-      // `scoreboard.setToggleShow 0|1|2` (`HudElementsScoreboard.con`), and the
-      // three flags they pick between are neighbours in the Scoreboard object —
-      // `ToggleSquads` +0x364, `ToggleScore` +0x365, `ToggleManage` +0x366
-      // (docs/functions/hud-variables.md). Exactly one is on at a time: each tab's
-      // picture and its bright label hang on its own flag, and the faded label on
-      // `NOT` it.
-      console.bind("scoreboard.setToggleShow", [&](const obf2::con::Command& command) {
-        const int tab = command.argInt(0).value_or(0);
-        hudVariables["ToggleScore"] = tab == 0;
-        hudVariables["ToggleSquads"] = tab == 1;
-        hudVariables["ToggleManage"] = tab == 2;
-        hudDirty = true;
-        std::printf("  scoreboard: tab %d\n", tab);
-      });
-      console.bind("sound.playSound", [](const obf2::con::Command&) {});
-    }
-
-    // The HUD's derived variables. In the game they are written not by a list at
-    // startup but by two per-frame functions, and each is named here by its address:
-    //
-    //   0x466930 — the map's size and what follows from it;
-    //   0x78d0f0 — the combat set by the current player.
-    //
-    // That is exactly why in the original no health or ammo bars are visible behind
-    // the spawn screen: there is no player yet, and 0x78d2d9 clears the whole set.
-    updateHudVariables = [&](bool hasPlayer, bool mapFullSize) {
-      if (obf2::hud::applyDerived(hudVariables, obf2::hud::WorldView{hasPlayer, mapFullSize})) {
-        hudDirty = true;
-      }
-      // The moving regions' ends are constants from `obf2/hud/animation.h`, and it
-      // says where each of them comes from.
-      //
-      // The left region has **three** positions, not two: hidden (-295), on foot
-      // (-137) and in a vehicle (54). 0x78b600 chooses among them by the flags
-      // `BottomLeftHealthAlpha` and `BottomLeftVehicleAlpha`. We do not compute those
-      // flags yet (see the notes: who writes them is not worked out), so we take the
-      // **on foot** position — it is the right one for a player on his own two feet.
-      // The vehicle one will be added once there is a source for the flags.
-      //
-      // The left region's mode is set by 0x78b870: "health" when there is a player
-      // and "hide" when there is none. "Vehicle" is when the controlled object is not
-      // a soldier; we are always a soldier for now, so we do not turn it on.
-      bottomLeftMode =
-          hasPlayer ? obf2::hud::BottomLeftMode::Health : obf2::hud::BottomLeftMode::Hidden;
-      // On the right the switch is the same as on the left: there is a player — show.
-      // The positions are a pair with the left ones too — on foot 337, in a vehicle
-      // 165 (`BF2.exe`, 0x7a5b10). We do not turn the vehicle on for the same reason
-      // as on the left: our controlled object is always a soldier for now.
-      bottomRightShow = hasPlayer;
-      bottomRightShownX = obf2::hud::kBottomRightShownX;
-      // The bar across the top belongs to the spawn flow. `SpawnInfoShow`
-      // (+0x1d3) is written by 0x4668d0, and there it is `state != 11 && state
-      // != 12` — but the whole block sits behind an outer branch at 0x467278
-      // that we have not read, so in combat the condition is **not measured**.
-      // What is measured is the spawn screen: the original draws the bar there,
-      // and the caption on it is `selectspawnpoint`
-      // (docs/research/spawn-screen-named.md). So we show it exactly there.
-      hudVariables["SpawnInfoShow"] = !hasPlayer;
-    };
-
+    obf2::hud::Manager::Hooks hooks;
     // What DONE does. There are two paths, and both are equally "real":
     //
-    //   * our own game — a direct request to our server. It behaves like the engine:
-    //     the soldier spawns only when a spawn point has been chosen;
+    //   * our own game — a direct request to our server. It behaves like the
+    //     engine: the soldier spawns only when a spawn point has been chosen;
     //   * a real BF2 server — three events in a row, NESelectTeam, NESelectKit,
-    //     NESelectSpawnGroup. The order and the pauses between them are verified
-    //     against an original server
+    //     NESelectSpawnGroup, verified against an original server
     //     (docs/functions/network-events.md).
-    requestSpawn = [&](int team, int kit, int group) -> bool {
+    hooks.requestSpawn = [&](int team, int kit, int group) -> bool {
       if (hostedServer != nullptr && !hostedServer->players().empty()) {
         hostedServer->requestSpawn(hostedServer->players().front().id, team, kit, group);
         return true;
       }
       if (remote != nullptr) {
-        // The server has to be told **its** spawn group number, not our control point
-        // id: on Dalian the server sends 515..518, while in the level's data the flags
-        // have 401..404, and they are not related in any way. All they share is the
-        // position, so we pass the position — and the connection picks the number when
-        // the time comes to send. We used to pick it right here and on a fast press
-        // got zero: the groups arrive as events only after the level has loaded.
+        // The server has to be told **its** spawn group number, not our control
+        // point id: on Dalian the server sends 515..518 while the level's flags are
+        // 401..404, and they are not related in any way. All they share is the
+        // position, so we pass the position — and the connection picks the number
+        // when the time comes to send.
         const obf2::level::ControlPoint* chosen = nullptr;
-        for (const auto& point : hudControlPoints) {
+        for (const auto& point : hudManager.controlPoints()) {
           if (point.id == group) { chosen = &point; break; }
         }
         if (chosen == nullptr) {
@@ -1194,711 +795,121 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
         }
         std::printf("  spawn screen: point %d (%s) at %.0f %.0f\n", group,
                     chosen->nameKey.c_str(), chosen->position.x, chosen->position.z);
-        remote->askSpawn(team, kit, chosen->position.x, chosen->position.z,
-                         hudContext.mapWorldSize);
+        remote->askSpawn(team, kit, chosen->position.x, chosen->position.z, hudManager.mapWorldSize());
         return true;
       }
       std::printf("  spawn screen: there is no server, spawning only closes the screen\n");
       return true;
     };
-
-    // The team's side name comes from the level itself:
-    //   gameLogic.setTeamName 1 "CH"
-    // For Dalian_plant that is CH and US — in exactly that order, so team one is
-    // Chinese. Across all 22 levels the set of names is exactly CH, EU, MEC, US, and
-    // the icon directories in Menu_client.zip are called the same.
-    teamName = [&](int team) -> std::string {
-      if (!level || team < 0 || team > 2) return {};
-      return level->teamNames[team];
+    hooks.commitSuicide = [&]() {
+      if (remote != nullptr) remote->commitSuicide();
     };
-    // The conversions from a side's name into keys and paths live in
-    // `obf2/hud/spawn.h` together with their test.
-    teamLabel = [&](int team) { return obf2::hud::armyLabelKey(teamName(team)); };
-    teamFlagIcon = [&](int team) { return obf2::hud::teamFlagIcon(teamName(team)); };
-
-    // The team tabs at the top of the spawn screen. In the data the TeamSelectInfo
-    // branch hangs on Team1Selected, and inside are two blocks — Team1Selected and
-    // Team2Selected.
-    // The spawn screen's variables depend on its state, so we keep them in one place
-    // and recompute them after every command.
-    applySpawnState = [&]() {
-      // We do not touch the HUD's state here: the frame sets it by the game's current
-      // state. We used to set state 1 here — and after DONE the spawn screen turned
-      // itself back on every time it was rebuilt.
-      // The map's markers depend on the team, so we assemble them every time.
-      // A flag stands on every point, while a spawn selection circle stands only
-      // where the point is held by **our** team: in Dalian_plant's data that is
-      // visible directly, ObjectTemplate.team gives 1 for powerplant, 2 for
-      // constructionsite, while reactors and mainentrance are neutral. Spawning at
-      // another team's or a neutral one is not allowed.
-      spawnContext.mapMarkers.clear();
-      spawnContext.spawnMarkers.clear();
-      std::vector<int> markerPoints;
-      for (const auto& point : hudControlPoints) {
-        obf2::hud::Context::MapMarker marker;
-        marker.worldX = point.position.x;
-        marker.worldZ = point.position.z;
-        marker.label = point.nameKey;
-        marker.texture = obf2::hud::controlPointIcon(point.team == 0 ? "" : teamName(point.team),
-                                                     point.unableToChangeTeam);
-        spawnContext.mapMarkers.push_back(std::move(marker));
-        if (point.team == selectedTeam) {
-          const bool chosen =
-              static_cast<int>(spawnContext.spawnMarkers.size()) == selectedSpawn;
-          spawnContext.spawnMarkers.push_back(
-              obf2::hud::Context::SpawnMarker{point.position.x, point.position.z, chosen});
-          markerPoints.push_back(point.id);
-        }
-      }
-      spawnScreen.setMarkerPoints(std::move(markerPoints));
-      // The vehicles and the strategic objects come after the flags, the way the
-      // original's batch has them.
-      spawnContext.mapMarkers.insert(spawnContext.mapMarkers.end(), assetMapMarkers.begin(),
-                                     assetMapMarkers.end());
-      hudVariables["Team1Selected"] = selectedTeam != 2;
-      hudVariables["Team2Selected"] = selectedTeam == 2;
-      // The tabs' captions and flags. In the data they are on the variables
-      // Team1NameString / Team1FlagIconPathString (HudElementsSpawn.con),
-      // while in the binary one and the same 0x787260 fills them in.
-      for (int team = 1; team <= 2; ++team) {
-        const std::string index = std::to_string(team);
-        hudStrings["Team" + index + "NameString"] =
-            std::string(engine.lexicon().text(teamLabel(team)));
-        hudStrings["Team" + index + "FlagIconPathString"] = teamFlagIcon(team);
-      }
-      // The same function also sets the "ours/theirs" pair: its first argument is the
-      // player's team, the second the opposite one.
-      hudStrings["FriendlyFlagIconPathString"] = teamFlagIcon(selectedTeam);
-      hudStrings["EnemyFlagIconPathString"] = teamFlagIcon(selectedTeam == 2 ? 1 : 2);
-      // The scoreboard's two headers name the sides with the same pair
-      // (`FriendlyTeamNameString` +0x52c, `EnemyTeamNameString` +0x530), and the
-      // same 0x787260 fills them beside the flags. `FriendlyTeamWinsString` and
-      // `EnemyTeamWinsString` are the rounds won; we count no rounds, so those two
-      // stay empty and the headers show the caption without a number — debt.
-      hudStrings["FriendlyTeamNameString"] =
-          std::string(engine.lexicon().text(teamLabel(selectedTeam)));
-      hudStrings["EnemyTeamNameString"] =
-          std::string(engine.lexicon().text(teamLabel(selectedTeam == 2 ? 1 : 2)));
-      // `MapFullSizeAndSpawnShow` used to be set here by hand, because there was no
-      // source. Now there is: 0x4668d0 computes it every frame as
-      // `MapFullSize AND SpawnShow`, and `applyDerived` already does that
-      // (obf2/hud/states.h). We no longer set it by hand.
-      // KitsShow / MembersShow is switched by SpawnManager.toggleMembers — a
-      // reversed command from hud-commands.md.
-      hudVariables["KitsShow"] = !membersTab;
-      hudVariables["MembersShow"] = membersTab;
-      // The chosen kit is a consequence of spawnManager.setPlayerKit, also a reversed
-      // command.
-      for (int slot = 0; slot < 7; ++slot) {
-        hudVariables["PlayerKitIcon" + std::to_string(slot) + "SelectShow"] = slot == selectedKit;
-      }
-
-      // --- the seven kit rows -----------------------------------------
-      //
-      // Everything a row shows the engine pours into these variables every frame
-      // out of the kit's own ObjectTemplate — `HudInformationLayer`, 0x468510
-      // (docs/functions/hud-kits.md). The kit of a row is named by the level:
-      // `gameLogic.setKit <team> <row> <kit> <soldier>`, so the list changes with
-      // the side and is rebuilt here along with the rest of the screen's state.
-      for (int slot = 0; slot < obf2::level::Level::kKitsPerTeam; ++slot) {
-        const std::string index = std::to_string(slot);
-        const std::string& kitName =
-            level ? level->kits[selectedTeam][slot] : std::string{};
-        const obf2::hud::KitRow row = obf2::hud::buildKitRow(registry, kitName);
-        // `Kit<N>Show` is `KitsShow` for every row the kit manager answers for —
-        // the engine writes the layer's own flag into the row's flag at the end of
-        // each pass (0x468510). A row the level named no kit for stays off.
-        hudVariables["Kit" + index + "Show"] = !membersTab && !row.kitTemplate.empty();
-        hudStrings["KitName" + index + "String"] = row.nameKey;
-        hudStrings["KitIcon" + index + "Path"] = row.icon;
-        hudStrings["KitWeaponIcon" + index + "Path"] = row.weaponIcon;
-        hudStrings["KitAltWeaponIcon" + index + "Path"] = row.altWeaponIcon;
-        hudValues["Kit" + index + "SprintAbility"] = row.sprintAbility;
-        // The unlock's picture is shown either way; the arrow says whether the
-        // player owns it, and it is the arrow that swaps the greyed-out picture
-        // and the padlock for the live one. We have no profile and no unlocks, so
-        // the arrow is off — which is what the original drew for the profile the
-        // dump was taken with.
-        hudVariables["KitUnlock" + index + "Show"] = row.unlock;
-        hudVariables["KitUnlockArrow" + index + "Show"] = false;
-        hudValues["Kit" + index + "UnlockBlinkAlpha"] = 0.0f;
-        for (std::size_t icon = 0; icon < obf2::hud::kMaxAbilityIcons; ++icon) {
-          const std::string at = index + "AbilityIcon" + std::to_string(icon);
-          const bool has = icon < row.abilityIcons.size();
-          hudVariables["Kit" + at + "Show"] = has;
-          hudStrings["Kit" + at + "PathString"] = has ? row.abilityIcons[icon] : std::string{};
-        }
-      }
+    hooks.spawnAtGroup = [&](int team, int kit, int group) {
+      if (remote != nullptr) remote->askSpawnGroup(team, kit, group);
     };
-    applySpawnState();
-
-    // The level's map picture is not set by the HUD: BF2.exe has a template for it
-    // `Levels/%s/Hud/Minimap/ingameMap.tga`.
-    if (!args.levelName.empty()) {
-      hudContext.mapTexture = "Levels/" + args.levelName + "/Hud/Minimap/ingameMap.tga";
-    }
-    // The game shows not the whole level picture but a square around the combat area,
-    // centred on the area's centre. Its side is the area's **larger side plus a fixed
-    // margin**, and the margin is a fraction of the picture and not of the area:
-    //
-    //   side = max(width, height) + world * 0.078125
-    //
-    // 0.078125 is 40 texels of the 512-wide map picture on each side. Measured from
-    // frame dumps of the original on two levels whose terrains differ in size, and it
-    // is the difference in size that separates this rule from the "times 1.2" we used
-    // before:
-    //
-    //   Strike at Karkand, world 1024, area 640.4 tall -> side 720.4, v span 0.70349
-    //                                                     the original: 0.7035
-    //   Dalian Plant,      world 2048, area 808 tall   -> side 968,   u span 0.47266
-    //                                                     the original: 0.4728
-    //
-    // Times 1.2 gives Karkand 0.7505, which is half the map out. Where the address of
-    // the constant is in the binary is not known — it is a measurement, not a read.
-    //
-    // The square may hang off the picture; the renderer cuts it there rather than
-    // sliding it back, and narrows the rectangle on screen to match.
-    //
-    // The picture is oriented so that z grows upwards: v = (1024 - z) / 2048.
-    constexpr float kMapMargin = 40.0f / 512.0f;
-    const auto hudGameplay =
-        level ? obf2::level::loadGameplayObjects(files, level->name, "gpm_cq", 16)
-              : std::optional<obf2::level::GameplayObjects>{};
-    if (hudGameplay && !hudGameplay->combatArea.empty()) {
-      float minX = 0.0f, maxX = 0.0f, minZ = 0.0f, maxZ = 0.0f;
-      hudGameplay->combatArea.bounds(minX, maxX, minZ, maxZ);
-      const float world = static_cast<float>(level ? level->primary.size - 1 : 1024) *
-                          (level ? level->primary.scale.x : 2.0f);
-      const float half = (std::max(maxX - minX, maxZ - minZ) + world * kMapMargin) * 0.5f;
-      const float centerX = (minX + maxX) * 0.5f;
-      const float centerZ = (minZ + maxZ) * 0.5f;
-      const auto toU = [&](float x) { return (x + world * 0.5f) / world; };
-      const auto toV = [&](float z) { return (world * 0.5f - z) / world; };
-      hudContext.mapU0 = toU(centerX - half);
-      hudContext.mapU1 = toU(centerX + half);
-      hudContext.mapV0 = toV(centerZ + half);
-      hudContext.mapV1 = toV(centerZ - half);
-      hudContext.mapWorldSize = world;
-      mapBaseCentreU = (hudContext.mapU0 + hudContext.mapU1) * 0.5f;
-      mapBaseCentreV = (hudContext.mapV0 + hudContext.mapV1) * 0.5f;
-      mapBaseHalfU = (hudContext.mapU1 - hudContext.mapU0) * 0.5f;
-      mapBaseHalfV = (hudContext.mapV1 - hudContext.mapV0) * 0.5f;
-      std::printf("  map: combat area %.0f..%.0f / %.0f..%.0f, visible u %.3f..%.3f v %.3f..%.3f\n",
-                  minX, maxX, minZ, maxZ, hudContext.mapU0, hudContext.mapU1, hudContext.mapV0,
-                  hudContext.mapV1);
-
-      // The red hatch over everything outside the combat area. The square it
-      // covers is the **uncut** one — the same square the crop is built from,
-      // before the map's edge takes a bite out of it — because the original's
-      // overlay covers the map node whole while its picture does not.
-      if (const auto bytes = files.read(obf2::normalizeAssetPath(obf2::hud::kCombatAreaSource))) {
-        std::string textureError;
-        if (const auto hatch = obf2::texture::loadImage(*bytes, &textureError)) {
-          const obf2::hud::WorldSquare square{centerX - half, centerZ - half, centerX + half,
-                                              centerZ + half};
-          combatAreaOverlay =
-              obf2::hud::buildCombatAreaOverlay(*hatch, hudGameplay->combatArea.points, square);
-          hudContext.combatAreaTexture = std::string(obf2::hud::kCombatAreaTexture);
-          std::printf("  map: combat-area hatch over %.0f..%.0f / %.0f..%.0f, %zu points\n",
-                      square.minX, square.maxX, square.minZ, square.maxZ,
-                      hudGameplay->combatArea.points.size());
-        } else {
-          std::printf("  map: the combat-area hatch did not read: %s\n", textureError.c_str());
-        }
-      }
-
-      // The capture points: the position, the team and the name's key come from the
-      // level — exactly what the server sees. The markers themselves are assembled by
-      // applySpawnState, because they depend on the player's team.
-      hudControlPoints = hudGameplay->controlPoints;
-      // The main HUD is baked once, so the flags for its minimap are assembled right
-      // here. There are no selection circles there — they exist only on the spawn
-      // screen.
-      for (const auto& point : hudControlPoints) {
-        obf2::hud::Context::MapMarker marker;
-        marker.worldX = point.position.x;
-        marker.worldZ = point.position.z;
-        marker.label = point.nameKey;
-        marker.texture = obf2::hud::controlPointIcon(point.team == 0 ? "" : teamName(point.team),
-                                                     point.unableToChangeTeam);
-        hudContext.mapMarkers.push_back(std::move(marker));
-      }
-      std::printf("  map: capture points %zu\n", hudControlPoints.size());
-
-      // --- what stands on the map besides the flags ------------------
-      //
-      // The original's map carries two more kinds of icon, and both come out of
-      // the objects' own templates rather than out of the HUD's data:
-      //
-      //   * a vehicle spawner shows the vehicle it issues, 16x16, from that
-      //     template's `vehicleHud.miniMapIcon`;
-      //   * anything with a `StrategicObject` component shows 19x19, from its
-      //     `StrategicObject.intactIcon` — bridges, mobile radars, the air
-      //     control tower (the UAV), the artillery pieces. The component also
-      //     carries a `destroyedIcon`, which we do not use yet: nothing tells us
-      //     an object has been destroyed.
-      //
-      // The sizes are measured on the original's spawn screen, icon by icon
-      // (docs/research/spawn-screen-named.md).
-      const auto iconOf = [&](const std::string& templateName, std::string_view component,
-                              std::string_view property) -> std::string {
-        const auto* object = registry.find(templateName);
-        if (object == nullptr) return {};
-        const auto* part = object->component(component);
-        if (part == nullptr) return {};
-        const auto at = part->properties.find(std::string(property));
-        if (at == part->properties.end() || at->second.empty()) return {};
-        std::string path(at->second.back().value());
-        for (char& c : path) {
-          if (c == '\\') c = '/';
-        }
-        return path;
-      };
-
-      for (const auto& spawner : hudGameplay->spawners) {
-        // Which side's vehicle stands there is the point's business; where the
-        // point is neutral or unknown we take whichever template the spawner
-        // lists first, because the icon is the same shape either way.
-        const auto* point = hudGameplay->controlPoint(spawner.controlPointId);
-        std::string vehicle;
-        if (point != nullptr) {
-          if (const auto found = spawner.templateByTeam.find(point->team);
-              found != spawner.templateByTeam.end()) {
-            vehicle = found->second;
+    if (args.hudRects) {
+      // `--hud-rects`: the same format as in the original's frame dump. The bounds
+      // are computed from the geometry itself rather than from the node's
+      // rectangle — that way the captions are comparable with the dump, which also
+      // outlines the drawn string rather than the node's frame.
+      hooks.reportRects = [&](const char* where,
+                              const std::vector<obf2::hud::DrawPiece>& pieces) {
+        for (const obf2::hud::DrawPiece& piece : pieces) {
+          if (piece.node == nullptr || piece.geometry.vertices.empty()) continue;
+          float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+          for (const auto& vertex : piece.geometry.vertices) {
+            const float px = (vertex.position.x + 1.0f) * 0.5f * hudManager.screen().width;
+            const float py = (1.0f - vertex.position.y) * 0.5f * hudManager.screen().height;
+            x0 = std::min(x0, px);
+            y0 = std::min(y0, py);
+            x1 = std::max(x1, px);
+            y1 = std::max(y1, py);
           }
+          std::printf("RECT %-14s %-30s %7.1f %7.1f %7.1f %7.1f %-46s [%s]\n", where,
+                      piece.node->name.c_str(), x0, y0, x1 - x0, y1 - y0, piece.texture.c_str(),
+                      piece.node->showVariable.c_str());
         }
-        if (vehicle.empty() && !spawner.templateByTeam.empty()) {
-          vehicle = spawner.templateByTeam.begin()->second;
-        }
-        if (vehicle.empty()) continue;
-        // A spawner can put a strategic object on the field rather than a
-        // vehicle — the mobile radars, the artillery pieces. Those show the
-        // strategic icon at its own size, which is why the original's map has a
-        // `Radar` and two `AirDef` on it and no vehicle icon in their place.
-        std::string icon = iconOf(vehicle, "StrategicObject", "intacticon");
-        float size = 19.0f;
-        if (icon.empty()) {
-          icon = iconOf(vehicle, "VehicleHud", "minimapicon");
-          size = 16.0f;
-        }
-        if (icon.empty()) continue;
-        assetMapMarkers.push_back(obf2::hud::Context::MapMarker{
-            spawner.position.x, spawner.position.z, std::move(icon), {}, size});
-      }
-      if (level) {
-        for (const auto& object : level->objects) {
-          std::string icon = iconOf(object.templateName, "StrategicObject", "intacticon");
-          if (icon.empty()) continue;
-          assetMapMarkers.push_back(obf2::hud::Context::MapMarker{
-              object.position.x, object.position.z, std::move(icon), {}, 19.0f});
-        }
-      }
-      hudContext.mapMarkers.insert(hudContext.mapMarkers.end(), assetMapMarkers.begin(),
-                                   assetMapMarkers.end());
-      std::printf("  map: vehicles and assets %zu\n", assetMapMarkers.size());
-    }
-    hudContext.localize = [&](std::string_view key) { return engine.lexicon().text(key); };
-    // Every node's font is the one named in setTextNodeStyle. In the data the path is
-    // written as "Fonts/hudFontLocalBold_9.dif" (sometimes with a backslash), while in
-    // the archive the fonts lie in two sets: in the root and in the `800` directory.
-    // We measure the HUD in the base 800x600, so we take `800`, and the root stays as
-    // a fallback.
-    hudContext.fontFor = [&](std::string_view style) -> obf2::hud::FontRef {
-      std::string key(style);
-      for (char& c : key) {
-        if (c == '\\') c = '/';
-      }
-      if (key.size() > 4 && key.compare(key.size() - 4, 4, ".dif") == 0) {
-        key.resize(key.size() - 4);
-      }
-      const auto cached = hudFonts.find(key);
-      if (cached != hudFonts.end()) {
-        return obf2::hud::FontRef{cached->second.valid ? &cached->second.font : nullptr,
-                                  cached->second.atlasPath};
-      }
-      const std::size_t slash = key.rfind('/');
-      const std::string dir = slash == std::string::npos ? std::string() : key.substr(0, slash + 1);
-      const std::string name = slash == std::string::npos ? key : key.substr(slash + 1);
-      // Some of the fonts lie in language directories rather than in the root: for
-      // instance StandardTextBold_15 exists only as English/StandardTextBold_15.
-      // So we try four places — the language one and the general one, each with `800`
-      // (the set for 800x600) and without it.
-      // The order is exactly this: the language directory first, and **without** the
-      // `800` subdirectory. The original's frame dump at 800x600 shows a kit's caption
-      // 79.2 wide at a height of 11, while the `800` set would give 60.3 by 9 — because
-      // there the point size is 13 against 16 in the language directory's root. So
-      // `800` is not meant for 800x600, as the name suggested.
-      LoadedFont loaded = loadFont(files, dir + "English/" + name);
-      if (!loaded.valid) loaded = loadFont(files, dir + "English/800/" + name);
-      if (!loaded.valid) loaded = loadFont(files, key);
-      if (!loaded.valid) loaded = loadFont(files, dir + "800/" + name);
-      const auto placed = hudFonts.emplace(key, std::move(loaded)).first;
-      return obf2::hud::FontRef{placed->second.valid ? &placed->second.font : nullptr,
-                                placed->second.atlasPath};
-    };
-    hudContext.isVisible = [&](std::string_view variable) {
-      if (variable == "1") return true;
-      const auto found = hudVariables.find(std::string(variable));
-      return found != hudVariables.end() && found->second;
-    };
-    hudContext.variableValue = [&](std::string_view variable) -> float {
-      // Numeric and boolean variables live in different dictionaries, while a show
-      // condition asks for both — see obf2/hud/states.h.
-      return obf2::hud::showValue(hudVariables, hudValues, variable);
-    };
-    // The alpha: we know one variable so far, but an important one. The wide plates
-    // under the health and ammo bars (400x39, healthBackground.tga and
-    // ammoBackground.tga) hang on exactly it, and in combat it is zero — in the game
-    // only a narrow squad strip, 142 units, is visible under the bars.
-    hudContext.variableAlpha = [&](std::string_view variable) -> std::optional<float> {
-      // The left region's four alphas are driven by its state machine
-      // (obf2/hud/bottom_left.h, from BF2.exe 0x78b600). They are what separates the
-      // region's two halves: on foot the health bars are visible, in a vehicle the
-      // vehicle bars. While we did not compute them, both were drawn together.
-      if (variable == "BottomLeftHealthAlpha") return bottomLeft.healthAlpha;
-      if (variable == "BottomLeftVehicleAlpha") return bottomLeft.vehicleAlpha;
-      if (variable == "BottomLeftHealthFadedAlpha") return bottomLeft.healthFadedAlpha;
-      if (variable == "BottomLeftVehicleFadedAlpha") return bottomLeft.vehicleFadedAlpha;
-      // On the right there is one alpha, also from the graph. Its pair
-      // `BottomRightFadedAlpha` (field +0x14) we do not compute: on the left the
-      // formula is visible at the end of 0x78b600, while on the right the place that
-      // computes it is **a source not found**.
-      if (variable == "BottomRightAlpha") return bottomRightAlpha;
-      const auto found = hudAlpha.find(std::string(variable));
-      if (found == hudAlpha.end()) return std::nullopt;
-      return found->second;
-    };
-    hudContext.variableText = [&](std::string_view variable) -> std::string_view {
-      const auto found = hudStrings.find(std::string(variable));
-      return found == hudStrings.end() ? std::string_view{} : std::string_view(found->second);
-    };
-
-    hudDynamicContext = hudContext;
-
-    // We measure the HUD with the **real** window rather than the requested one: the
-    // screen may have turned out smaller, and the window would slide with the request.
-    hudScreen.width = args.width;
-    hudScreen.height = args.height;
-    SDL_GetWindowSize(device->window(), &hudScreen.width, &hudScreen.height);
-    // The root is the Global group (Global -> GlobalHud -> IngameHud and on). Its
-    // nodes are given in absolute 800x600, so they land correctly.
-    //
-    // The corner layers (BottomLeftStatic, BottomRightAnimate, TopLayer ...) are not
-    // drawn yet: in the `.con` they are positioned nowhere. The anchor lies in the
-    // `MemeFile 2.0` files — that is data, not code, and it need not be looked for in
-    // BF2.exe (see docs/formats/hud-meme.md). While it is not taken apart, the health
-    // bar would drive into the middle of the screen.
-    // --hud-rects: the same format as in the original's frame dump.
-    reportRects = [&](const char* where, const std::vector<obf2::hud::DrawPiece>& pieces) {
-      if (!args.hudRects) return;
-      for (const obf2::hud::DrawPiece& piece : pieces) {
-        if (piece.node == nullptr || piece.geometry.vertices.empty()) continue;
-        // The bounds are computed from the geometry itself rather than from the node's
-        // rectangle: that way the captions are comparable with the original's dump,
-        // which also outlines the drawn string rather than the node's frame.
-        float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
-        for (const auto& vertex : piece.geometry.vertices) {
-          const float px = (vertex.position.x + 1.0f) * 0.5f * hudScreen.width;
-          const float py = (1.0f - vertex.position.y) * 0.5f * hudScreen.height;
-          x0 = std::min(x0, px);
-          y0 = std::min(y0, py);
-          x1 = std::max(x1, px);
-          y1 = std::max(y1, py);
-        }
-        std::printf("RECT %-14s %-30s %7.1f %7.1f %7.1f %7.1f %-46s [%s]\n", where,
-                    piece.node->name.c_str(), x0, y0, x1 - x0, y1 - y0,
-                    piece.texture.c_str(), piece.node->showVariable.c_str());
-      }
-    };
-
-    // The combat HUD is rebuildable too. In the game its variables are written not
-    // once at the level's start but every frame — see docs/functions/hud-states.md,
-    // the section on the HUD object: 0x78d0f0 takes the current player and either
-    // turns on PlayerHealthShow (0x78d154) or clears the whole set (0x78d2d9).
-    // So the tree has to be assembled anew rather than baked once and for all.
-    buildIngamePieces = [&]() {
-      const auto layers = obf2::hud::ingameLayers(ingameGraph, bottomLeftX, bottomRightX);
-      auto pieces = obf2::hud::buildIngame(
-          ingameHud, layers, hudFont.font, hudFont.atlasPath, hudScreen, hudContext,
-          [&](const obf2::hud::IngameLayer& layer, const std::vector<obf2::hud::DrawPiece>& made) {
-            reportRects(layer.group.c_str(), made);
-            if (!ingameReported) {
-              std::printf("  HUD: layer %-20s corner %.0f %.0f, pieces %zu\n", layer.group.c_str(),
-                          layer.x, layer.y, made.size());
-            }
-          });
-      reportRects("Global", pieces);
-      return pieces;
-    };
-
-    // Every key-held screen is unlocked by exactly **one** variable — the one that
-    // stands on its root in the game's data:
-    //
-    //   Scoreboard -> ScoreboardShow      RadioRose -> RadioInterfaceShow
-    //   SpawnMenu  -> SpawnShow           MapMenu   -> MapMenuShow
-    //
-    // Until now we treated everything unfamiliar as on for these screens — and on the
-    // scoreboard both tabs, both sets of captions and the server data block came out
-    // together, overlapping. The right way is the opposite: the same rules as in
-    // combat, plus this variable itself.
-    struct KeyScreenSetup {
-      const char* group;
-      const char* action;
-      const char* gate;
-      // The second branch this screen adds to itself. The map lives in the main tree
-      // (MapSplit under IngameHud) rather than inside the spawn screen — on the screen
-      // it simply switches to the big presentation.
-      const char* extraRoot = nullptr;
-      obf2::hud::MapView mapView = obf2::hud::MapView::Mini;
-      int state = -1;
-      bool heldByKey = true;
-    };
-    for (const KeyScreenSetup& setup : {
-             KeyScreenSetup{"Scoreboard", "c_GIShowScoreboard", "ScoreboardShow", nullptr,
-                            obf2::hud::MapView::Mini, 9, true},
-             KeyScreenSetup{"RadioRose", "c_GIRadioComm", "RadioInterfaceShow"},
-             KeyScreenSetup{"MapMenu", "c_GIMapSize", "MapMenuShow"},
-         }) {
-      const char* const group = setup.group;
-      const char* const action = setup.action;
-      obf2::hud::Context keyContext = hudContext;
-      const std::string gate = setup.gate;
-      keyContext.isVisible = [&, gate](std::string_view variable) {
-        if (variable == "1" || variable == gate) return true;
-        const auto found = hudVariables.find(std::string(variable));
-        return found != hudVariables.end() && found->second;
       };
-      keyContext.variableValue = [&, gate](std::string_view variable) -> float {
-        if (variable == gate) return 1.0f;
-        const auto found = hudValues.find(std::string(variable));
-        return found == hudValues.end() ? 0.0f : found->second;
-      };
-      if (setup.mapView != obf2::hud::MapView::Mini) ingameHud.setMapView(setup.mapView);
-      auto built = obf2::hud::buildTree(ingameHud, group, hudFont.font, hudFont.atlasPath,
-                                        hudScreen, keyContext);
-      if (setup.extraRoot != nullptr) {
-        for (auto& piece : obf2::hud::buildTree(ingameHud, setup.extraRoot, hudFont.font,
-                                                hudFont.atlasPath, hudScreen, keyContext)) {
-          built.push_back(std::move(piece));
-        }
-      }
-      // We assemble the report BEFORE putting the presentation back: otherwise the map
-      // node would already be measured as a thumbnail while the big one was baked in.
-      if (!built.empty()) reportRects(group, built);
-      // We put the thumbnail back: the main HUD is measured with it.
-      if (setup.mapView != obf2::hud::MapView::Mini) {
-        ingameHud.setMapView(obf2::hud::MapView::Mini);
-        mapRectStale = true;
-      }
-      if (built.empty()) continue;
-      KeyScreen screen;
-      screen.group = group;
-      screen.action = action;
-      screen.state = setup.state;
-      screen.heldByKey = setup.heldByKey;
-      for (auto& piece : built) {
-        scene.meshes.push_back(std::move(piece.geometry));
-        const int index = static_cast<int>(scene.meshes.size()) - 1;
-        screen.quads.push_back(index);
-        hudTints.emplace(index, piece.tint);
-      }
-      std::printf("  HUD: screen %-12s on %s (%s), pieces %zu\n", group, action,
-                  std::string(controls.key(action)).c_str(), screen.quads.size());
-      keyScreens.push_back(std::move(screen));
     }
+    // `openbf2.look <angle>` — turn the view to the given angle in degrees. Ours,
+    // for the checks: otherwise the minimap's compass cannot be captured in a
+    // screenshot, because the angle comes from the mouse.
+    engine.console().bind("openbf2.look", [&](const obf2::con::Command& command) {
+      yaw = command.argFloat(0).value_or(0.0f);
+      std::printf("  view: angle %.1f\n", static_cast<double>(yaw));
+    });
 
-    // The spawn screen is built separately and we keep its meshes to hand: after
-    // every command (choosing a kit, a team, a tab) it is rebuilt, while the other
-    // screens stay baked once and for all.
-    spawnContext = hudContext;
-    spawnContext.isVisible = [&](std::string_view variable) {
-      if (variable == "1" || variable == "SpawnShow") return true;
-      const auto found = hudVariables.find(std::string(variable));
-      return found != hudVariables.end() && found->second;
-    };
-    // The show effects are seen by the geometry builder itself: alpha multiplies the
-    // alpha, move shifts the rectangle.
-    spawnContext.showState = [&](const obf2::hud::Node& node) { return hudAnimator.state(node); };
-    rebuildIngame = [&]() {
-      std::vector<OwnedPiece> reusable = std::move(ingamePieces);
+    hudManager.load(files, engine, level ? &*level : nullptr, registry, hudSetup, std::move(hooks));
+  }
+
+  if (hudManager.ready()) {
+    // The geometry on the card. A rebuild writes the new geometry into the buffers
+    // that are already there and only makes new ones when a piece has outgrown its
+    // own (`MeshRenderer::refill`): creating a pair of buffers per piece is a trip
+    // into the driver each, and that was most of what a rebuild cost.
+    putOnCard = [&](std::vector<obf2::hud::DrawPiece>& built, std::vector<OwnedPiece>& into) {
+      std::vector<OwnedPiece> reusable = std::move(into);
       std::size_t reuse = 0;
-      ingamePieces.clear();
-      for (const char* root : {"Global", "BottomLeftAnimate", "BottomLeftStatic",
-                               "BottomRightAnimate", "BottomRightStatic"}) {
-        obf2::hud::updateAnimator(ingameHud, root, hudAnimator, hudContext);
-      }
-      auto ingameBuilt = buildIngamePieces();
-      const auto ingameUploadStart = std::chrono::steady_clock::now();
+      into.clear();
+      const auto uploadStart = std::chrono::steady_clock::now();
+      // One command buffer for the whole screen instead of one per piece.
       renderer->beginUploadBatch();
-      for (auto& piece : ingameBuilt) {
+      for (auto& piece : built) {
         if (piece.live) {
           // A live node's marker: there is no mesh here, only a place in the queue.
-          ingamePieces.push_back(OwnedPiece{{}, piece.tint, piece.node});
+          into.push_back(OwnedPiece{{}, piece.tint, piece.node});
           continue;
         }
         if (reuse < reusable.size()) {
           obf2::gfx::GpuMesh& older = reusable[reuse].mesh;
           if (older.vertices != nullptr &&
               renderer->refill(older, piece.geometry, resolveTexture)) {
-            ingamePieces.push_back(OwnedPiece{older, piece.tint, nullptr});
-            older = obf2::gfx::GpuMesh{};
-            ++reuse;
-            continue;
-          }
-          ++reuse;
-        }
-        if (auto uploaded = renderer->upload(piece.geometry, resolveTexture)) {
-          ingamePieces.push_back(OwnedPiece{*uploaded, piece.tint, nullptr});
-          ++hudUploaded;
-        }
-      }
-      renderer->endUploadBatch();
-      for (OwnedPiece& left : reusable) renderer->release(left.mesh);
-      hudUploadMs += std::chrono::duration<float, std::milli>(
-                         std::chrono::steady_clock::now() - ingameUploadStart)
-                         .count();
-      if (ingameReported) {
-        std::printf("  HUD: the combat one rebuilt, pieces %zu\n", ingamePieces.size());
-      }
-      ingameReported = true;
-    };
-    hudContext.showState = [&](const obf2::hud::Node& node) { return hudAnimator.state(node); };
-    rebuildIngame();
-
-    rebuildSpawn = [&]() {
-      // Only our own meshes. This used to release `ingamePieces` as well — without
-      // clearing the vector and without rebuilding it — so every rebuild of the
-      // spawn screen handed the graphics card's meshes back while the frame loop
-      // went on drawing from the same handles. When a rebuild came with
-      // `hudDirty` set the combat HUD was rebaked straight after and the damage
-      // was invisible; when it came from a click alone — choosing a kit, a side,
-      // the squad tab — nothing rebuilt it, and the combat HUD flickered over the
-      // screen until the next animation frame.
-      // The pieces of the previous bake are kept, not freed: a rebuild writes the
-      // new geometry into the buffers that are already there and only falls back
-      // to making new ones when a piece has outgrown its own
-      // (`MeshRenderer::refill`). Creating a pair of buffers per piece is a trip
-      // into the driver each, and that was most of what a rebuild cost.
-      std::vector<OwnedPiece> reusable = std::move(spawnPieces);
-      std::size_t reuse = 0;
-      spawnPieces.clear();
-      applySpawnState();
-      for (const char* root : {"SpawnMenu", "MapSplit", "TopLayer"}) {
-        obf2::hud::updateAnimator(ingameHud, root, hudAnimator, spawnContext);
-      }
-      ingameHud.setMapView(obf2::hud::MapView::Maxi);
-      auto built = obf2::hud::buildTree(ingameHud, "SpawnMenu", hudFont.font, hudFont.atlasPath,
-                                        hudScreen, spawnContext);
-      auto mapPieces = obf2::hud::buildTree(ingameHud, "MapSplit", hudFont.font,
-                                            hudFont.atlasPath, hudScreen, spawnContext);
-      const std::size_t mapCount = mapPieces.size();
-      for (auto& piece : mapPieces) built.push_back(std::move(piece));
-      // TopLayer is a real region from the data (`createSplitNode TopLayer
-      // TopLayerHud` in GeneralHudSettings.con), and it is where the DONE and SUICIDE
-      // buttons live: MapButtons -> DoneButton 666 539 124 17.
-      for (auto& piece : obf2::hud::buildTree(ingameHud, "TopLayer", hudFont.font,
-                                              hudFont.atlasPath, hudScreen, spawnContext)) {
-        built.push_back(std::move(piece));
-      }
-      // `--hud-rects` for the spawn screen. It used to be written out again right
-      // here, because `reportRects` was a lambda of the level-loading block and a
-      // call into it from the frame loop read a closure that was no longer there
-      // (CLAUDE.md, the first of the rakes). It outlives the block now, so the one
-      // copy of the loop serves both.
-      if (reportRects) reportRects("SpawnMenu", built);
-      ingameHud.setMapView(obf2::hud::MapView::Mini);
-      // The map's rectangle was just moved — let the combat frame put its own back,
-      // the one the animation computed.
-      mapRectStale = true;
-      const auto uploadStart = std::chrono::steady_clock::now();
-      // One command buffer for the whole screen instead of one per piece.
-      renderer->beginUploadBatch();
-      for (auto& piece : built) {
-        if (reuse < reusable.size()) {
-          obf2::gfx::GpuMesh& older = reusable[reuse].mesh;
-          if (renderer->refill(older, piece.geometry, resolveTexture)) {
-            spawnPieces.push_back(OwnedPiece{older, piece.tint});
+            into.push_back(OwnedPiece{older, piece.tint, nullptr});
             older = obf2::gfx::GpuMesh{};  // it belongs to the new list now
             ++reuse;
             continue;
           }
           ++reuse;  // it does not fit; it is freed below with the rest
         }
-        if (auto uploaded = renderer->upload(piece.geometry, resolveTexture)) {
-          spawnPieces.push_back(OwnedPiece{*uploaded, piece.tint});
+        if (auto put = renderer->upload(piece.geometry, resolveTexture)) {
+          into.push_back(OwnedPiece{*put, piece.tint, nullptr});
           ++hudUploaded;
         }
       }
       renderer->endUploadBatch();
+      // Only our own meshes are released. A rebuild that handed back somebody
+      // else's left the frame loop drawing freed handles (CLAUDE.md, the rakes).
       for (OwnedPiece& left : reusable) renderer->release(left.mesh);
       hudUploadMs += std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() -
                                                               uploadStart)
                          .count();
-      std::printf("  HUD: the spawn screen rebuilt, pieces %zu (map %zu), circles %zu\n",
-                  spawnPieces.size(), mapCount, spawnContext.spawnMarkers.size());
     };
-    rebuildSpawn();
-
-    // The live nodes: everything that takes its value from a variable we can fill in.
-    for (const auto& node : ingameHud.nodes()) {
-      const bool ticketText = node.group == "TicketInfo" &&
-                              (node.textVariable == "FriendlyTicketsString" ||
-                               node.textVariable == "EnemyTicketsString");
-      const bool cpBar = node.type == obf2::hud::NodeType::Bar &&
-                         node.group == "CPInformationItems" && !node.valueVariable.empty();
-      // The caption in the middle of the screen: while the round waits for players,
-      // the text in it appears and disappears, so it must not be baked in advance.
-      const bool centreMessage = node.textVariable == "DisconnectMessage";
-      // The compass: the only node in the data with `setPictureNodeRotateVariable`.
-      const bool rotating = !node.rotateVariable.empty();
-      // The map: its window follows the player and the zoom, so it must not be baked
-      // in advance either.
-      const bool mapNodeItself = node.type == obf2::hud::NodeType::Map ||
-                                 node.type == obf2::hud::NodeType::MiniMap;
-      if (!ticketText && !cpBar && !centreMessage && !rotating && !mapNodeItself) continue;
-      hudDynamic.push_back(DynamicNode{&node, {}, -1.0f, 0.0f, {}});
-    }
-
-    // The live nodes are not baked into the shared geometry: otherwise a second,
-    // frozen one would remain under the turning compass.
-    hudContext.skipNode = [&](const obf2::hud::Node& node) {
-      for (const DynamicNode& dynamic : hudDynamic) {
-        if (dynamic.node == &node) return true;
-      }
-      return false;
+    rebuildIngame = [&]() {
+      auto built = hudManager.buildIngame();
+      putOnCard(built, ingamePieces);
     };
-    // The first bake was still without this rule — redo it, otherwise the compass
-    // will stay on screen twice.
+    rebuildSpawn = [&]() {
+      auto built = hudManager.buildSpawn();
+      putOnCard(built, spawnPieces);
+    };
     rebuildIngame();
+    rebuildSpawn();
+    keyScreenPieces.resize(hudManager.keyScreens().size());
+    for (std::size_t i = 0; i < hudManager.keyScreens().size(); ++i) {
+      auto pieces = hudManager.keyScreens()[i].pieces;
+      putOnCard(pieces, keyScreenPieces[i]);
+    }
+    dynamicPieces.resize(hudManager.dynamicNodes().size());
 
     // --hud-screen list: what exactly landed on screen. Without it one has to guess
     // which node slid.
     if (args.hudScreenName == "list") {
-      for (const auto& piece : buildIngamePieces()) {
+      for (const auto& piece : hudManager.buildIngame()) {
         if (piece.node == nullptr) continue;
         std::printf("    %-10s %-28s %-22s %6.0f %6.0f %5.0f %5.0f  %s\n",
                     std::string(obf2::hud::nodeTypeName(piece.node->type)).c_str(),
                     piece.node->name.c_str(), piece.node->group.c_str(), piece.node->x,
-                    piece.node->y, piece.node->width, piece.node->height,
-                    piece.texture.c_str());
-      }
-    }
-
-    std::printf("  HUD: %zu nodes in the tree, pieces to draw %zu, live captions %zu\n",
-                ingameHud.nodes().size(), ingamePieces.size(), hudDynamic.size());
-
-    // The commands we cannot do yet. The game is a stream of commands, so the most
-    // useful thing is to see exactly what arrived and was left without a handler.
-    if (ingameHud.unknownCommands() > 0) {
-      std::printf("  HUD: unimplemented %lld commands, unique %zu\n",
-                  ingameHud.unknownCommands(), ingameHud.unknownByName().size());
-      int shown = 0;
-      for (const auto& [name, count] : ingameHud.unknownByName()) {
-        if (shown++ >= 8) break;
-        std::printf("    no handler: %-40s x%d\n", name.c_str(), count);
-      }
-      if (ingameHud.unknownByName().size() > 8) {
-        std::printf("    ... the rest is command_audit\n");
+                    piece.node->y, piece.node->width, piece.node->height, piece.texture.c_str());
       }
     }
   }
@@ -2971,14 +1982,15 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       // The HUD goes as a second pass over the ready frame — without clearing the
       // target. `--no-hud` skips it: when a frame is being compared against the
       // original's, the interface is in the way of everything being compared.
-      if (!args.noHud && (!hudQuads.empty() || !hudDynamic.empty())) {
+      if (!args.noHud && hudManager.ready()) {
         // Live values: the tickets come straight from the server, because in a
         // single-player game it is right here. To a client they will arrive in a
         // separate packet once the round's state exists on the network.
         if (hostedServer != nullptr) {
           const int own = 1, enemy = 2;
-          hudStrings["FriendlyTicketsString"] = std::to_string(hostedServer->tickets(own));
-          hudStrings["EnemyTicketsString"] = std::to_string(hostedServer->tickets(enemy));
+          hudManager.strings()["FriendlyTicketsString"] =
+              std::to_string(hostedServer->tickets(own));
+          hudManager.strings()["EnemyTicketsString"] = std::to_string(hostedServer->tickets(enemy));
 
           // The flag strips under the minimap: how many points each team holds.
           const auto& points = hostedServer->controlPoints();
@@ -2988,13 +2000,13 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
             else if (point.team == enemy) ++theirs;
           }
           const float total = points.empty() ? 1.0f : static_cast<float>(points.size());
-          hudValues["FriendlyCPs"] = static_cast<float>(ours) / total;
-          hudValues["EnemyCPs"] = static_cast<float>(theirs) / total;
+          hudManager.values()["FriendlyCPs"] = static_cast<float>(ours) / total;
+          hudManager.values()["EnemyCPs"] = static_cast<float>(theirs) / total;
 
-          // The caption in the middle of the screen while the round waits for players.
-          // Its node is `GameInfo DisconnectMessage 0 200 800 40` with the variables
-          // DisconnectMessage / DisconnectMessageActive; the text itself the game
-          // assembles in code (BF2.exe, 0x466f75): it takes the key
+          // The caption in the middle of the screen while the round waits for
+          // players. Its node is `GameInfo DisconnectMessage 0 200 800 40` with the
+          // variables DisconnectMessage / DisconnectMessageActive; the text itself
+          // the game assembles in code (BF2.exe, 0x466f75): it takes the key
           // HUD_STARTOFROUND_NRPLAYERSNEEDED and substitutes the number for the
           // marker #NROFPLAYERS#.
           const int missing = hostedServer->settings().playersNeededToStart -
@@ -3005,118 +2017,73 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
             if (const std::size_t at = text.find(mark); at != std::string::npos) {
               text.replace(at, mark.size(), std::to_string(missing));
             }
-            hudStrings["DisconnectMessage"] = text;
-            hudVariables["DisconnectMessageActive"] = true;
+            hudManager.strings()["DisconnectMessage"] = text;
+            hudManager.variables()["DisconnectMessageActive"] = true;
           } else {
-            hudVariables["DisconnectMessageActive"] = false;
+            hudManager.variables()["DisconnectMessageActive"] = false;
           }
         }
 
         std::vector<obf2::gfx::MeshRenderer::DrawItem> hudItems;
-        hudItems.reserve(hudQuads.size() + hudDynamic.size());
 
-        // The scoreboard, the radio and the spawn screen go over everything while a
-        // key is held. The order is the same as in the game: the combat HUD first.
-        std::vector<int> extra;
         // The HUD's state. In the game this is not a set of keys but a 32-entry
-        // machine (docs/functions/hud-states.md): state 1 is the spawn screen, and it
-        // stands by itself until the player has spawned; state 9 is the scoreboard,
-        // and that one really is on a key. So far we tell exactly those two apart.
-        // DONE closes the spawn screen. In the game the button does not "hide the
-        // menu" but asks the server to spawn, and the state switches on the fact of
-        // the player spawning; while the server cannot do that, we close it ourselves
-        // — otherwise the rest of the HUD cannot be looked at. Debt.
+        // machine (docs/functions/hud-states.md): state 1 is the spawn screen, and
+        // it stands by itself until the player has spawned; state 9 is the
+        // scoreboard, and that one really is on a key.
+        //
         // "There is a player" is not "the client is connected" but "the server gave
         // him a soldier". That is what governs the combat HUD in the engine
         // (0x78d0f0 takes the current player, and without one it clears the set).
-        const bool spawned =
-            hostedServer != nullptr ? localSoldierId != 0 : spawnScreen.requested();
+        const bool spawned = hostedServer != nullptr ? localSoldierId != 0
+                                                     : hudManager.spawnScreen().requested();
+        {
+          const std::string_view mapKey = hudManager.controls().key("c_GIMapSize");
+          hudManager.mapKey(!mapKey.empty() && device->isKeyDown(mapKey));
+          // The profile puts the zoom on N (`Controls.con`,
+          // `addKeyToTriggerMapping c_GIMapZoom IDFKeyboard IDKey_N`).
+          const std::string_view zoomKey = hudManager.controls().key("c_GIMapZoom");
+          hudManager.zoomKey(!zoomKey.empty() && device->isKeyDown(zoomKey));
+        }
         // The map key toggles state 0 <-> 2. In the state table state 2
         // (BF2.exe 0x787008) turns on `MapShow` alone: the rest of the HUD
         // disappears on the big map.
-        {
-          const std::string_view mapKey = controls.key("c_GIMapSize");
-          const bool down = !mapKey.empty() && device->isKeyDown(mapKey);
-          if (down && !mapKeyWasDown) bigMap = !bigMap;
-          mapKeyWasDown = down;
-        }
-        // The map's zoom is its own action: `c_GIMapZoom`, control 0x24, right
-        // beside `c_GIMapSize`'s 0x23 in the table the game builds at 0x690222.
-        // The profile puts it on N (`Controls.con`,
-        // `addKeyToTriggerMapping c_GIMapZoom IDFKeyboard IDKey_N`).
-        //
-        // **The engine's handler for that action has not been found**, only the
-        // action itself. What the console command behind the on-screen button
-        // does is a plain property — 0x57a97e reads and writes the map node's
-        // +0x6d0 and nothing else — so the step from one zoom to the next lives
-        // somewhere we have not looked. Cycling through the three levels is ours,
-        // and it is debt, not reversing.
-        {
-          const std::string_view zoomKey = controls.key("c_GIMapZoom");
-          const bool down = !zoomKey.empty() && device->isKeyDown(zoomKey);
-          if (down && !zoomKeyWasDown) {
-            mapNode.setZoomIndex((mapNode.zoomIndex() + 1) % obf2::hud::kMapZoomLevels);
-            std::printf("  map: zoom %d\n", mapNode.zoomIndex());
-          }
-          zoomKeyWasDown = down;
-        }
-        const int hudState = spawned ? (bigMap ? 2 : 0) : 1;
+        const int hudState = spawned ? (hudManager.bigMap() ? 2 : 0) : 1;
         const bool spawnVisible = hudState == 1 || args.hudScreenName == "SpawnMenu";
 
-        // The mouse: in combat the window captures it (otherwise the cursor runs into
-        // the screen's edge and looking simply stops — that is exactly what looked
-        // like "the controls do not work"), while on the spawn screen it is free,
-        // because there it presses buttons. Until now capture was turned on only in
-        // our own game, and on a real server looking was always broken.
+        // The mouse: in combat the window captures it (otherwise the cursor runs
+        // into the screen's edge and looking simply stops), while on the spawn
+        // screen it is free, because there it presses buttons.
         const bool wantRelativeMouse = spawned && !spawnVisible;
         if (wantRelativeMouse != relativeMouse) {
           relativeMouse = wantRelativeMouse;
           device->setRelativeMouse(relativeMouse);
         }
-        // The HUD's state and the variables derived from it — every frame, as in the
-        // game (0x786260 switches the state, 0x466930 and 0x78d0f0 compute the derived ones).
-        // A full-screen map is precisely the spawn screen: in state 1 the handler
-        // itself turns on MapBorderAlternateShow, and at 0x4669ae that equals the
-        // negation of MapMinSize.
         // The team is assigned by the server rather than by our choice: in the
-        // captured traffic the original client does not even send `NESelectTeam` — it
-        // accepts the one the server gave in CreatePlayerEvent. So as soon as we learn
-        // it, the spawn screen has to show the circles on that team's flags.
-        // The team is assigned by the server rather than by our choice: in the
-        // captured traffic the original client does not even send `NESelectTeam` — it
-        // accepts the one the server gave in `CreatePlayerEvent`. Resetting the chosen
-        // point here is no detail: the circles belong to our own team's flags, and
-        // without the reset we would ask to spawn at another team's flag, which the
-        // server does not do (`ServerGameLogic::uPlayingSpawning` takes the player's
-        // group, and that is their own team's).
+        // captured traffic the original client does not even send `NESelectTeam` —
+        // it accepts the one the server gave in `CreatePlayerEvent`. Resetting the
+        // chosen point here is no detail: the circles belong to our own team's
+        // flags, and without the reset we would ask to spawn at another team's,
+        // which the server does not do.
         if (remote != nullptr && remote->world.ownTeam() > 0 &&
-            selectedTeam != remote->world.ownTeam()) {
-          spawnScreen.setTeamFromServer(remote->world.ownTeam());
-          spawnDirty = true;
-          std::printf("  spawn screen: the server gave team %d\n", selectedTeam);
+            hudManager.spawnScreen().choice().team != remote->world.ownTeam()) {
+          hudManager.spawnScreen().setTeamFromServer(remote->world.ownTeam());
+          hudManager.markSpawnDirty();
+          std::printf("  spawn screen: the server gave team %d\n",
+                      hudManager.spawnScreen().choice().team);
         }
-        if (applyHudState) applyHudState(hudState);
-        // `MapFullSize` is no longer "we are on the spawn screen" but "the map's size
-        // has reached the big one" — that is how 0x77d3f8 derives it.
-        if (updateHudVariables) updateHudVariables(spawned, mapNode.fullSize());
+        hudManager.applyState(hudState);
+        // `MapFullSize` is not "we are on the spawn screen" but "the map's size has
+        // reached the big one" — that is how 0x77d3f8 derives it.
+        hudManager.updateVariables(spawned, hudManager.map().fullSize());
 
-        // A click on the spawn screen. A button has no logic of its own — it runs a
-        // console command from setButtonNodeConCmd, so all that is needed here is to
-        // find it under the cursor and run it.
         // `--exec` goes the same path as a button click: a button runs a console
-        // command, and we run a console command.
-        // Only once the screen has been assembled — otherwise there is nothing to
-        // make a choice on.
-        // We wait not only for the assembled screen but for the spawn circles too:
-        // they arrive as events only after the level has loaded, and without them
-        // there is nothing to choose from.
-        // We also wait for the screen to be assembled for **our** team: before the
-        // server's answer it shows the flags of the default one, and the choice would
-        // land in another team's spawn group — and the server does not spawn into
-        // another team's.
+        // command, and we run a console command. We wait for the assembled screen,
+        // for the spawn circles (they arrive as events only after the level has
+        // loaded) and for the screen to be assembled for **our** team.
         const bool teamKnown =
             remote == nullptr || (remote->world.ownTeam() > 0 &&
-                                  selectedTeam == remote->world.ownTeam());
+                                  hudManager.spawnScreen().choice().team ==
+                                      remote->world.ownTeam());
         for (const auto& scheduled : args.scheduledLines) {
           if (frame != scheduled.frame) continue;
           std::printf("  console (frame %d): %s\n", frame, scheduled.line.c_str());
@@ -3125,7 +2092,7 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           }
         }
         if (!args.execLines.empty() && spawnVisible && !spawnPieces.empty() &&
-            !spawnScreen.markerPoints().empty() && teamKnown && !execDone) {
+            !hudManager.spawnScreen().markerPoints().empty() && teamKnown && !execDone) {
           execDone = true;
           for (const std::string& line : args.execLines) {
             std::printf("  console: %s\n", line.c_str());
@@ -3150,192 +2117,28 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
             clickX = scheduled.x;
             clickY = scheduled.y;
           }
-          if (clicked) {
-            // The spawn circles first: the data has no nodes for them, the map catches
-            // the mouse itself. The game takes the selected one's texture from a
-            // separate array (BF2.exe 0x77f7eb against 0x77f7fa — 0x960 for the
-            // selected one, 0x950 for not).
-            // On the spawn screen the map is in its big presentation, so the mouse has
-            // to be caught in that one: in the thumbnail the node stands elsewhere.
-            ingameHud.setMapView(obf2::hud::MapView::Maxi);
-            const auto hitSpawn = obf2::hud::spawnMarkerAt(
-                ingameHud, "MapSplit", hudScreen, spawnContext, clickX, clickY);
-            ingameHud.setMapView(obf2::hud::MapView::Mini);
-            mapRectStale = true;
-            if (hitSpawn) {
-              selectedSpawn = static_cast<int>(*hitSpawn);
-              spawnDirty = true;
-              std::printf("  spawn screen: point %d\n", selectedSpawn);
-            }
-            // The spawn screen's buttons lie in two branches: SpawnMenu itself and
-            // TopLayer, where DONE and SUICIDE sit.
-            const obf2::hud::Node* hit = nullptr;
-            for (const char* root : {"SpawnMenu", "TopLayer"}) {
-              if (const obf2::hud::Node* found = obf2::hud::buttonAt(
-                      ingameHud, root, hudScreen, clickX, clickY, &spawnContext)) {
-                hit = found;
-              }
-            }
-            if (hit != nullptr) {
-              // A button has several commands, and each has its own event. In the data
-              // there are four: 0 (247 times), 1 (73), 3 (50) and 2 (11).
-              // A click owns 0 and 3 — on the three hang, among others,
-              // spawnManager.setPlayerTeam and scoreboard.setToggleShow;
-              // 1 and 2 are hover and unhover, holding only sounds.
-              for (const auto& [event, line] : hit->commands) {
-                if (event != 0 && event != 3) continue;
-                std::printf("  spawn screen: %s -> %s\n", hit->name.c_str(), line.c_str());
-                if (!engine.console().executeLine(line)) {
-                  std::printf("  spawn screen: a command without a handler — %s\n", line.c_str());
-                }
-              }
-            }
-          }
+          if (clicked) hudManager.clickSpawn(clickX, clickY, engine.console());
         }
+
         // While at least one node is travelling or fading, the screen has to be
         // rebaked every frame: our geometry lives in meshes on the graphics card.
         {
           const auto now = std::chrono::steady_clock::now();
-          const float dt =
-              std::chrono::duration<float>(now - lastAnimationTick).count();
+          const float dt = std::chrono::duration<float>(now - lastAnimationTick).count();
           lastAnimationTick = now;
-          hudAnimator.advance(dt > 0.25f ? 0.25f : dt);
-          if (hudAnimator.animating()) {
-            spawnDirty = true;
-            // **And the combat one too.** Until now only the spawn screen was rebaked,
-            // and the combat HUD's nodes with `setNodeInTime` did not move at all: the
-            // geometry stayed as it had been baked.
-            hudDirty = true;
-          }
-          // The speed of 600 comes from the file itself (SetVariableSineAction), and
-          // the curve from `MemeDll.dll` 0x10001050: outside the braking stretch the
-          // movement is linear, and in `Menu/Ingame` the braking is zero.
-          const float slice = dt > 0.25f ? 0.25f : dt;
-
-          // The corner regions. The division of labour here is exactly as in the game:
-          // the client's state machine (0x78b600) reads the current values and writes
-          // the **targets**, while the `Menu/Ingame` graph moves them. There is no
-          // speed in our code at all — they are in the file.
-          //
-          // We do not turn the "vehicle" mode on yet: 0x78b870 sets it when the
-          // player's controlled object is not their soldier.
-          const float wasX = bottomLeft.x;
-          const float wasHealth = bottomLeft.healthAlpha;
-          const float wasRightX = bottomRightX;
-          const float wasRightAlpha = bottomRightAlpha;
-          if (ingameGraph.file().root() >= 0) {
-            auto& variables = ingameGraph.variables();
-            bottomLeft.x = variables.get("BottomLeft/BottomLeft_XPos");
-            bottomLeft.healthAlpha = variables.get("BottomLeft/Alpha/BottomLeft_alpha1");
-            bottomLeft.vehicleAlpha = variables.get("BottomLeft/Alpha/BottomLeft_alpha2");
-            bottomLeft.update(bottomLeftMode, backgroundAlpha);
-            variables.set("BottomLeft/BottomLeft_nextXPos", bottomLeft.targetX);
-            variables.set("BottomLeft/Alpha/BottomLeft_nextAlpha1", bottomLeft.targetHealthAlpha);
-            variables.set("BottomLeft/Alpha/BottomLeft_nextAlpha2", bottomLeft.targetVehicleAlpha);
-            // The right region travels by the graph too, and now exactly as in the
-            // game. The machine in the file is five `CullVariableActionNode`
-            // (docs/formats/hud-meme-graph.md), while the engine drives only three of
-            // its variables, bound to the HUD object's fields (0x7a62c0):
-            //
-            //   `BottomRight_oldXPos` (+0x28) — the shown position,
-            //   `BottomRight_newXPos` (+0x2c) — the hidden one,
-            //   `BottomRight_direction` (+0x18) — show it or not.
-            //
-            // The graph does the rest: to show — travel to `oldXPos` and fade in
-            // there; to hide — fade out first and **only once faded** travel to
-            // `newXPos`. The right region's alpha comes from here too.
-            variables.set("BottomRight/BottomRight_oldXPos", bottomRightShownX);
-            variables.set("BottomRight/BottomRight_newXPos",
-                          obf2::hud::kBottomRightHiddenX);
-            variables.set("BottomRight/BottomRight_direction",
-                          bottomRightShow ? 1.0f : 0.0f);
-            ingameGraph.update(slice);
-            bottomLeft.x = variables.get("BottomLeft/BottomLeft_XPos");
-            bottomLeft.healthAlpha = variables.get("BottomLeft/Alpha/BottomLeft_alpha1");
-            bottomLeft.vehicleAlpha = variables.get("BottomLeft/Alpha/BottomLeft_alpha2");
-            bottomLeft.recomputeFaded(backgroundAlpha);
-            bottomRightX = variables.get("BottomRight/BottomRight_XPos");
-            bottomRightAlpha = variables.get("BottomRight/Alpha/BottomRight_alpha");
-          }
-          if (bottomLeft.x != wasX || bottomLeft.healthAlpha != wasHealth) hudDirty = true;
-
-          // The map. Its rectangle is not one of the three ready views but the one the
-          // animation computed: in the client that is the same target/current pair
-          // (0x77c330), and that is exactly why the minimap <-> big map transition
-          // looks smooth rather than like a jump.
-          // The minimap's compass. 0x751d8b computes the direction as
-          // `atan2(direction.x, direction.z)`, and ours is exactly that: zero looks
-          // along +Z, so this is simply the look angle.
-          // The angle goes into a variable — while the compass is drawn by a live node
-          // (`hudDynamic`), not by the shared geometry. It must not be routed through
-          // `hudDirty`: rebaking the whole HUD every frame is exactly the frame drop
-          // one can see by eye.
-          mapAngle.setTarget(yaw * 3.14159265358979323846f / 180.0f);
-          mapAngle.update(slice);
-          hudValues["MinimapDelayedMapAngle"] = mapAngle.delayed();
-
-          // Where the map looks: the player's position in fractions of the world.
-          // 0x751d55 computes it (`(sizeX/2 + playerX) / sizeX`) and hands it to
-          // 0x773630, which writes the target +0x740/+0x744.
-          if (hudContext.mapWorldSize > 1.0f) {
-            const float world = hudContext.mapWorldSize;
-            mapNode.setCentre((world * 0.5f + eye.x) / world, (world * 0.5f - eye.z) / world);
-          }
-
-          const auto wasSize = mapNode.size();
-          const auto wasPosition = mapNode.position();
-          mapNode.update(slice);
-          const auto position = mapNode.position();
-          const auto size = mapNode.size();
-          const bool moved = size.x != wasSize.x || size.y != wasSize.y ||
-                             position.x != wasPosition.x || position.y != wasPosition.y;
-          // `setMapRect` drags a `finish()` over all 1659 nodes with it, so we call it
-          // only when the rectangle really changed — or when somebody else managed to
-          // move it (a spawn screen rebuild sets the big presentation itself, through
-          // `setMapView`).
-          if (moved || mapRectStale) {
-            mapRectStale = false;
-            ingameHud.setMapRect(position.x, position.y, size.x, size.y,
-                                 mapNode.minSize() ? obf2::hud::MapView::Mini
-                                                   : obf2::hud::MapView::Maxi);
-            hudDirty = true;
-          }
-
-          // The map's window. The thumbnail in the corner follows the player and zooms
-          // in by the zoom index; the big map shows the whole combat area, as before.
-          // How exactly the engine blends these two centres — 0x773870 takes the weight
-          // from +0x694 — has **not been worked out**, so for now there are simply two
-          // branches.
-          if (mapBaseHalfU > 0.0f) {
-            const float scale = mapNode.minSize() ? mapNode.zoomScale() : 1.0f;
-            const float halfU = mapBaseHalfU / scale;
-            const float halfV = mapBaseHalfV / scale;
-            const float cu = mapNode.minSize() ? mapNode.centre().x : mapBaseCentreU;
-            const float cv = mapNode.minSize() ? mapNode.centre().y : mapBaseCentreV;
-            hudContext.mapU0 = cu - halfU;
-            hudContext.mapU1 = cu + halfU;
-            hudContext.mapV0 = cv - halfV;
-            hudContext.mapV1 = cv + halfV;
-          }
-
-          // The right region is driven by the graph — see above. All that is left here
-          // is to say that it moved.
-          if (bottomRightX != wasRightX || bottomRightAlpha != wasRightAlpha) hudDirty = true;
+          hudManager.animate(dt, yaw, eye);
         }
-        // A choice changed by the screen's own commands (the module marks itself).
-        if (spawnScreen.dirty()) {
-          spawnDirty = true;
-          spawnScreen.clearDirty();
-        }
+
         // We rebuild the spawn screen only while it is on screen.
-        if ((spawnDirty && spawnVisible && rebuildSpawn) || (hudDirty && rebuildIngame)) {
+        if ((hudManager.spawnDirty() && spawnVisible && rebuildSpawn) ||
+            (hudManager.dirty() && rebuildIngame)) {
           const auto before = std::chrono::steady_clock::now();
-          if (spawnDirty && spawnVisible && rebuildSpawn) {
-            spawnDirty = false;
+          if (hudManager.spawnDirty() && spawnVisible && rebuildSpawn) {
+            hudManager.clearSpawnDirty();
             rebuildSpawn();
           }
-          if (hudDirty && rebuildIngame) {
-            hudDirty = false;
+          if (hudManager.dirty() && rebuildIngame) {
+            hudManager.clearDirty();
             rebuildIngame();
           }
           const float spent =
@@ -3345,112 +2148,21 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
           hudRebuildMs += spent;
           hudRebuildMax = std::max(hudRebuildMax, spent);
         }
-        for (const KeyScreen& screen : keyScreens) {
-          const bool forced = screen.group == args.hudScreenName;
-          bool visible = forced;
-          if (!visible && screen.heldByKey) {
-            const std::string_view key = controls.key(screen.action);
-            visible = !key.empty() && device->isKeyDown(key);
-          } else if (!visible) {
-            visible = screen.state == hudState;
-          }
-          if (!visible) continue;
-          extra.insert(extra.end(), screen.quads.begin(), screen.quads.end());
-        }
 
         // The live nodes are rebuilt **before** the frame is assembled: their pieces
         // are substituted in place of the markers in `ingamePieces`.
-        for (DynamicNode& dynamic : hudDynamic) {
-          const obf2::hud::Node& node = *dynamic.node;
-          const bool isBar = node.type == obf2::hud::NodeType::Bar;
-          const bool isRotating = !node.rotateVariable.empty();
-          const bool isMap = node.type == obf2::hud::NodeType::Map ||
-                             node.type == obf2::hud::NodeType::MiniMap;
-
-          std::string text;
-          float value = 0.0f;
-          float angle = 0.0f;
-          if (isRotating) {
-            const auto found = hudValues.find(node.rotateVariable);
-            angle = found == hudValues.end() ? 0.0f : found->second;
-          } else if (isBar) {
-            const auto found = hudValues.find(node.valueVariable);
-            value = found == hudValues.end() ? 0.0f : found->second;
-          } else if (!isMap) {
-            const auto found = hudStrings.find(node.textVariable);
-            if (found != hudStrings.end()) text = found->second;
-          }
-
-          // A rotation step below which nothing is visible on screen any more: the
-          // compass is 192 pixels, so 0.005 radians is half a pixel at the edge.
-          // Without this threshold we would rebake the node every frame even while the
-          // angle settles in its last digits.
-          //
-          // The map is rebaked when its window moved: the centre follows the player
-          // and the window's size follows the zoom. The threshold is 0.0002 of the
-          // world's width, that is less than a minimap pixel.
-          const bool changed =
-              !dynamic.built ? true
-              : isMap        ? std::abs(hudContext.mapU0 - dynamic.shownValue) > 0.0002f ||
-                                   std::abs(hudContext.mapV0 - dynamic.shownAngle) > 0.0002f
-              : isRotating   ? std::abs(angle - dynamic.shownAngle) > 0.005f
-              : isBar        ? std::abs(value - dynamic.shownValue) > 0.001f
-                             : text != dynamic.shownText;
-          if (changed) {
-            // The value changed — we rebuild only this node.
-            for (OwnedPiece& piece : dynamic.pieces) renderer->release(piece.mesh);
-            dynamic.pieces.clear();
-            dynamic.built = true;
-            dynamic.shownValue = isMap ? hudContext.mapU0 : value;
-            dynamic.shownText = text;
-            dynamic.shownAngle = isMap ? hudContext.mapV0 : angle;
-
-            obf2::hud::Node copy = node;
-            // We take the general context rather than an empty one: otherwise the live
-            // captions are drawn with the default font instead of their own
-            // (setTextNodeStyle) and without localisation.
-            obf2::hud::Context single = hudDynamicContext;
-            if (isMap) {
-              // The map's window lives in `hudContext` and changes every frame, while
-              // `hudDynamicContext` is a snapshot; we carry it over by hand.
-              single.mapU0 = hudContext.mapU0;
-              single.mapU1 = hudContext.mapU1;
-              single.mapV0 = hudContext.mapV0;
-              single.mapV1 = hudContext.mapV1;
-            } else if (isRotating) {
-              single.variableValue = [&](std::string_view) { return angle; };
-            } else if (isBar) {
-              single.variableValue = [&](std::string_view) { return value; };
-            } else {
-              copy.text = text;
-              copy.textVariable.clear();
-            }
-            if (isMap || isRotating || isBar || !text.empty()) {
-              // The map gives more than one piece: the picture itself, the capture
-              // points' icons and their captions.
-              for (auto& built : obf2::hud::buildNode(copy, hudFont.font, hudFont.atlasPath,
-                                                      hudScreen, single)) {
-                if (auto uploaded = renderer->upload(built.geometry, resolveTexture)) {
-                  dynamic.pieces.push_back(OwnedPiece{*uploaded, built.tint});
-                }
-              }
+        for (std::size_t i = 0; i < hudManager.dynamicNodes().size(); ++i) {
+          obf2::hud::Manager::DynamicNode& live = hudManager.dynamicNodes()[i];
+          if (!hudManager.dynamicChanged(live)) continue;
+          for (OwnedPiece& piece : dynamicPieces[i]) renderer->release(piece.mesh);
+          dynamicPieces[i].clear();
+          for (auto& built : hudManager.buildDynamic(live)) {
+            if (auto put = renderer->upload(built.geometry, resolveTexture)) {
+              dynamicPieces[i].push_back(OwnedPiece{*put, built.tint, nullptr});
             }
           }
         }
 
-        const auto pushHud = [&](int index) {
-          if (index < 0 || !uploadedOk[static_cast<std::size_t>(index)]) return;
-          obf2::gfx::MeshRenderer::DrawItem item{&gpuMeshes[static_cast<std::size_t>(index)],
-                                                 obf2::Mat4::identity()};
-          const auto tint = hudTints.find(index);
-          if (tint != hudTints.end()) {
-            item.tint[0] = tint->second.r;
-            item.tint[1] = tint->second.g;
-            item.tint[2] = tint->second.b;
-            item.tint[3] = tint->second.a;
-          }
-          hudItems.push_back(item);
-        };
         const auto pushPiece = [&](const OwnedPiece& piece) {
           obf2::gfx::MeshRenderer::DrawItem item{&piece.mesh, obf2::Mat4::identity()};
           item.tint[0] = piece.tint.r;
@@ -3464,24 +2176,31 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
             pushPiece(piece);
             continue;
           }
-          // The live node's place: we substitute its pieces exactly here rather than at
-          // the end — otherwise the map would land over its own frame.
-          for (const DynamicNode& dynamic : hudDynamic) {
-            if (dynamic.node != piece.live) continue;
-            for (const OwnedPiece& own : dynamic.pieces) pushPiece(own);
+          // The live node's place: we substitute its pieces exactly here rather than
+          // at the end — otherwise the map would land over its own frame.
+          for (std::size_t i = 0; i < hudManager.dynamicNodes().size(); ++i) {
+            if (hudManager.dynamicNodes()[i].node != piece.live) continue;
+            for (const OwnedPiece& own : dynamicPieces[i]) pushPiece(own);
             break;
           }
         }
-        for (const int index : extra) pushHud(index);
-        if (spawnVisible) {
-          for (const OwnedPiece& piece : spawnPieces) {
-            obf2::gfx::MeshRenderer::DrawItem item{&piece.mesh, obf2::Mat4::identity()};
-            item.tint[0] = piece.tint.r;
-            item.tint[1] = piece.tint.g;
-            item.tint[2] = piece.tint.b;
-            item.tint[3] = piece.tint.a;
-            hudItems.push_back(item);
+        // The scoreboard, the radio and the map menu go over everything while a key
+        // is held. The order is the same as in the game: the combat HUD first.
+        for (std::size_t i = 0; i < hudManager.keyScreens().size(); ++i) {
+          const obf2::hud::Manager::KeyScreen& screen = hudManager.keyScreens()[i];
+          const bool forced = screen.group == args.hudScreenName;
+          bool visible = forced;
+          if (!visible && screen.heldByKey) {
+            const std::string_view key = hudManager.controls().key(screen.action);
+            visible = !key.empty() && device->isKeyDown(key);
+          } else if (!visible) {
+            visible = screen.state == hudState;
           }
+          if (!visible) continue;
+          for (const OwnedPiece& piece : keyScreenPieces[i]) pushPiece(piece);
+        }
+        if (spawnVisible) {
+          for (const OwnedPiece& piece : spawnPieces) pushPiece(piece);
         }
 
         renderer->renderOverlay(*acquired, hudItems, obf2::gfx::Color{}, false);
@@ -3522,66 +2241,15 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     if (args.frames > 0 && frame >= args.frames) break;
   }
 
-  for (auto& dynamic : hudDynamic) {
-    for (OwnedPiece& piece : dynamic.pieces) renderer->release(piece.mesh);
+  for (auto& pieces : dynamicPieces) {
+    for (OwnedPiece& piece : pieces) renderer->release(piece.mesh);
   }
+  for (auto& pieces : keyScreenPieces) {
+    for (OwnedPiece& piece : pieces) renderer->release(piece.mesh);
+  }
+  for (OwnedPiece& piece : ingamePieces) renderer->release(piece.mesh);
   // --hud-vars: every variable the tree asks for, and whether anyone fills it.
-  //
-  // The HUD is a stream of nodes hanging off names, and a name nobody writes is
-  // a node that never appears — silently. This is the list of those names, so
-  // the debt is a list rather than a feeling. It is printed once, after the tree
-  // is built, and it says the kind because the kinds live in different maps: a
-  // show condition is a bool, a bar's fill a float, a caption and a texture path
-  // a string.
-  if (args.hudVars) {
-    struct Use {
-      std::string kind;
-      int nodes = 0;
-    };
-    std::map<std::string, Use> used;
-    const auto note = [&](const std::string& name, const char* kind) {
-      if (name.empty() || name == "1" || name == "0") return;
-      Use& use = used[name];
-      if (use.kind.empty()) use.kind = kind;
-      else if (use.kind.find(kind) == std::string::npos) use.kind += std::string("+") + kind;
-      ++use.nodes;
-    };
-    for (const auto& node : ingameHud.nodes()) {
-      note(node.showVariable, "show");
-      for (const auto& test : node.showTests) note(test.variable, "show");
-      note(node.alphaVariable, "alpha");
-      note(node.textVariable, "string");
-      note(node.textureVariable, "texture");
-      note(node.valueVariable, "value");
-      note(node.rotateVariable, "rotate");
-      note(node.positionVariableX, "pos");
-      note(node.positionVariableY, "pos");
-      for (const auto& rgb : node.rgbVariables) note(rgb, "rgb");
-      for (const auto& occupied : node.occupiedPosVariables) note(occupied, "pos");
-    }
-    int known = 0;
-    std::vector<std::pair<int, std::string>> missing;
-    for (const auto& [name, use] : used) {
-      // Three maps and one lambda: the corner regions' alphas are computed by
-      // their own state machine rather than kept in a map, and `variableAlpha`
-      // is where a node asks for them.
-      const bool have = hudVariables.count(name) != 0 || hudValues.count(name) != 0 ||
-                        hudStrings.count(name) != 0 ||
-                        (hudContext.variableAlpha && hudContext.variableAlpha(name).has_value());
-      if (have) {
-        ++known;
-        continue;
-      }
-      missing.emplace_back(use.nodes, name + "  (" + use.kind + ")");
-    }
-    std::sort(missing.begin(), missing.end(),
-              [](const auto& a, const auto& b) { return a.first > b.first; });
-    std::printf("  HUD variables: %zu asked for, %d filled, %zu not\n", used.size(), known,
-                missing.size());
-    for (const auto& [nodes, text] : missing) {
-      std::printf("    %4d nodes  %s\n", nodes, text.c_str());
-    }
-  }
+  if (args.hudVars && hudManager.ready()) hudManager.reportVariables();
 
   for (OwnedPiece& piece : spawnPieces) renderer->release(piece.mesh);
   for (auto& gpuMesh : gpuMeshes) renderer->release(gpuMesh);

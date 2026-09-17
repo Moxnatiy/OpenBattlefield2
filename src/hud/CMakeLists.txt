@@ -11,8 +11,9 @@ add_library(obf2_hud
   src/map_node.cpp
   src/ingame.cpp
   src/states.cpp
+  src/manager.cpp
 )
 add_library(obf2::hud ALIAS obf2_hud)
 
 target_include_directories(obf2_hud PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(obf2_hud PUBLIC obf2_con obf2_core obf2_meme obf2_engine obf2_font obf2_mesh obf2_game obf2_texture PRIVATE obf2_flags)
+target_link_libraries(obf2_hud PUBLIC obf2_con obf2_core obf2_meme obf2_engine obf2_font obf2_mesh obf2_game obf2_level obf2_texture obf2_vfs PRIVATE obf2_flags)
