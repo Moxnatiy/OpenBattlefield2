@@ -88,6 +88,42 @@ struct PhysicsConstants {
   float positionalDamping = 0.99f;
   float positionalDampingWater = 0.9f;  // not used yet: the water share is not modelled
 
+  // The node's drag (`SoldierPhysicsNode::updatePositionalDragAdvanced`, Linux
+  // 0x6f1890): the template's `ObjectTemplate.drag 1.0` and `ObjectTemplate.mass
+  // 100` (`Objects/Soldiers/*/*_soldier.tweak`, every kit), and the coefficients
+  // `updatePhysics` passes along the node's rows (0x6f2190): 0.25 forward and up
+  // (0xb4355c), 0.9 to the side (0xb34a78).
+  float drag = 1.0f;
+  float mass = 100.0f;
+  float dragForward = 0.25f;
+  float dragUp = 0.25f;
+  float dragRight = 0.9f;
+
+  // `phy-soldier-jump-length-factor`: the share of the ground speed a jump keeps.
+  // `BF2.exe` registers it at 0x853b20 with 0.98 (`PUSH 0x3f7ae148`); the game's
+  // data does not set it.
+  float jumpLengthFactor = 0.98f;
+  // The delays a jump starts (`Soldier::handlePlayerInput`, Linux 0x54fbbb). The
+  // engine's defaults are 1.0 (`BF2.exe` 0x854400, 0x854420, 0x8544a0); the values
+  // are the game's data, `Objects/Soldiers/Common/Common.con`.
+  float fireDelayAfterJump = 0.7f;          // fire-delay-after-jump
+  float proneDelayAfterJump = 0.3f;         // prone-delay-after-jump
+  float sprintRechargeDelayAfterJump = 0.7f;  // sprint-recharge-delay-after-jump
+  // `jump-delay-after-prone` (0x854440 registers 1.0; the data sets 0.8). No pose
+  // but standing is modelled, so nothing starts it yet.
+  float jumpDelayAfterProne = 0.8f;
+
+  // The ground contact's material means (`SoldierResponsePhysics::internalImpulseOn`,
+  // Linux 0x6f2930..0x6f28cf: `+0xf4` friction and `+0xfc` resistance are the
+  // means of the two materials'). The soldier's is `Human_body`, friction 1.1 and
+  // resistance 0.01 (`Common/Material/materialManagerDefine.con`, material 24).
+  // The terrain's is **not read** — the terrain's material map is not taken — and
+  // `Grass` (material 5: 0.8, 0.06) stands in for it: measured on the live server
+  // on Dalian Plant, a landing's friction stops at 44.78 m/s², the dynamic limit of
+  // friction 0.95, and a sprint's resistance term is 0.035 of the slip.
+  float groundFriction = 0.95f;
+  float groundResistance = 0.035f;
+
   // --- the engine's constants (docs/functions/soldier-physics.md) ---
   //
   // These are the engine's own defaults, pulled from the Linux server. The game's
@@ -146,9 +182,40 @@ struct BodyState {
   // block), so a correction sets them too.
   float forwardAxis = 0.0f;
   float strafeAxis = 0.0f;
-  // The velocity the soldier's input asked for (physics `+0x84`), which the
-  // physics node takes on its **next** update — see `stepSoldierNode`.
-  Vec3f request;
+
+  // The rest of the physics node (`SoldierPhysicsNode`, docs/functions/
+  // soldier-physics.md, "The physics node, whole"); `velocity` above is its
+  // positional speed `+0x2c`. The controlled state carries all three.
+  Vec3f acceleration;  // +0x38, state 0x100
+  Vec3f friction;      // +0xac, state 0x200
+  Vec3f linearSpeed;   // +0x44, state 0x40000
+  int frictionContacts = 0;  // +0xb8
+
+  // The response physics (`SoldierResponsePhysics`): the input's surface speed
+  // `+0xcc`, which the friction turns into the next tick's velocity; the contacts'
+  // velocity `+0xd8`; the ground normal `+0xe4`; sticking, `+0x100` bit 0x40.
+  // `onGround` above is its `+0x11a`.
+  Vec3f surfaceSpeed;
+  Vec3f contactSpeed;
+  Vec3f groundNormal{0.0f, 1.0f, 0.0f};
+  bool sticking = false;
+  // The contacts' pending adjustments, `+0xb4` position and `+0xc0` speed, and how
+  // many contacts `+0xf0` — collected by `internalImpulseOn`, applied by
+  // `solveImpulse` (soldier_node.h).
+  Vec3f positionAdjust;
+  Vec3f speedAdjust;
+  int contacts = 0;
+
+  // The soldier's jump timers. `Soldier::resetInstance` (Linux 0x549df0) starts the
+  // two air timers at -1; the input counts them down to -1 (0x54f1b1).
+  float noAirControl = -1.0f;  // +0x460
+  float airControl = -1.0f;    // +0x464
+  // Counted down by `Soldier::handleFrameUpdate` (0x548f1d..0x548fd8), each only
+  // while above zero.
+  float fireDelay = 0.0f;              // +0x5a0
+  float proneDelay = 0.0f;             // +0x5a4
+  float jumpDelay = 0.0f;              // +0x5a8
+  float sprintRechargeDelay = 0.0f;    // +0x5b4
 };
 
 // The soldier's direction from its smoothed axes: forward * forwardAxis + right *
@@ -178,26 +245,15 @@ Vec3f soldierMoveDirection(BodyState& body, float forwardInput, float strafeInpu
                            const Vec3f& forward, const Vec3f& right,
                            const PhysicsConstants& constants);
 
-// One step of a soldier's movement.
+// One step of a soldier's movement — our own local server's, not the engine's.
 //
 // wish is the desired direction in the plane (already rotated by the look angle),
 // of length 0..1. groundHeight is the terrain's height under the body.
 //
-// directVelocity selects the engine's own order of one tick, measured on the live
-// server and read in the binary (docs/functions/soldier-physics.md, "One tick"):
-//
-//   1. the physics node (`SoldierPhysicsNode::updatePositionalPhysics`, Linux
-//      server 0x6f1de0): on the ground the velocity becomes the previous tick's
-//      `request` times `p-pos-damp`, and the position moves by the **average** of
-//      the old and the new velocity (the 0.5 at 0xb2f234);
-//   2. the input (`BF2.exe` 0x5adea0): `wish`, built by the caller from the body's
-//      matrix as it stood before this tick's turn, times the speed becomes the new
-//      `request`.
-//
-// In the air the old blend stays: that branch of 0x5a7c50 is not reversed.
+// The engine's own tick is `tickSoldier` (soldier_move.h); this blend is what the
+// hosted game still runs, and nothing of it is reversed.
 void stepSoldier(BodyState& body, const Vec3f& wish, float maxSpeed, bool jump,
-                 const PhysicsConstants& constants, float groundHeight, float step,
-                 bool directVelocity = false);
+                 const PhysicsConstants& constants, float groundHeight, float step);
 
 // The centres of the soldier's spheres above foot level. The count and the step
 // follow the engine's formula: spacing = (height - 2 * radius) / (count - 1).

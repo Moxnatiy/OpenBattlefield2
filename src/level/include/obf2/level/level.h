@@ -328,6 +328,28 @@ struct Level {
   // predicts its own soldier's movement while waiting for a correction), so it
   // lives here, next to the height map itself.
   float groundHeightAt(const Vec3f& position) const;
+
+  // The terrain's height and normal under a point, the engine's way —
+  // `Heightmap::getHeightAndNormalInLocalCoords` (Linux server 0x6fbc00), the
+  // physics' query (`HeightmapCluster` vtable 0x108, from
+  // `SoldierResponsePhysics::internal_checkVsTerrain` 0x6f6128). A grid cell is two
+  // triangles split along the diagonal from (x+1, z) to (x, z+1):
+  //
+  //   fx + fz < 1:  h = h00 + fx (h10 - h00) + fz (h01 - h00)
+  //                 normal = (-(h10 - h00) / sx, 1, -(h01 - h00) / sx)
+  //   otherwise:    h = h11 + (1 - fx)(h01 - h11) + (1 - fz)(h10 - h11)
+  //                 normal = ((h01 - h11) / sx, 1, (h10 - h11) / sx)
+  //
+  // normalised (0x6fbf53). A cell edge (fx or fz at zero) takes the first triangle
+  // (0x6fbf85, 0x6fc018). The engine scales both slopes by the x spacing
+  // (`+0x48`, 0x6fbcfd). Phong normals (`+0x54`, 0x6fbdb7) are off: no level sets
+  // them. Not read: the material byte the same call returns (0x6fbc7b,
+  // `getMaterialFromGrid`, the level's `.mat` file).
+  struct GroundContact {
+    float height = 0.0f;
+    Vec3f normal{0.0f, 1.0f, 0.0f};
+  };
+  GroundContact groundContactAt(const Vec3f& position) const;
 };
 
 // Mounts the level's server.zip and client.zip at the point Levels/<name>.

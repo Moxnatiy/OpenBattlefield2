@@ -271,6 +271,37 @@ static void testTerrainCentredOnOrigin() {
   CHECK_EQ(level->worldZ(4), 4.0f);
 }
 
+// The physics' terrain query, `Heightmap::getHeightAndNormalInLocalCoords` (Linux
+// server 0x6fbc00): two triangles a cell, split from (x+1, z) to (x, z+1).
+static void testGroundContactTriangles() {
+  level::Level level;
+  level.primary.size = 3;
+  level.primary.scale = Vec3f{2.0f, 1.0f, 2.0f};
+  // Rows by z: node (x, z) at z * 3 + x. The cell at the origin is nodes
+  // (1,1) h00, (2,1) h10, (1,2) h01, (2,2) h11.
+  level.heights = {0.0f, 0.0f, 0.0f,
+                   0.0f, 1.0f, 3.0f,
+                   0.0f, 2.0f, 8.0f};
+
+  // The lower triangle: fx = fz = 0.25.
+  auto contact = level.groundContactAt(Vec3f{0.5f, 0.0f, 0.5f});
+  CHECK(std::abs(contact.height - (1.0f + 0.25f * 2.0f + 0.25f * 1.0f)) < 1e-5f);
+  Vec3f expected = normalize(Vec3f{-2.0f / 2.0f, 1.0f, -1.0f / 2.0f});
+  CHECK(std::abs(contact.normal.x - expected.x) < 1e-5f);
+  CHECK(std::abs(contact.normal.z - expected.z) < 1e-5f);
+
+  // The upper triangle: fx = fz = 0.75, measured from h11.
+  contact = level.groundContactAt(Vec3f{1.5f, 0.0f, 1.5f});
+  CHECK(std::abs(contact.height - (8.0f + 0.25f * (2.0f - 8.0f) + 0.25f * (3.0f - 8.0f))) < 1e-5f);
+  expected = normalize(Vec3f{(2.0f - 8.0f) / 2.0f, 1.0f, (3.0f - 8.0f) / 2.0f});
+  CHECK(std::abs(contact.normal.x - expected.x) < 1e-5f);
+  CHECK(std::abs(contact.normal.y - expected.y) < 1e-5f);
+
+  // The diagonal itself belongs to the upper triangle, and both agree on it.
+  contact = level.groundContactAt(Vec3f{1.0f, 0.0f, 1.0f});
+  CHECK(std::abs(contact.height - 2.5f) < 1e-5f);
+}
+
 static void testPatchesSkipMissingColormaps() {
   TempLevel temp;
   temp.writeCommon();
@@ -419,6 +450,7 @@ TEST_MAIN({
   testSkydomeBlock();
   testStaticObjects();
   testTerrainCentredOnOrigin();
+  testGroundContactTriangles();
   testPatchesSkipMissingColormaps();
   testWaterPlane();
   testMissingHeightmapIsReported();

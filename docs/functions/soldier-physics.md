@@ -160,20 +160,25 @@ aim -40, 0x8 -41, body -9 a tick (the mouse's 5 and the restore's 4). Code:
 
 ## One tick
 
-The order the server runs a soldier's tick in, read from the live server's
-states of our own soldier and confirmed in the binary:
+`GameServer::simulateFrame` (Linux 0x45af70) runs every player's soldier in
+three passes, in this order:
 
-1. **The physics node** — `SoldierPhysicsNode::updatePositionalPhysics`
-   (Linux server 0x6f1de0). The new velocity is the old one plus the
-   accumulated change, times `p-pos-damp` (0.99, `BF2.exe` 0x8607a0) or
-   `p-pos-damp-water` (0.9, 0x8607c0) mixed by the share under water (`+0x68`).
-   The position then moves by **the average of the old and the new velocity**
-   (`(old + new) * 0.5`, the 0.5 at 0xb2f234) times the step.
-2. **The input** — 0x5adea0: the angles above, then
-   `Soldier::updateSoldierSpeed` (0x5a7c50) smooths the axes and asks the physics
-   (`+0x84`) for `speed * axes` along the matrix of the soldier's object
-   (`*(+0x1d0)->+0xc->+0x80`: row 2 forward, row 0 right, in the decompilation of
-   0x5adea0). That matrix still holds the previous tick's look.
+1. **The input** — `simulatePlayersUpdate` (0x454d40) → `simulatePlayerUpdate`
+   (0x4549e0) → `Soldier::handlePlayerInput` (Linux 0x54f160, `BF2.exe` 0x5adea0):
+   the angles above, the jump, and `Soldier::updateSoldierSpeed` (Linux 0x54ec40,
+   `BF2.exe` 0x5a7c50), which smooths the axes and, on the ground, hands
+   `speed * axes` along the movement matrix to the response physics as its
+   **surface speed** (`SoldierResponsePhysics::setSurfacePositionalSpeed`,
+   0x6f8470, `+0xcc`). That matrix still holds the previous tick's look.
+2. **The node** — `simulatePlayersPhysics` (0x454370) → `performMobilePhysicsUpdate`
+   → `SoldierPhysicsNode::updatePhysics` (0x6f2130), whole below.
+3. **The collision** — `Game::updateWorldCollision` (0x40f140), then
+   `simulatePlayersCollisions` (0x4543e0): the ground and the walls push the body
+   out and `SoldierResponsePhysics::addFriction` (0x6f3390) turns the surface
+   speed into the node's friction for the **next** tick's step (below).
+
+So the velocity the input asks for on tick N is the velocity the node reaches on
+tick N + 1, damped once.
 
 What the states show (forward held, spinning 12 degrees a tick):
 
@@ -192,12 +197,288 @@ What the states show (forward held, spinning 12 degrees a tick):
 Strafing with the aim offset at -40 the heading is body + aim − 90 of two
 states back, so the matrix is the whole look, not the body alone.
 
-The velocity asked for does not travel in the state. After a correction our
-prediction rebuilds it from the state's axes, the played action's speed and our
-own record of the look that tick's input read; how the original client restores
-it is **not established**. The air branch of 0x5a7c50 and the jump's place in
-this order (the input adds the impulse, `*0x9ec334 * 6.0` in 0x5adea0; which
-tick's physics takes it is not measured) are not reversed.
+The velocity asked for **does** travel in the state, as the friction it became:
+the controlled layout's 0x200 is the node's positional friction, `(surface speed −
+velocity) × 30` (below), and the client applies it with `setPositionalFriction`.
+Our earlier replay rebuilt the request from the axes and our own record of the
+look; that stand-in is what the jump pass replaced.
+
+### The physics node, whole
+
+`SoldierPhysicsNode` fields (Linux; the accessors name them):
+
+| offset | field | set by | read by |
+|---|---|---|---|
+| `+0x2c` | positional speed | `setPositionalSpeed` 0x6ddd80 (capped at `g_maxSpeed`), `addPositionalSpeed` 0x6dde60 | `getPositionalSpeed` 0x6f1060 |
+| `+0x38` | positional acceleration | `setPositionalAcceleration` 0x638110, `addAccelerationAtRelativePosition` 0x6de5d0 | `getPositionalAcceleration` 0x637a90 |
+| `+0x44` | local linear speed, added before the step | `setLocalLinearSpeed` 0x637e50 | `getLocalLinearSpeed` 0x637b30 |
+| `+0x5c` | drag | the template's `drag` (soldiers: 1.0) | 0x6f2169 |
+| `+0x60` | mass | the template's `mass` (soldiers: 100) | 0x6f19a1 |
+| `+0x64` | gravity modifier | | 0x6f21d8 |
+| `+0x68` | share under water | | 0x6f2182, 0x6f1f26 |
+| `+0xac` | positional friction | `setPositionalFriction` 0x6f24d0, `addFrictionAtAbsolutePosition` 0x6f1630 | `getPositionalFriction` 0x6f2270 |
+| `+0xb8` | friction contacts this tick | 0x6f1630 counts, 0x6f21e3 clears | |
+
+Every setter zeroes components under 1e-6 (0xb84754).
+
+```
+updatePhysics(step)                                                 0x6f2130
+  if drag > 0:  updatePositionalDragAdvanced(0.25, 0.25, 0.9, getDragMod(min(water, 1)))
+  updatePositionalPhysics(step)
+  acceleration.y += basicPhysicsSystem->getGravity() * gravityModifier   0x6f21d8
+  frictionContacts = 0
+
+updatePositionalDragAdvanced(forwardCoef, upCoef, rightCoef, mod)    0x6f1890
+  w = speed * mod - wind                      wind: basicPhysicsSystem vtable 0x50
+  k = -drag * |w| / mass
+  d = sum over the node's rows (vtable 0x78): row0 * rightCoef, row1 * upCoef,
+      row2 * forwardCoef, each times k * dot(w, row)
+  d *= 1/30 (0xb2fcc0), each component no larger than the speed's own
+  acceleration += d * 30
+getDragMod(w) = w * 25 + 1 - w                                        0x6f0ef0
+
+updatePositionalPhysics(step)                                         0x6f1de0
+  |acceleration|² > 1e6 → scaled to 1000;  |friction|² > 62500 → zeroed
+  speed += localLinearSpeed
+  old = speed
+  speed += (friction + acceleration) * step
+  speed *= (1 - water) * p-pos-damp + water * p-pos-damp-water
+  position += (old + speed) * 0.5 * step
+  acceleration = friction = localLinearSpeed = 0
+```
+
+The arguments' order is in the call at 0x6f2190: `xmm0` and `xmm1` 0.25
+(0xb4355c), `xmm2` 0.9 (0xb34a78). Drag and mass are the soldiers' own
+`ObjectTemplate.drag 1.0` and `ObjectTemplate.mass 100` (`Objects/Soldiers/*/*.tweak`).
+
+Measured on the live server, a standing jump: the vertical velocity of every state
+from the jump to the landing agrees with this step to 0.001 m/s, and the height to
+0.0002 m; without the drag the height drifts 7 mm off by the apex (the states
+printed by `--trace-own-state`).
+
+### What the controlled state carries of it
+
+`SoldierNetworkable::updateStateMask` (Linux 0x5db130) fills the update from the
+node, and `setNetUpdate` (0x5dd769) puts it back:
+
+| mask | update | from | applied with |
+|---|---|---|---|
+| 0x80 | `+0x14` | `getPositionalSpeed` (0x5db9b5) | `setPositionalSpeed` (0x5dd7d6) |
+| 0x100 | `+0x20` | `getPositionalAcceleration` (0x5dba14) | `setPositionalAcceleration` (0x5de45d) |
+| 0x200 | `+0x2c` | `getPositionalFriction` (0x5dba74) | `setPositionalFriction` (0x5de440) |
+| 0x40000 | `+0x38` | `getLocalLinearSpeed` (0x5dbad4) | `setLocalLinearSpeed` (0x5de47a) |
+| always, bit D | `+0x98` | response physics `+0x11a`, on the ground (0x5dbb9a) | written back to `+0x11a` (0x5dd90b) |
+| always, bit A | `+0x7d` | soldier `+0x4b0` (0x5db3f8) | |
+| always, bit B | `+0x7e` | soldier `+0x48c`, the response physics' `+0x11b` copied by the input: in water (0x54fa01) | |
+| always, bit C | `+0x7f` | soldier `+0x590` (0x5db43d) | |
+| 0x400, 0x800 | `+0x64`, `+0x68` | soldier `+0x3c4`, `+0x3c0`: the smoothed forward and strafe axes | |
+
+After those three the apply zeroes the rotational friction, speed and
+acceleration (0x5dd846..0x5dd8cd).
+
+### The jump
+
+`Soldier::handlePlayerInput`, Linux 0x54fb7a..0x54fe1d (`BF2.exe` 0x5ae9xx, the
+block under `*(+0xfa) != 0 && local_50 != 0`):
+
+```
+at the start of every input that is not a replay (flag 4 clear):          0x54f1b1
+  noControl (+0x460) > 0:  -= step, at or below 0 becomes -1 (0xb2f3c0)
+  airTime   (+0x464) > 0:  -= step, at or below 0 becomes -1
+jump = the action's axis under mask 0x200, zero under 0.001               0x54f457
+       zero while jumpDelayAfterProne (+0x5a8) > 0                         0x54f72c
+       zero in water (+0x48c)                                              0x54f747
+       (BF2.exe 0x5ae9xx: zero too unless the pose +0x230 is standing)
+onGround (+0x90 → +0x11a) and jump:                                       0x54fb83
+  fireDelay (+0x5a0)  = fire-delay-after-jump                              0x54fbbb
+  proneDelay (+0x5a4) = prone-delay-after-jump
+  sprintRecharge (+0x5b4) = sprint-recharge-delay-after-jump
+  airTime = 2.0                                                            0x54fbd9
+  ground normal.y (+0xe8) < 0.8 (0xb34b6c):  noControl = 0.5               0x54fbf3
+  forward, right = the movement matrix's rows 2 and 0, flattened, normalised
+  v = node->getPositionalSpeed()
+  J = forward * dot(v, forward) * jumpLength + right * dot(v, right) * jumpLength
+  |J| > getSoldierSpeed(7) * jumpLength:  scaled to it                    0x54fd5a
+  J.y = 6.0 (0xb355c8) * phy-soldier-jump-factor                           0x54fda6
+  node->setLocalLinearSpeed(0); setPositionalAcceleration(J); setPositionalSpeed(J)
+  stamina = max(0, stamina - template->SprintLossAtJump (+0x26c))          0x54fe1d
+then, still on the ground: updateSoldierSpeed(false, ...)                  0x550514
+in the air, not in water, not skydiving (+0x4b0): updateSoldierSpeed(true, ...)  0x550595
+```
+
+The jump speaks to the node three times, and each matters: the speed is `J`, the
+acceleration is `J` too — so the next step adds `J / 30` on top — and whatever
+friction the ground left stays, because nothing clears it.
+
+| variable | registered (`BF2.exe`) | default | data |
+|---|---|---|---|
+| `phy-soldier-jump-factor` | 0x853b00, `0x9ec334` | 1.0 | 1.0 (`Soldiers/Common/Common.con`) |
+| `phy-soldier-jump-length-factor` | 0x853b20, `0x9ec30c` | **0.98** (`0x3f7ae148`) | — |
+| `fire-delay-after-jump` | 0x854400, `0x9ec2d8` | 1.0 | 0.7 |
+| `prone-delay-after-jump` | 0x854420, `0x9ec2d4` | 1.0 | 0.3 |
+| `jump-delay-after-prone` | 0x854440, `0x9ec338` | 1.0 | 0.8 |
+| `sprint-recharge-delay-after-jump` | 0x8544a0, `0x9ec318` | 1.0 | 0.7 |
+| `ObjectTemplate.SprintLossAtJump` | string 0x8ae294 | | light kits 0.15, heavy 0.2 |
+
+The delays count down in `Soldier::handleFrameUpdate` (Linux 0x548f1d..0x548fd8),
+each only while above zero; `Soldier::handleUpdate` hands `sprintRecharge` to
+`SprintState::handleUpdate` (0x54b6f5).
+
+Measured on the live server (`--trace-own-state`, light kit): a standing jump's
+first state is 0.2022 m up at 6.135 m/s and the stamina drops 1.0 → 0.843
+(0.85, seven bits); a sprint jump's first state, from 6.788 m/s on the ground
+with friction 2.1701 in the state before, is 6.133 up and 6.872 forward. The
+step above gives 6.1336 and 6.8719.
+
+### In the air
+
+`Soldier::updateSoldierSpeed(inAir, forward, forwardDir, strafe, rightDir, step)`,
+Linux 0x54ec40, whole:
+
+```
+strafe = 0 if getIsSprinting (vtable 0x468) or +0x48c                     0x54ec75
+speed = getSoldierSpeed(7), ramped while a pose change runs (+0x494/+0x498/+0x49c)
+limit = 0
+inAir and noControl < 0 and airTime > 0:                                  0x54f0a5
+  speed = limit = airTime * 0.5 * phy-soldier-inair-speed (2.0)
+each axis: axis += (input - axis) * (input != 0 ? acceleration : deceleration),
+           under 0.001 becomes 0 — in the air too
+dir = forwardDir * forwardAxis + rightDir * strafeAxis, / length when over 1
+not inAir:  response->setSurfacePositionalSpeed(dir * speed * speedFactor)  0x54f093
+inAir and noControl < 0 and airTime > 0:
+  old = |node speed.xz|
+  node->addPositionalSpeed((dir.x, 0, dir.z) * speed * speedFactor)       0x54ef98
+  new = |node speed.xz|
+  old > limit and new > old:  speed.xz scaled back to old, y kept         0x54f038
+```
+
+So in the air nothing asks for a velocity; the input only steers, with a strength
+that falls from 2 m/s to nothing over the jump's two seconds, and it can add speed
+only while the soldier is slower than that strength. On flat ground `noControl`
+is never set, and steering starts on the first tick in the air.
+
+Measured: pressing forward five ticks into a standing jump, the state after the
+first steering tick moves at 0.3547 m/s with the axis at 0.195 — 0.195 × (2 −
+5/30) × 0.99 = 0.3539.
+
+### The ground contact and the friction
+
+`SoldierResponsePhysics` fields: `+0xcc` surface speed (the input's), `+0xd8` the
+contacts' velocity (`addAdjustVector` in `internalImpulseOn`, 0x6f2803), `+0xe4`
+the ground normal, `+0xf4` friction, `+0xf8` elasticity, `+0xfc` resistance — each
+the mean of the two materials' (`internalImpulseOn` 0x6f2930..0x6f28cf; material
+7001 `Slippery_For_Soldier` sets the friction to 0), `+0x100` flags, 0x40 =
+sticking, `+0x11a` on the ground, `+0x11b` in water.
+
+`reset` (0x6f2580) clears on the ground, the contacts, and sets the normal to
+`(0, phy-soldier-feet-contact-normal, 0)`. It does **not** clear the surface speed.
+
+```
+addFriction(node)                                                     0x6f3390
+  not on the ground and not in water:  flags = 1; return   (surface speed kept)
+  n = normal; ny5 = n.y^5
+  staticLimit  = friction * 7.2 (0xb95a48) * 9.82 (0xb94c0c) * ny5 / 30
+  dynamicLimit = friction * 4.8 (0xb95a4c) * 9.82 * ny5 / 30
+  rel = contacts - surface;  rel.y += gravity / 30
+  t = -(rel - n * dot(n, rel) / dot(n, n))           the tangential part, turned
+  resistance > 0:  node->addAccelerationAtRelativePosition(0, t * resistance)
+  sticking:      |t| > staticLimit  → t to staticLimit, sticking off,
+                                       and then |t| > dynamicLimit → t to dynamicLimit
+  not sticking:  |t| > dynamicLimit → t to dynamicLimit;  otherwise sticking on
+  node->addFrictionAtAbsolutePosition(position, t * 30)
+  surface = contacts = 0; contact count = 0
+addFrictionAtAbsolutePosition(p, f)                                   0x6f1630
+  friction = (friction * count + f) / (count + 1); count += 1
+```
+
+With the node step above, on the ground `speed' = (speed + (surface − speed) +
+drag / 30) × 0.99`: the velocity the input asked for, damped, one tick later —
+the relation the prediction used before, now with its source.
+
+Measured: running and sprinting steadily, `friction / 30` is `surface − velocity`
+for a forward axis of 0.980 at both speeds (3.9: 0.03938; 7.0: 0.07233). A
+standing jump's landing at 1.49 m/s sideways states friction 44.78 — the
+dynamic limit times 30 for friction 0.95, the mean of `Human_body` 1.1 and a
+ground of 0.8 (`Common/Material/materialManagerDefine.con`). The resistance term
+is `t` times 0.035 on the sprinting ground and 0.045 where the jump landed —
+means of 0.01 and 0.06 (`Grass`, `Sand`) and 0.08 (`Gravel`).
+
+### The terrain push-out
+
+The soldier's collision mesh is not a file: `ObjectTemplate.collisionMesh
+Soldier_CollisionMesh` (`Objects/Soldiers/*/*_soldier.tweak`) is recognised by name
+(`BF2.exe` 0x6fc730) and built in code (`FUN_00707070`, 0x707070, the branch with no
+stream). Its vertices, relative to the pivot (`coll-soldier-pivot-height` 1.0 above
+the feet), in order:
+
+| index | vertex | |
+|---|---|---|
+| 0 | (0, -1, 0) | the feet |
+| 1–4 | (∓0.2, -0.6, ∓0.2) | a square 0.4 m above the feet |
+| 5–12 | (±0.4, 0, ±0.2), (±0.2, 0, ±0.4) | an octagon at the pivot |
+| 13–16 | (0, 0.8, ±0.4), (±0.4, 0.8, 0) | a diamond 0.8 above the pivot |
+
+and every face's material is 24, `Human_body` (the last argument of each
+`FUN_00705bf0`).
+
+`SoldierResponsePhysics::internal_checkVsTerrain(step, scale)` (Linux 0x6f5e30,
+`checkVsTerrain` passes a scale of 1.0 at 0x6f67a0), the terrain half:
+
+```
+for i in 0..4:                                   the mesh's first five vertices
+  w = position + matrix * vertex[i] * scale
+  h, n, material = heightmapCluster->getHeightAndNormalInWorldCoords(w.x, w.z)  0x6f6128
+  depth = w.y - h
+  depth <= 0:
+    v = node->getTangentSpeed(contact - position)   the node's speed (0x6f0ec0)
+    internalImpulseOn(n, v, depth * n.y, vertex material, terrain material, i == 0)
+    i == 0 and n.y > groundNormal.y:  groundNormal = n; onGround = 1       0x6f6433
+then the water check against getWaterLevelInWorldCoords (vtable 0x130): not read
+```
+
+`internalImpulseOn(n, v, strength, ...)` (0x6f26f0) collects, through `setAdjust`
+(0x6dfd20: an empty value is taken, one of the same sign keeps the larger, one of
+the opposite sign is added):
+
+```
+positionAdjust (+0xb4) <- n * -strength
+speedAdjust    (+0xc0) <- -(dot(v, n) / |n|²) n        (zero when |n|² is under epsilon)
+contacts       (+0xd8)  = running mean of v (addAdjustVector 0x6dfef0), count +0xf0
+friction, elasticity, resistance = means of the two materials'
+```
+
+and `solveImpulse` (0x6f7690) then moves the node by `positionAdjust` (0x6f77b7)
+and, when `speedAdjust` is not zero, hands it times one plus the elasticity and
+`phy-imp-mod` (1.0, registered 0x6f3209) to `addRelativeImpulse` (0x6de3d0), which
+adds it to the local linear speed. The collision test loop for objects that
+follows (`coll-soldier-collision-test-count` 8) is not reversed.
+
+A push of `-depth * n.y` along a unit normal puts the feet back on the terrain's
+plane exactly, measured vertically, and the velocity keeps its part along the
+slope: walking downhill the soldier stays on the ground because nothing takes his
+downward speed away, only its part into the slope.
+
+The terrain's height and normal are `Heightmap::getHeightAndNormalInLocalCoords`
+(0x6fbc00): two triangles a cell, split along the diagonal from (x+1, z) to
+(x, z+1) — the formulas are in `level.h`, `groundContactAt`. `getMaterialFromGrid`
+(vtable 0xf8, 0x6fbc7b) reads the level's `HeightmapPrimary.mat`
+(`heightmap.loadMaterialData`, Linux 0x6fc1c0: one byte a cell times
+`heightmap.setMaterialScale` squared); **we do not load it yet**, so the ground's
+friction and resistance stand in (physics.h).
+
+What the states show of it: the velocity is left as it was and the local linear
+speed takes back its part along the normal — 0.486 up while standing, 6.449 on a
+landing, (0.149, 0.799, 0.391) on a slope.
+
+**Not reversed yet:** `checkSoldierVsMesh` (0x6f44a0), the objects; the terrain
+material map; the water half of `internal_checkVsTerrain`.
+
+Measured with all of the above on the live server (`--trace-own-state`, a run
+with a standing jump, steering in the air, a sprint jump and a run jump): of 590
+states, 6 differ from our prediction of the same tick by more than 1 cm, against
+59 of 441 before. What is left is the spawn, contacts with objects, and two
+states in the air whose vertical speed is one tick of gravity past ours — what the
+server played on those ticks is not established.
 
 Before this, the prediction smoothed the world velocity and turned it with the
 look on the same tick. On the live coop server a run while spinning at 12 degrees

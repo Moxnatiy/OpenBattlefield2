@@ -209,6 +209,10 @@ struct Args {
   // over a range, as -1..1, and sprint held when the last number is 1. The same idea
   // for running: where the server puts us after it.
   std::vector<ScheduledLook> moves;
+  // --jump-at <frame> — the jump key pressed for that one frame.
+  std::vector<int> jumps;
+  // --trace-own-state: every controlled state of our soldier (session::Settings).
+  bool traceOwnState = false;
   // --trace-frames <frame>:<frames> — per frame, the camera and every other
   // soldier drawn: the measure for "the camera jerks, the box hops".
   int traceFrom = -1;
@@ -275,6 +279,8 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--own-box") args.showOwnBox = true;
     else if (flag == "--draw-predicted") args.drawPredicted = true;
     else if (flag == "--watch-soldier") args.watchSoldier = true;
+    else if (flag == "--trace-own-state") args.traceOwnState = true;
+    else if (flag == "--jump-at" && i + 1 < argc) args.jumps.push_back(std::atoi(argv[++i]));
     else if (flag == "--flash" && i + 1 < argc) args.flashSwf = argv[++i];
     else if (flag == "--connect" && i + 1 < argc) args.connectTo = argv[++i];
     else if (flag == "--probe") args.probe = true;
@@ -867,6 +873,7 @@ obf2::session::Settings sessionSettings(const Args& args) {
   settings.skipContent = args.skipContent;
   settings.skipDatabase = args.skipDatabase;
   settings.startSimulation = args.startSimulation;
+  settings.traceOwnState = args.traceOwnState;
   return settings;
 }
 
@@ -3313,6 +3320,9 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
       frameInput.moveRight = move.dy;
       frameInput.sprint = move.sprint != 0;
     }
+    for (const int jumpFrame : args.jumps) {
+      if (frame == jumpFrame) frameInput.jump = true;
+    }
     // The server sends pings and waits for answers: staying silent frame after frame
     // gets us disconnected. So the connection runs together with the picture, and we
     // keep the waiting short — otherwise it would be a freeze.
@@ -3798,7 +3808,7 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
             while (carried.tick < nowTick) {
               carried.from = carried.body.position;
               obf2::server::carryRemoteSoldier(carried.body, carried.swim, feet, velocity,
-                                               remote->physics, remote->terrain,
+                                               pose->bodyYaw, remote->physics, remote->terrain,
                                                remote->collision, obf2::server::kTickTime);
               ++carried.tick;
             }

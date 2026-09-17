@@ -35,6 +35,11 @@ void PhysicsConstants::bind(engine::Console& console) {
     else if (name == "phy-soldier-look-factor-x") lookFactorX = *value;
     else if (name == "phy-soldier-look-factor-y") lookFactorY = *value;
     else if (name == "phy-soldier-jump-factor") jumpFactor = *value;
+    else if (name == "phy-soldier-jump-length-factor") jumpLengthFactor = *value;
+    else if (name == "fire-delay-after-jump") fireDelayAfterJump = *value;
+    else if (name == "prone-delay-after-jump") proneDelayAfterJump = *value;
+    else if (name == "jump-delay-after-prone") jumpDelayAfterProne = *value;
+    else if (name == "sprint-recharge-delay-after-jump") sprintRechargeDelayAfterJump = *value;
     else if (name == "p-pos-damp") positionalDamping = *value;
     else if (name == "p-pos-damp-water") positionalDampingWater = *value;
   });
@@ -62,44 +67,8 @@ Vec3f soldierAxesDirection(float forwardAxis, float strafeAxis, const Vec3f& for
 }
 
 void stepSoldier(BodyState& body, const Vec3f& wish, float maxSpeed, bool jump,
-                 const PhysicsConstants& constants, float groundHeight, float step,
-                 bool directVelocity) {
+                 const PhysicsConstants& constants, float groundHeight, float step) {
   const float targetSpeed = maxSpeed * constants.speedFactor;
-
-  if (directVelocity) {
-    // 1. The physics node (0x6f1de0) takes the velocity asked for on the previous
-    // tick, damped, and moves by the average of the old and the new velocity.
-    const Vec3f old = body.velocity;
-    Vec3f next = old;
-    if (body.onGround) {
-      next.x = body.request.x * constants.positionalDamping;
-      next.z = body.request.z * constants.positionalDamping;
-    } else {
-      // Not reversed: the air branch of 0x5a7c50. The old blend stands in.
-      const float blend =
-          std::min(1.0f, constants.acceleration * constants.airMovementFactor * step * 30.0f);
-      next.x += (body.request.x - next.x) * blend;
-      next.z += (body.request.z - next.z) * blend;
-    }
-    if (jump && body.onGround) {
-      next.y = constants.jumpSpeed * constants.jumpFactor;
-      body.onGround = false;
-    } else if (!body.onGround) {
-      next.y -= constants.gravity * step;
-    }
-    body.velocity = next;
-    body.position = body.position + (old + next) * (0.5f * step);
-    if (body.position.y <= groundHeight) {
-      body.position.y = groundHeight;
-      if (body.velocity.y < 0.0f) body.velocity.y = 0.0f;
-      body.onGround = true;
-    } else {
-      body.onGround = false;
-    }
-    // 2. The input (0x5adea0) asks for the next tick's velocity.
-    body.request = Vec3f{wish.x * targetSpeed, 0.0f, wish.z * targetSpeed};
-    return;
-  }
 
   // There is almost no control in the air — which is exactly why in BF2 a jump's
   // direction cannot be changed in flight.

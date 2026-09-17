@@ -935,4 +935,33 @@ float Level::groundHeightAt(const Vec3f& position) const {
   return top + (bottom - top) * tz;
 }
 
+Level::GroundContact Level::groundContactAt(const Vec3f& position) const {
+  GroundContact contact;
+  if (heights.empty()) return contact;
+
+  const float half = halfExtent();
+  const float gx = position.x / primary.scale.x + half;
+  const float gz = position.z / primary.scale.z + half;
+  const int x0 = static_cast<int>(std::floor(gx));
+  const int z0 = static_cast<int>(std::floor(gz));
+  const float fx = gx - static_cast<float>(x0);
+  const float fz = gz - static_cast<float>(z0);
+
+  const float h10 = heightAt(x0 + 1, z0);
+  const float h01 = heightAt(x0, z0 + 1);
+  const float inverseSpacing = 1.0f / primary.scale.x;
+  Vec3f normal;
+  if (fx > 0.0f && fz > 0.0f && fx + fz >= 1.0f) {
+    const float h11 = heightAt(x0 + 1, z0 + 1);
+    contact.height = h11 + (1.0f - fx) * (h01 - h11) + (1.0f - fz) * (h10 - h11);
+    normal = Vec3f{(h01 - h11) * inverseSpacing, 1.0f, (h10 - h11) * inverseSpacing};
+  } else {
+    const float h00 = heightAt(x0, z0);
+    contact.height = h00 + std::max(fx, 0.0f) * (h10 - h00) + std::max(fz, 0.0f) * (h01 - h00);
+    normal = Vec3f{-(h10 - h00) * inverseSpacing, 1.0f, -(h01 - h00) * inverseSpacing};
+  }
+  contact.normal = normalize(normal);
+  return contact;
+}
+
 }  // namespace obf2::level

@@ -15,6 +15,10 @@ struct SprintState {
   float dissipationTime = 10.0f;
   float recoverTime = 17.0f;
   float limit = 0.05f;
+  // `ObjectTemplate.SprintLossAtJump`, the template's `+0x26c`, taken off the
+  // stamina by a jump (Linux 0x54fe1d). Light kits 0.15, heavy 0.2 — the same
+  // caveat: the light kits' until the kit is taken.
+  float lossAtJump = 0.15f;
   float drainScale = 1.0f;  // +0xc, 1.0 from the constructor; halved on a no-vehicles server
   float stamina = 1.0f;     // +0x10
   bool wants = false;       // +0x14, set by a message, cleared by every update

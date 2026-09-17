@@ -50,14 +50,43 @@ struct TickAccumulator {
   }
 };
 
-// wish is the desired direction in the plane (already rotated by the look angle),
-// of length 0..1. terrain and collision may be empty: with no terrain the ground
-// counts as zero, with no collision there are no walls. directVelocity: wish is
-// already the smoothed direction of `soldierMoveDirection` and becomes the
-// velocity on the ground as it is (`BF2.exe` 0x5a7c50).
+// Our own local server's step (the hosted game): wish is the desired direction in
+// the plane, of length 0..1. terrain and collision may be empty: with no terrain
+// the ground counts as zero, with no collision there are no walls. Not the engine's
+// order — that is `tickSoldier`.
 void moveSoldier(BodyState& body, SwimState& swim, const Vec3f& wish, float maxSpeed, bool jump,
                  const PhysicsConstants& physics, const level::Level* terrain,
-                 const CollisionWorld* collision, float step, bool directVelocity = false);
+                 const CollisionWorld* collision, float step);
+
+// What one action asks of the soldier's movement.
+struct SoldierIntent {
+  // The smoothed axes along the movement matrix — `soldierMoveDirection`.
+  Vec3f wish;
+  // The movement matrix's rows 2 and 0, flattened and normalised (0x54fa44): the
+  // jump keeps the speed along them.
+  Vec3f forward{0.0f, 0.0f, 1.0f};
+  Vec3f right{1.0f, 0.0f, 0.0f};
+  // `getSoldierSpeed(7)`, the speed state's speed.
+  float speed = 0.0f;
+  // The action's jump axis (mask 0x200).
+  bool jump = false;
+};
+
+// The movement half of `Soldier::handlePlayerInput` (Linux 0x54f160): the air
+// timers, the jump, and `updateSoldierSpeed` — the surface speed on the ground,
+// steering in the air. Returns whether the soldier jumped; the stamina the jump
+// costs (`SprintLossAtJump`, 0x54fe1d) is the caller's, which holds the sprint.
+// docs/functions/soldier-physics.md, "The jump" and "In the air".
+bool soldierInput(BodyState& body, const SoldierIntent& intent, const PhysicsConstants& physics,
+                  float step);
+
+// One engine tick of our own soldier, in `GameServer::simulateFrame`'s order
+// (Linux 0x45af70): the input, the physics node (`stepSoldierNode`), the collision
+// and its friction; then the delays count down. `matrixYaw` is the yaw the node's
+// matrix holds, for the drag. Returns whether the soldier jumped.
+bool tickSoldier(BodyState& body, SwimState& swim, const SoldierIntent& intent, float matrixYaw,
+                 const PhysicsConstants& physics, const level::Level* terrain,
+                 const CollisionWorld* collision, float step);
 
 // One tick of a soldier whose motion comes from the network rather than from
 // input — another player seen from this client.
@@ -67,21 +96,14 @@ void moveSoldier(BodyState& body, SwimState& swim, const Vec3f& wish, float maxS
 // (0x5dc15c) and seeds a mobile one with the newest update: its velocity through
 // `setPositionalSpeed` (vtable 0xd0, which stores it at +0x2c capped at
 // `g_maxSpeed` 1500, 0x6ddd80) and the predicted matrix through
-// `setPrevTransformation` (vtable 0xa8, 0x6f2310). The node's own tick,
-// `SoldierPhysicsNode::updatePositionalPhysics` (0x6f1de0), then damps that
-// velocity by `p-pos-damp` and moves by the average of the old and the new one,
-// and the soldier's ground and wall passes run after it — so a soldier whose
-// update points down stops on the floor instead of running into it.
+// `setPrevTransformation` (vtable 0xa8, 0x6f2310). The node's own tick then runs,
+// and the soldier's ground and wall passes after it — so a soldier whose update
+// points down stops on the floor instead of running into it.
 //
-// That node step is the same one our own soldier takes (`stepSoldier` with
-// `directVelocity`), with the network's velocity standing where the input's
-// request stands: on the ground the node takes the velocity it was given, damped,
-// either way. `feet` is the predicted position less `coll-soldier-pivot-height`.
-//
-// Not read: the forces the physics manager accumulates into the node (+0x38,
-// +0xac); gravity in the air is the one `stepSoldier` already applies.
+// `feet` is the predicted position less `coll-soldier-pivot-height`; `yaw` his
+// body's yaw, for the drag.
 void carryRemoteSoldier(BodyState& body, SwimState& swim, const Vec3f& feet,
-                        const Vec3f& velocity, const PhysicsConstants& physics,
+                        const Vec3f& velocity, float yaw, const PhysicsConstants& physics,
                         const level::Level* terrain, const CollisionWorld* collision,
                         float step);
 

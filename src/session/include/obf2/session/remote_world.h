@@ -53,6 +53,9 @@ struct Settings {
   bool skipContent = false;
   bool skipDatabase = false;
   bool startSimulation = false;
+  // --trace-own-state: every controlled-object state of our soldier, with the
+  // physics node's fields it carries and our prediction of the same tick.
+  bool traceOwnState = false;
 };
 
 struct KnownObject {
@@ -463,12 +466,15 @@ struct RemoteWorld {
     // live server: the tick whose action lets go of sprint and presses strafe still
     // has its strafe dropped, and the state after it reports the flag down.
     const bool sprinting = sprint.sprinting;
-    inputAt[number % inputAt.size()] = {matrixYaw, sprinting};
     obf2::server::turnSoldier(
         look, obf2::net::bf2::axisFromWire(played.axes[obf2::net::bf2::kAxisMouseX]),
         obf2::net::bf2::axisFromWire(played.axes[obf2::net::bf2::kAxisMouseY]),
         obf2::net::bf2::axisFromWire(played.axes[obf2::net::bf2::kAxisThrottle]), physics);
-    if (bodyReady && terrain != nullptr) stepBody(played, matrixYaw, sprinting);
+    if (bodyReady && terrain != nullptr && stepBody(played, matrixYaw, sprinting)) {
+      // 0x54fe1d: the jump's stamina, straight off.
+      sprint.stamina = std::max(0.0f, sprint.stamina - sprint.lossAtJump);
+    }
+    bodyAt[number % bodyAt.size()] = {number, body};
 
     // The sprint message (`FUN_005c0460`): while the player's sprint is on, 0x2a on
     // the tick it came on, 0x29 after. The player's sprint is the key with the
@@ -478,16 +484,10 @@ struct RemoteWorld {
     const bool sprintKey = sprintInputOf(played);
     if (sprintKey) obf2::server::sprintMessage(sprint, sprintKeyLastTick);
     sprintKeyLastTick = sprintKey;
-    // Not modelled: the blocking argument and the recharge delay after a jump.
-    obf2::server::updateSprint(sprint, false, 0.0f, obf2::server::kTickTime);
+    // `Soldier::handleUpdate` hands the recharge delay a jump started (0x54b6f5).
+    // Not modelled: the blocking argument.
+    obf2::server::updateSprint(sprint, false, body.sprintRechargeDelay, obf2::server::kTickTime);
   }
-  // What each action's input read, by action tick — for the velocity request a
-  // correction has to rebuild (`reconcile`). As many as `sent` holds.
-  struct InputRecord {
-    float matrixYaw = 0.0f;
-    bool sprinting = false;
-  };
-  std::array<InputRecord, 256> inputAt{};
   obf2::server::SprintState sprint;
   bool sprintKeyLastTick = false;
 
@@ -527,6 +527,7 @@ struct RemoteWorld {
   // turn that is one large mouse movement too many, taken back by the next state.
   void reconcile(const obf2::net::bf2::SoldierState& state, std::int32_t counter) {
     if (!state.position || !bodyReady) return;
+    if (args.traceOwnState) traceOwnState(state, counter);
     const obf2::Vec3f predicted = body.position;
     const float predictedYaw = yaw();
 
@@ -534,8 +535,25 @@ struct RemoteWorld {
     // (`FUN_006ed4c0`); our body's position is the feet.
     obf2::Vec3f feet = *state.position;
     feet.y -= physics.pivotHeight;
+    // What the state does not carry — the surface speed a jump leaves standing, the
+    // sticking flag, the ground's normal, the jump's timers and delays — is taken
+    // from our own prediction of the same tick; the client's copies are its own
+    // too, never networked.
+    if (counter >= 0) {
+      const BodyRecord& ours = bodyAt[static_cast<std::uint32_t>(counter) % bodyAt.size()];
+      if (ours.number == static_cast<std::uint32_t>(counter)) body = ours.body;
+    }
     body.position = feet;
     if (state.velocity) body.velocity = *state.velocity;
+    // The physics node, as `SoldierNetworkable::setNetUpdate` puts it back (Linux
+    // 0x5dd7d6, 0x5de45d, 0x5de440, 0x5de47a), and the ground flag (0x5dd90b).
+    // The friction is the velocity the server's input asked for, still to be taken
+    // by the next step: `(surface speed - velocity) * 30` (0x6f3390).
+    if (state.vector100) body.acceleration = *state.vector100;
+    if (state.vector200) body.friction = *state.vector200;
+    if (state.vector40000) body.linearSpeed = *state.vector40000;
+    body.onGround = state.bitD;
+    body.frictionContacts = 0;
     // The smoothed movement axes, `Soldier +0x22c` and `+0x228` (0x400, 0x800 in
     // the state): without them the replay starts every ramp from our own guess.
     if (state.value400) body.forwardAxis = *state.value400;
@@ -573,21 +591,8 @@ struct RemoteWorld {
     // 0x4d4bce: the head goes whatever its tick. A counter the server already
     // sent comes as -1 (`FUN_005b7390` against `+0x20e8`), and then this is the
     // one action it took off its buffer.
-    //
-    // The velocity the server's input asked for on that tick (physics `+0x84`)
-    // does not travel in the state, and the next tick moves by it. It is rebuilt
-    // from what does: the state's axes, the played action's speed, and the matrix
-    // the input read — the body's yaw before that action's turn, as our own
-    // prediction of that tick had it. How the original client restores it is not
-    // established.
     if (!sent.empty()) {
-      const auto& [headNumber, head] = sent.front();
-      const InputRecord& input = inputAt[headNumber % inputAt.size()];
-      body.request = obf2::server::soldierAxesDirection(body.forwardAxis, body.strafeAxis,
-                                                        facingOf(input.matrixYaw),
-                                                        rightOf(input.matrixYaw)) *
-                     (speedOf(input.sprinting) * physics.speedFactor);
-      sprintKeyLastTick = sprintInputOf(head);
+      sprintKeyLastTick = sprintInputOf(sent.front().second);
       sent.pop_front();
     }
     for (const auto& [number, played] : sent) playAction(number, played);
@@ -613,11 +618,46 @@ struct RemoteWorld {
                   state.flag4000.value_or(false) ? 1 : 0, state.value4000.value_or(-1.0f));
     }
   }
+  // What our prediction had after each action, by action tick — the other half of
+  // `--trace-own-state`: the server's state names the action it played last, and
+  // this is where we had the body after the same one.
+  struct BodyRecord {
+    std::uint32_t number = 0;
+    obf2::server::BodyState body;
+  };
+  std::array<BodyRecord, 256> bodyAt{};
+
+  void traceOwnState(const obf2::net::bf2::SoldierState& s, std::int32_t counter) {
+    const auto vec = [](const std::optional<obf2::Vec3f>& v, char* out, std::size_t size) {
+      if (v) std::snprintf(out, size, "%.4f %.4f %.4f", v->x, v->y, v->z);
+      else std::snprintf(out, size, "-");
+    };
+    char velocity[64], acceleration[64], friction[64], linear[64];
+    vec(s.velocity, velocity, sizeof(velocity));
+    vec(s.vector100, acceleration, sizeof(acceleration));
+    vec(s.vector200, friction, sizeof(friction));
+    vec(s.vector40000, linear, sizeof(linear));
+    std::printf("  own state %d: pos %.4f %.4f %.4f vel %s acc %s fric %s lin %s ground %d "
+                "axes %.3f %.3f sprint %d stamina %.3f\n",
+                counter, s.position->x, s.position->y, s.position->z, velocity, acceleration,
+                friction, linear, s.bitD ? 1 : 0, s.value400.value_or(-99.0f),
+                s.value800.value_or(-99.0f), s.flag4000.value_or(false) ? 1 : 0,
+                s.value4000.value_or(-1.0f));
+    if (counter < 0) return;
+    const BodyRecord& ours = bodyAt[static_cast<std::uint32_t>(counter) % bodyAt.size()];
+    if (ours.number != static_cast<std::uint32_t>(counter)) return;
+    const obf2::Vec3f pivot = ours.body.position + obf2::Vec3f{0.0f, physics.pivotHeight, 0.0f};
+    std::printf("  ours  %d: pos %.4f %.4f %.4f vel %.4f %.4f %.4f ground %d (off %.4f %.4f %.4f)\n",
+                counter, pivot.x, pivot.y, pivot.z, ours.body.velocity.x, ours.body.velocity.y,
+                ours.body.velocity.z, ours.body.onGround ? 1 : 0, pivot.x - s.position->x,
+                pivot.y - s.position->y, pivot.z - s.position->z);
+  }
+
   int bigCorrections = 0;
   float yawCorrectionMax = 0.0f;
   float yawCorrectionSum = 0.0f;
 
-  void stepBody(const obf2::net::bf2::PlayerAction& action, float matrixYaw, bool sprinting) {
+  bool stepBody(const obf2::net::bf2::PlayerAction& action, float matrixYaw, bool sprinting) {
     // The axes as the server reads them back from the wire (0x5bc6a0). A soldier
     // strafes with the yaw axis: the engine has no separate strafe axis. A
     // sprinting soldier does not strafe: `updateSoldierSpeed` zeroes that input
@@ -630,14 +670,19 @@ struct RemoteWorld {
     const obf2::Vec3f wish = obf2::server::soldierMoveDirection(
         body, forward, strafe, facingOf(matrixYaw), rightOf(matrixYaw), physics);
 
-    const bool jump = (action.buttons & obf2::net::bf2::kButtonAction) != 0;
-    const float speed = speedOf(sprinting);
+    obf2::server::SoldierIntent intent;
+    intent.wish = wish;
+    intent.forward = facingOf(matrixYaw);
+    intent.right = rightOf(matrixYaw);
+    intent.speed = speedOf(sprinting);
+    intent.jump = (action.buttons & obf2::net::bf2::kButtonAction) != 0;
 
-    // The movement goes through the same function as on the server: ground, water,
-    // walls. While the client had its own shortened copy, it knew only the ground's
-    // height — and the soldier walked through objects.
-    obf2::server::moveSoldier(body, swim, wish, speed, jump, physics, terrain, collision,
-                              obf2::server::kTickTime, true);
+    // The engine's tick: the input, the node, the collision (`tickSoldier`). The
+    // node's matrix, which the drag reads, is the body's after this action's turn
+    // (`updateTransformation` runs in the input, Linux 0x55003b) — its yaw is taken
+    // as the body's; the matrix's own rows are not measured.
+    return obf2::server::tickSoldier(body, swim, intent, look.bodyYaw, physics, terrain, collision,
+                                     obf2::server::kTickTime);
   }
   int bodyTicks = 0;
 
