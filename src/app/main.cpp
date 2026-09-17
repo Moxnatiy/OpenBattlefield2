@@ -20,6 +20,8 @@
 #include <unordered_set>
 
 #include "obf2/app/command_line.h"
+#include "obf2/app/hosted_game.h"
+#include "obf2/app/scene_build.h"
 #include "obf2/core/math.h"
 #include "obf2/core/parallel.h"
 #include "obf2/core/path.h"
@@ -300,48 +302,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
                RemoteWorld* remote = nullptr) {
   // --- preparing the scene ---------------------------------------------
 
-  // Unique geometry is kept apart from the placement: on a level the same building
-  // occurs dozens of times, and uploading it to the GPU each time makes no sense.
-  struct Scene {
-    // One placement of a piece of geometry. `road` says the renderer must draw
-    // it as a skin on the terrain rather than as geometry of its own — what that
-    // means is `obf2::gfx`'s business, not ours.
-    struct Instance {
-      int mesh = -1;
-      obf2::Mat4 transform;
-      bool road = false;
-      float roadBlendFactor = 1.0f;
-      // Which page of the level's light map atlas this placement is baked into,
-      // and its window in it. -1 means the object has no baked light map.
-      int lightmapAtlas = -1;
-      float lightmapOffset[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-    };
-
-    std::vector<obf2::mesh::RenderMesh> meshes;
-    std::vector<Instance> instances;
-    obf2::Vec3f center;
-    float radius = 1.0f;
-
-    void add(obf2::mesh::RenderMesh&& geometry, const obf2::Mat4& transform, bool road = false) {
-      meshes.push_back(std::move(geometry));
-      Instance instance;
-      instance.mesh = static_cast<int>(meshes.size()) - 1;
-      instance.transform = transform;
-      instance.road = road;
-      instances.push_back(instance);
-    }
-  } scene;
-
-  // The sky dome, kept apart from the scene: everything in the scene has a
-  // fixed place, and the dome's place is wherever the camera is.
-  std::optional<obf2::mesh::RenderMesh> skyDome;
-
-  // The level's baked object light maps, keyed by template name and position.
-  obf2::level::ObjectLightmaps objectLightmaps;
-  // One of the terrain's chart maps, kept for its size alone: the near detail's
-  // half-texel correction needs it, and the patches themselves are handed to
-  // the scene as they are built.
-  std::string firstChartMap;
+  // The scene and everything the level adds to it (`obf2/app/scene.h`).
+  obf2::app::Scene scene;
+  obf2::app::LevelScene levelScene;
 
   std::optional<obf2::level::Level> level;
   obf2::game::Registry registry;
@@ -376,41 +339,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
                 level->terrain.seaLevel);
     std::printf("  static objects: %zu, roads: %zu\n", level->objects.size(),
                 level->roads.size());
-    // The level's baked light maps for placed objects. Read once here; every
-    // placement below asks it for its own window.
-    objectLightmaps = obf2::level::ObjectLightmaps::load(files, args.levelName);
-
-    auto patches = obf2::level::buildTerrainPatches(*level, files);
-    std::printf("  terrain patches: %zu of %d (the rest under water, no colour map)\n", patches.size(),
-                ((level->primary.size - 1) / level->terrain.patchSize) *
-                    ((level->primary.size - 1) / level->terrain.patchSize));
-    for (auto& patch : patches) {
-      if (firstChartMap.empty()) firstChartMap = patch.detailmap;
-      scene.add(std::move(patch.geometry), obf2::Mat4::identity());
-    }
-
-    // Roads: their vertices lie relative to the start point, so we place them by
-    // the absolute position from the .con.
-    int roadsPlaced = 0;
-    for (auto& road : level->roads) {
-      if (road.geometry.indices.empty()) continue;
-      scene.add(std::move(road.geometry), obf2::translation(road.position), true);
-      scene.instances.back().roadBlendFactor = road.blendFactor;
-      ++roadsPlaced;
-    }
-    std::printf("  roads in the scene: %d\n", roadsPlaced);
-    scene.add(obf2::level::buildWaterPlane(*level), obf2::Mat4::identity());
-
-    // The sky dome. Its place is the camera's, so it is not a scene instance:
-    // it is uploaded on its own and put into the draw list every frame.
-    if (auto dome = obf2::level::buildSkyDome(*level, files)) {
-      skyDome = std::move(*dome);
-      std::printf("  sky: %s, texture %s, rotation %.0f\n", level->sky.domeTemplate.c_str(),
-                  level->sky.texture.c_str(), static_cast<double>(level->sky.domeRotation));
-    } else if (!level->sky.domeTemplate.empty()) {
-      std::printf("  sky: the dome mesh for `%s` was not found\n",
-                  level->sky.domeTemplate.c_str());
-    }
+    levelScene = obf2::app::buildLevelScene(files, *level, scene);
 
     if (remote != nullptr) remote->keepAlive();
     std::printf("  loading: the level's own files took %.2f s\n", secondsSince(started));
@@ -428,234 +357,22 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     std::vector<obf2::level::StaticObject> placement = level->objects;
 
     if (args.hosted) {
-      obf2::server::ServerSettings serverSettings;
-      serverSettings.levelName = level->name;
-      // The spawn is above the map's centre, slightly above sea level, so as not to
-      // end up inside a hill.
-      serverSettings.spawnPosition = obf2::Vec3f{-40.0f, level->terrain.seaLevel + 40.0f, -200.0f};
-
-      // The movement constants come from the game's data rather than from our heads:
-      // the same file the original reads.
-      serverSettings.physics = obf2::server::loadPhysicsConstants(files);
-      std::printf("  physics: acceleration %.2f, deceleration %.2f, air control %.2f\n",
-                  serverSettings.physics.acceleration, serverSettings.physics.deceleration,
-                  serverSettings.physics.airMovementFactor);
-      // The tickets and the round's settings come from the same files the game reads:
-      // GameLogicInit.con (the starting tickets) and Settings/ServerSettings.con.
-      {
-        obf2::engine::Console settingsConsole;
-        settingsConsole.bind("gameLogic.setDefaultNumberOfTickets",
-                             [&](const obf2::con::Command& command) {
-                               const auto team = command.argInt(0);
-                               const auto count = command.argInt(1);
-                               if (team && count && *team >= 1 && *team <= 2) {
-                                 serverSettings.defaultTickets[*team] = *count;
-                               }
-                             });
-        settingsConsole.bind("sv.ticketRatio", [&](const obf2::con::Command& command) {
-          serverSettings.ticketRatio = command.argFloat(0).value_or(serverSettings.ticketRatio);
-        });
-        settingsConsole.bind("sv.spawnTime", [&](const obf2::con::Command& command) {
-          serverSettings.respawnDelay = command.argFloat(0).value_or(serverSettings.respawnDelay);
-        });
-        settingsConsole.bind("sv.numPlayersNeededToStart", [&](const obf2::con::Command& command) {
-          serverSettings.playersNeededToStart =
-              command.argInt(0).value_or(serverSettings.playersNeededToStart);
-        });
-        // We have a spawn screen, so the workaround for headless runs is not needed
-        // here: the soldier will spawn only after DONE, as in the engine.
-        serverSettings.spawnOnJoin = false;
-        obf2::con::Interpreter settingsInterpreter(
-            files, [&](const obf2::con::Command& c) { settingsConsole.execute(c); });
-        settingsInterpreter.runFile("GameLogicInit.con");
-        settingsInterpreter.runFile("Settings/ServerSettings.con");
-        std::printf("  tickets: %d against %d (ticketRatio %.0f%%), spawn in %.0f s\n",
-                    serverSettings.defaultTickets[1], serverSettings.defaultTickets[2],
-                    serverSettings.ticketRatio, serverSettings.respawnDelay);
-      }
-
-      hostedServer = std::make_unique<obf2::server::GameServer>(serverSettings);
-      obf2::server::GameServer& gameServer = *hostedServer;
-
-      // The level's statics first, then the game logic — exactly the order the engine
-      // does it in. The other way round is not allowed: `loadWorld` starts with a
-      // clean object list and would sweep away the flags `setGameplay` places.
-      gameServer.loadWorld(*level);
-
-      // The mode's game logic: control points and vehicle spawners.
-      std::string gameplayError;
-      if (auto gameplay = obf2::level::loadGameplayObjects(files, level->name, "gpm_cq", 16,
-                                                           &gameplayError)) {
-        std::printf("  game logic: %zu control points, %zu vehicle spawners, "
-                    "%zu spawn points\n",
-                    gameplay->controlPoints.size(), gameplay->spawners.size(),
-                    gameplay->spawnPoints.size());
-        for (const auto& point : gameplay->controlPoints) {
-          std::printf("    point %d \"%s\" radius %.0f @ %.0f/%.0f/%.0f\n", point.id,
-                      point.nameKey.c_str(), point.radius, point.position.x, point.position.y,
-                      point.position.z);
-        }
-        gameServer.setGameplay(std::move(*gameplay));
-      } else {
-        std::printf("  game logic: %s\n", gameplayError.c_str());
-      }
-
-      // The terrain, for collision with the ground: without it a soldier falls forever.
-      gameServer.setTerrain(&*level);
-
-      // Vehicles have to stop a soldier too: they stand in the server's world rather
-      // than in the level's statics, so they are added separately.
-      std::vector<obf2::level::StaticObject> collisionObjects = level->objects;
-      for (const auto& object : gameServer.objects()) {
-        if (object.spawnerIndex < 0) continue;
-        obf2::level::StaticObject vehicle;
-        vehicle.templateName = object.templateName;
-        vehicle.position = object.position;
-        vehicle.rotation = object.rotation;
-        vehicle.hasRotation = true;
-        collisionObjects.push_back(std::move(vehicle));
-      }
-
       collisionLibrary = std::make_unique<obf2::server::CollisionLibrary>(files, registry);
-      gameServer.setCollision(obf2::server::buildCollisionWorld(*collisionLibrary, collisionObjects));
-
-      auto [clientSide, serverSide] = obf2::net::LoopbackConnection::createPair();
-      gameServer.accept(std::move(serverSide));
-
-      hostedClient = std::make_unique<obf2::server::GameClient>(std::move(clientSide),
-                                                               std::string("player"));
-      obf2::server::GameClient& client = *hostedClient;
-      client.connect();
-
-      // The world is large and is cut into packets, so we spin while new ones arrive.
-      std::size_t previous = 0;
-      for (int step = 0; step < 4096; ++step) {
-        gameServer.tick(1.0f / 60.0f);
-        client.tick(1.0f / 60.0f);
-        if (client.objects().size() == previous && step > 8) break;
-        previous = client.objects().size();
-      }
-
-      std::printf("  local server: %s, players %zu, packets %lld/%lld\n",
-                  std::string(obf2::server::clientStateName(client.state())).c_str(),
-                  gameServer.playerCount(), gameServer.packetsSent(),
-                  gameServer.packetsReceived());
-      int flags = 0;
-      for (const auto& [id, object] : client.objects()) {
-        (void)id;
-        if (object.templateName.rfind("CPNAME", 0) == 0) ++flags;
-      }
-      std::printf("  control points that reached the client: %d\n", flags);
-      std::printf("  the client received objects: %zu of %zu\n", client.objects().size(),
-                  level->objects.size());
-
-      // We do not put the player's soldier into the scene: we play as him, not watch him.
-      for (const auto& player : gameServer.players()) localSoldierId = player.soldierId;
-
-      placement.clear();
-      placement.reserve(client.objects().size());
-      for (const auto& [id, object] : client.objects()) {
-        if (id == localSoldierId) continue;
-        obf2::level::StaticObject staticObject;
-        staticObject.templateName = object.templateName;
-        staticObject.position = object.position;
-        staticObject.rotation = object.rotation;
-        staticObject.hasRotation = true;
-        placement.push_back(std::move(staticObject));
-      }
-
-      // Vegetation does not travel over the network — the client draws it from the
-      // level's data, as the original does. The matrix from the .con carries both
-      int overgrowth = 0;
-      for (const obf2::level::StaticObject& object : level->objects) {
-        if (!object.isOvergrowth) continue;
-        placement.push_back(object);
-        ++overgrowth;
-      }
-      std::printf("  vegetation from the level's data: %d instances\n", overgrowth);
+      obf2::app::HostedGame hosted = obf2::app::startHostedGame(files, *level, *collisionLibrary);
+      hostedServer = std::move(hosted.server);
+      hostedClient = std::move(hosted.client);
+      localSoldierId = hosted.localSoldierId;
+      placement = std::move(hosted.placement);
     }
 
-    std::unordered_map<std::string, int> meshIndexByTemplate;
-    std::map<std::string, int> missing;
-    int placed = 0;
-    int lightmapped = 0;
-    const auto placementStarted = std::chrono::steady_clock::now();
-
-    // The geometry first, and on every core. A level places two thousand
-    // objects out of three hundred templates, and assembling one — unpacking
-    // its meshes from the archives, flattening its tree, moving its parts — is
-    // the same work whichever thread does it and looks at nothing another
-    // thread writes. The order of the built meshes is the order the names come
-    // in, so the scene is the same as when this was a loop.
-    {
-      std::vector<std::string> names;
-      for (const auto& object : placement) {
-        if (meshIndexByTemplate.emplace(object.templateName, -1).second) {
-          names.push_back(object.templateName);
-        }
-      }
-      std::vector<std::optional<obf2::mesh::RenderMesh>> built(names.size());
-      obf2::parallelFor(names.size(), [&](std::size_t i) {
-        built[i] = buildObjectMesh(files, registry, names[i], args, false);
-      });
-      for (std::size_t i = 0; i < names.size(); ++i) {
-        if (!built[i]) continue;
-        scene.meshes.push_back(std::move(*built[i]));
-        meshIndexByTemplate[names[i]] = static_cast<int>(scene.meshes.size()) - 1;
-      }
-      if (remote != nullptr) remote->keepAlive();
-    }
-
-    for (const auto& object : placement) {
-      // The placement is the longest part of loading. While it goes on, the server
-      // has to hear that we are alive.
-      if (remote != nullptr) remote->keepAlive();
-      const auto found = meshIndexByTemplate.find(object.templateName);
-      if (found == meshIndexByTemplate.end()) continue;
-      if (found->second < 0) {
-        ++missing[object.templateName];
-        continue;
-      }
-
-      obf2::Mat4 transform = object.transform;
-      if (!object.hasTransform) {
-        transform = obf2::translation(object.position);
-        if (object.hasRotation) {
-          transform = transform * obf2::rotationYawPitchRoll(object.rotation.x, object.rotation.y,
-                                                             object.rotation.z);
-        }
-      }
-      Scene::Instance instance;
-      instance.mesh = found->second;
-      instance.transform = transform;
-      // The baked light map is keyed by the template's name and the placement's
-      // own position, so it is looked up here rather than with the geometry:
-      // the mesh is shared between copies and the light map is not.
-      const auto* baked =
-          args.noLightmaps ? nullptr
-                           : objectLightmaps.find(object.templateName, object.position);
-      if (baked != nullptr) {
-        instance.lightmapAtlas = baked->atlas;
-        instance.lightmapOffset[0] = baked->scaleU;
-        instance.lightmapOffset[1] = baked->scaleV;
-        instance.lightmapOffset[2] = baked->offsetU;
-        instance.lightmapOffset[3] = baked->offsetV;
-        ++lightmapped;
-      }
-      scene.instances.push_back(instance);
-      ++placed;
-    }
-
-    std::printf("  unique geometry: %zu, placed: %d, without geometry: %zu templates (%.2f s)\n",
-                scene.meshes.size() - patches.size(), placed, missing.size(),
-                secondsSince(placementStarted));
-    std::printf("  baked light maps: %d of %d objects, %d atlas pages\n", lightmapped, placed,
-                objectLightmaps.atlasCount());
-    int shown = 0;
-    for (const auto& [name, count] : missing) {
-      if (shown++ >= 5) break;
-      std::printf("    without geometry: %s (x%d)\n", name.c_str(), count);
-    }
+    obf2::app::SceneOptions sceneOptions;
+    sceneOptions.geometryIndex = args.geometryIndex;
+    sceneOptions.lodIndex = args.lodIndex;
+    sceneOptions.noLightmaps = args.noLightmaps;
+    obf2::app::placeObjects(files, registry, placement, sceneOptions, levelScene, scene,
+                            [remote]() {
+                              if (remote != nullptr) remote->keepAlive();
+                            });
 
     std::printf("  terrain lighting: sun %.2f/%.2f/%.2f, sky %.2f/%.2f/%.2f\n",
                 level->terrain.terrainSunColor.x, level->terrain.terrainSunColor.y,
@@ -2336,10 +2053,10 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   // The atlas pages, uploaded once. Only the pages some object actually points
   // at are loaded; a level has up to 21 and a small map uses few of them.
   std::vector<SDL_GPUTexture*> lightmapPages(
-      static_cast<std::size_t>(std::max(objectLightmaps.atlasCount(), 0)), nullptr);
+      static_cast<std::size_t>(std::max(levelScene.objectLightmaps.atlasCount(), 0)), nullptr);
   {
     std::vector<bool> wanted(lightmapPages.size(), false);
-    for (const Scene::Instance& instance : scene.instances) {
+    for (const obf2::app::Scene::Instance& instance : scene.instances) {
       if (instance.lightmapAtlas >= 0 &&
           static_cast<std::size_t>(instance.lightmapAtlas) < wanted.size()) {
         wanted[static_cast<std::size_t>(instance.lightmapAtlas)] = true;
@@ -2348,7 +2065,7 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     int loaded = 0;
     for (std::size_t i = 0; i < lightmapPages.size(); ++i) {
       if (!wanted[i]) continue;
-      if (auto decoded = resolveTexture(objectLightmaps.atlasPath(static_cast<int>(i)))) {
+      if (auto decoded = resolveTexture(levelScene.objectLightmaps.atlasPath(static_cast<int>(i)))) {
         lightmapPages[i] = renderer->uploadSharedTexture(*decoded);
         if (lightmapPages[i] != nullptr) ++loaded;
       }
@@ -2408,8 +2125,8 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
     // 0x100d9c30) rather than from `terrain.detailmapSize`, which on Karkand
     // says 512 where the files are 256.
     int chartSize = 0;
-    if (!firstChartMap.empty()) {
-      if (auto decoded = resolveTexture(firstChartMap)) {
+    if (!levelScene.firstChartMap.empty()) {
+      if (auto decoded = resolveTexture(levelScene.firstChartMap)) {
         chartSize = static_cast<int>(decoded->width);
       }
     }
@@ -2418,8 +2135,8 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
 
   obf2::gfx::GpuMesh skyMesh;
   bool skyReady = false;
-  if (skyDome) {
-    if (auto uploaded = renderer->upload(*skyDome, resolveTexture, &error)) {
+  if (levelScene.skyDome) {
+    if (auto uploaded = renderer->upload(*levelScene.skyDome, resolveTexture, &error)) {
       skyMesh = *uploaded;
       skyReady = true;
     }
@@ -2616,7 +2333,7 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
   std::vector<obf2::gfx::MeshRenderer::DrawItem> items;
   items.reserve(scene.instances.size());
   long long drawnTriangles = 0;
-  for (const Scene::Instance& instance : scene.instances) {
+  for (const obf2::app::Scene::Instance& instance : scene.instances) {
     const int meshIndex = instance.mesh;
     if (meshIndex < 0 || !uploadedOk[static_cast<std::size_t>(meshIndex)]) continue;
     obf2::gfx::MeshRenderer::DrawItem item{&gpuMeshes[static_cast<std::size_t>(meshIndex)],
