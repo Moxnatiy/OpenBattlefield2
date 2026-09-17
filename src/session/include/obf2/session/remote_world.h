@@ -1117,7 +1117,13 @@ struct RemoteWorld {
               const auto born = objects.find(ourSoldier);
               if (born != objects.end()) {
                 placedSoldier = ourSoldier;
-                correct(born->second);
+                // The creation position is the pivot, as every state's is: measured on
+                // the live server, a soldier created at 163.75 over terrain 162.50 is
+                // stood at 163.4971 by his first state, falling at 2.843 m/s — 0.25 m
+                // of fall from feet 1.0 under the creation point. Our body is the feet.
+                obf2::Vec3f feet = born->second;
+                feet.y -= physics.pivotHeight;
+                correct(feet);
                 std::printf("  the body was placed at %.1f %.1f %.1f (the soldier's creation position), "
                             "terrain %.2f\n",
                             born->second.x, born->second.y, born->second.z,
