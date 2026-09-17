@@ -4027,6 +4027,17 @@ std::function<bool(int team, int kit, int group)> requestSpawn;
                 // the two have to agree — the difference is the error in our yaw.
                 const float heading =
                     std::atan2(velocity.x, velocity.z) * 180.0f / 3.14159265358979323846f;
+                // What the original's animation would read instead: the node's
+                // displacement over the last tick times 30
+                // (`PointPhysicsNode::postFrameUpdate`, Linux 0x6ddca0).
+                float nodeSpeed = -1.0f;
+                if (const auto carriedIt = carriedSoldiers.find(id);
+                    carriedIt != carriedSoldiers.end() && carriedIt->second.ready) {
+                  const obf2::Vec3f moved =
+                      carriedIt->second.body.position - carriedIt->second.from;
+                  nodeSpeed = std::sqrt(moved.x * moved.x + moved.z * moved.z) * 30.0f;
+                }
+                std::printf("    soldier %u node speed %.2f\n", id, nodeSpeed);
                 std::printf("    soldier %u anim: speed %.2f, direction %.2f %.2f, yaw %.1f, "
                             "heading %.1f, angles body %.1f aim %.1f 0x8 %.1f pitch %.1f, clips",
                             id, animState.speed, animState.direction[0], animState.direction[2],

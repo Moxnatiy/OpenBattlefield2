@@ -1495,7 +1495,19 @@ F, A, +0x44 = 0
 There is no collision in it — the soldier's ground and wall passes run apart —
 and `setPositionalSpeed` (0x6ddd80) writes that same +0x2c, capped at `g_maxSpeed`
 (1500, 0x6dd7f9) with components under a small epsilon zeroed. The animation reads
-a different field, +0x84 (`getAbsolutePositionalSpeed`, 0x6dd440).
+a different field, +0x84 (`getAbsolutePositionalSpeed`, 0x6dd440), and that field
+is not a velocity anyone sets. `PointPhysicsNode::postFrameUpdate` (0x6ddca0),
+whole:
+
+```
+position = vtable[0x90]()                       the node's absolute position
++0x84 = (position - +0x78) * 30.0               30.0 at 0xb2efc4 — one tick
+        each component under 1e-6 (0xb84754) set to zero
++0x78 = position
+```
+
+So the speed the animation is handed is how far the node actually moved over the
+last update, per second.
 
 Ours: `obf2::server::carryRemoteSoldier` puts the soldier where and moving as the
 prediction says, once per game tick, and runs the node step and the ground and wall
