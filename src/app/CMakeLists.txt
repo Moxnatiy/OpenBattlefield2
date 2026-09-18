@@ -8,6 +8,8 @@ add_library(obf2_app
   src/render_context.cpp
   src/world_view.cpp
   src/main_menu.cpp
+  src/camera.cpp
+  src/scripted_input.cpp
 )
 add_library(obf2::app ALIAS obf2_app)
 if(TARGET obf2_flash)

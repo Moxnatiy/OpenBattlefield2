@@ -19,7 +19,9 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "obf2/app/camera.h"
 #include "obf2/app/command_line.h"
+#include "obf2/app/scripted_input.h"
 #include "obf2/app/hosted_game.h"
 #include "obf2/app/main_menu.h"
 #include "obf2/app/render_context.h"
@@ -888,19 +890,18 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     // buttons under the Flash movie, and DONE on the spawn screen while
     // the local server was running.
     obf2::gfx::Device::InputState frameInput = device->readInput();
-    for (const auto& look : args.looks) {
-      if (frame < look.frame || frame >= look.frame + look.frames) continue;
-      frameInput.mouseDeltaX += look.dx;
-      frameInput.mouseDeltaY += look.dy;
-    }
-    for (const auto& move : args.moves) {
-      if (frame < move.frame || frame >= move.frame + move.frames) continue;
-      frameInput.moveForward = move.dx;
-      frameInput.moveRight = move.dy;
-      frameInput.sprint = move.sprint != 0;
-    }
-    for (const int jumpFrame : args.jumps) {
-      if (frame == jumpFrame) frameInput.jump = true;
+    // What the run gives itself: a turn, a run and a jump on named frames
+    // (`obf2/app/scripted_input.h`).
+    {
+      const obf2::app::ScriptedFrame scripted = obf2::app::scriptedInput(args, frame);
+      frameInput.mouseDeltaX += scripted.mouseDeltaX;
+      frameInput.mouseDeltaY += scripted.mouseDeltaY;
+      if (scripted.hasMove) {
+        frameInput.moveForward = scripted.moveForward;
+        frameInput.moveRight = scripted.moveRight;
+        frameInput.sprint = scripted.sprint;
+      }
+      if (scripted.jump) frameInput.jump = true;
     }
     // The server sends pings and waits for answers: staying silent frame after frame
     // gets us disconnected. So the connection runs together with the picture, and we
@@ -975,31 +976,33 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     }
 
     // --- the camera ---
-    obf2::Vec3f eye;
-    obf2::Vec3f lookTarget = scene.center;
+    // Where the frame is seen from (`obf2/app/camera.h`). The soldier's own eye is
+    // filled in first, because that is also where his input is queued and where
+    // his tick is run.
+    obf2::app::CameraInputs cameraInputs;
+    cameraInputs.fixed = args.camera;
+    cameraInputs.fixedYaw = args.cameraYaw;
+    cameraInputs.fixedPitch = args.cameraPitch;
+    cameraInputs.topDown = args.topDown;
+    cameraInputs.sceneCentre = scene.center;
+    cameraInputs.distance = distance;
+    cameraInputs.eyeHeight = eyeHeight;
+    cameraInputs.frame = frame;
+    if (level && level->hasBeforeSpawnCamera) {
+      cameraInputs.beforeSpawnPosition = level->beforeSpawnCameraPos;
+      cameraInputs.beforeSpawnRotation = level->beforeSpawnCameraRot;
+    }
 
     // Until the player has spawned there is nothing to look from in first person:
     // there is no soldier yet. The spawn screen's camera from Init.con works then.
     const auto remoteSoldier =
         remote != nullptr ? remote->soldierPosition() : std::optional<obf2::Vec3f>{};
-    if (args.camera) {
-      // `--camera x/y/z --angles yaw pitch`: stand exactly here and look exactly
-      // there, whatever mode the rest of the run is in. It outranks the soldier
-      // and the spawn screen on purpose — the point of it is to put our frame
-      // and the original's in the same spot, and the original is put there with
-      // the same numbers.
-      constexpr float kToRadians = 3.14159265358979323846f / 180.0f;
-      const float yawRadians = args.cameraYaw * kToRadians;
-      const float pitchRadians = args.cameraPitch * kToRadians;
-      eye = *args.camera;
-      lookTarget = eye + obf2::Vec3f{std::sin(yawRadians) * std::cos(pitchRadians),
-                                     std::sin(pitchRadians),
-                                     std::cos(yawRadians) * std::cos(pitchRadians)};
-    } else if ((hostedServer && hostedClient && localSoldierId != 0) || remoteSoldier) {
+    if ((hostedServer && hostedClient && localSoldierId != 0) || remoteSoldier) {
       // The soldier's position comes from whoever owns him: our server in our own
       // game, that server on a real one.
-      eye = remoteSoldier ? *remoteSoldier : hostedClient->interpolatedPosition(localSoldierId);
-      eye.y += 1.7f;  // the soldier's height: the camera at eye level
+      obf2::Vec3f soldierEye =
+          remoteSoldier ? *remoteSoldier : hostedClient->interpolatedPosition(localSoldierId);
+      soldierEye.y += 1.7f;  // the soldier's height: the camera at eye level
 
       // On a real server the input goes to the same place as in our own game —
       // only in another form: as the player action stream.
@@ -1035,45 +1038,25 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         // Drawn between ticks, as `BF2FrameInterpolator` does (RemoteWorld).
         yaw = remote->cameraYaw();
         pitch = remote->cameraPitch();
-        eye = *remote->drawnSoldierPosition();
-        eye.y += 1.7f;
+        soldierEye = *remote->drawnSoldierPosition();
+        soldierEye.y += 1.7f;
       }
-
-      constexpr float kToRadians = 3.14159265358979323846f / 180.0f;
-      const float yawRadians = yaw * kToRadians;
-      const float pitchRadians = pitch * kToRadians;
-      if (remote != nullptr && frame >= args.traceFrom && frame < args.traceFrom + args.traceFrames) {
-        std::printf("  trace frame %d: step %.4f, eye %.4f %.4f %.4f, yaw %.3f pitch %.3f, game tick %u "
-                    "fraction %.3f, unanswered %zu\n",
-                    frame, frameStep, eye.x, eye.y, eye.z, yaw, pitch, remote->world.gameTick(),
+      cameraInputs.soldierEye = soldierEye;
+      cameraInputs.soldierYaw = yaw;
+      cameraInputs.soldierPitch = pitch;
+      if (remote != nullptr && frame >= args.traceFrom &&
+          frame < args.traceFrom + args.traceFrames) {
+        std::printf("  trace frame %d: step %.4f, eye %.4f %.4f %.4f, yaw %.3f pitch %.3f, "
+                    "game tick %u fraction %.3f, unanswered %zu\n",
+                    frame, frameStep, soldierEye.x, soldierEye.y, soldierEye.z, yaw, pitch,
+                    remote->world.gameTick(),
                     remote->tick.pending / obf2::server::kTickTime, remote->sent.size());
       }
-      // A zero angle looks along +Z — the same as the server computes.
-      lookTarget = eye + obf2::Vec3f{std::sin(yawRadians) * std::cos(pitchRadians),
-                                     std::sin(pitchRadians),
-                                     std::cos(yawRadians) * std::cos(pitchRadians)};
-    } else if (args.topDown) {
-      eye = obf2::Vec3f{scene.center.x, scene.center.y + distance, scene.center.z};
-    } else if (level && level->hasBeforeSpawnCamera) {
-      // Until the player has spawned the camera stands where the level said:
-      //
-      //   gameLogic.setBeforeSpawnCamera -50/185/-285 -16/-3/0
-      //
-      // (Levels/<level>/Init.con). The first triple is the position, the second the
-      // rotation in degrees. Until now we simply orbited the camera around the map's
-      // centre, and the view had nothing in common with the game.
-      constexpr float kToRadians = 3.14159265358979323846f / 180.0f;
-      eye = level->beforeSpawnCameraPos;
-      const float yawRadians = level->beforeSpawnCameraRot.x * kToRadians;
-      const float pitchRadians = level->beforeSpawnCameraRot.y * kToRadians;
-      lookTarget = eye + obf2::Vec3f{std::sin(yawRadians) * std::cos(pitchRadians),
-                                     std::sin(pitchRadians),
-                                     std::cos(yawRadians) * std::cos(pitchRadians)};
-    } else {
-      const float angle = static_cast<float>(frame) / 60.0f * 0.6f;
-      eye = obf2::Vec3f{scene.center.x + std::sin(angle) * distance, scene.center.y + eyeHeight,
-                        scene.center.z + std::cos(angle) * distance};
     }
+
+    const obf2::app::CameraView camera = obf2::app::chooseCamera(cameraInputs);
+    obf2::Vec3f eye = camera.eye;
+    obf2::Vec3f lookTarget = camera.target;
 
     // `--watch-soldier`: a debugging camera, ours and not the game's. It stands four
     // metres from the nearest other soldier, at a fixed bearing, and looks at his
