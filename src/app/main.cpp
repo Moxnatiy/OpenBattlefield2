@@ -110,44 +110,13 @@ double secondsSince(std::chrono::steady_clock::time_point start) {
   return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 }
 
-// The pieces that used to live here and now have modules of their own. Only the
-// names are kept, so that the command line's two overrides are applied in one
-// place rather than at every call.
-using obf2::font::LoadedFont;
-using obf2::font::loadFont;
-using obf2::game::resolveGeometryPath;
-using obf2::mesh::buildScreenQuad;
-
+// Where an object is lost on its way to the screen (`obf2/game/object_mesh.h`).
+// The session asks for it by name; the two numbers the command line may override
+// are applied here rather than at every call.
 obf2::game::DrawStage checkDrawable(obf2::FileSystem& files, const obf2::game::Registry& registry,
                                     const std::string& templateName, const Args& args) {
   return obf2::game::checkDrawable(files, registry, templateName, args.geometryIndex,
                                    args.lodIndex);
-}
-
-std::optional<obf2::mesh::RenderMesh> loadMesh(obf2::FileSystem& files, const std::string& path,
-                                               int geometryOverride, int lodIndex, bool verbose) {
-  return obf2::game::loadMesh(files, path, geometryOverride, lodIndex, verbose);
-}
-
-std::optional<obf2::mesh::RenderMesh> buildObjectMesh(obf2::FileSystem& files,
-                                                      const obf2::game::Registry& registry,
-                                                      const std::string& templateName,
-                                                      const Args& args, bool verbose) {
-  return obf2::game::buildObjectMesh(files, registry, templateName, args.geometryIndex,
-                                     args.lodIndex, verbose);
-}
-
-// The main menu's background. In the game the menu is Flash, which the engine
-// runs with its own player; its assets are ordinary PNGs, and those are what we take.
-std::string findMenuBackground(obf2::FileSystem& files) {
-  for (const char* candidate : {
-           "menu/external/flashmenu/images/background/background_2.png",
-           "menu/external/flashmenu/images/background/background_3.png",
-           "menu/external/flashmenu/images/background/background_1.png",
-       }) {
-    if (files.exists(candidate)) return candidate;
-  }
-  return {};
 }
 
 }  // namespace
