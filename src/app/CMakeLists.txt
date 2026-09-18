@@ -9,6 +9,9 @@ add_library(obf2_app
   src/world_view.cpp
   src/main_menu.cpp
   src/camera.cpp
+  src/model_view.cpp
+  src/calibrate.cpp
+  src/collision_probe.cpp
   src/scripted_input.cpp
 )
 add_library(obf2::app ALIAS obf2_app)

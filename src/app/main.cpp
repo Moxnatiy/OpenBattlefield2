@@ -19,11 +19,14 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "obf2/app/calibrate.h"
 #include "obf2/app/camera.h"
+#include "obf2/app/collision_probe.h"
 #include "obf2/app/command_line.h"
 #include "obf2/app/scripted_input.h"
 #include "obf2/app/hosted_game.h"
 #include "obf2/app/main_menu.h"
+#include "obf2/app/model_view.h"
 #include "obf2/app/render_context.h"
 #include "obf2/app/scene_build.h"
 #include "obf2/app/world_view.h"
@@ -148,116 +151,6 @@ std::string findMenuBackground(obf2::FileSystem& files) {
 }
 
 }  // namespace
-
-// Matches template numbers to names.
-//
-// The server sends objects by template number, and the number is the order of
-// creation (`ObjectTemplateManager::createTemplate`), so the name cannot be got
-// from the number itself. But the positions match: we read the level ourselves and
-// know what stands where, and the server gives numbers for those same places.
-//
-// The packet file is made by `tools/linuxded/capture.py --stage world --out`.
-int runCalibrate(const Args& args, obf2::FileSystem& files) {
-  if (args.levelName.empty()) {
-    std::fprintf(stderr, "give a level: --level <name>\n");
-    return 1;
-  }
-  std::string error;
-  if (!obf2::level::mountLevel(files, args.modDir, args.levelName, &error)) {
-    std::fprintf(stderr, "the level was not mounted: %s\n", error.c_str());
-    return 1;
-  }
-
-  auto known = buildKnownObjects(files, args.levelName, &error);
-  std::printf("level %s: known objects %zu\n", args.levelName.c_str(), known.size());
-
-  const auto packets = obf2::net::bf2::loadCapture(args.calibrate);
-  if (packets.empty()) {
-    std::fprintf(stderr, "%s holds no packets\n", args.calibrate.c_str());
-    return 1;
-  }
-
-  std::map<std::uint32_t, std::string> mapping;
-  std::map<std::uint32_t, obf2::Vec3f> unmatched;
-  int fromServer = 0, matched = 0;
-  for (const auto& packet : packets) {
-    for (const auto& event : obf2::net::bf2::readEvents(packet)) {
-      if (!event.object || !event.object->position) continue;
-      ++fromServer;
-      const auto& at = *event.object->position;
-
-      const KnownObject* best = nearestKnown(known, at);
-      if (best) {
-        ++matched;
-        mapping[event.object->templateId] = best->name;
-      } else {
-        unmatched[event.object->templateId] = at;
-      }
-    }
-  }
-
-  std::printf("objects from the server: %d, matched: %d\n", fromServer, matched);
-  for (const auto& [id, name] : mapping) {
-    std::printf("  %6u  %s\n", id, name.c_str());
-  }
-
-  // A check of the guess about where the numbers come from.
-  //
-  // The server sends a template number rather than a name, and passes no list
-  // block at all (the conversation holds only three: 0, 2 and 5). The engine takes
-  // the template from `ObjectTemplateManager::getTemplate(unsigned)` — an ordinary
-  // `std::map` by number (Linux server, 0x6a1110), so the numbers are handed out
-  // somewhere during loading and have to match on both sides.
-  //
-  // The simplest assumption: the number is the order of a template's creation. It
-  // is checked rather than taken on trust: we have "number -> name" pairs won by
-  // matching on position, and our own list in creation order. If the assumption is
-  // wrong, that is visible right here.
-  {
-    obf2::game::Registry registry = buildRegistry(files);
-    const std::vector<const obf2::game::ObjectTemplate*> ordered = registry.all();
-    int hit = 0, miss = 0;
-    for (const auto& [id, name] : mapping) {
-      if (id >= ordered.size()) { ++miss; continue; }
-      if (ordered[id]->name == name) ++hit; else ++miss;
-    }
-    std::printf("number = creation order? matched %d, not %d (our templates %zu)\n",
-                hit, miss, ordered.size());
-
-    // If the numbers do not match, the question is whether at least the **order**
-    // matches: then the difference is only that we count something extra or fail to
-    // load something, while the idea "the number grows with creation order" is
-    // right.
-    std::map<std::string, std::size_t> indexByName;
-    for (std::size_t i = 0; i < ordered.size(); ++i) {
-      indexByName.emplace(ordered[i]->name, i);
-    }
-    std::printf("order: the server's number -> ours\n");
-    long long previous = -1;
-    int rising = 0, falling = 0, absent = 0;
-    for (const auto& [id, name] : mapping) {
-      const auto found = indexByName.find(name);
-      if (found == indexByName.end()) {
-        std::printf("  %6u  -> not in our list  %s\n", id, name.c_str());
-        ++absent;
-        continue;
-      }
-      const auto ours = static_cast<long long>(found->second);
-      std::printf("  %6u  -> %6lld  %s\n", id, ours, name.c_str());
-      if (previous >= 0) (ours > previous ? rising : falling)++;
-      previous = ours;
-    }
-    std::printf("the order matches: %d times, violated: %d, absent here: %d\n", rising, falling,
-                absent);
-  }
-  if (!unmatched.empty()) {
-    std::printf("%zu numbers not recognised:\n", unmatched.size());
-    for (const auto& [id, at] : unmatched) {
-      std::printf("  %6u  @ %.1f %.1f %.1f\n", id, at.x, at.y, at.z);
-    }
-  }
-  return 0;
-}
 
 // The three hashes for the content check.
 //
@@ -419,77 +312,21 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   if (bootMode) {
     menu.boot(files, engine, args.modDir, scene, menuOptions);
   } else if (args.levelName.empty()) {
-    std::optional<obf2::mesh::RenderMesh> single;
+    // The model viewer: one mesh or one object, posed by its clips
+    // (`obf2/app/model_view.h`).
+    obf2::app::ModelRequest model;
+    model.meshPath = args.meshPath;
+    model.objectName = args.objectName;
+    model.geometryIndex = args.geometryIndex;
+    model.lodIndex = args.lodIndex;
+    model.animationPaths = args.animationPaths;
+    model.skeletonPath = args.skeletonPath;
+    model.frame = args.frame;
     if (!args.objectName.empty()) {
       registry = buildRegistry(files);
       std::printf("registry: %zu templates\n", registry.size());
-      single = buildObjectMesh(files, registry, args.objectName, args, true);
-      if (!single) {
-        std::fprintf(stderr, "could not assemble the object %s\n", args.objectName.c_str());
-        return 1;
-      }
-
-      // Skeletal animation: we put the mesh into a pose from the clips. There may be
-      // several clips — the engine blends them per bone (the weapon moves the upper
-      // body, the movement the legs), and each touches only its own bones.
-      if (!args.animationPaths.empty() && !single->skin.empty()) {
-        const std::string skeletonPath =
-            args.skeletonPath.empty()
-                ? std::string("objects/soldiers/Common/Animations/3p_setup.ske")
-                : args.skeletonPath;
-
-        const auto skeletonBytes = files.read(skeletonPath);
-        std::string skinError;
-        const auto skeleton =
-            skeletonBytes ? obf2::mesh::loadSkeleton(*skeletonBytes, &skinError) : std::nullopt;
-        if (!skeleton) {
-          std::fprintf(stderr, "skeleton: %s\n", skinError.c_str());
-        } else {
-          std::vector<obf2::mesh::BoneAnimation> clips;
-          for (const std::string& path : args.animationPaths) {
-            const auto bytes = files.read(path);
-            if (!bytes) {
-              std::fprintf(stderr, "no animation %s\n", path.c_str());
-              continue;
-            }
-            auto clip = obf2::mesh::loadBoneAnimation(*bytes, &skinError);
-            if (!clip) {
-              std::fprintf(stderr, "animation %s: %s\n", path.c_str(), skinError.c_str());
-              continue;
-            }
-            clips.push_back(std::move(*clip));
-          }
-
-          std::vector<obf2::mesh::PoseStage> stages;
-          const auto frameIndex = static_cast<std::uint32_t>(args.frame < 0 ? 0 : args.frame);
-          for (const auto& clip : clips) {
-            // The frame is taken cyclically: the clips are of different lengths (the
-            // legs 16 frames, the weapon 36), while we show one moment.
-            const std::uint32_t frame =
-                clip.frameCount == 0 ? 0 : frameIndex % clip.frameCount;
-            stages.push_back(obf2::mesh::PoseStage{&clip, static_cast<float>(frame), 1.0f});
-            std::printf("  clip: %zu tracks, %u frames -> frame %u\n", clip.boneIds.size(),
-                        clip.frameCount, frame);
-          }
-
-          if (!stages.empty()) {
-            const auto pose = obf2::mesh::poseSkeleton(*skeleton, stages);
-            obf2::mesh::RenderMesh posed = *single;
-            obf2::mesh::skinMesh(*single, pose, posed);
-            single = std::move(posed);
-          }
-        }
-      }
-    } else {
-      single = loadMesh(files, args.meshPath, args.geometryIndex, args.lodIndex, true);
-      if (!single) return 1;
     }
-
-    const obf2::Vec3f boundsMin{single->bounds.min.x, single->bounds.min.y, single->bounds.min.z};
-    const obf2::Vec3f boundsMax{single->bounds.max.x, single->bounds.max.y, single->bounds.max.z};
-    scene.center = (boundsMin + boundsMax) * 0.5f;
-    scene.radius = std::max(0.001f, obf2::length(boundsMax - boundsMin) * 0.5f);
-    scene.add(std::move(*single), obf2::Mat4::identity());
+    if (!obf2::app::addModelToScene(files, registry, model, scene)) return 1;
   }
 
   // --- GPU --------------------------------------------------------------
@@ -814,28 +651,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       remote->collision = remoteCollision.get();
       remote->collisionLibrary = collisionLibrary.get();
       if (args.collisionNear) {
-        const obf2::Vec3f at = *args.collisionNear;
-        for (const auto& object : level->objects) {
-          const float dx = object.position.x - at.x;
-          const float dz = object.position.z - at.z;
-          if (dx * dx + dz * dz > 15.0f * 15.0f) continue;
-          const auto* root = registry.find(object.templateName);
-          std::printf("  near: %s at %.2f %.2f %.2f rot %.1f %.1f %.1f, collisionMesh '%s'\n",
-                      object.templateName.c_str(), object.position.x, object.position.y,
-                      object.position.z, object.rotation.x, object.rotation.y, object.rotation.z,
-                      root ? std::string(root->text("collisionMesh")).c_str() : "(no template)");
-          if (root == nullptr) continue;
-          for (const auto& child : root->children) {
-            const auto* childTemplate = registry.find(child.name);
-            std::printf("    child %s at %.2f %.2f %.2f, collisionMesh '%s'\n", child.name.c_str(),
-                        child.position.x, child.position.y, child.position.z,
-                        childTemplate ? std::string(childTemplate->text("collisionMesh")).c_str()
-                                      : "(no template)");
-          }
-        }
-        std::vector<obf2::server::MeshContact> contacts;
-        remoteCollision->sphereContacts(at, obf2::Vec3f{}, 1.0f, contacts);
-        std::printf("  near: %zu contacts of a 1 m sphere at the point\n", contacts.size());
+        obf2::app::probeCollisionNear(*args.collisionNear, *level, registry, *remoteCollision);
       }
     }
     std::printf("  connection: the level is loaded, the conversation continues\n");
@@ -1480,7 +1296,7 @@ int main(int argc, char** argv) {
   std::printf("mod: %s | archives: %d\n", args.modDir.string().c_str(), mounted);
   for (const auto& e : mountErrors) std::printf("  [mount] %s\n", e.c_str());
 
-  if (!args.calibrate.empty()) return runCalibrate(args, files);
+  if (!args.calibrate.empty()) return obf2::app::runCalibrate(args, files);
 
   // Connecting to a real server is a mode of its own: neither a window nor a level
   // is needed here.
