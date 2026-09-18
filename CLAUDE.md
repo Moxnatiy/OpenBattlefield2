@@ -348,34 +348,46 @@ third_party/    vendored single-file libraries: miniz, stb
 | `engine` | console, settings, key bindings |
 | `flash` | the Flash menu: Ruffle behind a C ABI |
 | `session` | the live link to a server: handshake, the world it keeps, our action stream |
-| `app` | the `openbf2` executable — and nothing else (rule 11) |
+| `app` | the `openbf2` executable and the modules it is assembled from — the command line, the scene, the renderer, the menu, the world on screen (see below) |
 
-### Breaking up `main.cpp`
+### The application, module by module
 
-In order of usefulness. Each item is a module with a test:
+`main.cpp` went from 6000 lines to 1352: the arguments, the mode it is in,
+the wiring of the modules below and the frame loop — and nothing else.
 
-1. ~~**`net/bf2_session`**~~ — **done**, as `obf2::session::RemoteWorld`
-   (`src/session/`). Not under `net/`: it needs `obf2::server` for the
-   soldier's physics and `obf2_server` already links `obf2_net`, so that
-   would close a cycle; the module sits above both instead. It took
-   `KnownObject`, `DrawStage`, `ContentHashes`, `buildRegistry`,
-   `buildKnownObjects`, `nearestKnown` and `contentHashes` with it, and
-   `main.cpp` lost 1495 lines. What it does **not** take is the
-   drawability check, which needs the mesh loaders and their flags: the
-   session asks for it through `drawabilityOf`. `Args` stopped being a
-   dependency — `session::Settings` holds the ten fields that mattered,
-   by value.
-2. **`app/spawn_screen`** — the spawn screen: selection state, clicks, DONE.
-   **Begun:** the state and the screen's commands (kit, team, tab, DONE, the
-   chosen circle and its control points, SUICIDE) run through
-   `obf2::hud::SpawnInterface::bind`, the module the test covers. They had been
-   written out a second time in `main.cpp`, so the tested copy was not the one
-   that ran. What is left in `main.cpp`: the rebuild of the screen's geometry,
-   the map markers and the click hit-testing.
-3. **`app/frame_loop`** — camera, input, the prediction step.
-4. **`hud/ingame`** — assembling the battle HUD and its live values.
-5. **`app/scene_build`** — loading a level into the scene and uploading it
-   to the GPU.
+The names are the engine's own, from the source tree its checked build
+carries (docs/reference/engine-source-tree.txt). Where a module has a
+counterpart there, it is named beside it, because that is what says where
+to look when something does not match.
+
+| module | what it holds | the engine's |
+|---|---|---|
+| `app/command_line` | `Args` and the parsing; every measuring switch | `Game/Main/BF2EngineSetup` |
+| `app/scene`, `app/scene_build` | the scene (unique geometry plus placements), the terrain, roads, water, sky and the placed objects | `Scene/Object/ObjectManager` |
+| `app/hosted_game` | a single-player game: our server and a client on a loop, with the round's settings from the game's data | `Game/GameServer` |
+| `app/render_context` | the window, the renderer, the texture cache and the upload of a scene | `Game/Main/BF2Render` |
+| `app/world_view` | other players and the server's objects on screen: looks, animation, the physics carry, the vehicles | `Game/Common/GhostManager` + `BF2FrameInterpolator` |
+| `app/main_menu` | the intro, the loading screen and the game's own Flash menu | `Game/SwiffHost` + `Game/MenuLogic` |
+| `app/camera`, `app/scripted_input` | where the frame is seen from; `--look-at`, `--move-at`, `--jump-at` | `IO/Input` |
+| `app/model_view`, `app/calibrate`, `app/collision_probe` | the modes that are not the game: one mesh posed by its clips, template numbers matched to names, what collides at a point | — |
+| `hud/manager` | the whole interface of a round: the tree, the variables, the state machine, the spawn screen, the animation | `Menu/BF2HudManager` |
+| `game/object_mesh` | a template's tree into geometry, and where an object is lost on the way to the screen | `Scene/Object/ObjectUtils` |
+| `session/remote_world` | the live link to a server: handshake, the world it keeps, our action stream | `Game/Common/ClientConnection` |
+
+Two rules the split follows, and both were bought with bugs:
+
+* **the interface builds, the application draws.** `hud::Manager` gives
+  back `DrawPiece`s and never touches the card, which is the same division
+  the engine makes between the manager and the renderer. Uploading lives in
+  `main.cpp` beside the other uploads;
+* **anything the frame loop calls lives at the outer level.** A lambda of
+  a setup block captured by reference is dead memory by the time the loop
+  runs — it happened again during this split, to the upload helper, and it
+  is the first of the rakes below.
+
+What is still in `main.cpp` and could leave it: the frame loop's own body
+(the order of pump, predict, draw, HUD, screenshot) and the spawn screen's
+click plumbing.
 
 ## Building
 
