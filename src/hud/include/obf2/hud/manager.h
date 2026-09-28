@@ -90,7 +90,14 @@ class Manager {
   bool ready() const { return ready_; }
 
   // --- the state machine (docs/functions/hud-states.md) ---
-  void applyState(int state);
+  // The state the round is in by the game: 0 in battle, 1 on the spawn screen,
+  // 2 on the big map. Handed on only when it changes — see `gameState` in the
+  // source for why.
+  void gameState(int state);
+  // Tab, `c_GIShowScoreboard`: held shows the scoreboard over whatever the HUD
+  // was on, released goes back to it (`StateMachine::scoreboardPressed`).
+  void scoreboardKey(bool down);
+  int state() const { return states_.current(); }
   // The derived variables, as the engine's two per-frame functions write them
   // (0x466930 for the map's size, 0x78d0f0 for the player's set).
   void updateVariables(bool hasPlayer, bool mapFullSize);
@@ -210,7 +217,12 @@ class Manager {
   std::vector<KeyScreen> keyScreens_;
   std::vector<DynamicNode> dynamic_;
 
-  int statePrevious_ = -1;  // -1 is the first switch's `default`: clear everything
+  void applyState(int state);
+  void afterTransition(int before, bool changed);
+
+  StateMachine states_;
+  int lastGameState_ = -1;
+  bool scoreboardDown_ = false;
   bool dirty_ = false;
   bool spawnDirty_ = false;
   bool ingameReported_ = false;

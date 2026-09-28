@@ -1014,7 +1014,20 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         // The map key toggles state 0 <-> 2. In the state table state 2
         // (BF2.exe 0x787008) turns on `MapShow` alone: the rest of the HUD
         // disappears on the big map.
-        const int hudState = spawned ? (hudManager.bigMap() ? 2 : 0) : 1;
+        hudManager.gameState(spawned ? (hudManager.bigMap() ? 2 : 0) : 1);
+        // Tab, held: the scoreboard over whatever the HUD is on, and back to it on
+        // release (the game-input handler 0x758770, docs/functions/hud-states.md).
+        // `--hud-screen Scoreboard` holds it for a screenshot.
+        {
+          const std::string_view tabKey = hudManager.controls().key("c_GIShowScoreboard");
+          const bool forced = args.hudScreenName == "Scoreboard";
+          // A spawn takes the HUD out of the scoreboard, as the engine's spawn
+          // event does, and a key that stays down never presses again. The
+          // screenshot switch presses it anew whenever that has happened.
+          if (forced && hudManager.state() != 9) hudManager.scoreboardKey(false);
+          hudManager.scoreboardKey(forced || (!tabKey.empty() && device->isKeyDown(tabKey)));
+        }
+        const int hudState = hudManager.state();
         const bool spawnVisible = hudState == 1 || args.hudScreenName == "SpawnMenu";
 
         // The mouse: in combat the window captures it (otherwise the cursor runs
@@ -1038,7 +1051,6 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
           std::printf("  spawn screen: the server gave team %d\n",
                       hudManager.spawnScreen().choice().team);
         }
-        hudManager.applyState(hudState);
         // `MapFullSize` is not "we are on the spawn screen" but "the map's size has
         // reached the big one" — that is how 0x77d3f8 derives it.
         hudManager.updateVariables(spawned, hudManager.map().fullSize());
@@ -1151,8 +1163,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
             break;
           }
         }
-        // The scoreboard, the radio and the map menu go over everything while a key
-        // is held. The order is the same as in the game: the combat HUD first.
+        // The radio and the map menu go over everything while a key is held. The
+        // scoreboard is not here: it is part of the combat HUD's own walk now, a
+        // state rather than a baked screen.
         for (std::size_t i = 0; i < hudManager.keyScreens().size(); ++i) {
           const obf2::hud::Manager::KeyScreen& screen = hudManager.keyScreens()[i];
           const bool forced = screen.group == args.hudScreenName;

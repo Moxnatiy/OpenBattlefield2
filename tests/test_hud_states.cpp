@@ -169,7 +169,95 @@ static void testShowValueReadsBothDictionaries() {
   CHECK(std::abs(hud::showValue(flags, values, "NoSuchThing")) < 0.001f);
 }
 
+// Tab in battle: the scoreboard (9) over the combat HUD, which stays on under it —
+// state 9 turns nothing off, and leaving 0 turns off only `VoipListShow`. On
+// release the HUD goes back to 0.
+static void testTabInBattle() {
+  hud::VariableMap variables;
+  hud::StateMachine states;
+  states.set(variables, 0, false);
+  CHECK(variables["ShowIngameHud"]);
+
+  CHECK(states.scoreboardPressed(variables));
+  CHECK_EQ(states.current(), 9);
+  CHECK_EQ(states.remembered(), 0);
+  CHECK(variables["ScoreboardShow"]);
+  CHECK(variables["LevelsListShow"]);
+  CHECK(variables["ShowIngameHud"]);
+
+  CHECK(states.scoreboardReleased(variables));
+  CHECK_EQ(states.current(), 0);
+  CHECK(!variables["ScoreboardShow"]);
+  CHECK(!variables["LevelsListShow"]);
+  CHECK(variables["ShowIngameHud"]);
+}
+
+// Tab on the spawn screen: leaving 1 for 9 keeps `SpawnShow` (0x7862ea), and
+// the release goes back to 1, not to battle.
+static void testTabOnTheSpawnScreen() {
+  hud::VariableMap variables;
+  hud::StateMachine states;
+  states.set(variables, 1, false);
+  CHECK(variables["SpawnShow"]);
+
+  states.scoreboardPressed(variables);
+  CHECK_EQ(states.current(), 9);
+  CHECK(variables["SpawnShow"]);
+  CHECK(variables["ScoreboardShow"]);
+
+  states.scoreboardReleased(variables);
+  CHECK_EQ(states.current(), 1);
+  CHECK(variables["SpawnShow"]);
+  CHECK(variables["KitsShow"]);
+  CHECK(!variables["ScoreboardShow"]);
+}
+
+// Holding Tab changes nothing further; a press in the radio (4) or the spotted
+// menu (6) is ignored; a release outside 9 and 12 does nothing; and a
+// remembered 10 comes back as 0 (0x759776).
+static void testScoreboardEdges() {
+  hud::VariableMap variables;
+  hud::StateMachine states;
+  states.set(variables, 0, false);
+  states.scoreboardPressed(variables);
+  CHECK(!states.scoreboardPressed(variables));
+  CHECK_EQ(states.current(), 9);
+
+  hud::StateMachine radio;
+  radio.set(variables, 4, false);
+  CHECK(!radio.scoreboardPressed(variables));
+  CHECK_EQ(radio.current(), 4);
+  CHECK(!radio.scoreboardReleased(variables));
+  CHECK_EQ(radio.current(), 4);
+
+  hud::StateMachine empty;
+  empty.set(variables, 10, false);
+  empty.scoreboardPressed(variables);
+  CHECK_EQ(empty.remembered(), 10);
+  empty.scoreboardReleased(variables);
+  CHECK_EQ(empty.current(), 0);
+}
+
+// `setState(state, remember)` (0x74fd50): the same state is no transition and
+// forgets nothing; `remember` false leaves the remembered one as it was.
+static void testSetRemembers() {
+  hud::VariableMap variables;
+  hud::StateMachine states;
+  states.set(variables, 0, false);
+  states.set(variables, 2, true);
+  CHECK_EQ(states.remembered(), 0);
+  CHECK(!states.set(variables, 2, true));
+  CHECK_EQ(states.remembered(), 0);
+  states.set(variables, 1, false);
+  CHECK_EQ(states.remembered(), 0);
+  CHECK_EQ(states.current(), 1);
+}
+
 TEST_MAIN({
+  testTabInBattle();
+  testTabOnTheSpawnScreen();
+  testScoreboardEdges();
+  testSetRemembers();
   testStateTurnsOnItsOwn();
   testShowValueReadsBothDictionaries();
   testBigMapKeepsTheHud();

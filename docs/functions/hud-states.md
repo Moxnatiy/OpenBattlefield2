@@ -126,6 +126,76 @@ transition, `SetupShow` (0x786289), `DemoRecInterfaceShow` (0x7862a2) and
 In the code that is `hudLeaveStates()` and
 `applyState(variables, old, new)`.
 
+## Who sets the state: the HUD object and its input handler
+
+The state lives in the HUD object (vtable 0x926130), not in the table above:
+
+| vtable slot | function | what it does |
+|---|---|---|
+| 0x004 | 0x758770 | the game-input handler (below) |
+| 0x1d8 | 0x74ff40 | `toggle(state, back)`: in `state` already → `setState(back)`, otherwise `setState(state, 1)` |
+| 0x1dc | 0x74fd50 | `setState(state, remember)`: if `state` differs from the current one, the current goes to **+0x254** when `remember`, `state` to **+0x250**, and 0x786260 runs the two switches (only when the HUD is up, `+0x104` set) |
+| 0x1e0 | 0x751a00 | the current state, `+0x250` |
+| 0x1e4 | 0x751a10 | the remembered one, `+0x254` |
+
+And a direct helper, 0x74ff00 `toggleState(s)`: in `s` already → `setState(0)`,
+otherwise `setState(s, 1)`.
+
+### The input event and its actions
+
+The handler gets one input event. `InputEvent_pressed(event, action)`
+(0x404580) is true when the action's bit is set in the event's 64-bit mask
+(`+0x128`, `+0x12c`, bit `1 << action`) **and** its value (`+action*4`) is
+over 0.5. So a key's release — its bit set, its value 0 — is not a press of
+it, and falls through every test of the handler.
+
+The action numbers are the engine's own table, built at 0x68f87b;
+`tools/control_ids.py` prints it (126 actions). The ones that matter here:
+
+| number | action | key (`Settings/Controls.con`) |
+|---|---|---|
+| 0x37 | `c_GIShowScoreboard` | Tab |
+| 0x10 | `c_GIAltOk` | the right mouse button |
+| 0x1c | `c_GITab` | Tab, as a menu key |
+| 0x23 | `c_GIMapSize` | M |
+
+### The scoreboard: Tab held, not toggled
+
+0x758770 is a long chain of "was this action just pressed", entered only when
+the HUD's checks `vtbl[0xc4]()` and `vtbl[0x26c]()` are false and either
+`vtbl[0x274]()` is false or `[0x99e348]->vtbl[0xdc]()` is true — what those
+four ask is **not established**. Along it:
+
+* **Tab pressed** (0x37, 0x758c8c), and `[0x99e348]->vtbl[0xdc]()` false:
+  if the state is one of 9, 12, 6, 4, 5, 7 nothing happens (0x758cbd..0x758d0f);
+  otherwise, when `vtbl[0x1fc]()` is true the remembered state is restored
+  first (`setState(previous, 1)`, 0x758d21), and then **`setState(9, 1)`**
+  (0x758d38) — the scoreboard, with the state it covered remembered.
+* **Tab and the right mouse button in one event, while in 9** (or 12, 6, 4,
+  5, 7; 0x758d47): `setState(12, 0)` and 0x74f0c0(0), which hands the mouse to
+  the interface. State 12 is the scoreboard with the mouse active — the bottom
+  bar's "Right click to activate mouse" is this.
+* **The right mouse button alone** (0x10 tested first, before Tab) has a path
+  of its own. In states 0, 9, 2 and 10, when `vtbl[0x34c](player)` is true
+  (the check 0x78d0f0 uses to clear the combat set — what it asks is not
+  established) it calls `[0x99ef80]->vtbl[0x74](player)` and `vtbl[0x1bc]()`
+  and goes to 12 the same way; otherwise only 0x74f0c0 runs. Whether one event
+  can carry Tab and the button together depends on how the event's mask is
+  filled — per change or per held key — and that is **not established**.
+* **An event with none of the chain's actions pressed** — the Tab's own release
+  among them — reaches the chain's end (0x7596da):
+  * in 13 or 14: `setState(previous, 0)`;
+  * in **9**, or in 12 with `vtbl[0x26c]()` false: back to the remembered
+    state — `setState(previous, 1)` (0x7596f8), or `setState(0, 1)` when the
+    remembered one is 10 (0x759776);
+  * otherwise `c_GIHotRankUp` (0x36) is tested, and nothing changes.
+
+So the scoreboard stands while Tab is held and goes on its release, and it
+goes **back to the state it covered** — the spawn screen stays the spawn
+screen. Together with the first switch's rule that leaving 1 for 9 or 12 does
+not turn `SpawnShow` off, the spawn screen's variables are never touched by a
+look at the scoreboard.
+
 ## Derived variables: what the engine computes every frame
 
 Besides the states, two more functions write HUD variables, and **they run

@@ -60,6 +60,43 @@ const std::vector<StateEntry>& hudLeaveStates();
 // that means it is time to rebuild.
 bool applyState(VariableMap& variables, int previous, int state);
 
+// The HUD object's own state and the one it remembers — the engine keeps both
+// in the object (`BF2.exe`, vtable 0x926130): the current one at +0x250
+// (`getState`, slot 0x1e0) and the remembered one at +0x254 (slot 0x1e4).
+// docs/functions/hud-states.md, "Who sets the state".
+class StateMachine {
+ public:
+  // `setState(state, remember)`, slot 0x1dc (0x74fd50): nothing happens when the
+  // state is the current one; otherwise the current one is remembered when
+  // `remember` is set, and the transition runs (0x786260, `applyState`).
+  // Returns true when the variables changed.
+  bool set(VariableMap& variables, int state, bool remember);
+
+  // Tab, `c_GIShowScoreboard` (action 0x37), in the game-input handler 0x758770.
+  //
+  // Pressed: in states 9, 12, 6, 4, 5 and 7 nothing happens; otherwise the HUD
+  // goes to 9 with the state it covered remembered (0x758d38).
+  //
+  // Released — an event with none of the handler's actions pressed: in 9 the HUD
+  // goes back to the remembered state, or to 0 when that one is 10 (0x7596f8,
+  // 0x759776). 12 goes back the same way while the handler's `vtbl[0x26c]()` is
+  // false; what that asks is **not established**, and it is taken as false.
+  //
+  // So the scoreboard stands while Tab is held and goes on its release, back to
+  // the screen it covered.
+  bool scoreboardPressed(VariableMap& variables);
+  bool scoreboardReleased(VariableMap& variables);
+
+  int current() const { return current_; }
+  int remembered() const { return remembered_; }
+
+ private:
+  // No state yet: -1 leads into the first switch's `default` branch, "clear
+  // absolutely everything" (0x78653c).
+  int current_ = -1;
+  int remembered_ = 0;
+};
+
 // A variable's value for the show conditions (`setNodeLogicShowVariable`).
 //
 // A condition asks by one name for both numeric variables (bar fills) and

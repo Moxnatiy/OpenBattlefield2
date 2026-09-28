@@ -469,18 +469,40 @@ void Manager::buildMapWindow(FileSystem& files, const level::Level* level,
   dynamicContext_ = context_;
 }
 
-void Manager::applyState(int state) {
+void Manager::afterTransition(int before, bool changed) {
+  const int now = states_.current();
   // The map changes its target by the state number — verbatim 0x777dc0.
-  map_.applyState(state);
-  // A transition rather than "set the state": in the game the first switch goes on
-  // the old state, the second on the new one (0x786260).
-  if (hud::applyState(variables_, statePrevious_, state)) dirty_ = true;
+  map_.applyState(now);
+  if (changed) dirty_ = true;
   // The spawn screen is baked geometry we keep, and its nodes hang on the same
   // variables: a state that changes them changes what it should be showing. The
   // engine has no such problem — it walks the tree every frame — so this is our
   // cache to invalidate, and forgetting it is what left the screen empty.
-  if (statePrevious_ != state) spawnDirty_ = true;
-  statePrevious_ = state;
+  if (before != now) spawnDirty_ = true;
+}
+
+void Manager::applyState(int state) {
+  const int before = states_.current();
+  afterTransition(before, states_.set(variables_, state, false));
+}
+
+void Manager::gameState(int state) {
+  // In the engine the round's own events call `setState` — a spawn, a death, the
+  // map key — each once, when it happens. Our frame works the state out anew every
+  // frame instead, so only its changes are handed on: handing it on every frame
+  // would take the HUD straight back out of the scoreboard.
+  if (state == lastGameState_) return;
+  lastGameState_ = state;
+  applyState(state);
+}
+
+void Manager::scoreboardKey(bool down) {
+  if (down == scoreboardDown_) return;
+  scoreboardDown_ = down;
+  const int before = states_.current();
+  const bool changed =
+      down ? states_.scoreboardPressed(variables_) : states_.scoreboardReleased(variables_);
+  afterTransition(before, changed);
 }
 
 void Manager::updateVariables(bool hasPlayer, bool mapFullSize) {
@@ -681,9 +703,15 @@ void Manager::bakeKeyScreens() {
     int state = -1;
     bool heldByKey = true;
   };
+  // The scoreboard is not one of them any more. It is a state (9), and Tab drives
+  // it the engine's way (`StateMachine::scoreboardPressed`); once `ScoreboardShow`
+  // is really on, the ordinary walk draws it where the tree has it — after the map
+  // and the spawn screen, so over both — with its own 0.1 s fade
+  // (`HudElementsScoreboard.con`: `setNodeInTime 0.1`, `setNodeOutTime 0.1`,
+  // `addNodeAlphaShowEffect`). Baked with its gate forced, it had neither the fade
+  // nor the order, and a tab clicked on it never showed, because the bake was
+  // never made again.
   for (const KeyScreenSetup& setup : {
-           KeyScreenSetup{"Scoreboard", "c_GIShowScoreboard", "ScoreboardShow", nullptr,
-                          MapView::Mini, 9, true},
            KeyScreenSetup{"RadioRose", "c_GIRadioComm", "RadioInterfaceShow"},
            KeyScreenSetup{"MapMenu", "c_GIMapSize", "MapMenuShow"},
        }) {

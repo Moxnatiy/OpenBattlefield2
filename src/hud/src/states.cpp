@@ -219,4 +219,29 @@ bool applyDerived(VariableMap& variables, const WorldView& view) {
   return changed;
 }
 
+bool StateMachine::set(VariableMap& variables, int state, bool remember) {
+  if (state == current_) return false;
+  if (remember && current_ >= 0) remembered_ = current_;
+  const int previous = current_;
+  current_ = state;
+  return applyState(variables, previous, state);
+}
+
+bool StateMachine::scoreboardPressed(VariableMap& variables) {
+  switch (current_) {
+    case 9: case 12: case 6: case 4: case 5: case 7:
+      return false;
+    default:
+      // `vtbl[0x1fc]()` true would restore the remembered state first
+      // (0x758d21); what it asks is not established, and it is taken as false.
+      return set(variables, 9, true);
+  }
+}
+
+bool StateMachine::scoreboardReleased(VariableMap& variables) {
+  if (current_ != 9 && current_ != 12) return false;
+  const int back = remembered_ == 10 ? 0 : remembered_;
+  return set(variables, back, true);
+}
+
 }  // namespace obf2::hud
