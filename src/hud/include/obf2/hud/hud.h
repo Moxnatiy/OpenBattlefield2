@@ -198,30 +198,43 @@ struct Node {
   std::string area;
   float absX = 0.0f, absY = 0.0f;
 
-  // A list (the scoreboard, squad selection). Its background and border are not
-  // textures but solid colours — which is exactly why a list without them looked
-  // like empty space:
+  // A list (the scoreboard, squad selection): `Bf2NewListBoxNode`, whose fields
+  // and defaults are in docs/functions/hud-scoreboard.md. Its background and
+  // border are solid colours, not textures:
   //
   //   createListNode Scoreboard FriendlyScoreList 10 75 389 462 19 1
   //   setListNodeBackgroundColor 0.745 0.729 0.58 0.9
   //   setListNodeBorder 20 22 3 3
   //   setListNodeBorderColor 0.482 0.474 0.388 1
   //
-  // The second-to-last number in createListNode is the row height.
-  bool hasListBackground = false;
-  Color listBackground;
-  bool hasListBorder = false;
-  Color listBorderColor;
-  float listBorder[4] = {0.0f, 0.0f, 0.0f, 0.0f};  // left, right, top, bottom
-  float listRowHeight = 0.0f;
+  // The defaults are `createListNode`'s own (BF2.exe 0x796710): background
+  // (1, 0, 0, 0), border colour (1, 1, 0, 0), not bordered.
+  Color listBackground{1.0f, 0.0f, 0.0f, 0.0f};  // +0xa8, setListNodeBackgroundColor
+  Color listBorderColor{1.0f, 1.0f, 0.0f, 0.0f}; // +0xb8, setListNodeBorderColor
+  // `setListNodeBorder` turns the border on (+0x95) and takes **top, bottom,
+  // left, right**: the builder (0x795720) hands its four arguments to the node's
+  // slots 0x11c..0x128, which write +0x98, +0x9c, +0xa0, +0xa4 in that order, and
+  // the renderer (0x7c5c80) takes +0x98 as the top strip's height. We used to read
+  // them as left, right, top, bottom, which put the scoreboard's rows 20 units in
+  // from the left and its header strip 3 high.
+  bool listBordered = false;
+  float listBorderTop = 2.0f, listBorderBottom = 2.0f;  // the node ctor's 2 (0x7c5605)
+  float listBorderLeft = 2.0f, listBorderRight = 2.0f;
+  float listRowHeight = 12.0f;   // +0x18: createListNode's 7th number; 12 in the ctor (0x7c551c)
+  int listCreateFlag = 0;        // createListNode's last number (slot 0xc8): purpose not established
   Color listSelectColor;                  // setListNodeSelectColor r g b a
-  bool hasListScrollbar = false;          // setListNodeScrollbar <width> <gap>
-  float listScrollbarWidth = 0.0f;
-  float listScrollbarGap = 0.0f;
+  bool hasListScrollbar = false;
+  // `setListNodeScrollbar a b`: a goes to +0x24 and b to +0xf8 (0x7957c0). The
+  // last column gives way to both (0x7c4d20). Which one is the bar's width is not
+  // established; the defaults are 4 (0x7c5529) and 1.0 (0x796904).
+  float listScrollbarWidth = 4.0f;  // +0x24
+  float listScrollbarGap = 1.0f;    // +0xf8
   Color listScrollbarColor;
   Color listScrollbarBackground;
-  int listData = -1;             // setListNodeData — the row source's number
-  float listRowSpacing = 0.0f;   // setListNodeRowSpacing
+  int listData = -1;             // setListNodeData — the row source's number (0x7af170)
+  float listRowSpacing = 1.0f;   // +0x1c: setListNodeRowSpacing; 1.0 in the ctor (0x7c5523)
+  // setListNodeFont <file> <n>: a text's `§n` code picks font n (0x7c5c80).
+  std::vector<std::string> listFonts;
   bool listOutline = false;      // setListNodeOutline
   // setListNodeConCmd <number> "<command>" — what to run on a click.
   std::vector<std::pair<int, std::string>> listCommands;

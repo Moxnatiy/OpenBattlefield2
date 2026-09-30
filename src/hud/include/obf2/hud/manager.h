@@ -24,6 +24,7 @@
 #include "obf2/hud/hud.h"
 #include "obf2/hud/map_node.h"
 #include "obf2/hud/render.h"
+#include "obf2/hud/scoreboard.h"
 #include "obf2/hud/spawn_interface.h"
 #include "obf2/hud/states.h"
 #include "obf2/level/gameplay.h"
@@ -78,6 +79,7 @@ class Manager {
     std::string shownText;
     float shownValue = -1.0f;
     float shownAngle = 0.0f;
+    int shownRevision = -1;  // a list: the scoreboard's revision it was built from
     bool built = false;
   };
 
@@ -103,6 +105,11 @@ class Manager {
   void updateVariables(bool hasPlayer, bool mapFullSize);
   // The spawn screen's own variables: the team tabs, the kit rows, the markers.
   void applySpawnState();
+  // The players the scoreboard lists, and which of them is us. The engine's
+  // `Scoreboard::update` (0x7a4c80) runs only while the scoreboard is shown, and
+  // so does this.
+  void scoreboardPlayers(const std::vector<ScoreboardPlayer>& players, int localIndex);
+  const Scoreboard& scoreboard() const { return scoreboard_; }
 
   // --- what moves by itself ---
   // One frame of the `Menu/Ingame` graph: the corner regions, the map's
@@ -214,6 +221,7 @@ class Manager {
   bool zoomKeyWasDown_ = false;
 
   Animator animator_;
+  Scoreboard scoreboard_;
   std::vector<KeyScreen> keyScreens_;
   std::vector<DynamicNode> dynamic_;
 

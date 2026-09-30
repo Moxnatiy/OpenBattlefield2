@@ -11,6 +11,8 @@ add_library(obf2_hud
   src/map_node.cpp
   src/ingame.cpp
   src/states.cpp
+  src/list_data.cpp
+  src/scoreboard.cpp
   src/manager.cpp
 )
 add_library(obf2::hud ALIAS obf2_hud)

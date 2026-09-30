@@ -137,8 +137,13 @@ bool Manager::load(FileSystem& files, engine::Engine& engine, const level::Level
     // The map: its window follows the player and the zoom, so it must not be baked
     // in advance either.
     const bool mapNodeItself = node.type == NodeType::Map || node.type == NodeType::MiniMap;
-    if (!ticketText && !cpBar && !centreMessage && !rotating && !mapNodeItself) continue;
-    dynamic_.push_back(DynamicNode{&node, {}, -1.0f, 0.0f, false});
+    // The scoreboard's lists: their rows follow the players, so they are rebuilt on
+    // their own whenever the scoreboard's contents change.
+    const bool scoreList = node.type == NodeType::List && scoreboard_.list(node.listData) != nullptr;
+    if (!ticketText && !cpBar && !centreMessage && !rotating && !mapNodeItself && !scoreList) {
+      continue;
+    }
+    dynamic_.push_back(DynamicNode{&node, {}, -1.0f, 0.0f, -1, false});
   }
 
   // The live nodes are not baked into the shared geometry: otherwise a second,
@@ -306,6 +311,9 @@ void Manager::buildContexts(engine::Engine& engine) {
   // The show effects are seen by the geometry builder itself: alpha multiplies the
   // alpha, move shifts the rectangle.
   context_.showState = [this](const Node& node) { return animator_.state(node); };
+  // A list node's rows (0x7af170): the scoreboard's four; the other eight
+  // sources (chat, squads, the commander's, the level list) are not ours yet.
+  context_.listData = [this](int data) { return scoreboard_.list(data); };
 
   dynamicContext_ = context_;
   spawnContext_ = context_;
@@ -503,6 +511,14 @@ void Manager::scoreboardKey(bool down) {
   const bool changed =
       down ? states_.scoreboardPressed(variables_) : states_.scoreboardReleased(variables_);
   afterTransition(before, changed);
+}
+
+void Manager::scoreboardPlayers(const std::vector<ScoreboardPlayer>& players, int localIndex) {
+  // `Scoreboard::update(visible)` (0x7a4c80) does its work only while visible.
+  const auto shown = variables_.find("ScoreboardShow");
+  if (shown == variables_.end() || !shown->second) return;
+  const std::string label(engine_->lexicon().text("HUD_TEXT_MENU_SCOREBOARD_NUMBER_OF_PLAYERS"));
+  scoreboard_.update(players, localIndex, label);
 }
 
 void Manager::updateVariables(bool hasPlayer, bool mapFullSize) {
@@ -763,6 +779,12 @@ bool Manager::dynamicChanged(const DynamicNode& live) const {
   const bool isRotating = !node.rotateVariable.empty();
   const bool isBar = node.type == NodeType::Bar;
   if (!live.built) return true;
+  if (node.type == NodeType::List) {
+    // The rows, and the fade the node is built with: the scoreboard fades in over
+    // 0.1 s (`setNodeInTime 0.1`), and a list built at its start would stay clear.
+    return scoreboard_.revision() != live.shownRevision ||
+           std::abs(animator_.state(node).alpha - live.shownValue) > 0.001f;
+  }
   // A rotation step below which nothing is visible on screen any more: the compass
   // is 192 pixels, so 0.005 radians is half a pixel at the edge. The map is rebaked
   // when its window moved: the threshold is 0.0002 of the world's width, that is
@@ -790,6 +812,12 @@ std::vector<DrawPiece> Manager::buildDynamic(DynamicNode& live) {
   const bool isMap = node.type == NodeType::Map || node.type == NodeType::MiniMap;
   const bool isRotating = !node.rotateVariable.empty();
   const bool isBar = node.type == NodeType::Bar;
+  if (node.type == NodeType::List) {
+    live.built = true;
+    live.shownRevision = scoreboard_.revision();
+    live.shownValue = animator_.state(node).alpha;
+    return buildNode(node, font_.font, font_.atlasPath, screen_, dynamicContext_);
+  }
 
   std::string text;
   float value = 0.0f;

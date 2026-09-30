@@ -64,12 +64,11 @@ rounds), `ToggleSquads`/`ToggleManage` (the tabs, now switched by
 But the variables are not what is missing there. **The rows are.** Eleven
 `createListNode` in the data — the two scoreboard player lists, the two team
 totals, the squad list, the squad invite list, the chat, the commander's squad
-and chat lists, the level list, the VOIP list — and our renderer draws a list's
-border and background and **no rows at all**. The row source is
-`setListNodeData <n>`, a number from 1 to 12, and what those numbers select is
-**not established**: the command's handler in the binary is behind the console
-property thunks at 0x881460/0x881170, and neither the server's symbols nor the
-checked build name the enum.
+and chat lists, the level list, the VOIP list. The row source is
+`setListNodeData <n>`, and what the numbers select is now read: the HUD
+object's slot 0x1cc, 0x7af170 (docs/functions/hud-scoreboard.md). The
+scoreboard's four (1, 2, 9, 10) have rows; the other seven still draw their
+plate alone.
 
 | list | data | where |
 |---|---:|---|
@@ -85,10 +84,10 @@ checked build name the enum.
 | `VoipSquadList` | 11 | HudElementsVoipList.con |
 | `MapList` | 12 | HudElementsLevelsList.con |
 
-Nor is the row's **layout** measured. The header gives the columns' places —
-`FriendlyHeaderLabel` at 15 wide 138 for the name, `FriendlyHeaderIcons` at 231
-wide 150 for five icons of 30 — but which number goes under which icon is a
-guess until a frame dump of the original's scoreboard says so. We have none:
+The row's **layout** is read from the binary now — which number goes under which
+icon is `Scoreboard`'s own fill (0x7a38d0), and the header art agrees with it —
+but it is not **measured**: a frame dump of the original's scoreboard would
+check the glyph placement. We have none:
 every dump we hold is of the spawn screen.
 
 **The minimap in combat is half-filled.** Its ten: `LevelTime` and `TimeInfoShow`

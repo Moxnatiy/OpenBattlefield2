@@ -370,6 +370,7 @@ to look when something does not match.
 | `app/main_menu` | the intro, the loading screen and the game's own Flash menu | `Game/SwiffHost` + `Game/MenuLogic` |
 | `app/camera`, `app/scripted_input` | where the frame is seen from; `--look-at`, `--move-at`, `--jump-at` | `IO/Input` |
 | `app/model_view`, `app/calibrate`, `app/collision_probe` | the modes that are not the game: one mesh posed by its clips, template numbers matched to names, what collides at a point | — |
+| `app/scoreboard_players` | who the scoreboard lists, from the session's world or our own server | `Menu/Hud/Scoreboard` (its `update`) |
 | `hud/manager` | the whole interface of a round: the tree, the variables, the state machine, the spawn screen, the animation | `Menu/BF2HudManager` |
 | `game/object_mesh` | a template's tree into geometry, and where an object is lost on the way to the screen | `Scene/Object/ObjectUtils` |
 | `session/remote_world` | the live link to a server: handshake, the world it keeps, our action stream | `Game/Common/ClientConnection` |
@@ -477,6 +478,7 @@ soldier through `tickSoldier`.
 | who turns on `BottomRightDirection` | the machine is reversed (docs/functions/hud-bottom-right.md), only the matching "hide" at 0x7a8280 was found | the notes name who writes the one |
 | `BottomRightFadedAlpha` (+0x14) | the formula for the left side exists (end of 0x78b600), the place for the right side was not found | nodes on this variable fade as in the original |
 | `VariableColorEffect`, `AlphaFadeEffect` in the graph | not executed | in `Menu/Ingame` they only appear on test squares under `showTest`, so there is no visible debt |
+| the scoreboard's numbers | the rows are the engine's (`Scoreboard` 0x7a38d0, the list node 0x7c5c80, docs/functions/hud-scoreboard.md). A player's score block, ping and alive flag ride the `Player` networkable (`Player::setNetUpdate`), which is not read: the score columns stay empty, as the engine leaves them for a player without one, and on `--connect` "alive" stands in as "has an object". Not reversed: the kit icon of a living teammate, the squad and manage views, the rows' mouse | on the same server our scoreboard shows the original's numbers |
 
 **Menu.** The menu ↔ game bridge is reversed — seventeen objects, all
 forty methods of `Logic` with addresses (docs/functions/menu-bridge.md).

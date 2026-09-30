@@ -29,6 +29,7 @@
 #include "obf2/app/model_view.h"
 #include "obf2/app/render_context.h"
 #include "obf2/app/scene_build.h"
+#include "obf2/app/scoreboard_players.h"
 #include "obf2/app/world_view.h"
 #include "obf2/core/math.h"
 #include "obf2/core/parallel.h"
@@ -1026,6 +1027,16 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
           // screenshot switch presses it anew whenever that has happened.
           if (forced && hudManager.state() != 9) hudManager.scoreboardKey(false);
           hudManager.scoreboardKey(forced || (!tabKey.empty() && device->isKeyDown(tabKey)));
+        }
+        // The scoreboard's rows, from whoever keeps the players in this mode.
+        if (remote != nullptr) {
+          hudManager.scoreboardPlayers(
+              obf2::app::scoreboardPlayers(remote->world.players(), remote->world.ownPlayer(),
+                                           spawned),
+              remote->world.ownPlayer());
+        } else if (hostedServer != nullptr && hostedClient != nullptr) {
+          hudManager.scoreboardPlayers(obf2::app::scoreboardPlayers(hostedServer->players()),
+                                       static_cast<int>(hostedClient->playerId()));
         }
         const int hudState = hudManager.state();
         const bool spawnVisible = hudState == 1 || args.hudScreenName == "SpawnMenu";

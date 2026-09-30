@@ -34,6 +34,7 @@ target_compile_definitions(test_meme PRIVATE
   OBF2_GAME_FILES="${CMAKE_SOURCE_DIR}/Game Files")
 obf2_add_test(test_hud obf2_hud)
 obf2_add_test(test_hud_states obf2_hud)
+obf2_add_test(test_hud_scoreboard obf2_hud)
 obf2_add_test(test_hud_spawn obf2_hud)
 obf2_add_test(test_hud_spawn_interface obf2_hud)
 obf2_add_test(test_hud_items obf2_hud)

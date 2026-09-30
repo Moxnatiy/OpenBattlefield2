@@ -476,23 +476,68 @@ std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& fon
     return pieces;
   }
 
-  // A list: the background and the border are solid colours, not textures. We draw
-  // the border over the whole node and the background inside its insets. The rows
-  // will appear once there is somewhere to take the players from; the plate itself
-  // is needed already, because without it the scoreboard has a hole instead of a list.
+  // A list: the plate, the border and the rows, placed as `Bf2NewListBoxNode`
+  // places them (0x7c5c80, obf2/hud/list_data.h). The rows come from the list
+  // `setListNodeData` names; without one only the plate is drawn.
   if (node.type == NodeType::List) {
     static const std::string kFill = "#ffffff";
-    if (node.hasListBorder) {
-      pieces.push_back(DrawPiece{quad(rect, screen, kFill), kFill, &node, node.listBorderColor});
-    }
-    if (node.hasListBackground) {
-      ScreenRect inner = rect;
-      inner.x += node.listBorder[0] * scaleY;
-      inner.width -= (node.listBorder[0] + node.listBorder[1]) * scaleY;
-      inner.y += node.listBorder[2] * scaleY;
-      inner.height -= (node.listBorder[2] + node.listBorder[3]) * scaleY;
-      if (inner.width > 0.0f && inner.height > 0.0f) {
-        pieces.push_back(DrawPiece{quad(inner, screen, kFill), kFill, &node, node.listBackground});
+    const ListData* data =
+        context.listData && node.listData >= 0 ? context.listData(node.listData) : nullptr;
+    // A list's font by its number (`setListNodeFont <file> <n>`).
+    auto faceOf = [&](int number) -> std::pair<const font::Font*, std::string> {
+      if (number >= 0 && static_cast<std::size_t>(number) < node.listFonts.size() &&
+          !node.listFonts[static_cast<std::size_t>(number)].empty() && context.fontFor) {
+        const FontRef chosen = context.fontFor(node.listFonts[static_cast<std::size_t>(number)]);
+        if (chosen.font != nullptr) return {chosen.font, chosen.atlas};
+      }
+      return {nullptr, std::string()};
+    };
+    const TextMeasure measure = [&](int number, std::string_view text) -> std::optional<RunMetrics> {
+      const auto [face, atlas] = faceOf(number);
+      if (face == nullptr) return std::nullopt;
+      RunMetrics metrics;
+      metrics.width = font::textWidth(*face, text, 1.0f);
+      std::size_t position = 0;
+      while (position < text.size()) {
+        const font::Glyph* glyph = face->glyph(font::nextCodepoint(text, position));
+        if (glyph == nullptr) continue;
+        const float top = static_cast<float>(glyph->offsetY);
+        const float bottom = top + static_cast<float>(glyph->pixelHeight());
+        metrics.top = metrics.empty ? top : std::min(metrics.top, top);
+        metrics.bottom = metrics.empty ? bottom : std::max(metrics.bottom, bottom);
+        metrics.empty = false;
+      }
+      return metrics;
+    };
+    // The placement is in HUD units from the node's corner; the rectangle already
+    // carries the window's scale and any show-effect shift.
+    const auto toScreen = [&](float x, float y, float w, float h) {
+      return ScreenRect{rect.x + (x - node.absX) * scaleY, rect.y + (y - node.absY) * scaleY,
+                        w * scaleY, h * scaleY};
+    };
+    for (const PlacedListItem& item : placeList(node, data, measure)) {
+      if (item.kind == PlacedListItem::Kind::Plate) {
+        pieces.push_back(DrawPiece{quad(toScreen(item.x, item.y, item.width, item.height), screen,
+                                        kFill),
+                                   kFill, &node, item.color});
+      } else if (item.kind == PlacedListItem::Kind::Texture) {
+        pieces.push_back(DrawPiece{quad(toScreen(item.x, item.y, item.width, item.height), screen,
+                                        item.texture),
+                                   item.texture, &node, item.color});
+      } else {
+        const auto [face, atlas] = faceOf(item.font);
+        if (face == nullptr) continue;
+        const ScreenRect at = toScreen(item.x, item.y, 0.0f, 0.0f);
+        font::TextLayout layout;
+        layout.screenWidth = screen.width;
+        layout.screenHeight = screen.height;
+        layout.scale = scaleY;
+        layout.x = at.x;
+        layout.y = at.y;
+        auto geometry = font::buildText(*face, item.text, layout, atlas);
+        if (!geometry.indices.empty()) {
+          pieces.push_back(DrawPiece{std::move(geometry), atlas, &node, item.color});
+        }
       }
     }
     return pieces;

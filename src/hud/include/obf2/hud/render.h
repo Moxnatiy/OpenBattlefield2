@@ -17,6 +17,7 @@
 #include "obf2/font/text.h"
 #include "obf2/hud/animation.h"
 #include "obf2/hud/hud.h"
+#include "obf2/hud/list_data.h"
 #include "obf2/mesh/bf2_mesh.h"
 
 namespace obf2::hud {
@@ -89,6 +90,9 @@ struct Context {
   // that variable, and the node stays visible: most of them are smooth fades, and
   // by default they are on.
   std::function<std::optional<float>(std::string_view variable)> variableAlpha;
+  // The rows of a list node: `setListNodeData <n>` names the list (0x7af170).
+  // Empty, or null for a number, and the node draws its plate alone.
+  std::function<const ListData*(int data)> listData;
   // The level's map picture. Its path is given not by the HUD but by the level
   // itself — BF2.exe has the template `Levels/%s/Hud/Minimap/ingameMap.tga` for it.
   std::string mapTexture;

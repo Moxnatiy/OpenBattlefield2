@@ -176,8 +176,13 @@ void Builder::feed(const con::Command& command) {
                          type == NodeType::Occupied;
     const int skip = shifted ? 1 : 0;
     if (type == NodeType::Bar) node.barKind = command.argInt(2).value_or(0);
-    // createListNode <parent> <name> <x> <y> <w> <h> <row height> <?>
-    if (type == NodeType::List) node.listRowHeight = command.argFloat(6).value_or(0.0f);
+    // createListNode <parent> <name> <x> <y> <w> <h> <row height> <flag>: the
+    // builder (0x796710) hands the row height to slot 0x10c (+0x18) and the flag to
+    // slot 0xc8.
+    if (type == NodeType::List) {
+      node.listRowHeight = command.argFloat(6).value_or(node.listRowHeight);
+      node.listCreateFlag = command.argInt(7).value_or(0);
+    }
     // A slider and the map carry no rectangle: a slider has its bounds and step there.
     if (type == NodeType::Slider || type == NodeType::Map) {
       if (command.args.size() >= 2) {
@@ -631,20 +636,22 @@ void Builder::feed(const con::Command& command) {
   if (method == "setcpfont") { node->cpFont = std::string(command.argStr(0)); return; }
   if (method == "setcpfontcolor") { readColor(node->cpFontColor); return; }
 
+  // 0x795600 and 0x7956c0: four floats each, into +0xa8 and +0xb8.
   if (method == "setlistnodebackgroundcolor") {
     readColor(node->listBackground);
-    node->hasListBackground = true;
     return;
   }
   if (method == "setlistnodebordercolor") {
     readColor(node->listBorderColor);
-    node->hasListBorder = true;
     return;
   }
+  // 0x795720: bordered, then top, bottom, left, right (see hud.h).
   if (method == "setlistnodeborder") {
-    for (int i = 0; i < 4; ++i) {
-      node->listBorder[i] = command.argFloat(static_cast<std::size_t>(i)).value_or(0.0f);
-    }
+    node->listBordered = true;
+    node->listBorderTop = command.argFloat(0).value_or(0.0f);
+    node->listBorderBottom = command.argFloat(1).value_or(0.0f);
+    node->listBorderLeft = command.argFloat(2).value_or(0.0f);
+    node->listBorderRight = command.argFloat(3).value_or(0.0f);
     return;
   }
   if (method == "setmaxipos") { mapPos(node->mapMaxi); return; }
@@ -706,8 +713,20 @@ void Builder::feed(const con::Command& command) {
     node->barSnap = command.argFloat(0).value_or(0.0f);
     return;
   }
-  if (method == "setlistnodefont" || method == "settextnodefont" ||
-      method == "setbuttonnodefont") {
+  if (method == "setlistnodefont") {
+    // setListNodeFont <file> <n>: the node keeps a font per number, and a list
+    // text's `§n` picks among them (0x7c5c80).
+    const int index = command.argInt(1).value_or(0);
+    if (index >= 0 && index < 16) {
+      if (node->listFonts.size() <= static_cast<std::size_t>(index)) {
+        node->listFonts.resize(static_cast<std::size_t>(index) + 1);
+      }
+      node->listFonts[static_cast<std::size_t>(index)] = std::string(command.argStr(0));
+    }
+    node->font = std::string(command.argStr(0));
+    return;
+  }
+  if (method == "settextnodefont" || method == "setbuttonnodefont") {
     node->font = std::string(command.argStr(0));
     return;
   }
