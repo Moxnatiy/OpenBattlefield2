@@ -12,7 +12,7 @@ std::optional<SoldierPart> partOf(const ObjectTemplate& object, int geometry) {
 }  // namespace
 
 std::optional<SoldierModel> soldierModel(const Registry& registry, std::string_view soldier,
-                                         std::string_view kit) {
+                                         std::string_view kit, int weaponItem) {
   const ObjectTemplate* body = registry.find(soldier);
   if (body == nullptr) return std::nullopt;
   auto bodyPart = partOf(*body, kSoldierThirdPersonGeometry);
@@ -38,7 +38,7 @@ std::optional<SoldierModel> soldierModel(const Registry& registry, std::string_v
 
     for (const ChildTemplate& child : kitTemplate->children) {
       const ObjectTemplate* item = registry.find(child.name);
-      if (item == nullptr || item->number("itemindex") != 3.0f) continue;
+      if (item == nullptr || item->number("itemindex") != static_cast<float>(weaponItem)) continue;
       // The same sub-geometry as the body: the camera sets 1 on the object **and
       // its children** for the third-person view (`Camera::changeSubGeometry`).
       model.weapon = partOf(*item, kSoldierThirdPersonGeometry);

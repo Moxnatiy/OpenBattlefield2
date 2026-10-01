@@ -5,6 +5,7 @@ add_library(obf2_net
   src/bf2_protocol.cpp
   src/bf2_events.cpp
   src/soldier_state.cpp
+  src/player_state.cpp
   src/ghost_track.cpp
   src/bf2_world.cpp
   src/bf2_join.cpp

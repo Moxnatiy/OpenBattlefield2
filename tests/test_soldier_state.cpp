@@ -81,7 +81,7 @@ static void testControlledOrder() {
   CHECK(state->complete);
   CHECK_EQ(state->mask, mask);
   CHECK_EQ(*state->value40, 200u);
-  CHECK_EQ(*state->pairB20, 4u);
+  CHECK_EQ(*state->requestedPose, 4u);
   CHECK(state->position && std::abs(state->position->y - 150.25f) < 0.002f);
   CHECK(state->velocity && std::abs(state->velocity->z + 2.0f) < 0.002f);
   CHECK(state->bodyYaw && std::abs(*state->bodyYaw - 123.5f) < 0.0001f);

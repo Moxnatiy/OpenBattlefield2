@@ -30,6 +30,7 @@
 #include "obf2/app/render_context.h"
 #include "obf2/app/scene_build.h"
 #include "obf2/app/scoreboard_players.h"
+#include "obf2/app/spawn_circles.h"
 #include "obf2/app/world_view.h"
 #include "obf2/core/math.h"
 #include "obf2/core/parallel.h"
@@ -375,6 +376,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   std::vector<std::vector<OwnedPiece>> dynamicPieces;
   // What the interface's rebuilds cost, in milliseconds and in number, split
   // between building the geometry and putting it on the card.
+  int shownSpawnGroups = -1;  // the session's spawn group revision the HUD has
   int hudRebuilds = 0;
   float hudRebuildMs = 0.0f;
   float hudRebuildMax = 0.0f;
@@ -414,6 +416,13 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     hooks.requestSpawn = [&](int team, int kit, int group) -> bool {
       if (hostedServer != nullptr && !hostedServer->players().empty()) {
         hostedServer->requestSpawn(hostedServer->players().front().id, team, kit, group);
+        return true;
+      }
+      if (remote != nullptr && hudManager.circlesAreServerGroups()) {
+        // The circles are the server's own groups (spawn_circles.h), so the
+        // number is the group's, which is what `NESelectSpawnGroup` takes.
+        std::printf("  spawn screen: spawn group %d\n", group);
+        remote->askSpawnGroup(team, kit, group);
         return true;
       }
       if (remote != nullptr) {
@@ -573,6 +582,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     viewOptions.lodIndex = args.lodIndex;
     viewOptions.traceFrom = args.traceFrom;
     viewOptions.traceFrames = args.traceFrames;
+    viewOptions.watchPose = args.watchPose;
+    viewOptions.watchWeapon = args.watchWeapon;
+    viewOptions.watchRagdoll = args.watchRagdoll;
     worldView.init(files, registry, *renderer, resolveTexture, *remote, level ? &*level : nullptr,
                    viewOptions);
   }
@@ -706,7 +718,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       // sends the server nothing at all — which is a different measurement from
       // the one we want.
       if (args.spawnGroupGiven && args.spawnGroup != 0 && !askedForGroup &&
-          !remote->spawnGroups.empty()) {
+          !remote->world.spawnGroups().empty()) {
         std::printf("  --group %d: asking to spawn as team %d with kit %d\n", args.spawnGroup,
                     args.team, args.kit);
         remote->askSpawnGroup(args.team, args.kit, args.spawnGroup);
@@ -869,13 +881,15 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
               static_cast<float>(remote->world.gameTick()) * obf2::net::bf2::kGhostTickMs;
           const float fromUs = remoteSoldier ? obf2::length(at - *remoteSoldier) : -1.0f;
           std::printf("  watched %u: updates %d, samples %zu, newest %.0f ms ago, mode %d, "
-                      "speed %.2f, %.0f m from our body, at %.2f %.2f %.2f\n",
+                      "speed %.2f, %.0f m from our body, at %.2f %.2f %.2f, pose %u, "
+                      "weapon out %d, ragdoll particles %zu\n",
                       watched, object.updates, object.track.count(),
                       newest != nullptr ? nowMs - newest->timeMs : -1.0f,
                       pose ? static_cast<int>(pose->mode) : -1,
                       newest != nullptr && newest->velocity ? obf2::length(*newest->velocity)
                                                             : -1.0f,
-                      fromUs, at.x, at.y, at.z);
+                      fromUs, at.x, at.y, at.z, object.lastPose, object.lastWeaponIndex,
+                      object.ragdollParticles.size());
         }
       }
     }
@@ -1002,7 +1016,15 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         // "There is a player" is not "the client is connected" but "the server gave
         // him a soldier". That is what governs the combat HUD in the engine
         // (0x78d0f0 takes the current player, and without one it clears the set).
+        //
+        // On `--connect` that is the session's own flag: raised when the server
+        // spawns our player and dropped when it says he died. "DONE was pressed"
+        // stood in for it, and it never fell again — after a death the spawn screen
+        // did not come back, so there was nothing to respawn with. Between DONE
+        // and the soldier the screen stays, as the original's does, with the
+        // countdown on its bar.
         const bool spawned = hostedServer != nullptr ? localSoldierId != 0
+                             : remote != nullptr     ? remote->playerSpawned
                                                      : hudManager.spawnScreen().requested();
         {
           const std::string_view mapKey = hudManager.controls().key("c_GIMapSize");
@@ -1027,6 +1049,41 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
           // screenshot switch presses it anew whenever that has happened.
           if (forced && hudManager.state() != 9) hudManager.scoreboardKey(false);
           hudManager.scoreboardKey(forced || (!tabKey.empty() && device->isKeyDown(tabKey)));
+        }
+        // The spawn screen's circles: the server's groups, once it has named any.
+        if (remote != nullptr) {
+          remote->spawnWorldSize = hudManager.mapWorldSize();
+          if (remote->world.spawnGroupRevision() != shownSpawnGroups) {
+            shownSpawnGroups = remote->world.spawnGroupRevision();
+            hudManager.serverSpawnGroups(
+                obf2::app::spawnCircles(remote->world.spawnGroups(), hudManager.mapWorldSize()));
+          }
+          // A squad's group is for its squad only (`getGroupsForPlayer`): our squad
+          // is our own player's state (0x2000, `setSquadId`).
+          const auto self = remote->world.players().find(
+              static_cast<std::uint32_t>(remote->world.ownPlayer()));
+          if (self != remote->world.players().end()) {
+            hudManager.localSquad(static_cast<int>(self->second.squad.value_or(0)));
+          }
+        }
+        // The spawn bar while dead: the player's own state says which group the
+        // server holds for him and the tick he may spawn at (player_state.h, bit
+        // 0x20); `getTimeToSpawn` is that tick less the game tick, over 30.
+        if (remote != nullptr) {
+          const auto own = remote->world.players().find(
+              static_cast<std::uint32_t>(remote->world.ownPlayer()));
+          if (own != remote->world.players().end()) {
+            const bool alive = own->second.alive ? *own->second.alive : spawned;
+            if (!alive) {
+              float wait = 0.0f;
+              if (own->second.spawnAtTick) {
+                const auto left = static_cast<std::int64_t>(*own->second.spawnAtTick) -
+                                  static_cast<std::int64_t>(remote->world.gameTick());
+                wait = left > 0 ? static_cast<float>(left) / 30.0f : 0.0f;
+              }
+              hudManager.deadSpawnInfo(static_cast<int>(own->second.spawnGroup.value_or(0)), wait);
+            }
+          }
         }
         // The scoreboard's rows, from whoever keeps the players in this mode.
         if (remote != nullptr) {

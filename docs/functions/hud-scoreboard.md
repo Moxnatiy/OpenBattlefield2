@@ -264,8 +264,22 @@ Its y: the vertical alignment (`+0x68`, always 1 here) centres the glyphs' ink �
 from the lowest glyph top (starting at 10) to the highest glyph bottom — in the
 row's height. Both x and y are floored.
 
+## Where the numbers come from
+
+On `--connect` a player's alive flag, score block, ping, squad and rank are his
+own networkable's (docs/functions/player-state.md); `app/scoreboard_players`
+hands them over. `--hosted` has none of it yet.
+
+The kit icon of another team (`icon_Faded.dds`) is a paletted DDS — a white
+frame and question mark — which the texture loader now reads
+(`DDPF_PALETTEINDEXED8`).
+
 ## What is left
 
+* who writes `ServerNameString`, `ServerIPString`, `ServerPortString` (the
+  layer's +0x57c, +0x580, +0x584, registered by name at 0x46b314; nothing else in
+  the exe, the menus or the Python writes them by name) — **source not found**,
+  so the SERVER INFO bar's address is empty;
 * the squad view (`ToggleSquads`: 0x7a3310, 0x7a3140, 0x7a4780) and the manage
   view (`ToggleManage`: the VOIP and kick-vote columns 0x7a3bae..0x7a3e5b);
 * which of the kit's icons column 1 shows (the `VehicleHud` component's

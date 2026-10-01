@@ -154,6 +154,17 @@ bool skipEvent(BitReader& reader, std::uint32_t type) {
       return readCreateObject(reader, ignored);
     }
     case 11: return skipPostRemote(reader);
+    case 21:
+      // `KilledByEvent::deSerialize` (Linux 0x42a920): 8, 8, 1, 16, 32, 32, 8, then a
+      // compressed position at 1/1000. The vector's length is its own; the table
+      // used to stop before it, and every kill threw the rest of its packet off.
+      return reader.skipBits(8 + 8 + 1 + 16 + 32 + 32 + 8) &&
+             reader.readCompressedVector(Vec3f{}, 0.001f).has_value();
+    case 64:
+      // `GrapplingHookUpdateEvent::deSerialize` (Linux 0x4280b0): 16, 8, two
+      // compressed vectors at 1/1000, 1.
+      return reader.skipBits(16 + 8) && reader.readCompressedVector(Vec3f{}, 0.001f).has_value() &&
+             reader.readCompressedVector(Vec3f{}, 0.001f).has_value() && reader.skipBits(1);
     default: return false;  // this one is not parsed yet
   }
 }
@@ -191,6 +202,13 @@ std::optional<Event> readEvent(BitReader& reader) {
     event.block = std::move(piece);
     return event;
   }
+  if (*type == 58) {
+    // `RemoveSpawnGroupEvent`: the group's number, then its network id.
+    const auto id = reader.readBits(8);
+    if (!id || !reader.skipBits(16)) return std::nullopt;
+    event.removeSpawnGroup = static_cast<std::uint8_t>(*id);
+    return event;
+  }
   if (*type == 57) {
     CreateSpawnGroup group;
     const auto first = reader.readBits(8);
@@ -206,9 +224,9 @@ std::optional<Event> readEvent(BitReader& reader) {
     }
     group.id = static_cast<std::uint8_t>(*first);
     group.team = *small;
-    group.flag1 = *flag1 != 0;
-    group.flag2 = *flag2 != 0;
-    group.flag3 = *flag3 != 0;
+    group.active = *flag1 != 0;
+    group.aiOnly = *flag2 != 0;
+    group.selectable = *flag3 != 0;
     group.worldX = static_cast<std::uint8_t>(*worldX);
     group.worldZ = static_cast<std::uint8_t>(*worldZ);
     group.networkId = static_cast<std::uint16_t>(*id);
@@ -290,16 +308,18 @@ std::optional<Event> readEvent(BitReader& reader) {
   if (*type == 5) {
     CreatePlayer player;
     const auto team = reader.readBits(3);
-    const auto squad = reader.readBits(4);
+    const auto spawnGroup = reader.readBits(4);
     reader.readBits(1);
     const auto id = reader.readBits(8);
+    const auto networkId = reader.readBits(16);
     reader.readBits(16);
-    reader.readBits(16);
-    reader.readBits(1);
-    if (!team || !squad || !id) return std::nullopt;
+    const auto aiPlayer = reader.readBits(1);
+    if (!team || !spawnGroup || !id || !networkId || !aiPlayer) return std::nullopt;
     player.team = *team;
-    player.squad = *squad;
+    player.spawnGroup = *spawnGroup;
     player.id = *id;
+    player.networkId = static_cast<std::uint16_t>(*networkId);
+    player.aiPlayer = *aiPlayer != 0;
 
     // The name is exactly 32 bytes, and rubbish is left in the field after the
     // zero, so we read bytes and stop at the first zero. `readString` will not do
@@ -367,6 +387,47 @@ std::optional<MapInfo> parseMapInfo(std::span<const std::byte> block) {
   info.size = static_cast<int>(*size);
   info.first = *first;
   return info;
+}
+
+std::optional<SpawnGroupState> readSpawnGroupState(BitReader& reader) {
+  // Linux `SpawnGroup::setNetUpdate` 0x4b9ab0, in its own order.
+  SpawnGroupState out;
+  const auto mask = reader.readBits(kSpawnGroupMaskBits);
+  if (!mask) return std::nullopt;
+  out.mask = *mask;
+  if (out.mask & 0x10) {
+    const auto v = reader.readBits(1);
+    if (!v) return std::nullopt;
+    out.selectable = *v != 0;
+  }
+  if (out.mask & 0x2) {
+    const auto v = reader.readBits(4);
+    if (!v) return std::nullopt;
+    out.team = *v;
+  }
+  if (out.mask & 0x4) {
+    const auto v = reader.readBits(1);
+    if (!v) return std::nullopt;
+    out.active = *v != 0;
+  }
+  if (out.mask & 0x8) {
+    const auto v = reader.readBits(1);
+    if (!v) return std::nullopt;
+    out.aiOnly = *v != 0;
+  }
+  if (out.mask & 0x1) {
+    const auto x = reader.readBits(8);
+    const auto z = reader.readBits(8);
+    if (!x || !z) return std::nullopt;
+    out.worldX = static_cast<std::uint8_t>(*x);
+    out.worldZ = static_cast<std::uint8_t>(*z);
+  }
+  if (out.mask & 0x20) {
+    const auto v = reader.readBits(8);
+    if (!v) return std::nullopt;
+    out.squad = static_cast<int>(*v) - 1;
+  }
+  return out;
 }
 
 std::uint8_t nearestSpawnGroup(const std::vector<CreateSpawnGroup>& groups, float worldX,
@@ -530,7 +591,8 @@ std::optional<GhostHeader> enterGhosts(BitReader& reader) {
 
 std::vector<GhostRecord> readGhostRecords(
     std::span<const std::byte> packet, const Vec3f& reference,
-    const std::function<GhostClass(std::uint16_t)>& classOf) {
+    const std::function<GhostClass(std::uint16_t)>& classOf,
+    const std::function<int(std::uint16_t)>& inventoryOf) {
   std::vector<GhostRecord> out;
   BitReader reader(packet);
   const auto header = enterGhosts(reader);
@@ -581,13 +643,29 @@ std::vector<GhostRecord> readGhostRecords(
 
       BitReader payload(packet);
       if (record.netClass == GhostClass::Soldier && payload.skipBits(payloadStart)) {
-        if (auto state = readSoldierState(payload, reference, SoldierLayout::Ghost)) {
+        const int inventory = inventoryOf ? inventoryOf(record.networkId) : -1;
+        if (auto state = readSoldierState(payload, reference, SoldierLayout::Ghost, inventory)) {
           record.stateMask = state->mask;
+          record.readBits = static_cast<std::uint32_t>(payload.bitPosition() - payloadStart);
           // Taken only when it fitted into the content: otherwise we read the
           // wrong thing and would pass rubbish off as a position.
           if (payload.bitPosition() <= payloadEnd) {
             record.position = state->position;
             record.soldier = std::move(*state);
+          }
+        }
+      } else if (record.netClass == GhostClass::SpawnGroup && payload.skipBits(payloadStart)) {
+        if (auto state = readSpawnGroupState(payload)) {
+          record.stateMask = state->mask;
+          record.readBits = static_cast<std::uint32_t>(payload.bitPosition() - payloadStart);
+          if (payload.bitPosition() <= payloadEnd) record.spawnGroup = *state;
+        }
+      } else if (record.netClass == GhostClass::Player && payload.skipBits(payloadStart)) {
+        if (auto state = readPlayerState(payload)) {
+          record.stateMask = state->mask;
+          record.readBits = static_cast<std::uint32_t>(payload.bitPosition() - payloadStart);
+          if (state->complete && payload.bitPosition() <= payloadEnd) {
+            record.player = std::move(*state);
           }
         }
       } else if (record.netClass == GhostClass::SimpleObject && payload.skipBits(payloadStart)) {

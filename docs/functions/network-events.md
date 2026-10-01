@@ -1119,7 +1119,7 @@ For a soldier the first networkable is `SoldierNetworkable`, whose slot +0x30
 | mask | 21 bits | 21 bits |
 | 0x40 | 8 bits, 1 bit | same |
 | 0x20 | two values 0..4, 3 bits each | same |
-| 0x8000 | ragdoll branch (FUN_007e5440 / FUN_007ea290); the rest is skipped | same |
+| 0x8000 | the ragdoll's state, and the record ends (see "The ragdoll branch" below) | same |
 | 0x1 | position, compressed from the stream's reference, 0.001 | same |
 | 0x80 | velocity, from zero, 0.01 | velocity, from zero, 0.001 |
 | 0x100, 0x200 | — | vectors from zero, 0.0001 — purpose not established |
@@ -1142,15 +1142,76 @@ Two traps in reading it:
   `FUN_004f9a10(min, max)` takes the smallest n with `2^n - 1 >= max - min + 1`:
   0..1 is two bits, 0..3 three, 0..255 nine. Read as `ceil(log2)` everything
   after the first ranged field is shifted;
-* **0x1000's width is not in the stream.** It is the soldier's weapon count,
-  asked of its inventory (`*(object+0x14)+0x22c` → `+0x10`). Our own soldier's
-  mask on Karkand is 0x1f7fff, with 0x1000 set, so our reader stops there
-  (`SoldierState::complete` stays false) until the kit's weapon count is known.
-  Everything before it — position, velocity, angles — is read.
+* **0x1000's width is not in the stream.** It is the soldier template's
+  inventory size, read in the data as `ObjectTemplate.inventorySize`
+  (`objects/soldiers/*/*.tweak`, 10 for every soldier of the game):
+  * `BF2.exe` 0x62dbcc: `*(object+0x14)` is the template, and the call is the
+    interface at template+0x22c, vtable +0x10, with `this` moved onto it;
+  * which method that is comes from the server, whose `SoldierTemplate` vtable
+    for the same interface (0x74ffa8, offset-to-top −504) reads addRef, getRef,
+    release, queryInterface, **`getInventorySize`** (0x558c90, the thunk to
+    0x558ca0, `return this[+0x224]`) — slot 4, which is +0x10 on 32 bits;
+  * the read is `FUN_004f9a10(0, size + 1)` minus one into +0x6c (0x62dbe7):
+    with 10, 0..11 in four bits, −1 when nothing is out.
+
+  **What the value is**: the server takes it in `SoldierNetworkable::setNetUpdate`
+  (0x5dd58c): −1 skips the search, otherwise it walks the player control
+  object's items (vtable +0xe8) and compares each one's `IItemObject` +0x60 —
+  `getItemIndex` (slot 12 in both `GenericFireArm`'s and `Item`'s vtables,
+  0x76e810, 0x743b48) — with it; then calls the soldier's +0x520 with the low
+  byte. So it is the `itemIndex` of the weapon he has out, the same number the
+  kit's weapons carry in their `.tweak`.
+
+  Without the size the reader stops there (`SoldierState::complete` stays false);
+  everything before it — position, velocity, angles — is read.
 
 Measured on `tests/data/bf2-karkand-lives.bin` (`tests/test_soldier_state.cpp`):
 **47 of 47** controlled states of our soldier, across both lives, put it on the
 x and z its `CreateObjectEvent` named, to 5 cm, while the player stood still.
+
+### The ragdoll branch (0x8000)
+
+A dead soldier's record. `BF2.exe` 0x62d6da, after 0x40 and 0x20:
+
+```
+if mask & 0x8000:
+    ragdoll = soldier[+0x44][+0x254]
+    ragdoll ? RagDoll::readCurrentState(ragdoll, stream)   0x7ea290
+            : RagDoll::skipCurrentState(stream)            0x7e5440
+    jump to the tail (0x62dce4) — nothing else of the record is read
+```
+
+`skipCurrentState` reads 9 bits and skips that many (`BitStream` 0x6b6710
+advances the read position). `readCurrentState` reads the same 9 bits and
+throws them away, then walks the ragdoll's particles (0x58 bytes each, the vector
+at +0x8..+0xc of the ragdoll) and, for each one marked at +0x54:
+
+| particle | read | written to |
+|---|---|---|
+| index 0 | three raw 32-bit floats (0x53c0a0) | +0x30 |
+| any other | the wide vector (0x6b6f50) from particle 0's +0x30, precision 0.01 (0x3c23d70a) | +0x30 |
+
+and, while the ragdoll's +0x62 is set (cleared at the end, so the first read
+only), copies +0x30 into +0x0 too. Before the walk it sets +0x5c to 0.3
+(0x3e99999a), +0x61 and +0x1d to 1, and +0x38 to the value at `*0xa26178` —
+purposes not established.
+
+The server's writer, `RagDoll::writeCurrentState` (Linux 0x6bf4c0), says what the
+9 bits are: it reserves them, writes the particles, then goes back and writes
+the number of bits the particles took. The particles' layout (Linux
+`Particle::Particle` 0x6ba720): +0x0 position, +0xc the previous one, +0x48 the
+bone, +0x4c the mass, +0x50 the size, +0x54 the network flag. Every constructor
+clears +0x54, and **who sets it is not established**; on the live server every
+state carried four particles. `ragDollInit.con` (`objects/soldiers/common/
+animations/`) adds thirteen, four of them with mass 1 (bones 1, 6, 15, 31) —
+whether those are the four is not established either.
+
+Ours: `readSoldierState` reads the length, the first particle raw and wide
+vectors until the length is used up, and calls the record complete when it ends
+exactly there. Measured on the live server (2400 frames, three deaths): **119 of
+119** ragdoll records end exactly at their length, and with them every soldier
+record of the run; the four particles of a body lie within 0.56 m of each other
+at one height. `tests/data/bf2-ragdoll.bin`, `test_bf2_world`.
 
 ## The soldier's position is its pivot
 

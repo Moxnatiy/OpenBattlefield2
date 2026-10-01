@@ -264,7 +264,34 @@ void testKitAndPickupAreRead() {
   }
 }
 
+// `KilledByEvent` ends in a compressed position (Linux 0x42a920), whose length is
+// its own. Taken by a fixed table, the packet a death arrives in was read off its
+// bits: the event after it came out as type 0, and the ghost header's time as
+// 877259529 between 322192 and 322195 — the game tick, and the spawn countdown with
+// it, never recovered. `tests/data/bf2-killed-by.bin` is five packets around a
+// suicide on the live server; the third carries the kill.
+static void testKilledByEventIsWalked() {
+  const auto packets = loadCapture(std::string(OBF2_TEST_DATA) + "/bf2-killed-by.bin");
+  CHECK_EQ(packets.size(), std::size_t(5));
+  if (packets.size() != 5) return;
+  const auto events = obf2::net::bf2::readEvents(packets[2]);
+  CHECK_EQ(events.size(), std::size_t(2));
+  if (events.size() == 2) {
+    CHECK_EQ(events[0].type, 21u);
+    CHECK_EQ(events[1].type, 11u);
+  }
+  std::uint32_t previous = 0;
+  for (const auto& packet : packets) {
+    const auto header = obf2::net::bf2::readGhostHeader(packet);
+    CHECK(header.has_value());
+    if (!header) continue;
+    if (previous != 0) CHECK(header->time > previous && header->time - previous < 10);
+    previous = header->time;
+  }
+}
+
 TEST_MAIN({
+  testKilledByEventIsWalked();
   testKitAndPickupAreRead();
   testWorldCaptureIsFullyDecoded();
   testHeightsAreOnTheTerrain();

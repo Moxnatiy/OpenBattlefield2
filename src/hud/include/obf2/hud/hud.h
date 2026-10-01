@@ -337,6 +337,9 @@ class Builder {
   // linked and Node::parent, Node::area and Node::absX/absY appear. Without this
   // step the coordinates stay relative — and the HUD falls apart.
   void finish();
+  // Node::absX/absY again along the parents `finish` linked, for when a node's
+  // own position changed (the map's rectangle) but the tree did not.
+  void resolvePositions();
 
   // Switches every map node to the given presentation. The game has one map,
   // shown in different ways: in combat a thumbnail in the corner, on the spawn
@@ -353,7 +356,11 @@ class Builder {
   void setMapRect(float x, float y, float width, float height, MapView shape);
 
   const std::vector<Node>& nodes() const { return nodes_; }
-  std::vector<const Node*> group(std::string_view name) const;
+  // A group's nodes in declaration order. Looked up in an index, not by walking
+  // every node: the engine keeps a node's children in the node, and a walk of the
+  // tree asks this once per node — scanning all of them each time made one HUD
+  // rebuild cost 120 ms.
+  const std::vector<const Node*>& group(std::string_view name) const;
   std::vector<std::string> groups() const;
 
   long long unknownCommands() const { return unknown_; }
@@ -363,6 +370,11 @@ class Builder {
   Node* active();
 
   std::vector<Node> nodes_;
+  // The group index behind `group()`: made on first use and made again whenever
+  // the node vector has grown or moved, since it holds pointers into it.
+  mutable std::map<std::string, std::vector<const Node*>, std::less<>> groupIndex_;
+  mutable std::size_t indexedCount_ = 0;
+  mutable const Node* indexedData_ = nullptr;
   std::map<std::string, int> unknownByName_;
   int activeIndex_ = -1;  // -1 = the last one created
   int layer_ = 0;         // the current layer, moved on by hudBuilder.newLayer

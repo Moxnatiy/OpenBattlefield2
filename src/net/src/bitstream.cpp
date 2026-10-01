@@ -179,6 +179,30 @@ std::optional<Vec3f> BitReader::readCompressedVector(const Vec3f& reference, flo
                reference.z + components[2]};
 }
 
+std::optional<Vec3f> BitReader::readWideVector(const Vec3f& base, float precision) {
+  const auto level = readBits(3);
+  if (!level) return std::nullopt;
+  if (*level == 0) {
+    const auto x = readBits(32);
+    const auto y = readBits(32);
+    const auto z = readBits(32);
+    if (!x || !y || !z) return std::nullopt;
+    return Vec3f{bitsToFloat(*x), bitsToFloat(*y), bitsToFloat(*z)};
+  }
+  if (*level == 7) return base;
+
+  const unsigned magnitudeBits = kCompressionVectorBitTable2[*level] - 1u;
+  float components[3] = {0.0f, 0.0f, 0.0f};
+  for (float& component : components) {
+    const auto negative = readBool();
+    const auto magnitude = readBits(magnitudeBits);
+    if (!negative || !magnitude) return std::nullopt;
+    const float value = static_cast<float>(*magnitude) * precision;
+    component = *negative ? -value : value;
+  }
+  return Vec3f{base.x + components[0], base.y + components[1], base.z + components[2]};
+}
+
 std::optional<BasicHeader> BitReader::readBasicHeader() {
   const auto type = readBits(kBasicHeaderTypeBits);
   const auto subtype = readBits(kBasicHeaderSubtypeBits);

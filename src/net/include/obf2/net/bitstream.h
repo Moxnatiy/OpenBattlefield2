@@ -92,6 +92,12 @@ class BitReader {
                                             const std::uint32_t (&table)[4] =
                                                 kCompressionVectorBitTable);
 
+  // The wide vector (`BF2.exe` 0x6b6f50): a 3-bit level from
+  // `kCompressionVectorBitTable2` (0x9791c4). 0 is three raw floats, absolute;
+  // 7 is the base itself; 1..6 are three values of `0x4f9c10(bits)` — a sign
+  // bit, then bits - 1 of magnitude — times the precision, plus the base.
+  std::optional<Vec3f> readWideVector(const Vec3f& base, float precision);
+
   std::optional<BasicHeader> readBasicHeader();
   std::optional<ExtendedHeader> readExtendedHeader();
 

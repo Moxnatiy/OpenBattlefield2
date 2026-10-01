@@ -23,6 +23,7 @@
 
 #include "obf2/core/math.h"
 #include "obf2/net/bitstream.h"
+#include "obf2/net/player_state.h"
 #include "obf2/net/soldier_state.h"
 
 namespace obf2::net::bf2 {
@@ -56,10 +57,18 @@ struct CreateObject {
 };
 
 // A player from `CreatePlayerEvent` (type 5). The server sends the name in 32 bytes.
+// `CreatePlayerEvent` (Linux constructor 0x423a90, `serialize` 0x423df0): team
+// (`getTeam`) 3 bits, spawn group (`getSpawnGroup`) 4 bits, the constructor's
+// second argument 1 bit, index (`getId`) 8 bits, the network id 16 bits,
+// 16 bits always 0, `getIsAIPlayer` 1 bit, the name in 32 bytes.
+// `executeClient` (0x423fa0) registers the player's own networkable under
+// `networkId` — its ghost records are player_state.h.
 struct CreatePlayer {
   std::uint32_t team = 0;
-  std::uint32_t squad = 0;
+  std::uint32_t spawnGroup = 0;
   std::uint32_t id = 0;
+  std::uint16_t networkId = 0;
+  bool aiPlayer = false;
   std::string name;
 };
 
@@ -149,15 +158,42 @@ struct CreateSpawnGroup {
   // network id) and not 402 (the level's point number).
   std::uint8_t id = 0;         // 8 bits
   std::uint32_t team = 0;      // 4 bits
-  bool flag1 = false;
-  bool flag2 = false;
-  bool flag3 = false;
+  // The three bits, in the order `CreateSpawnGroupEvent::serialize` (Linux
+  // 0x424670) writes them and `createClientSpawnGroup` (0x4ba600) takes them:
+  bool active = false;      // `SpawnGroup::setActive` (vtable 0x50)
+  bool aiOnly = false;      // +0x9a: only a bot may have it (`getGroupsForPlayer` 0x4b8790)
+  bool selectable = false;  // +0xa0: listed for players at all (the same function)
   std::uint8_t worldX = 0;     // the packed position, axis 1
   std::uint8_t worldZ = 0;     // the packed position, axis 2
   // The group's network id — the object system knows it by this. For choosing a
-  // spawn point it is **not** needed: the original does not send it.
+  // spawn point it is **not** needed: the original does not send it. Its ghost
+  // records (`SpawnGroupState` below) carry the group's later changes.
   std::uint16_t networkId = 0;  // 16 bits
+  // Not in the event: the squad the group belongs to, -1 for none, which only the
+  // group's ghost carries (bit 0x20). A squad's group is its squad's alone
+  // (`getGroupsForPlayer`, Linux 0x4b8790).
+  int squad = -1;
 };
+
+// A spawn group's ghost record — `SpawnGroup::setNetUpdate` (Linux 0x4b9ab0). A
+// 6-bit mask, then in this order:
+//   0x10  1 bit    selectable (+0xa0)
+//   0x2   4 bits   the team (`setTeam`)
+//   0x4   1 bit    active (`setActive`)
+//   0x8   1 bit    bots only (+0x9a)
+//   0x1   8, 8     the position, packed as the event's
+//   0x20  8 bits   the squad, stored minus one (`setSquad`, vtable 0x40)
+struct SpawnGroupState {
+  std::uint32_t mask = 0;
+  std::optional<bool> selectable;
+  std::optional<std::uint32_t> team;
+  std::optional<bool> active;
+  std::optional<bool> aiOnly;
+  std::optional<std::uint8_t> worldX, worldZ;
+  std::optional<int> squad;
+};
+inline constexpr unsigned kSpawnGroupMaskBits = 6;
+std::optional<SpawnGroupState> readSpawnGroupState(BitReader& reader);
 
 // Unpacking a group's position. It is packed by `SpawnGroup::getUnsignedWorldPosition`
 // (0x4b94b0), and the arithmetic there is:
@@ -271,6 +307,10 @@ struct Event {
   std::optional<HandlePickup> pickup;
   // `ExitVehicleEvent` (type 10): the number of the player who left.
   std::optional<std::uint32_t> exitPlayer;
+  // `RemoveSpawnGroupEvent` (type 58): the group's number (8 bits; then its
+  // network id, 16). `executeClient` (Linux 0x42e1b0) has the client's spawn
+  // manager drop the group (`removeClientSpawnGroup`, vtable 0x98).
+  std::optional<std::uint8_t> removeSpawnGroup;
 };
 
 // Assembles blocks from the chunks that arrive as events.
@@ -365,6 +405,11 @@ enum class GhostClass {
   Unknown,       // no full record seen yet: walked by length, not read
   SimpleObject,  // `SimpleObjectNetworkable`: vehicles, emplacements, props
   Soldier,       // `SoldierNetworkable`
+  // `Player`: known by the network id `CreatePlayerEvent` names, not by a mask
+  // (docs/functions/player-state.md).
+  Player,
+  // `SpawnGroup`: known by the network id `CreateSpawnGroupEvent` names.
+  SpawnGroup,
 };
 
 // One ghost stream record (`GhostManager::readData`):
@@ -388,6 +433,14 @@ struct GhostRecord {
   std::optional<Vec3f> position;
   // A soldier's state, as far as the ghost layout could be read.
   std::optional<SoldierState> soldier;
+  // A player's state (player_state.h), when it was read to its end inside the
+  // record's length.
+  std::optional<PlayerState> player;
+  // A spawn group's state, likewise.
+  std::optional<SpawnGroupState> spawnGroup;
+  // How many bits the content's reader took — the check that a layout is right:
+  // a record read whole ends exactly at `payloadBits`.
+  std::uint32_t readBits = 0;
 };
 
 // A record's contents are read by the object's networked class. For everything
@@ -452,9 +505,14 @@ std::optional<GhostHeader> readGhostHeader(std::span<const std::byte> packet);
 // `classOf` says what the caller already knows about an object. A record of an
 // unknown object is recognised by its full mask (kSoldierGhostMask /
 // kObjectGhostMask) and comes back with `netClass` set, for the caller to keep.
+//
+// `inventoryOf` gives a soldier's inventory size (`SoldierTemplate::
+// getInventorySize`, the template's `inventorySize`), which is the width of his
+// weapon index (0x1000); -1 or no function leaves the reader stopping there.
 std::vector<GhostRecord> readGhostRecords(
     std::span<const std::byte> packet, const Vec3f& reference = {},
-    const std::function<GhostClass(std::uint16_t)>& classOf = {});
+    const std::function<GhostClass(std::uint16_t)>& classOf = {},
+    const std::function<int(std::uint16_t)>& inventoryOf = {});
 
 // Walks a data packet and returns every event in it.
 // Empty means this is not a data packet or it broke off on the very first event.

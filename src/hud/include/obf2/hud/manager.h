@@ -105,6 +105,29 @@ class Manager {
   void updateVariables(bool hasPlayer, bool mapFullSize);
   // The spawn screen's own variables: the team tabs, the kit rows, the markers.
   void applySpawnState();
+  // The server's spawn groups (`CreateSpawnGroupEvent`), as the client's
+  // `SpawnManager` keeps them. When there are any, the circles are these and not
+  // the level's control points: the map draws `getGroupsForPlayer` (0x77f6e0), and
+  // a flag that changed hands since the level's file was written is only in them.
+  struct ServerSpawnGroup {
+    int id = 0;
+    int team = 0;
+    bool aiOnly = false;      // +0x9a
+    bool selectable = false;  // +0xa0
+    int squad = -1;           // `getSquad`: -1 for none, from the group's ghost
+    float worldX = 0.0f, worldZ = 0.0f;
+  };
+  void serverSpawnGroups(std::vector<ServerSpawnGroup> groups);
+  // The local player's squad (`getSquadId`), 0 for none: a squad's group is its
+  // squad's alone. Whether he leads it (`getIsSquadLeader`, which also hides the
+  // group) is not carried by his state, and is taken as not.
+  void localSquad(int squad);
+  // The spawn bar's text while the player is dead (`spawnInfoText`, 0x4668d0).
+  // `serverGroup` and `timeToSpawn` are the player's own state; the chosen circle
+  // and whether the screen is up the manager knows itself.
+  void deadSpawnInfo(int serverGroup, float timeToSpawn);
+  // Whether the circles are the server's groups — then DONE names a group number.
+  bool circlesAreServerGroups() const { return !serverGroups_.empty(); }
   // The players the scoreboard lists, and which of them is us. The engine's
   // `Scoreboard::update` (0x7a4c80) runs only while the scoreboard is shown, and
   // so does this.
@@ -200,6 +223,8 @@ class Manager {
   Context dynamicContext_;
 
   SpawnInterface spawnScreen_;
+  std::vector<ServerSpawnGroup> serverGroups_;
+  int localSquad_ = 0;
   std::vector<level::ControlPoint> controlPoints_;
   std::vector<Context::MapMarker> assetMarkers_;
   std::optional<texture::Texture> combatArea_;

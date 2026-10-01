@@ -60,6 +60,13 @@ def layout(table, cls):
         return [], False
     first, last = fields[0][1], fields[-1][1]
     branchy = any(s[0] == "branch" and first <= s[1] <= last for s in steps)
+    # Any other read of the stream — `readCompressedVector`, a string, a float
+    # helper — has a length of its own that the bit table cannot hold. Missing it
+    # made `KilledByEvent` (which ends in a compressed position) look fixed-size,
+    # and every kill then knocked the rest of its packet off its bits.
+    for line in lines:
+        if line[1].startswith("call") and "BitStream" in line[2] and "readBits" not in line[2]:
+            branchy = True
     widths = [v if k == "field" else None for k, _, v in fields]
     return widths, branchy
 

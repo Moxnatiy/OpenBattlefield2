@@ -224,6 +224,44 @@ static void testFarVectorKeepsFullPrecision() {
   }
 }
 
+// The wide vector (`BF2.exe` 0x6b6f50), written by hand the way the reader takes
+// it: a 3-bit level, then for levels 1..6 three `0x4f9c10` values — a sign bit
+// first, then the magnitude.
+static void testWideVector() {
+  const obf2::Vec3f base{10.0f, 20.0f, 30.0f};
+  auto data = buffer(64);
+  BitWriter writer(data);
+  // Level 4: 12 bits a component (0x9791c4), so 11 of magnitude.
+  CHECK(writer.writeBits(4, 3));
+  CHECK(writer.writeBits(0, 1));
+  CHECK(writer.writeBits(150, 11));  // +1.50
+  CHECK(writer.writeBits(1, 1));
+  CHECK(writer.writeBits(25, 11));   // -0.25
+  CHECK(writer.writeBits(0, 1));
+  CHECK(writer.writeBits(0, 11));    // 0
+  // Level 7: the base itself, nothing more.
+  CHECK(writer.writeBits(7, 3));
+  // Level 0: three raw floats, absolute.
+  CHECK(writer.writeBits(0, 3));
+  for (const float value : {1.0f, -2.0f, 4.5f}) {
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    CHECK(writer.writeBits(bits, 32));
+  }
+
+  BitReader reader(data);
+  const auto near = reader.readWideVector(base, 0.01f);
+  CHECK(near.has_value());
+  CHECK(std::abs(near->x - 11.5f) < 1e-4f);
+  CHECK(std::abs(near->y - 19.75f) < 1e-4f);
+  CHECK(std::abs(near->z - 30.0f) < 1e-4f);
+  const auto same = reader.readWideVector(base, 0.01f);
+  CHECK(same.has_value() && same->x == 10.0f && same->y == 20.0f && same->z == 30.0f);
+  const auto raw = reader.readWideVector(base, 0.01f);
+  CHECK(raw.has_value() && raw->x == 1.0f && raw->y == -2.0f && raw->z == 4.5f);
+  CHECK_EQ(reader.bitPosition(), static_cast<std::size_t>(3 + 36 + 3 + 3 + 96));
+}
+
 static void testCompressedVectorRefusesTruncatedBuffer() {
   const auto data = buffer(2);
   BitReader reader(data);
@@ -242,5 +280,6 @@ TEST_MAIN({
   testCompressedVectorRoundTrip();
   testCompressionLevelGrowsWithDistance();
   testFarVectorKeepsFullPrecision();
+  testWideVector();
   testCompressedVectorRefusesTruncatedBuffer();
 })

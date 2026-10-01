@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_set>
 
 namespace obf2::hud {
 namespace {
@@ -565,6 +566,15 @@ std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& fon
       pieces.push_back(
           DrawPiece{quad(rect, screen, texture, 0.0f, 1.0f, 0.0f, 1.0f, angle), texture, &node,
                     node.color});
+    } else if (node.type == NodeType::Picture && node.textureVariable.empty()) {
+      // A picture with no texture is a plate in its colour. `Bf2PictureNode`'s
+      // draw (0x7acab0) issues its quad with the texture handle it holds (+0x8)
+      // whether or not there is one, and its own border strips go through the same
+      // call with a handle of 0 — solid, in the border's colour. The scoreboard's
+      // SERVER INFO and MAP VOTE bars are such plates (`ServerInfoBar`,
+      // `MapListBar`: a size and `setNodeColor`, nothing else).
+      static const std::string kFill = "#ffffff";
+      pieces.push_back(DrawPiece{quad(rect, screen, kFill), kFill, &node, node.color});
     }
   }
 
@@ -689,20 +699,34 @@ bool hiddenByAlpha(const Node& node, const Context& context) {
 
 }  // namespace
 
+namespace {
+
+// The groups a walk of the tree has entered — the guard against a cycle in the
+// data. Every node's name is entered once, so this must not be a list searched
+// from the start: that made each walk quadratic in the node count, and the HUD's
+// rebuild took over 100 ms. The names live in the builder's nodes (or are the
+// caller's root), so views into them stay valid for the walk.
+class VisitedGroups {
+ public:
+  bool enter(std::string_view group) { return seen_.insert(group).second; }
+
+ private:
+  std::unordered_set<std::string_view> seen_;
+};
+
+}  // namespace
+
 std::vector<DrawPiece> buildTree(const Builder& builder, std::string_view rootGroup,
                                  const font::Font& font, const std::string& fontAtlas,
                                  const Screen& screen, const Context& context, int maxDepth) {
   std::vector<DrawPiece> pieces;
-  std::vector<std::string> visited;
+  VisitedGroups visited;
 
   // A depth-first walk in declaration order: later nodes land on top, so the walk
   // order is the drawing order.
   const auto walk = [&](auto&& self, std::string_view group, int depth) -> void {
     if (depth > maxDepth) return;
-    for (const std::string& seen : visited) {
-      if (seen == group) return;  // a guard against a cycle in the data
-    }
-    visited.emplace_back(group);
+    if (!visited.enter(group)) return;  // a guard against a cycle in the data
 
     for (const Node* node : builder.group(group)) {
       if (!nodeShown(*node, context)) continue;
@@ -750,13 +774,10 @@ std::optional<Bounds> treeBounds(const Builder& builder, std::string_view rootGr
   // We walk the same path as buildTree: what has to be counted is exactly what
   // really reaches the screen, otherwise disabled nodes would drag the bounds out.
   std::optional<Bounds> out;
-  std::vector<std::string> visited;
+  VisitedGroups visited;
   const auto walk = [&](auto&& self, std::string_view group, int depth) -> void {
     if (depth > maxDepth) return;
-    for (const std::string& seen : visited) {
-      if (seen == group) return;
-    }
-    visited.emplace_back(group);
+    if (!visited.enter(group)) return;
     for (const Node* node : builder.group(group)) {
       if (!nodeVisible(*node, context)) continue;
       if (node->type == NodeType::Split) {
@@ -790,13 +811,10 @@ std::optional<std::size_t> spawnMarkerAt(const Builder& builder, std::string_vie
   const float size = context.spawnMarkerSize * scaleY;
 
   std::optional<std::size_t> found;
-  std::vector<std::string> visited;
+  VisitedGroups visited;
   const auto walk = [&](auto&& self, std::string_view group, int depth) -> void {
     if (depth > maxDepth) return;
-    for (const std::string& seen : visited) {
-      if (seen == group) return;
-    }
-    visited.emplace_back(group);
+    if (!visited.enter(group)) return;
     for (const Node* node : builder.group(group)) {
       if (!nodeShown(*node, context)) continue;
       if (node->type == NodeType::Map || node->type == NodeType::MiniMap) {
@@ -822,7 +840,7 @@ std::optional<std::size_t> spawnMarkerAt(const Builder& builder, std::string_vie
 
 void updateAnimator(const Builder& builder, std::string_view rootGroup, Animator& animator,
                     const Context& context, int maxDepth) {
-  std::vector<std::string> visited;
+  VisitedGroups visited;
   // Down the tree the ancestors' effects are carried along: a group's fade and a
   // group's travel belong to everything under it (see `Animator::compose`). The
   // root starts from nothing — `known` false, so the first real node keeps its
@@ -830,10 +848,7 @@ void updateAnimator(const Builder& builder, std::string_view rootGroup, Animator
   const auto walk = [&](auto&& self, std::string_view group, const ShowState& from,
                         int depth) -> void {
     if (depth > maxDepth) return;
-    for (const std::string& seen : visited) {
-      if (seen == group) return;
-    }
-    visited.emplace_back(group);
+    if (!visited.enter(group)) return;
     for (const Node* node : builder.group(group)) {
       animator.setVisible(*node, nodeVisible(*node, context) && !hiddenByAlpha(*node, context));
       const ShowState combined = Animator::compose(from, animator.ownState(*node));
@@ -850,13 +865,10 @@ const Node* buttonAt(const Builder& builder, std::string_view group, const Scree
   // Kit0NotSelected), so we walk it the same way as when drawing, and with the
   // same show conditions: an invisible button catches no mouse.
   const Node* found = nullptr;
-  std::vector<std::string> visited;
+  VisitedGroups visited;
   const auto walk = [&](auto&& self, std::string_view where, int depth) -> void {
     if (depth > 24) return;
-    for (const std::string& seen : visited) {
-      if (seen == where) return;
-    }
-    visited.emplace_back(where);
+    if (!visited.enter(where)) return;
     for (const Node* node : builder.group(where)) {
       if (context != nullptr && !nodeVisible(*node, *context)) continue;
       if (node->type == NodeType::Button && !node->command.empty()) {

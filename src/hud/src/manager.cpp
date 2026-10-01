@@ -513,6 +513,49 @@ void Manager::scoreboardKey(bool down) {
   afterTransition(before, changed);
 }
 
+void Manager::serverSpawnGroups(std::vector<ServerSpawnGroup> groups) {
+  const auto same = [](const ServerSpawnGroup& a, const ServerSpawnGroup& b) {
+    return a.id == b.id && a.team == b.team && a.aiOnly == b.aiOnly &&
+           a.selectable == b.selectable && a.squad == b.squad && a.worldX == b.worldX &&
+           a.worldZ == b.worldZ;
+  };
+  if (groups.size() == serverGroups_.size() &&
+      std::equal(groups.begin(), groups.end(), serverGroups_.begin(), same)) {
+    return;
+  }
+  serverGroups_ = std::move(groups);
+  spawnDirty_ = true;
+}
+
+void Manager::localSquad(int squad) {
+  if (squad == localSquad_) return;
+  localSquad_ = squad;
+  spawnDirty_ = true;
+}
+
+void Manager::deadSpawnInfo(int serverGroup, float timeToSpawn) {
+  // 0x4668d0: the screen counts as up in HUD states 1, 0xd, 0x11 and 0x12.
+  const int state = states_.current();
+  SpawnInfo info;
+  info.serverGroup = serverGroup;
+  info.chosenGroup = spawnScreen_.chosenPoint();
+  info.screenUp = state == 1 || state == 0xd || state == 0x11 || state == 0x12;
+  info.timeToSpawn = timeToSpawn;
+  const SpawnInfoText made = spawnInfoText(info);
+  std::string text(engine_->lexicon().text(made.key));
+  if (made.time >= 0) {
+    // `#TIME#` replaced by the number (0x467460).
+    const std::string marker = "#TIME#";
+    if (const std::size_t at = text.find(marker); at != std::string::npos) {
+      text.replace(at, marker.size(), std::to_string(made.time));
+    }
+  }
+  std::string& slot = strings_["SpawnInfoString"];
+  if (slot == text) return;
+  slot = std::move(text);
+  spawnDirty_ = true;
+}
+
 void Manager::scoreboardPlayers(const std::vector<ScoreboardPlayer>& players, int localIndex) {
   // `Scoreboard::update(visible)` (0x7a4c80) does its work only while visible.
   const auto shown = variables_.find("ScoreboardShow");
@@ -566,6 +609,12 @@ void Manager::applySpawnState() {
   spawnContext_.mapMarkers.clear();
   spawnContext_.spawnMarkers.clear();
   std::vector<int> markerPoints;
+  const auto addCircle = [&](float x, float z, int id) {
+    const bool chosen =
+        static_cast<int>(spawnContext_.spawnMarkers.size()) == spawnScreen_.choice().marker;
+    spawnContext_.spawnMarkers.push_back(Context::SpawnMarker{x, z, chosen});
+    markerPoints.push_back(id);
+  };
   for (const auto& point : controlPoints_) {
     Context::MapMarker marker;
     marker.worldX = point.position.x;
@@ -574,13 +623,19 @@ void Manager::applySpawnState() {
     marker.texture = controlPointIcon(point.team == 0 ? "" : teamName(point.team),
                                       point.unableToChangeTeam);
     spawnContext_.mapMarkers.push_back(std::move(marker));
-    if (point.team == selectedTeam) {
-      const bool chosen = static_cast<int>(spawnContext_.spawnMarkers.size()) ==
-                          spawnScreen_.choice().marker;
-      spawnContext_.spawnMarkers.push_back(
-          Context::SpawnMarker{point.position.x, point.position.z, chosen});
-      markerPoints.push_back(point.id);
+    // Without a server's groups (our own game, or none yet): the level's points.
+    if (serverGroups_.empty() && point.team == selectedTeam) {
+      addCircle(point.position.x, point.position.z, point.id);
     }
+  }
+  // With them: `SpawnManager::getGroupsForPlayer` (Linux 0x4b8790), the list the
+  // map's circles come from (0x77f6e0) — the player's team, not bots-only (we are
+  // not a bot), selectable, and a squad's group (`getSquad` != -1, from the
+  // group's ghost) only for that squad's members who do not lead it.
+  for (const ServerSpawnGroup& group : serverGroups_) {
+    if (group.team != selectedTeam || group.aiOnly || !group.selectable) continue;
+    if (group.squad != -1 && group.squad != localSquad_) continue;
+    addCircle(group.worldX, group.worldZ, group.id);
   }
   spawnScreen_.setMarkerPoints(std::move(markerPoints));
   // The vehicles and the strategic objects come after the flags, the way the

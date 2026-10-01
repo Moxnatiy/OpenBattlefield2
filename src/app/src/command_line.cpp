@@ -57,6 +57,18 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--own-box") args.showOwnBox = true;
     else if (flag == "--draw-predicted") args.drawPredicted = true;
     else if (flag == "--watch-soldier") args.watchSoldier = true;
+    else if (flag == "--watch-pose" && i + 1 < argc) {
+      args.watchSoldier = true;
+      args.watchPose = std::atoi(argv[++i]);
+    }
+    else if (flag == "--watch-ragdoll") {
+      args.watchSoldier = true;
+      args.watchRagdoll = true;
+    }
+    else if (flag == "--watch-weapon" && i + 1 < argc) {
+      args.watchSoldier = true;
+      args.watchWeapon = std::atoi(argv[++i]);
+    }
     else if (flag == "--trace-own-state") args.traceOwnState = true;
     else if (flag == "--jump-at" && i + 1 < argc) args.jumps.push_back(std::atoi(argv[++i]));
     else if (flag == "--flash" && i + 1 < argc) args.flashSwf = argv[++i];

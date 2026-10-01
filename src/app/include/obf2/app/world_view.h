@@ -45,6 +45,15 @@ class WorldView {
     // `--trace-frames <frame>:<frames>`: per frame, every soldier drawn.
     int traceFrom = -1;
     int traceFrames = 0;
+    // `--watch-pose <n>`: `--watch-soldier` moves to the nearest soldier whose
+    // ghost carries this pose (0x20: 1 crouch, 2 prone, 3 swim) whenever the one it
+    // watches is not in it. A measuring switch: bots pick their poses themselves.
+    int watchPose = -1;
+    // `--watch-weapon <item>`: the same, for a soldier with this `itemIndex` out
+    // (0x1000). Both together ask for both.
+    int watchWeapon = -1;
+    // `--watch-ragdoll`: the same, for a dead soldier whose ragdoll the server sends.
+    bool watchRagdoll = false;
   };
 
   // The placeholders and the level's gameplay placement. False when the boxes did
@@ -119,7 +128,12 @@ class WorldView {
   };
 
   const mesh::BoneAnimation* clipAt(const std::string& path);
-  Look* lookFor(const std::string& soldierName, const std::string& kitName);
+  // A soldier, his kit and the `itemIndex` of the weapon he has out make one look.
+  Look* lookFor(const std::string& soldierName, const std::string& kitName, int weaponItem);
+  static std::string lookKey(const std::string& soldierName, const std::string& kitName,
+                             int weaponItem) {
+    return soldierName + "|" + kitName + "|" + std::to_string(weaponItem);
+  }
   // Carries one soldier to the current tick and gives the point to draw him at.
   Vec3f carry(std::uint16_t id, const net::bf2::RemoteObject& object,
               const net::bf2::GhostPose& pose);

@@ -67,13 +67,14 @@ const mesh::BoneAnimation* WorldView::clipAt(const std::string& path) {
   return found->second ? &*found->second : nullptr;
 }
 
-WorldView::Look* WorldView::lookFor(const std::string& soldierName, const std::string& kitName) {
-  const std::string key = soldierName + "|" + kitName;
+WorldView::Look* WorldView::lookFor(const std::string& soldierName, const std::string& kitName,
+                                    int weaponItem) {
+  const std::string key = lookKey(soldierName, kitName, weaponItem);
   if (const auto found = looks_.find(key); found != looks_.end()) {
     return found->second.ready ? &found->second : nullptr;
   }
   Look look;
-  const auto model = game::soldierModel(*registry_, soldierName, kitName);
+  const auto model = game::soldierModel(*registry_, soldierName, kitName, weaponItem);
   const auto loadPart = [&](const game::SoldierPart& part) {
     const std::string path = game::resolveGeometryPath(*files_, part.templateFile, part.geometryName);
     return path.empty() ? std::nullopt
@@ -293,11 +294,14 @@ void WorldView::collect(std::vector<gfx::MeshRenderer::DrawItem>& out, int frame
       const std::string* soldierName = remote_->templateNumbers.nameOf(object.templateId);
       const std::uint32_t kit = remote_->world.kitTemplateOf(id);
       const std::string* kitName = kit != 0 ? remote_->templateNumbers.nameOf(kit) : nullptr;
-      Look* look = soldierName != nullptr
-                       ? lookFor(*soldierName, kitName != nullptr ? *kitName : std::string())
-                       : nullptr;
+      // The weapon he has out is his state's 0x1000, the item's `itemIndex`
+      // (soldier_state.h). Until a record carrying it is read — or when it says
+      // nothing is out — the kit's main weapon, slot 3, stands in.
+      const int weaponItem = object.lastWeaponIndex >= 0 ? object.lastWeaponIndex : 3;
+      const std::string kitText = kitName != nullptr ? *kitName : std::string();
+      Look* look = soldierName != nullptr ? lookFor(*soldierName, kitText, weaponItem) : nullptr;
       if (look != nullptr) {
-        const std::string key = *soldierName + "|" + (kitName != nullptr ? *kitName : "");
+        const std::string key = lookKey(*soldierName, kitText, weaponItem);
         DrawnSoldier& drawn = drawn_[id];
         // A soldier who respawned with another kit is another look, so his mesh is
         // built again.
@@ -318,6 +322,10 @@ void WorldView::collect(std::vector<gfx::MeshRenderer::DrawItem>& out, int frame
         // ghost carries is the body's plus the aim's, which is the matrix the
         // movement is built from (docs/functions/soldier-physics.md).
         anim::State animState;
+        // The pose the `PoseTrigger` picks its branch by is the soldier's own
+        // (`setTriggerPose(+0x3c8)`, Linux 0x55490f), which his ghost carries in
+        // bit 0x20. The trigger clamps an index past its last child itself.
+        animState.pose = static_cast<anim::Pose>(std::min<std::uint32_t>(object.lastPose, 3));
         const auto* newest = object.track.newest();
         const Vec3f velocity = newest != nullptr && newest->velocity ? *newest->velocity : Vec3f{};
         const float planar = std::sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
@@ -414,6 +422,35 @@ std::uint16_t WorldView::watchSoldier(const Vec3f& from) {
            id != remote_->ourSoldier;
   };
   if (watched_ != 0 && !stillThere(watched_)) watched_ = 0;
+  if (options_.watchPose >= 0 || options_.watchWeapon >= 0 || options_.watchRagdoll) {
+    // `--watch-pose`, `--watch-weapon`, `--watch-ragdoll`: keep to a soldier in
+    // that pose, with that item out, or lying as a ragdoll — the nearest there is.
+    const auto inPose = [&](std::uint16_t id) {
+      const net::bf2::RemoteObject& object = objects.at(id);
+      return (options_.watchPose < 0 || static_cast<int>(object.lastPose) == options_.watchPose) &&
+             (options_.watchWeapon < 0 || object.lastWeaponIndex == options_.watchWeapon) &&
+             (!options_.watchRagdoll || !object.ragdollParticles.empty());
+    };
+    if (watched_ != 0 && inPose(watched_)) return watched_;
+    float nearestInPose = 1e9f;
+    std::uint16_t chosen = 0;
+    for (const auto& [id, object] : objects) {
+      if (!stillThere(id) || !inPose(id)) continue;
+      const float away = length(object.position - from);
+      if (away < nearestInPose) {
+        nearestInPose = away;
+        chosen = id;
+      }
+    }
+    if (chosen != 0) {
+      if (chosen != watched_) {
+        std::printf("  watching soldier %u (pose %d, weapon %d)\n", chosen, options_.watchPose,
+                    options_.watchWeapon);
+      }
+      watched_ = chosen;
+      return watched_;
+    }
+  }
   if (watched_ != 0) return watched_;
   float nearest = 1e9f;
   for (const auto& [id, object] : objects) {

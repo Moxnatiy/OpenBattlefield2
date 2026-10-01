@@ -242,7 +242,41 @@ static void testDecodeRgba8() {
   CHECK(decodeRgba8(*texture, 5).empty());
 }
 
+// `DDPF_PALETTEINDEXED8` (0x20): the palette follows the header, then one index
+// per pixel — `icon_Faded.dds`'s shape. Read as plain 8-bit it came out as the
+// palette's own bytes.
+static void testPaletted() {
+  DdsBuilder builder;
+  builder.size(2, 1);
+  std::vector<std::byte> bytes = builder.build();
+  const std::uint32_t flags = 0x20, bits = 8;
+  std::memcpy(bytes.data() + 80, &flags, 4);
+  std::memcpy(bytes.data() + 88, &bits, 4);
+  std::vector<std::byte> palette(1024, std::byte{0});
+  // Entry 3: red 10, green 20, blue 30, alpha 110; entry 7: white, alpha 255.
+  palette[12] = std::byte{10}; palette[13] = std::byte{20}; palette[14] = std::byte{30};
+  palette[15] = std::byte{110};
+  for (int i = 28; i < 32; ++i) palette[static_cast<std::size_t>(i)] = std::byte{255};
+  bytes.insert(bytes.end(), palette.begin(), palette.end());
+  bytes.push_back(std::byte{3});
+  bytes.push_back(std::byte{7});
+
+  const auto texture = loadDds(bytes);
+  CHECK(texture.has_value());
+  if (!texture) return;
+  CHECK(texture->format == Format::Bgra8);
+  const auto rgba = decodeRgba8(*texture, 0);
+  CHECK_EQ(rgba.size(), std::size_t(8));
+  if (rgba.size() != 8) return;
+  CHECK_EQ(static_cast<int>(rgba[0]), 10);
+  CHECK_EQ(static_cast<int>(rgba[1]), 20);
+  CHECK_EQ(static_cast<int>(rgba[2]), 30);
+  CHECK_EQ(static_cast<int>(rgba[3]), 110);
+  CHECK_EQ(static_cast<int>(rgba[7]), 255);
+}
+
 TEST_MAIN({
+  testPaletted();
   testLevelSize();
   testDecodeRgba8();
   testDxt5WithMips();

@@ -73,6 +73,7 @@ add_subdirectory(tools/anim_info)
   add_subdirectory(tools/template_numbers)
   add_subdirectory(tools/hud_dump)
   add_subdirectory(tools/command_audit)
+  add_subdirectory(tools/capture_scan)
 endif()
 
 if(OBF2_BUILD_TESTS)

@@ -62,6 +62,9 @@ struct Args {
   // --watch-soldier: the camera looks at the nearest other soldier (ours, for
   // screenshots of how other players are drawn).
   bool watchSoldier = false;
+  int watchPose = -1;  // --watch-pose <n>: watch a soldier in this pose (world_view.h)
+  int watchWeapon = -1;  // --watch-weapon <item>: ... with this `itemIndex` out (0x1000)
+  bool watchRagdoll = false;  // --watch-ragdoll: ... lying dead as a ragdoll (0x8000)
   // --mouse-scale: how many axis units one mouse pixel gives. The link
   // "pixels -> axis" lives in the client's `ControlMap` and is **not reversed
   // yet**, so this number is NOT measured — it plays the role of sensitivity and

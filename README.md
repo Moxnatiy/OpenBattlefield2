@@ -98,8 +98,9 @@ ctest --test-dir build/macos-arm64-debug --output-on-failure
 ./build/macos-arm64-debug/src/app/openbf2 --level Dalian_plant \
     --width 800 --height 600 --frames 4 --screenshot out.png
 
-# Join an original dedicated server
-./build/macos-arm64-debug/src/app/openbf2 --connect <host> --level dalian_plant
+# Join an original dedicated server. No `--level`: the server names the level
+# it runs, and the client mounts that one (docs/research/09-network-protocol.md)
+./build/macos-arm64-debug/src/app/openbf2 --connect <host>
 
 # Stand somewhere exactly, look somewhere exactly, and take the interface off.
 # For comparing a frame against the original's: `tools/bf2_run.sh` puts the

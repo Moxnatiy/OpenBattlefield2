@@ -178,7 +178,9 @@ struct RemoteWorld {
   // with (ghost_track.h).
   std::uint32_t previousPacketTick = 0;
   int packetGapSum = 0, packetGaps = 0, packetGapMax = 0;
-  std::vector<obf2::net::bf2::CreateSpawnGroup> spawnGroups;
+  // The level's GLSWorldSizeX, which the server packs group positions with; set
+  // once the level is known (2048 is the engine's default).
+  float spawnWorldSize = 2048.0f;
   std::uint8_t lastServerSequence = 0;
   int ghostPackets = 0, ghostRecords = 0;
   int ghostFlagSet = 0, ghostFlagClear = 0, ghostUnparsed = 0;
@@ -217,7 +219,7 @@ struct RemoteWorld {
   std::uint16_t chosenGroupId(float* away = nullptr) const {
     if (!havePoint) return static_cast<std::uint16_t>(directGroup);
     // Our own groups only: another team's the server simply ignores, and the player does not spawn.
-    return obf2::net::bf2::nearestSpawnGroup(spawnGroups, chosenX, chosenZ, chosenWorld,
+    return obf2::net::bf2::nearestSpawnGroup(world.spawnGroups(), chosenX, chosenZ, chosenWorld,
                                              away, world.ownTeam());
   }
 
@@ -1041,7 +1043,7 @@ struct RemoteWorld {
             const std::uint16_t wire = chosenGroupId(&away);
             eventWith(obf2::net::bf2::kNetSelectSpawnGroup, wire);
             std::printf("  step: spawn point %u (at %.0f m, groups in the list %zu, our team %d)\n",
-                        wire, away, spawnGroups.size(), world.ownTeam());
+                        wire, away, world.spawnGroups().size(), world.ownTeam());
             break;
           }
           case obf2::net::bf2::JoinStep::Ready:
@@ -1323,6 +1325,16 @@ struct RemoteWorld {
                       const auto lav = templateNumbers.numberOf("USAPC_LAV25");
                       std::printf("  template numbers: %zu, USAPC_LAV25 is %d\n",
                                   templateNumbers.size(), lav ? static_cast<int>(*lav) : -1);
+                      // The width of a soldier's weapon index (0x1000): his
+                      // template's `inventorySize` (soldier_state.h).
+                      world.setInventorySize([this](std::uint32_t templateId) {
+                        const std::string* name = templateNumbers.nameOf(templateId);
+                        const obf2::game::ObjectTemplate* soldier =
+                            name != nullptr ? registry.find(*name) : nullptr;
+                        const auto size =
+                            soldier != nullptr ? soldier->number("inventorysize") : std::nullopt;
+                        return size ? static_cast<int>(*size) : -1;
+                      });
                     }
                   }
                   levelReady = true;
@@ -1367,17 +1379,21 @@ struct RemoteWorld {
               }
               continue;
             }
+            if (event.removeSpawnGroup) {
+              std::printf("  spawn group %u removed\n", *event.removeSpawnGroup);
+              continue;
+            }
             if (event.spawnGroup) {
+              // The list itself is the world's (`WorldView::spawnGroups`); here it is
+              // only reported. The position as the server packed it, with the level's world size
+              // (GLSWorldSizeX) once the level is known.
               const auto& group = *event.spawnGroup;
-              spawnGroups.push_back(group);
-              // The world's size comes from the level, because that is what the server
-              // packs the position with (GLSWorldSizeX/Z).
-              const float worldSize = 2048.0f;
+              const float worldSize = spawnWorldSize;
               std::printf(
-                  "  spawn group: number %u, team %u, network %u, flags %d%d%d, "
-                  "position %.0f %.0f\n",
-                  group.id, group.team, group.networkId, group.flag1 ? 1 : 0, group.flag2 ? 1 : 0,
-                  group.flag3 ? 1 : 0,
+                  "  spawn group: number %u, team %u, network %u, active %d, bots only %d, "
+                  "selectable %d, position %.0f %.0f\n",
+                  group.id, group.team, group.networkId, group.active ? 1 : 0, group.aiOnly ? 1 : 0,
+                  group.selectable ? 1 : 0,
                   obf2::net::bf2::spawnGroupWorldPos(group.worldX, worldSize),
                   obf2::net::bf2::spawnGroupWorldPos(group.worldZ, worldSize));
               continue;
@@ -1583,6 +1599,53 @@ struct RemoteWorld {
                 world.objects().size(), positionUpdates);
     if (world.rejected() > 0) {
       std::printf("  positions rejected as unreadable: %d\n", world.rejected());
+    }
+    // player_state.h: a record the layout reads right ends exactly at its length.
+    std::printf("  player records: %d, read to exactly their length %d\n", world.playerRecords(),
+                world.playerRecordsExact());
+    std::printf("  spawn group records: %d, read to exactly their length %d\n",
+                world.spawnGroupRecords(), world.spawnGroupRecordsExact());
+    for (const auto& group : world.spawnGroups()) {
+      if (!group.selectable) continue;
+      std::printf("  spawn group %u at the end: team %u, squad %d, active %d, bots only %d\n",
+                  group.id, group.team, group.squad, group.active ? 1 : 0, group.aiOnly ? 1 : 0);
+    }
+    for (const auto& [id, player] : world.players()) {
+      if (player.stateRecords == 0) continue;
+      std::printf("  player %u %s: records %d, alive %d, score %d, kills %d, deaths %d, "
+                  "teamwork %d, ping %d, squad %d, rank %d\n",
+                  id, player.name.c_str(), player.stateRecords, player.alive.value_or(false) ? 1 : 0,
+                  player.score ? player.score->score : -1, player.score ? player.score->kills : -1,
+                  player.score ? player.score->deaths : -1,
+                  player.score ? player.score->teamwork : -1,
+                  player.ping ? static_cast<int>(*player.ping) : -1,
+                  player.squad ? static_cast<int>(*player.squad) : -1, player.rank.value_or(-1));
+    }
+    for (const auto& [id, object] : world.objects()) {
+      if (object.soldierRecords == 0) continue;
+      std::printf("  soldier %u's poses (records): stand %d, crouch %d, prone %d, swim %d, 4: %d\n",
+                  id, object.poseRecords[0], object.poseRecords[1], object.poseRecords[2],
+                  object.poseRecords[3], object.poseRecords[4]);
+      std::string weapons;
+      for (int item = 0; item < 12; ++item) {
+        if (object.weaponRecords[item] == 0) continue;
+        weapons += " " + std::to_string(item) + ":" + std::to_string(object.weaponRecords[item]);
+      }
+      std::printf("  soldier %u's weapon out (item index: records):%s; read to the end %d of %d, "
+                  "stopped for want of his inventory size %d, ragdoll %d (exact %d, particles "
+                  "%zu) (template %u)\n",
+                  id, weapons.empty() ? " none read" : weapons.c_str(), object.complete,
+                  object.soldierRecords, object.withoutInventory, object.ragdollRecords,
+                  object.ragdollExact, object.ragdollParticles.size(), object.templateId);
+      // Where his body lies: each particle, its distance from the first, and its
+      // height over his last position, for a check that it is a body at all.
+      for (const Vec3f& particle : object.ragdollParticles) {
+        const Vec3f& first = object.ragdollParticles.front();
+        std::printf("    ragdoll particle at %.2f %.2f %.2f: %.2f m from the first, %.2f above his "
+                    "last position\n",
+                    particle.x, particle.y, particle.z, obf2::length(particle - first),
+                    particle.y - object.position.y);
+      }
     }
     for (const auto& [id, object] : world.objects()) {
       if (object.team == 0 || object.updates == 0) continue;

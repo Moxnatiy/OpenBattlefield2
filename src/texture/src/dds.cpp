@@ -12,6 +12,7 @@ constexpr std::uint32_t kHeaderSize = 124;
 // DDS_PIXELFORMAT.dwFlags
 constexpr std::uint32_t kPfAlphaPixels = 0x1;
 constexpr std::uint32_t kPfFourCC = 0x4;
+constexpr std::uint32_t kPfPaletteIndexed8 = 0x20;
 constexpr std::uint32_t kPfRgb = 0x40;
 
 // DDSCAPS2
@@ -169,8 +170,34 @@ std::optional<Texture> loadDds(std::span<const std::byte> bytes, std::string* er
     else if (bitCount == 16 && (pfFlags & kPfAlphaPixels) != 0 && maskA == 0xF000) format = Format::Bgra4;
     else if (bitCount == 16 && maskR == 0xF800) format = Format::Bgr565;
     else return fail("unsupported uncompressed layout, " + std::to_string(bitCount) + " bits");
+  } else if ((pfFlags & kPfPaletteIndexed8) != 0 && bitCount == 8) {
+    // `DDPF_PALETTEINDEXED8`: 256 palette entries of four bytes — red, green,
+    // blue, and the alpha in the fourth — follow the header, then one index per
+    // pixel. The game has one such file, the scoreboard's
+    // `Ingame/Scoreboard/Icons/icon_Faded.dds` (1408 bytes = 128 + 1024 + 16×16):
+    // a white frame and question mark at alphas 255 and 110. Read as plain 8-bit
+    // it came out as the palette's bytes, red stripes. Expanded to B8G8R8A8 here,
+    // top level only.
+    constexpr std::size_t kPaletteBytes = 256 * 4;
+    const std::size_t pixels = static_cast<std::size_t>(width) * height;
+    if (bytes.size() < 128 + kPaletteBytes + pixels) return fail("paletted texture is truncated");
+    Texture texture;
+    texture.format = Format::Bgra8;
+    texture.width = width;
+    texture.height = height;
+    texture.data.resize(pixels * 4);
+    for (std::size_t i = 0; i < pixels; ++i) {
+      const auto index = static_cast<std::size_t>(bytes[128 + kPaletteBytes + i]);
+      const std::byte* entry = bytes.data() + 128 + index * 4;
+      texture.data[i * 4 + 0] = entry[2];  // blue
+      texture.data[i * 4 + 1] = entry[1];  // green
+      texture.data[i * 4 + 2] = entry[0];  // red
+      texture.data[i * 4 + 3] = entry[3];  // alpha
+    }
+    texture.mips.push_back(MipLevel{width, height, 0, pixels * 4});
+    return texture;
   } else if (bitCount == 8) {
-    format = Format::R8;  // the only such file in the game is an interface icon
+    format = Format::R8;  // an 8-bit layout without a palette: taken as grey
   } else {
     return fail("unsupported pixel format");
   }

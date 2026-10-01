@@ -32,9 +32,8 @@ struct SoldierModel {
   std::string animationSystem3p;  // `ObjectTemplate.animationSystem3P`, the legs
   SoldierPart body;
   std::optional<SoldierPart> kit;
-  // The kit's weapon in `itemIndex` slot 3, and its animation system for the
-  // upper body. Which weapon is out is in the soldier state's 0x1000; until that is
-  // read for other players, slot 3 stands in.
+  // The kit's weapon in the asked `itemIndex` slot, and its animation system for
+  // the upper body. Which one is out is the soldier state's 0x1000.
   std::optional<SoldierPart> weapon;
   std::string weaponAnimationSystem3p;
 };
@@ -53,7 +52,10 @@ struct SoldierModel {
 // where 0 carries the scope blur — `mesh_info`.
 inline constexpr int kSoldierThirdPersonGeometry = 1;
 
+// `weaponItem` is the `itemIndex` of the weapon he has out — the soldier state's
+// 0x1000 (soldier_state.h). Slot 3, the kit's main weapon, stands in where that is
+// not known yet: a soldier whose full record has not been read.
 std::optional<SoldierModel> soldierModel(const Registry& registry, std::string_view soldier,
-                                         std::string_view kit);
+                                         std::string_view kit, int weaponItem = 3);
 
 }  // namespace obf2::game

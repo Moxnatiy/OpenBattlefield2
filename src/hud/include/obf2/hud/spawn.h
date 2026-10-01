@@ -39,5 +39,31 @@ std::string teamFlagIcon(std::string_view teamName);
 // level it picks out the one point the dump shows a base icon for.
 std::string controlPointIcon(std::string_view teamName, bool isBase = false);
 
+// The bar across the top of the spawn screen (`SpawnInfoString`, the layer's
+// +0x510) while the player is dead — `HudInformationLayer`'s per-frame update,
+// BF2.exe 0x4668d0, from 0x4672b0:
+//
+//   no group chosen on the server (`getSpawnGroup` < 1):
+//     the spawn screen is up (states 1, 0xd, 0x11, 0x12) and a circle is chosen
+//                                         -> HUD_CENTERINFOBOX_presstospawn
+//     otherwise                           -> HUD_CENTERINFOBOX_selectspawnpoint
+//   a group chosen, and it is the circle's:
+//     `getTimeToSpawn` > 0                -> HUD_CENTERINFOBOX_timetospawn, #TIME#
+//                                            the time rounded up (0x463930)
+//     otherwise                           -> HUD_CENTERINFOBOX_instantspawn
+//   a group chosen that is not the circle's -> HUD_CENTERINFOBOX_invalidspawnpoint
+struct SpawnInfo {
+  int serverGroup = 0;      // `player->getSpawnGroup()`, from his state (0x2)
+  int chosenGroup = 0;      // the circle chosen on the screen; 0 for none
+  bool screenUp = false;    // the HUD state is 1, 0xd, 0x11 or 0x12
+  float timeToSpawn = 0.0f; // seconds, `getTimeToSpawn`
+};
+// The key, and for `timetospawn` the number to put for #TIME#.
+struct SpawnInfoText {
+  std::string key;
+  int time = -1;
+};
+SpawnInfoText spawnInfoText(const SpawnInfo& info);
+
 
 }  // namespace obf2::hud

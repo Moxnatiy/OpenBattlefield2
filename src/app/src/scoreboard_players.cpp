@@ -10,7 +10,25 @@ std::vector<hud::ScoreboardPlayer> scoreboardPlayers(
     player.index = static_cast<int>(id);
     player.name = remote.name;
     player.team = remote.team;
-    player.alive = static_cast<int>(id) == ownPlayer ? ownAlive : remote.object != 0;
+    // The player's own state (player_state.h) when it has come; until then the
+    // stand-ins below.
+    if (remote.alive) {
+      player.alive = *remote.alive;
+    } else {
+      player.alive = static_cast<int>(id) == ownPlayer ? ownAlive : remote.object != 0;
+    }
+    if (remote.score) {
+      hud::PlayerScore score;
+      score.score = remote.score->score;
+      score.teamwork = remote.score->teamwork;
+      score.kills = remote.score->kills;
+      score.deaths = remote.score->deaths;
+      score.rank = remote.rank.value_or(0);
+      player.score = score;
+    }
+    player.ping = static_cast<int>(remote.ping.value_or(0));
+    player.squad = static_cast<int>(remote.squad.value_or(0));
+    player.commander = remote.commander.value_or(false);
     out.push_back(std::move(player));
   }
   return out;

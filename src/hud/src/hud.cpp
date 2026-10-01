@@ -78,12 +78,28 @@ void Builder::finish() {
     nodes_[i].parent =
         (found != byName.end() && found->second != static_cast<int>(i)) ? found->second : -1;
   }
-  // The absolute position is the sum over the ancestors. A step counter saves us
-  // from a cycle: the game's data has none, but a mod may.
+  // The root region a node hangs under. A step counter saves us from a cycle:
+  // the game's data has none, but a mod may.
+  for (std::size_t i = 0; i < nodes_.size(); ++i) {
+    int at = static_cast<int>(i);
+    const std::string* area = &nodes_[i].group;
+    for (int step = 0; at >= 0 && step < 64; ++step) {
+      area = &nodes_[static_cast<std::size_t>(at)].group;
+      at = nodes_[static_cast<std::size_t>(at)].parent;
+    }
+    nodes_[i].area = *area;
+  }
+  resolvePositions();
+}
+
+void Builder::resolvePositions() {
+  // The absolute position is the sum over the ancestors, along the parents
+  // `finish` linked. Kept apart from the linking: the map's rectangle moves every
+  // frame of its animation, and linking the tree by name again each time — every
+  // name lowered and put into a map — was most of what a frame's HUD cost.
   for (std::size_t i = 0; i < nodes_.size(); ++i) {
     float x = 0.0f;
     float y = 0.0f;
-    std::string area = nodes_[i].group;
     int at = static_cast<int>(i);
     for (int step = 0; at >= 0 && step < 64; ++step) {
       const Node& current = nodes_[static_cast<std::size_t>(at)];
@@ -91,12 +107,10 @@ void Builder::finish() {
       // sum alongside x/y.
       x += current.x + current.offsetX;
       y += current.y + current.offsetY;
-      area = current.group;
       at = current.parent;
     }
     nodes_[i].absX = x;
     nodes_[i].absY = y;
-    nodes_[i].area = area;
   }
 }
 
@@ -107,7 +121,7 @@ void Builder::setMapView(MapView view) {
     }
   }
   // The node's rectangle changed — the resolved coordinates have to be recomputed.
-  finish();
+  resolvePositions();
 }
 
 void Builder::setMapRect(float x, float y, float width, float height, MapView shape) {
@@ -119,7 +133,7 @@ void Builder::setMapRect(float x, float y, float width, float height, MapView sh
     node.height = height;
     node.mapView = shape;
   }
-  finish();
+  resolvePositions();
 }
 
 void useMapView(Node& node, MapView view) {
@@ -772,12 +786,16 @@ void Builder::feed(const con::Command& command) {
   ++unknownByName_[std::string(method)];
 }
 
-std::vector<const Node*> Builder::group(std::string_view name) const {
-  std::vector<const Node*> found;
-  for (const Node& node : nodes_) {
-    if (node.group == name) found.push_back(&node);
+const std::vector<const Node*>& Builder::group(std::string_view name) const {
+  if (indexedCount_ != nodes_.size() || indexedData_ != nodes_.data()) {
+    groupIndex_.clear();
+    for (const Node& node : nodes_) groupIndex_[node.group].push_back(&node);
+    indexedCount_ = nodes_.size();
+    indexedData_ = nodes_.data();
   }
-  return found;
+  static const std::vector<const Node*> kNone;
+  const auto found = groupIndex_.find(name);
+  return found == groupIndex_.end() ? kNone : found->second;
 }
 
 std::vector<std::string> Builder::groups() const {

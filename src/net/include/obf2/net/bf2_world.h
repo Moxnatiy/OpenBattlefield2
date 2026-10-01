@@ -66,6 +66,20 @@ struct RemoteObject {
   // The last value of each angle the soldier's records carried (soldier_state.h),
   // kept whether or not the newest record had it: 0x2, 0x4, 0x8, 0x10.
   float lastBodyYaw = 0.0f, lastAimYaw = 0.0f, lastAngle8 = 0.0f, lastPitch = 0.0f;
+  // The last pose the records carried (0x20, `Soldier::getPose`): 0 stand,
+  // 1 crouch, 2 prone, 3 swim. A full record always has it.
+  std::uint32_t lastPose = 0;
+  int poseRecords[5] = {0, 0, 0, 0, 0};  // records seen per pose, for the report
+  // The weapon he has out (0x1000): the `itemIndex` of the kit's child, -1 until
+  // a record carrying it is read. Only read when his inventory size is known.
+  int lastWeaponIndex = -1;
+  int weaponRecords[12] = {};  // records seen per item index 0..11, for the report
+  int withoutInventory = 0;    // records not read to the end while his size was unknown
+  int ragdollRecords = 0;      // records with the ragdoll branch (0x8000)
+  int ragdollExact = 0;        // of them, read whole and ending exactly at their length
+  // The ragdoll's particles from the newest record that carried them, in world
+  // space (soldier_state.h); empty while he is alive.
+  std::vector<Vec3f> ragdollParticles;
   Vec3f lastVelocity;
 
   // The last four updates stamped with the server's time, to draw from
@@ -77,6 +91,22 @@ struct RemotePlayer {
   std::string name;
   int team = 0;
   std::uint16_t object = 0;  // the object the player occupied
+  // The player's own networkable (`CreatePlayerEvent`) and what its records
+  // said, merged: a record carries only the fields its mask names, and the
+  // engine applies only those (0x500570, the tail from 0x500f3a).
+  std::uint16_t networkId = 0;
+  int stateRecords = 0;
+  std::optional<bool> alive;
+  std::optional<PlayerState::Score> score;
+  std::optional<std::uint32_t> ping;
+  std::optional<int> rank;
+  std::optional<std::uint32_t> squad;
+  std::optional<int> kit;
+  std::optional<bool> commander;
+  std::optional<bool> sprint;
+  std::optional<std::uint32_t> spawnGroup;   // 0x2, `getSpawnGroup`
+  std::optional<std::uint32_t> spawnAtTick;  // 0x20
+  std::optional<bool> manDown;               // 0x20
 };
 
 class WorldView {
@@ -119,6 +149,27 @@ class WorldView {
 
   // How many positions arrived from the stream and how many we rejected as unreadable.
   int positionUpdates() const { return positionUpdates_; }
+  // The server's spawn groups as the client's spawn manager keeps them: made or
+  // updated by `CreateSpawnGroupEvent` (the same number is the same group,
+  // `getCreateSpawnGroup`), dropped by `RemoveSpawnGroupEvent`, and changed by
+  // the group's own ghost (`SpawnGroupState`: a captured flag's new team, a
+  // squad's group, a moving vehicle's position). `spawnGroupRevision` moves on
+  // every change, for whoever mirrors the list.
+  const std::vector<CreateSpawnGroup>& spawnGroups() const { return spawnGroups_; }
+  int spawnGroupRevision() const { return spawnGroupRevision_; }
+
+  // The measure for player_state.h: how many player records came, and how many
+  // of them the layout read to exactly their length.
+  int playerRecords() const { return playerRecords_; }
+  int spawnGroupRecords() const { return spawnGroupRecords_; }
+  int spawnGroupRecordsExact() const { return spawnGroupRecordsExact_; }
+  int playerRecordsExact() const { return playerRecordsExact_; }
+  // The same for the soldiers' records read to their end (soldier_state.h): how
+  // many were, and how many of them ended exactly at their length — which is what
+  // says the weapon index's width (0x1000) is right, since fields follow it.
+  int soldierRecordsComplete() const { return soldierRecordsComplete_; }
+  int soldierRecordsExact() const { return soldierRecordsExact_; }
+  int soldierRecordsWithWeapon() const { return soldierRecordsWithWeapon_; }  // of the complete
 
   // The game tick other objects are predicted at — the client's own clock:
   //
@@ -149,6 +200,14 @@ class WorldView {
   // growing divergence is a parsing error. Whoever calls knows the terrain.
   void setGroundProbe(std::function<float(const Vec3f&)> probe) { ground_ = std::move(probe); }
 
+  // A soldier template's inventory size (`SoldierTemplate::getInventorySize`,
+  // the template's `inventorySize`) by its template number, or -1 when not known.
+  // It is the width of the weapon index in his state (0x1000, soldier_state.h);
+  // without it a soldier's record is read only up to that field.
+  void setInventorySize(std::function<int(std::uint32_t templateId)> size) {
+    inventorySize_ = std::move(size);
+  }
+
  private:
   GhostClass classOf(std::uint16_t id) const;
   bool looksSane(const Vec3f& at, bool soldier) const;
@@ -168,8 +227,19 @@ class WorldView {
   Vec3f compressionReference_;
   std::uint16_t traceObject_ = 0;
   std::function<float(const Vec3f&)> ground_;
+  std::function<int(std::uint32_t)> inventorySize_;
   int positionUpdates_ = 0;
   int rejected_ = 0;
+  std::map<std::uint16_t, std::uint32_t> playerOf_;  // a player's network id -> his index
+  std::vector<CreateSpawnGroup> spawnGroups_;
+  int spawnGroupRevision_ = 0;
+  int spawnGroupRecords_ = 0;
+  int spawnGroupRecordsExact_ = 0;
+  int soldierRecordsComplete_ = 0;
+  int soldierRecordsExact_ = 0;
+  int soldierRecordsWithWeapon_ = 0;
+  int playerRecords_ = 0;       // player records seen
+  int playerRecordsExact_ = 0;  // of them, read to exactly their length
   std::uint32_t gameTick_ = 0;
   std::uint32_t newestPacketTick_ = 0;
   bool tickSet_ = false;

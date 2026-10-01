@@ -52,7 +52,26 @@ static void testDalianOrder() {
   CHECK_EQ(hud::armyLabelKey(teamNames[1]), std::string("HUD_TEXT_MENU_SPAWN_ARMY_CHINA"));
 }
 
+// The spawn bar while dead (0x4668d0): every branch, and the countdown rounded up.
+static void testSpawnInfoText() {
+  using hud::SpawnInfo;
+  CHECK_EQ(hud::spawnInfoText(SpawnInfo{0, 0, true, 0.0f}).key,
+           std::string("HUD_CENTERINFOBOX_selectspawnpoint"));
+  CHECK_EQ(hud::spawnInfoText(SpawnInfo{0, 3, true, 0.0f}).key,
+           std::string("HUD_CENTERINFOBOX_presstospawn"));
+  CHECK_EQ(hud::spawnInfoText(SpawnInfo{0, 3, false, 0.0f}).key,
+           std::string("HUD_CENTERINFOBOX_selectspawnpoint"));
+  CHECK_EQ(hud::spawnInfoText(SpawnInfo{3, 4, true, 5.0f}).key,
+           std::string("HUD_CENTERINFOBOX_invalidspawnpoint"));
+  const auto counting = hud::spawnInfoText(SpawnInfo{3, 3, true, 12.2f});
+  CHECK_EQ(counting.key, std::string("HUD_CENTERINFOBOX_timetospawn"));
+  CHECK_EQ(counting.time, 13);
+  CHECK_EQ(hud::spawnInfoText(SpawnInfo{3, 3, true, 0.0f}).key,
+           std::string("HUD_CENTERINFOBOX_instantspawn"));
+}
+
 TEST_MAIN({
+  testSpawnInfoText();
   testArmyLabelKeys();
   testTeamFlagIcon();
   testControlPointIcon();

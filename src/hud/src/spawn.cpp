@@ -1,5 +1,7 @@
 #include "obf2/hud/spawn.h"
 
+#include <cmath>
+
 namespace obf2::hud {
 
 std::string armyLabelKey(std::string_view teamName) {
@@ -21,6 +23,19 @@ std::string controlPointIcon(std::string_view teamName, bool isBase) {
   const std::string faction = teamName.empty() ? "Neutral" : std::string(teamName);
   return "Ingame/Flags/Icons/Minimap/" + faction +
          (isBase ? "/miniMap_CPBase.tga" : "/miniMap_CP.tga");
+}
+
+SpawnInfoText spawnInfoText(const SpawnInfo& info) {
+  // 0x4668d0, the dead player's branch (see spawn.h).
+  if (info.serverGroup < 1) {
+    if (info.screenUp && info.chosenGroup > 0) return {"HUD_CENTERINFOBOX_presstospawn"};
+    return {"HUD_CENTERINFOBOX_selectspawnpoint"};
+  }
+  if (info.chosenGroup != info.serverGroup) return {"HUD_CENTERINFOBOX_invalidspawnpoint"};
+  if (info.timeToSpawn > 0.0f) {
+    return {"HUD_CENTERINFOBOX_timetospawn", static_cast<int>(std::ceil(info.timeToSpawn))};
+  }
+  return {"HUD_CENTERINFOBOX_instantspawn"};
 }
 
 }  // namespace obf2::hud

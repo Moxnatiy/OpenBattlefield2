@@ -42,8 +42,9 @@ other soldier; the screenshot shows a US soldier with helmet, vest and pouches.
 What stands in for now, each one a stage below:
 
 * the pose is standing for everyone — the legs' `stand_rightFootBack` and the
-  weapon's `stand_still` at their first frame, chosen by bundle name;
-* the upper body's weapon is the kit's slot 3, not the one out;
+  weapon's `stand_still` at their first frame, chosen by bundle name (now read,
+  stage 3);
+* the upper body's weapon is the kit's slot 3, not the one out (now read, stage 3);
 * no weapon mesh in the hands;
 * the skinned mesh is lit by the static mesh shader, not `SkinnedMesh.fx`.
 
@@ -156,8 +157,38 @@ and it is then appended to the soldier like the kit and skinned by the same
 shader. Measure: a screenshot from the live server shows a soldier running with
 the rifle in both hands.
 
-What is still a stand-in: the weapon drawn is the kit's `itemIndex` 3, not the one
-he has out. That is the soldier state's 0x1000 and it is still not read.
+### The weapon he has out, and his pose
+
+Both ride his ghost (network-events.md, the soldier state):
+
+* **0x1000** is the `itemIndex` of the item out, −1 for none. Its width is his
+  template's inventory size (`BF2.exe` 0x62dbcc → `SoldierTemplate::
+  getInventorySize`), which the data gives as `ObjectTemplate.inventorySize 10`
+  for every soldier (`objects/soldiers/*/*.tweak`); the server matches it against
+  each item's `getItemIndex` (Linux 0x5dd58c). The session asks the registry for
+  the size by the soldier's template number (`WorldView::setInventorySize`), and
+  the look is keyed by soldier, kit **and** item (`WorldView::lookFor`), so a
+  switch to the pistol is another mesh and another upper-body animation system.
+  Until a record carrying it arrives, or when it says −1, slot 3 stands in.
+* **0x20** is the pose (`Soldier::getPose`, 0x550d30): 0 stand, 1 crouch, 2 prone,
+  3 swim, and it goes to the legs' `PoseTrigger`.
+
+Measured on the live server (Strike at Karkand, 16 bots, 2400 frames): every
+soldier record is either read to its end or stops at the ragdoll branch (0x8000,
+a dead soldier), none for want of the size — e.g. 204 + 38 of 242. Bots were seen
+with items 1, 2, 3, 4, 5 and 6 out. `--watch-weapon 2` holds the camera on a bot
+with his pistol out, and the screenshot shows a crouching MEC support soldier
+aiming it, in the pistol's own clips. The test (`test_bf2_world`,
+`testSoldierWeaponIndexWidth`) checks the width on the kept captures: with
+three bits instead of four, every record carrying the field misses its end.
+
+The ragdoll branch (0x8000) is read now (network-events.md, "The ragdoll
+branch"): a dead soldier's record carries his ragdoll's particles in world space.
+It is **not drawn**: a dead soldier is drawn standing where he died, in his last
+pose, until his object goes. The original lays the body down by the ragdoll —
+`RagDoll::update`, `verlet`, the constraints of `ragDollConstraints.inc`, and
+`applyOnSkeleton` over `ragDoll.toSkeleton` / `lockBone` (`ragDollInit.con`) —
+none of which is reversed. `--watch-ragdoll` holds the camera on such a soldier.
 
 ## Stage 4 — first person
 

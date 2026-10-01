@@ -113,7 +113,105 @@ void testOtherPlayersObjectsFromTheirRecords() {
   CHECK(std::abs(soldier.position.z + 271.28f) < 0.2f);
 }
 
+// A player's own networkable (docs/functions/player-state.md): the records whose
+// network id `CreatePlayerEvent` named are read with `Player::setNetUpdate`'s
+// layout (0x500570), and a layout that is right ends every record exactly at its
+// length. Checked on every capture from the original server we keep.
+void testPlayerRecordsReadToTheirLength() {
+  int total = 0;
+  for (const char* name : {"bf2-spawned.bin", "bf2-karkand-lives.bin", "bf2-karkand-other-player.bin",
+                           "bf2-ghosts.bin"}) {
+    obf2::net::bf2::WorldView world;
+    for (const auto& packet : loadCapture(std::string(OBF2_TEST_DATA) + "/" + name)) {
+      world.feed(packet);
+    }
+    std::printf("  %s: player records %d, exact %d\n", name, world.playerRecords(),
+                world.playerRecordsExact());
+    CHECK_EQ(world.playerRecords(), world.playerRecordsExact());
+    total += world.playerRecords();
+    // The spawn groups' ghosts too (`SpawnGroup::setNetUpdate`, Linux 0x4b9ab0).
+    std::printf("  %s: spawn group records %d, exact %d\n", name, world.spawnGroupRecords(),
+                world.spawnGroupRecordsExact());
+    CHECK_EQ(world.spawnGroupRecords(), world.spawnGroupRecordsExact());
+    // A player whose score came has score = 2 x kills + teamwork, BF2's own
+    // arithmetic — a check on the score block's order that owes nothing to us.
+    for (const auto& [id, player] : world.players()) {
+      if (!player.score) continue;
+      CHECK_EQ(player.score->score, 2 * player.score->kills + player.score->teamwork);
+    }
+  }
+  CHECK(total > 0);
+}
+
+// A soldier's weapon index (0x1000) is as wide as his template's inventory size
+// (soldier_state.h, `BF2.exe` 0x62dbcc), and every soldier of the game has
+// `ObjectTemplate.inventorySize 10` (`objects/soldiers/*/*.tweak`). Fields follow
+// it, so a wrong width shows as records that do not end at their length: given 2
+// (three bits), every one of the 8 records here that carry the field fails. What it cannot
+// tell apart is the sizes that give the same four bits, 6 to 13.
+void testSoldierWeaponIndexWidth() {
+  int complete = 0, withWeapon = 0, weaponRecords = 0;
+  for (const char* name : {"bf2-spawned.bin", "bf2-karkand-lives.bin", "bf2-karkand-other-player.bin",
+                           "bf2-ghosts.bin"}) {
+    obf2::net::bf2::WorldView world;
+    world.setInventorySize([](std::uint32_t) { return 10; });
+    for (const auto& packet : loadCapture(std::string(OBF2_TEST_DATA) + "/" + name)) {
+      world.feed(packet);
+    }
+    std::printf("  %s: soldier records read to the end %d, exact %d, with a weapon %d\n", name,
+                world.soldierRecordsComplete(), world.soldierRecordsExact(),
+                world.soldierRecordsWithWeapon());
+    CHECK_EQ(world.soldierRecordsComplete(), world.soldierRecordsExact());
+    complete += world.soldierRecordsComplete();
+    weaponRecords += world.soldierRecordsWithWeapon();
+    for (const auto& [id, object] : world.objects()) {
+      if (object.lastWeaponIndex < 0) continue;
+      ++withWeapon;
+      // An `itemIndex` a kit carries: 1 to 9 in the game's kits.
+      CHECK(object.lastWeaponIndex >= 1 && object.lastWeaponIndex <= 9);
+    }
+  }
+  std::printf("  soldiers with a weapon read: %d\n", withWeapon);
+  CHECK(complete > 0);
+  CHECK(weaponRecords >= 8);
+  CHECK(withWeapon > 0);
+}
+
+// `tests/data/bf2-ragdoll.bin`: 2400 frames on the live server (Strike at
+// Karkand, bots), three soldiers dying in it. A dead soldier's record is the
+// ragdoll's state and nothing after it (soldier_state.h, 0x62d6da): a 9-bit
+// length, the first particle raw, the rest wide vectors from it. Read right,
+// every one of those records ends exactly at its length, and its particles are a
+// body — close together, which a misread raw float or level would not be.
+void testRagdollRecordsReadWhole() {
+  obf2::net::bf2::WorldView world;
+  world.setInventorySize([](std::uint32_t) { return 10; });
+  for (const auto& packet : loadCapture(std::string(OBF2_TEST_DATA) + "/bf2-ragdoll.bin")) {
+    world.feed(packet);
+  }
+  int ragdolls = 0, exact = 0, bodies = 0;
+  for (const auto& [id, object] : world.objects()) {
+    ragdolls += object.ragdollRecords;
+    exact += object.ragdollExact;
+    if (object.ragdollParticles.empty()) continue;
+    ++bodies;
+    for (const obf2::Vec3f& particle : object.ragdollParticles) {
+      CHECK(obf2::length(particle - object.ragdollParticles.front()) < 1.0f);
+    }
+  }
+  std::printf("  ragdoll records %d, exact %d, bodies lying at the end %d\n", ragdolls, exact,
+              bodies);
+  CHECK(ragdolls > 0);
+  CHECK_EQ(exact, ragdolls);
+  CHECK(bodies > 0);
+  // And with that, every soldier record of the run is read to its end.
+  CHECK_EQ(world.soldierRecordsComplete(), world.soldierRecordsExact());
+}
+
 TEST_MAIN({
+  testRagdollRecordsReadWhole();
+  testSoldierWeaponIndexWidth();
+  testPlayerRecordsReadToTheirLength();
   testWorldViewCollectsPlayersAndObjects();
   testWorldViewTakesCompressionReference();
   testOtherPlayersObjectsFromTheirRecords();

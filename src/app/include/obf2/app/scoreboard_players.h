@@ -16,10 +16,11 @@
 
 namespace obf2::app {
 
-// `--connect`: the players `CreatePlayerEvent` named. Whether one is alive is
-// `Player::getIsAlive` in the engine, which rides the player's own networkable —
-// not read. It stands in as "the server gave him an object" for the others and
-// as `ownAlive` for us.
+// `--connect`: the players `CreatePlayerEvent` named, with what their own
+// networkable said (docs/functions/player-state.md): alive, the score block,
+// ping, squad, rank. A player whose records have not come yet has no score
+// block, and "alive" stands in as "the server gave him an object" (for us,
+// `ownAlive`) until his first record says.
 std::vector<hud::ScoreboardPlayer> scoreboardPlayers(
     const std::map<std::uint32_t, net::bf2::RemotePlayer>& players, int ownPlayer, bool ownAlive);
 

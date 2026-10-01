@@ -17,7 +17,19 @@
 //   mask                                  21 bits
 //   0x40      8 bits, 1 bit               the first is scaled by 1/255 and a maximum (health, by the look of the apply code — not established)
 //   0x20      two values 0..4, 3 bits each
-//   0x8000    another branch altogether (`FUN_007e5440` / `FUN_007ea290`) — the rest of the layout is skipped
+//   0x8000    the ragdoll's state, and **the record ends there** (0x62d6da jumps
+//             to the function's tail, 0x62dce4). `RagDoll::readCurrentState`
+//             (0x7ea290) when the soldier has a ragdoll (+0x254), otherwise
+//             `RagDoll::skipCurrentState` (0x7e5440), which reads the 9-bit
+//             length and skips that many bits. The layout, as the server's
+//             `RagDoll::writeCurrentState` (Linux 0x6bf4c0) writes it:
+//               9 bits     the length in bits of what follows (written last,
+//                          over a reserved slot)
+//               particle 0 three raw 32-bit floats (0x53c0a0)
+//               the others a wide vector (0x6b6f50) from particle 0, 0.01
+//             Only the particles the ragdoll marks (+0x54 of its 0x58-byte
+//             particle) go out; which ones that is is not established, so the
+//             reader takes vectors until the length is used up.
 //   0x1       the position: a compressed vector from the stream's reference, 0.001
 //   Controlled:  0x80 vector 0.001, 0x100 vector 0.0001, 0x200 vector 0.0001, 0x40000 vector 0.001 (all from zero)
 //   Ghost:       0x80 vector 0.01 from zero — the velocity
@@ -42,11 +54,15 @@
 // `(v * 2 / (2^n - 1) - 1) * limit`, with anything within one step of zero set
 // to zero.
 //
-// Only one field's width is not in the layout: 0x1000's range is the soldier's
-// weapon count, asked of its inventory (`*(object+0x14)+0x22c` → `+0x10`). A
-// reader that does not know it stops before that field and says so.
+// Only one field's width is not in the layout: 0x1000's range is the soldier
+// template's inventory size (`BF2.exe` 0x62dbcc calls template+0x22c's vtable
+// +0x10, which is `SoldierTemplate::getInventorySize` — Linux server vtable
+// 0x74ffa8, slot 4). The value is the `itemIndex` of the weapon he has out, −1
+// for none (Linux 0x5dd58c compares it with each item's `getItemIndex`). A
+// reader that does not know the size stops before that field and says so.
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 #include "obf2/core/math.h"
 #include "obf2/net/bitstream.h"
@@ -62,15 +78,26 @@ inline constexpr unsigned kSoldierMaskBits = 21;
 
 struct SoldierState {
   std::uint32_t mask = 0;
-  // Read through to the last field. False means the reader stopped: the ragdoll
-  // branch, a weapon index whose width is not known, or the buffer ran out.
+  // Read through to the last field. False means the reader stopped: a weapon
+  // index whose width is not known, a ragdoll state that does not fill its own
+  // length, or the buffer ran out.
   bool complete = false;
   bool ragdoll = false;  // 0x8000
+  // 0x8000: the ragdoll's particles in world space (`RagDoll::readCurrentState`,
+  // 0x7ea290, writes them to the particle's +0x30, and on its first read also to
+  // +0x0), and the length the state declared for them.
+  std::vector<Vec3f> ragdollParticles;
+  std::uint32_t ragdollBits = 0;
 
   std::optional<std::uint32_t> value40;  // 0x40: 8 bits — purpose not established
   std::optional<bool> flag40;            // 0x40: 1 bit — purpose not established
-  std::optional<std::uint32_t> pairA20;  // 0x20: 0..4 — purpose not established
-  std::optional<std::uint32_t> pairB20;  // 0x20: 0..4
+  // 0x20: the pose and the pose asked for, 0..4 each. The Linux apply block of
+  // `SoldierNetworkable::setNetUpdate` (0x5dc640) writes them to soldier +0x3c8 and
+  // +0x3cc, which `Soldier::getPose` (0x550d30) and `getRequestedPose` (0x550d50)
+  // return; the animation's `PoseTrigger` takes the first (`setTriggerPose(+0x3c8)`,
+  // 0x55490f): 0 stand, 1 crouch, 2 prone, 3 swim (docs/functions/animation-system.md).
+  std::optional<std::uint32_t> pose;
+  std::optional<std::uint32_t> requestedPose;
 
   std::optional<Vec3f> position;   // 0x1
   std::optional<Vec3f> velocity;   // 0x80

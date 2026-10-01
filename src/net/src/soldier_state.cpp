@@ -1,5 +1,6 @@
 #include "obf2/net/soldier_state.h"
 
+#include <bit>
 #include <cmath>
 #include <cstring>
 
@@ -53,11 +54,32 @@ std::optional<SoldierState> readSoldierState(BitReader& reader, const Vec3f& ref
     const auto a = bits(rangedBits(4));
     const auto b = bits(rangedBits(4));
     if (!a || !b) return out;
-    out.pairA20 = *a;
-    out.pairB20 = *b;
+    out.pose = *a;
+    out.requestedPose = *b;
   }
+  // The ragdoll (header comment): its state, and nothing after it.
   if (has(0x8000)) {
     out.ragdoll = true;
+    const auto length = bits(9);
+    if (!length) return out;
+    out.ragdollBits = *length;
+    const std::size_t start = reader.bitPosition();
+    const std::size_t end = start + *length;
+    while (reader.bitPosition() < end) {
+      if (out.ragdollParticles.empty()) {
+        const auto x = bits(32);
+        const auto y = bits(32);
+        const auto z = bits(32);
+        if (!x || !y || !z) return out;
+        out.ragdollParticles.push_back(
+            Vec3f{std::bit_cast<float>(*x), std::bit_cast<float>(*y), std::bit_cast<float>(*z)});
+      } else {
+        const auto v = reader.readWideVector(out.ragdollParticles.front(), 0.01f);
+        if (!v) return out;
+        out.ragdollParticles.push_back(*v);
+      }
+    }
+    out.complete = reader.bitPosition() == end;
     return out;
   }
 
