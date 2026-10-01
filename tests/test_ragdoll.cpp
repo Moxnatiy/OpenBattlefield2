@@ -14,6 +14,7 @@
 #include "check.h"
 #include "obf2/anim/ragdoll.h"
 #include "obf2/net/bf2_world.h"
+#include "obf2/server/collision_world.h"
 
 using namespace obf2;
 
@@ -169,14 +170,91 @@ void testReplay(const anim::RagdollTemplate& t) {
   CHECK(length(head) > 0.3f && length(head) < 1.2f);
 }
 
+// `getClosestDistanceBetweenLines` (0x723cf0): crossing segments meet at their
+// closest points; parallel ones take the engine's endpoints.
+void testClosestBetweenSegments() {
+  float s = 0.0f, t = 0.0f;
+  const float crossing = anim::closestBetweenSegments(Vec3f{-1, 0, 0}, Vec3f{1, 0, 0},
+                                                      Vec3f{0, 1, -1}, Vec3f{0, 1, 1}, s, t);
+  CHECK(std::fabs(crossing - 1.0f) < 1e-5f);
+  CHECK(std::fabs(s - 0.5f) < 1e-5f && std::fabs(t - 0.5f) < 1e-5f);
+  // Past the end: the first segment's end is the closest point.
+  const float past = anim::closestBetweenSegments(Vec3f{0, 0, 0}, Vec3f{1, 0, 0},
+                                                  Vec3f{3, 0, -1}, Vec3f{3, 0, 1}, s, t);
+  CHECK(std::fabs(past - 2.0f) < 1e-5f && s == 1.0f);
+  // Parallel and side by side, 0.1 apart: the engine's branch, s from the start.
+  const float parallel = anim::closestBetweenSegments(Vec3f{0, 0, 0}, Vec3f{0, 1, 0},
+                                                      Vec3f{0.1f, 0, 0}, Vec3f{0.1f, 1, 0}, s, t);
+  CHECK(std::fabs(parallel - 0.1f) < 1e-5f);
+}
+
+// A body thrown at a wall stays on its side of it: every particle's motion is
+// cast at the faces near the body (`checkCollisionConstraints`' object pass,
+// `CollisionMesh::getDistance`), and a hit puts it back on the near side. Without
+// the objects the same body goes through — the check bites.
+void testWall(const anim::RagdollTemplate& t) {
+  // A wall at x = 0.5 facing −x, 3 m high and 4 m wide: two faces, wound the
+  // engine's way (`cross(c − a, b − a)` is the normal).
+  mesh::CollisionLayer wall;
+  wall.vertices = {{0.5f, 0.0f, -2.0f}, {0.5f, 3.0f, -2.0f}, {0.5f, 0.0f, 2.0f}, {0.5f, 3.0f, 2.0f}};
+  wall.faces = {{0, 1, 2, 0}, {1, 3, 2, 0}};
+  server::CollisionWorld world;
+  world.addLayer(wall, Mat4::identity());
+
+  // Standing at x = −0.3, hips on the origin's vertical, thrown at 4 m/s.
+  std::vector<mesh::Mat4> pose = t.restWorld;
+  const Vec3f hips{pose[6].m[12], pose[6].m[13], pose[6].m[14]};
+  float lowest = 1e9f;
+  for (const mesh::Mat4& m : pose) lowest = std::min(lowest, m.m[13]);
+  for (mesh::Mat4& m : pose) {
+    m.m[12] += -0.3f - hips.x;
+    m.m[13] -= lowest;
+    m.m[14] -= hips.z;
+  }
+  anim::RagdollGround ground;
+  ground.cast = [](const Vec3f&, const Vec3f& end) -> std::optional<anim::RagdollGround::Hit> {
+    if (end.y > 0.0f) return std::nullopt;
+    return anim::RagdollGround::Hit{end.y, Vec3f{0.0f, 1.0f, 0.0f}};
+  };
+  ground.height = [](const Vec3f&) { return 0.0f; };
+
+  const auto furthest = [&](bool withObjects) {
+    anim::RagdollGround g = ground;
+    if (withObjects) {
+      g.objects = [&world](const Vec3f& start, const Vec3f& motion, const Vec3f& around,
+                           float radius) -> std::optional<anim::RagdollGround::ObjectHit> {
+        const auto hit = world.segmentContact(start, motion, around, radius);
+        if (!hit) return std::nullopt;
+        return anim::RagdollGround::ObjectHit{hit->normal, hit->along};
+      };
+    }
+    anim::Ragdoll body(t, pose, Vec3f{4.0f, 0.0f, 0.0f});
+    float most = -1e9f;
+    for (int frame = 0; frame < 120; ++frame) {
+      body.update(1.0f / 60.0f, g);
+      for (const auto& p : body.particles()) most = std::max(most, p.position.x);
+    }
+    return most;
+  };
+  const float with = furthest(true);
+  const float without = furthest(false);
+  std::printf("  thrown at a wall at x = 0.5: furthest particle %.3f with the objects, %.3f "
+              "without\n",
+              with, without);
+  CHECK(with <= 0.5f + 0.01f);
+  CHECK(without > 0.6f);
+}
+
 }  // namespace
 
 TEST_MAIN({
+  testClosestBetweenSegments();
   const auto t = loadTemplate();
   if (!t) {
     std::printf("  no installation: the ragdoll is not checked\n");
   } else {
     testTemplate(*t);
     testReplay(*t);
+    testWall(*t);
   }
 })

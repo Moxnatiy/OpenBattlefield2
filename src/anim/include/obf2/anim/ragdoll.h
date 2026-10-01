@@ -4,10 +4,10 @@
 // docs/functions/ragdoll.md with the address it was read at; the comments name
 // the function.
 //
-// What is not here, and says so in the notes: collision with objects and the
-// capsules against them (`checkCollisionConstraints`'s first and last parts,
-// `checkCapsuleConstraints`), forces (`addForce`, `addHitImpact`), water, and the
-// time budget `updateInstances` spreads the bodies over.
+// What is not here, and says so in the notes: the limbs' capsules against
+// objects' edges (`checkCollisionCapsulesAgainstObjects`), forces (`addForce`,
+// `addHitImpact`), water, and the time budget `updateInstances` spreads the
+// bodies over.
 #include <array>
 #include <bitset>
 #include <cstdint>
@@ -140,7 +140,25 @@ struct RagdollGround {
   };
   std::function<std::optional<Hit>(const Vec3f& start, const Vec3f& end)> cast;
   std::function<float(const Vec3f&)> height;
+
+  // The objects near the body (`getCollidingObjects`, Linux 0x6be1f0: within
+  // `rd_completeCollRadius` of the centre) and a segment against their faces
+  // (`CollisionMesh::getDistance`, vtable +0xb8): the face's normal and how far
+  // before the segment's end its plane was crossed, `(r − 1)·|motion|`.
+  struct ObjectHit {
+    Vec3f normal{0.0f, 1.0f, 0.0f};
+    float along = 0.0f;
+  };
+  std::function<std::optional<ObjectHit>(const Vec3f& start, const Vec3f& motion,
+                                          const Vec3f& around, float radius)>
+      objects;
 };
+
+// `getClosestDistanceBetweenLines` (Linux 0x723cf0): the closest points of two
+// segments, as fractions along each, and their distance. Nearly parallel ones
+// (|a·c − b²| < 0.001, an absolute bound) take the engine's own endpoints.
+float closestBetweenSegments(const Vec3f& p0, const Vec3f& p1, const Vec3f& q0, const Vec3f& q1,
+                             float& s, float& t);
 
 class Ragdoll {
  public:
@@ -192,6 +210,7 @@ class Ragdoll {
   void checkDihedral();
   void checkLegAngular();
   void checkCollision(const RagdollGround& ground);
+  void checkCapsules();
   bool pinned(const Particle& p) const { return client_ && p.networked; }
   void wakeUp();
   Vec3f forward() const;
@@ -212,6 +231,8 @@ class Ragdoll {
   bool client_ = false;        // +0x75
   bool fresh_ = true;          // +0x76: no network state yet
   bool landed_ = false;        // +0x77: something was hit
+  int lod_ = 0;                // +0x6c
+  Vec3f collectedAround_;      // where `getCollidingObjects` looked this pass
 };
 
 }  // namespace obf2::anim

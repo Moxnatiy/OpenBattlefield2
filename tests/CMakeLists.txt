@@ -65,7 +65,7 @@ obf2_add_test(test_bf2_world obf2_net)
 target_compile_definitions(test_bf2_world PRIVATE
   OBF2_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
 
-obf2_add_test(test_ragdoll obf2_anim obf2_net)
+obf2_add_test(test_ragdoll obf2_anim obf2_net obf2_server)
 # The template from the user's installation (passes without one), the network
 # states from a live run in tests/data.
 target_compile_definitions(test_ragdoll PRIVATE

@@ -83,6 +83,56 @@ void makeOrthonormalBasis(Vec3f& z, Vec3f& x, Vec3f& y) {
 
 }  // namespace
 
+float closestBetweenSegments(const Vec3f& p0, const Vec3f& p1, const Vec3f& q0, const Vec3f& q1,
+                             float& s, float& t) {
+  // 0x723cf0, with its names: a = |d1|², b = −d1·d2, c = |d2|², d = d1·r.
+  const Vec3f d1 = p1 - p0, d2 = q1 - q0, r = p0 - q0;
+  const float a = dot(d1, d1), c = dot(d2, d2);
+  const float d1d2 = dot(d1, d2);
+  const float b = -d1d2;
+  const float d = dot(d1, r);
+  if (std::fabs(a * c - b * b) < 0.001f) {
+    // Nearly parallel: the engine's own choice of endpoints (0x723d9x..0x7240dd).
+    s = 0.0f;
+    t = 0.0f;
+    if (b <= 0.0f) {
+      if (-d < a) {
+        if (d <= 0.0f) {
+          s = -d / a;
+        } else if (d < d1d2) {
+          t = -d / b;
+        } else {
+          t = 1.0f;
+        }
+      } else {
+        s = 1.0f;
+      }
+    } else if (d < 0.0f) {
+      if (a < -d) {
+        s = 1.0f;
+        t = b <= -(a + d) ? 1.0f : -(a + d) / b;
+      } else {
+        s = -d / a;
+      }
+    }
+  } else {
+    // Not parallel: the closest points are unique, and the engine's region-by-
+    // region walk finds the same two as clamping does.
+    const float e = dot(d2, r);
+    const float denominator = a * c - d1d2 * d1d2;
+    s = std::clamp((d1d2 * e - d * c) / denominator, 0.0f, 1.0f);
+    t = (d1d2 * s + e) / c;
+    if (t < 0.0f) {
+      t = 0.0f;
+      s = std::clamp(-d / a, 0.0f, 1.0f);
+    } else if (t > 1.0f) {
+      t = 1.0f;
+      s = std::clamp((d1d2 - d) / a, 0.0f, 1.0f);
+    }
+  }
+  return length((p0 + d1 * s) - (q0 + d2 * t));
+}
+
 float RagdollTemplate::boneDistance(int a, int b) const {
   const auto at = [this](int bone) {
     return bone >= 0 && static_cast<std::size_t>(bone) < restWorld.size()
@@ -500,8 +550,64 @@ void Ragdoll::checkLegAngular() {
   }
 }
 
+void Ragdoll::checkCapsules() {
+  // `checkCapsuleConstraints` (0x6baa50): the shins, 2–4 against 7–9, as capsules
+  // of `rd_boneSize` (`capsuleVsCapsuleCollision` 0x724400). No pin test.
+  const int i2 = tmpl_->particleOf(2), i4 = tmpl_->particleOf(4);
+  const int i7 = tmpl_->particleOf(7), i9 = tmpl_->particleOf(9);
+  if (i2 < 0 || i4 < 0 || i7 < 0 || i9 < 0) return;
+  Particle& a0 = particles_[static_cast<std::size_t>(i2)];
+  Particle& a1 = particles_[static_cast<std::size_t>(i4)];
+  Particle& b0 = particles_[static_cast<std::size_t>(i7)];
+  Particle& b1 = particles_[static_cast<std::size_t>(i9)];
+  float s = 0.0f, t = 0.0f;
+  const float distance = closestBetweenSegments(a0.position, a1.position, b0.position,
+                                                b1.position, s, t);
+  if (!(kEpsilon <= std::fabs(distance))) return;
+  const float radius = settings_.boneSize;
+  const float depth = -((radius + radius) - distance);
+  if (!(depth <= 0.0f)) return;
+  const Vec3f onA = a0.position + (a1.position - a0.position) * s;
+  const Vec3f onB = b0.position + (b1.position - b0.position) * t;
+  const Vec3f normal = (onB - onA) * (-1.0f / distance);
+  const Vec3f shift = normal * (0.5f * -depth * 0.5f);
+  a0.position = a0.position + shift;
+  a1.position = a1.position + shift;
+  b0.position = b0.position - shift;
+  b1.position = b1.position - shift;
+}
+
 void Ragdoll::checkCollision(const RagdollGround& ground) {
-  // 0x6bf920, its land part. Objects and capsules are not ported (the notes).
+  // 0x6bf920.
+  if (lod_ < 2) checkCapsules();
+
+  // Against the objects near the body: a particle's motion, stretched by its
+  // size, against their faces. A hit puts it back on the near side and is
+  // remembered (+0x55) so the ground leaves it alone this pass.
+  if (settings_.useObjectCollision != 0 && ground.objects) {
+    for (Particle& p : particles_) {
+      p.hit = false;
+      const bool limbEnd = p.bone == 2 || p.bone == 7 || p.bone == 16 || p.bone == 32 ||
+                           p.bone == 47;
+      if ((2 <= lod_ && limbEnd) || pinned(p)) continue;
+      Vec3f previous = p.previous;
+      const Vec3f moved = p.position - previous;
+      if (dot3(moved, moved) <= kEpsilon) {
+        previous = Vec3f{p.position.x, p.size * 0.5f + p.position.y, p.position.z};
+      }
+      const Vec3f dir = engineNormalize(p.position - previous);
+      const Vec3f motion = (p.position - previous) + dir * p.size;
+      const auto hit = ground.objects(previous, motion, collectedAround_,
+                                      settings_.completeCollRadius);
+      if (hit && dot3(dir, hit->normal) < 0.0f) {
+        p.hit = true;
+        p.position = ((p.position + dir * p.size) - hit->normal * hit->along) - dir * p.size;
+        p.previous = p.position;
+        landed_ = true;
+      }
+    }
+  }
+
   if (settings_.useLandCollision == 0 || !ground.cast || !ground.height) return;
   for (Particle& p : particles_) {
     if (p.hit) {
@@ -533,6 +639,8 @@ void Ragdoll::checkCollision(const RagdollGround& ground) {
 
 void Ragdoll::satisfyConstraints(const RagdollGround& ground) {
   // 0x6c12e0.
+  // `getCollidingObjects` (0x6be1f0) looks around the centre once per pass.
+  collectedAround_ = center();
   std::vector<Vec3f> saved;
   if (client_) {
     for (const Particle& p : particles_) {
@@ -561,6 +669,7 @@ void Ragdoll::satisfyConstraints(const RagdollGround& ground) {
 
 Vec3f Ragdoll::update(float frameTime, const RagdollGround& ground, int lod) {
   // 0x6c1850.
+  lod_ = lod;
   float step = settings_.dT;
   if (0 < lod) step *= 1.5f;
   const float dt = frameTime * settings_.slowMotion;

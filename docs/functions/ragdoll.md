@@ -190,12 +190,48 @@ read from the call sites 0x6c0c1f and 0x6c0c2f):
 
 ## Against the ground (`checkCollisionConstraints`, 0x6bf920)
 
-First, while +0x6c < 2, `checkCapsuleConstraints`. With
-`rd_useObjectCollision`, every particle (except, once +0x6c ≥ 2, bones 2, 7, 16,
-32, 47) that is not pinned is tested against each colliding object's collision
-mesh (`IObject` +0x198 with 2, the mesh's +0xb8) — a hit facing the particle
-puts it on the surface, marks it hit (+0x55) for this pass, wakes the ragdoll
-and reports an impact. **Not ported**: we do not collect the colliding objects.
+First, while +0x6c < 2, `checkCapsuleConstraints` (0x6baa50): **the shins only**,
+2–4 against 7–9, as capsules of `rd_boneSize` (`capsuleVsCapsuleCollision`
+0x724400: the closest points of the two segments,
+`getClosestDistanceBetweenLines` 0x723cf0; under 2r apart, the normal from the
+second to the first). Each shin moves a quarter of the overlap apart along it, no
+pin test.
+
+`getClosestDistanceBetweenLines` is the classic segment–segment distance with
+both fractions in [0, 1], walked region by region; for segments that are not
+parallel its two points are the unique closest ones. Nearly parallel ones
+(|a·c − b²| < 0.001 — an absolute bound, so for shins of 0.46 m anything within
+about 9°) take the engine's own endpoints: same direction — s = −d/a while d ≤ 0,
+else t = d/(d1·d2) or 1; opposite — s, t = 0 while d ≥ 0, else s = 1 and
+t = −(a + d)/b capped at 1, or s = −d/a.
+
+The objects are collected once per `satisfyConstraints` by `getCollidingObjects`
+(0x6be1f0): the object manager's objects within `rd_completeCollRadius` (1.5 m)
+of the centre that pass `RagDollObjectPredicator` (0x6c3a40: a collision mesh of
+type 2, a physics node whose flags (+0xa8) lack 0x10, and the object flags the
+predicate holds, 0x100 — **what 0x100 and 0x10 are is not established**), and
+whose type-2 bounding box meets that sphere. Type 2 is the soldiers' collision,
+the one `checkSoldierVsMesh` asks for.
+
+With `rd_useObjectCollision`, every particle (except, once +0x6c ≥ 2, bones 2,
+7, 16, 32, 47) that is not pinned: `prev` and `dir` as for the ground below, the
+segment from `prev` along `(pos − prev) + dir·size` against each object's mesh
+(`CollisionMesh::getDistance`, vtable +0xb8, 0x7187a0 →
+`CollisionMeshTemplate::getDistance` 0x71bee0 → `Bsp::getClosestFace` 0x709b20 →
+`BspNode::getClosestFace` 0x709700 → `checkFaceAndEdgeCollision` 0x724ae0,
+one-sided, the walk stopping at the first face it accepts). A face is crossed when
+the segment's end is on or under its plane, its start on or above it, the motion
+goes against the normal and the crossing lies in the triangle. What the ragdoll
+reads back is the face's normal and `(r − 1)·|motion|` — how far before the end
+the plane was crossed. On a hit facing the particle (`dot(dir, n) < 0`) it moves
+**along the normal by that length** (`pos − n·along`), its velocity is gone, it
+is marked hit (+0x55) so the ground leaves it this pass, and an impact is
+reported; the first object that answers so ends the particle's search.
+
+Ours: `CollisionWorld::segmentContact` over the session's collision world (every
+static object's and every spawned vehicle's type-2 faces, near the centre),
+taking of all the faces crossed the one crossed first; the predicate's flags are
+not applied.
 
 With `rd_useLandCollision`, every particle not hit and not pinned:
 
@@ -211,7 +247,17 @@ With `rd_useLandCollision`, every particle not hit and not pinned:
   (`getHeightInWorldCoords`, +0x138): it rises **1% of the gap** per pass, and its
   previous position follows.
 
-Last, while +0x6c < 2, `checkCollisionCapsulesAgainstObjects` — **not ported**.
+Last, while +0x6c < 2, `checkCollisionCapsulesAgainstObjects` (0x6bb450, under
+`rd_useCapsuleCollision`): every `addCapsuleCollision` pair, as a capsule of the
+first particle's size, against each colliding object
+(`CollisionMesh::getDistanceToCapsules`, vtable +0xd0 → 0x719ba0: the faces
+`Bsp::getCollidingFacesInsideCapsule` finds, each tested by
+`checkCapsuleEdgesCollision` 0x727770 — the capsule against the triangle's three
+**edges** through `getIntersectionOfCapsAndEdgeNew` 0x726540 and
+`...Internal` 0x725b90). Every contact whose value is under zero moves both
+particles along its normal by that much, their velocity gone, no pin test.
+**Not ported**: the two intersection routines are not reversed — a limb can still
+cross an edge between two particles that stay outside.
 
 **The cast** comes down to `Heightmap::intersectRay` (0x6fc510), a descent
 through the height map's levels of maxima to the cells the segment crosses,
@@ -319,10 +365,17 @@ Measured:
 * on screen, live (`--watch-ragdoll`): a dead soldier lying on his front on the
   cobbles of Karkand, arms out, his launcher on his back.
 
-Not ported, each a debt in CLAUDE.md: collision with objects and the capsules
-(`checkCapsuleConstraints`, `checkCollisionCapsulesAgainstObjects`, the
-object half of `checkCollisionConstraints` — a body lies through a wall), forces
-and impacts (`addForce`, `addHitImpact`), water, `updateInstances`' distance
+* a body thrown at 4 m/s at a wall 0.8 m away (`test_ragdoll`, `testWall`): its
+  furthest particle stops at 0.460 m against the wall at 0.5 m; without the
+  objects it ends 2.413 m out;
+* live, 6000 frames on Karkand, three deaths: 8263 body-frames, none with a
+  particle a face separates from the body's centre (the end-of-run report's
+  `ragdoll bodies` line). Those three lay in the open, so this says the
+  object pass does no harm, not that a wall stops a body — the test does.
+
+Not ported, each a debt in CLAUDE.md: the limbs' capsules against objects'
+edges (`checkCollisionCapsulesAgainstObjects`), the object predicate's flags,
+forces and impacts (`addForce`, `addHitImpact`), water, `updateInstances`' distance
 order and time budget (every body steps at the full rate), the skeleton loader's
 zeroing under 0.001 and its `mesh` bones, and the local matrices a self-mapped
 bone takes (the engine's are the last animation's; ours are the rest pose's).

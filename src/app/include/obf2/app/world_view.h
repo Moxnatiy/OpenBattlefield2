@@ -186,6 +186,10 @@ class WorldView {
   std::optional<anim::RagdollTemplate> ragdollTemplate_;
   bool ragdollTried_ = false;
   std::map<std::uint16_t, Body> bodies_;
+  // Frames a body was drawn, and of them those with a particle a face separates
+  // from the body's centre — through a wall.
+  int bodyFrames_ = 0;
+  int bodyFramesThroughFace_ = 0;
 };
 
 }  // namespace obf2::app

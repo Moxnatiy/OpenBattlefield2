@@ -175,9 +175,31 @@ std::optional<Mat4> WorldView::poseBody(std::uint16_t id, const net::bf2::Remote
     };
     ground.height = [terrain](const Vec3f& at) { return terrain->groundContactAt(at).height; };
   }
+  // The objects: the session's collision world, the soldiers' lod (2) of every
+  // static object and of the vehicles the server spawned. The engine's filter
+  // (`RagDollObjectPredicator`, Linux 0x6c3a40: object flag 0x100, physics flag
+  // 0x10 clear) is not applied — what those flags mean is not established.
+  if (const server::CollisionWorld* collision = remote_->collision) {
+    ground.objects = [collision](const Vec3f& start, const Vec3f& motion, const Vec3f& around,
+                                 float radius) -> std::optional<anim::RagdollGround::ObjectHit> {
+      const auto hit = collision->segmentContact(start, motion, around, radius);
+      if (!hit) return std::nullopt;
+      return anim::RagdollGround::ObjectHit{hit->normal, hit->along};
+    };
+  }
   // The level of detail `updateInstances` gives by distance to the camera is not
   // ported: every body steps at the full rate (+0x6c = 0).
   const Vec3f centre = body.ragdoll.update(frameStep, ground);
+  // The measure for walls: a particle that a face separates from the centre.
+  ++bodyFrames_;
+  if (const server::CollisionWorld* collision = remote_->collision) {
+    for (const auto& p : body.ragdoll.particles()) {
+      if (collision->segmentContact(centre, p.position - centre, centre, 1.5f)) {
+        ++bodyFramesThroughFace_;
+        break;
+      }
+    }
+  }
   if (drawn.pose.empty()) drawn.pose = mesh::poseSkeleton(drawn.look->skeleton, nullptr, 0);
   body.ragdoll.applyOnSkeleton(drawn.pose);
   return translation(centre);
@@ -538,6 +560,10 @@ void WorldView::report() const {
                 "largest step between frames %.2f m, under the terrain: predicted %d, drawn %d\n",
                 id, stat.frames[2], stat.frames[1], stat.frames[0], stat.largestStep,
                 stat.predictedUnder, stat.drawnUnder);
+  }
+  if (bodyFrames_ > 0) {
+    std::printf("  ragdoll bodies: %d frames drawn, %d with a particle through a face\n",
+                bodyFrames_, bodyFramesThroughFace_);
   }
 }
 

@@ -587,21 +587,56 @@ void CollisionWorld::forEachNearby(
   const int z0 = static_cast<int>(std::floor((position.z - radius) / cellSize_));
   const int z1 = static_cast<int>(std::floor((position.z + radius) / cellSize_));
 
-  // One triangle may lie in several cells, so we make sure not to process it twice.
-  std::vector<std::uint32_t> seen;
+  // One triangle may lie in several cells, so we make sure not to process it
+  // twice: each query stamps the triangles it visits with its own number. A list
+  // of those seen, searched for each one, made a query in a dense cell of a city
+  // quadratic — thousands of faces, a frame gone on carrying one soldier.
+  if (stamps_.size() != triangles_.size()) stamps_.assign(triangles_.size(), 0);
+  if (++stamp_ == 0) {
+    std::fill(stamps_.begin(), stamps_.end(), 0u);
+    stamp_ = 1;
+  }
   for (int x = x0; x <= x1; ++x) {
     for (int y = y0; y <= y1; ++y) {
       for (int z = z0; z <= z1; ++z) {
         const auto cell = cells_.find(cellKey(x, y, z));
         if (cell == cells_.end()) continue;
         for (const std::uint32_t index : cell->second) {
-          if (std::find(seen.begin(), seen.end(), index) != seen.end()) continue;
-          seen.push_back(index);
+          if (stamps_[index] == stamp_) continue;
+          stamps_[index] = stamp_;
           visit(triangles_[index]);
         }
       }
     }
   }
+}
+
+std::optional<CollisionWorld::SegmentContact> CollisionWorld::segmentContact(
+    const Vec3f& start, const Vec3f& motion, const Vec3f& around, float radius) const {
+  const Vec3f end = start + motion;
+  std::optional<SegmentContact> best;
+  const auto test = [&](const CollisionTriangle& tri) {
+    SegmentContact contact;
+    if (!faceAndEdge(tri.a, tri.b, tri.c, tri.normal, start, end, contact.point,
+                     contact.endDepth, contact.along)) {
+      return;
+    }
+    if (best && !(contact.along < best->along)) return;
+    contact.normal = tri.normal;
+    contact.material = tri.material;
+    best = contact;
+  };
+  forEachNearby(around, radius, test);
+  for (const Movable& movable : movables_) {
+    if (!movable.alive) continue;
+    if (around.x + radius < movable.minimum.x || around.x - radius > movable.maximum.x ||
+        around.y + radius < movable.minimum.y || around.y - radius > movable.maximum.y ||
+        around.z + radius < movable.minimum.z || around.z - radius > movable.maximum.z) {
+      continue;
+    }
+    for (const CollisionTriangle& tri : movable.triangles) test(tri);
+  }
+  return best;
 }
 
 int CollisionWorld::resolveSphere(Vec3f& position, float radius) const {

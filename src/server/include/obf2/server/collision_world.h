@@ -10,6 +10,7 @@
 // server that decides where the player actually got to.
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -76,6 +77,29 @@ class CollisionWorld {
   void sphereContacts(const Vec3f& from, const Vec3f& motion, float radius,
                       std::vector<MeshContact>& out) const;
 
+  // A segment from `start` along `motion` against the faces of the objects near
+  // `around` (within `radius`) — the engine's `CollisionMesh::getDistance`
+  // (vtable +0xb8, Linux 0x7187a0 → `CollisionMeshTemplate::getDistance`
+  // 0x71bee0 → `Bsp::getClosestFace` 0x709b20 → `checkFaceAndEdgeCollision`
+  // 0x724ae0), one-sided, as the ragdoll asks it (docs/functions/ragdoll.md):
+  // a face counts when the segment's end is on or under its plane, its start on
+  // or above it, it travels against the normal, and the crossing lies in the
+  // triangle (projected on two axes chosen by the normal, 0x724bxx).
+  //
+  // `along` is `(r − 1)·|motion|` — how far before the end the plane was crossed,
+  // not above zero — and `endDepth` the end's distance under the plane. Of every
+  // face crossed, the one crossed first wins; the engine's BSP walk returns the
+  // first in its own order, nearest first, and stops there.
+  struct SegmentContact {
+    Vec3f normal;
+    Vec3f point;
+    float along = 0.0f;
+    float endDepth = 0.0f;
+    std::uint16_t material = 0;
+  };
+  std::optional<SegmentContact> segmentContact(const Vec3f& start, const Vec3f& motion,
+                                               const Vec3f& around, float radius) const;
+
   // Pushes a sphere out of the geometry. Returns how many times it had to push —
   // zero means the way is clear.
   int resolveSphere(Vec3f& position, float radius) const;
@@ -105,6 +129,10 @@ class CollisionWorld {
   std::uint32_t layers_ = 0;
   std::vector<CollisionTriangle> triangles_;
   std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> cells_;
+  // `forEachNearby`'s guard against visiting a triangle twice: the query's number
+  // per triangle. Not thread-safe — the world is queried from one thread.
+  mutable std::vector<std::uint32_t> stamps_;
+  mutable std::uint32_t stamp_ = 0;
 
   struct Movable {
     std::vector<CollisionPiece> pieces;
