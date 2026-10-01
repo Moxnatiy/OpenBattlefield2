@@ -1201,10 +1201,11 @@ The server's writer, `RagDoll::writeCurrentState` (Linux 0x6bf4c0), says what th
 the number of bits the particles took. The particles' layout (Linux
 `Particle::Particle` 0x6ba720): +0x0 position, +0xc the previous one, +0x48 the
 bone, +0x4c the mass, +0x50 the size, +0x54 the network flag. Every constructor
-clears +0x54, and **who sets it is not established**; on the live server every
-state carried four particles. `ragDollInit.con` (`objects/soldiers/common/
-animations/`) adds thirteen, four of them with mass 1 (bones 1, 6, 15, 31) —
-whether those are the four is not established either.
+clears +0x54; `RagDoll::reset` (0x6bef00) sets it for bone 1, 6, 15 and 31 by the
+bits 1, 2, 4, 8 of `ragdoll_net_boneEnable`, whose default is 15
+(docs/functions/ragdoll.md). So the four on the wire are the hips (6), the top of
+the left leg (1) and the shoulders (15, 31) — and the live server sends exactly
+four.
 
 Ours: `readSoldierState` reads the length, the first particle raw and wide
 vectors until the length is used up, and calls the record complete when it ends

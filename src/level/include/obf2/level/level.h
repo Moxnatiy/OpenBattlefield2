@@ -350,6 +350,29 @@ struct Level {
     Vec3f normal{0.0f, 1.0f, 0.0f};
   };
   GroundContact groundContactAt(const Vec3f& position) const;
+
+  // A segment cast at the terrain, the engine's way —
+  // `HeightmapCluster::intersectRayInWorldCoords` (Linux 0x701030) and the
+  // height map's `intersectRay` (0x6fc510, docs/functions/ragdoll.md):
+  //
+  //   * a vertical segment (dx² + dz² < 1e-8) asks the height and normal at its
+  //     end: a hit when the end is at or under the terrain, `t = end.y − height`
+  //     in world units;
+  //   * any other walks the cells it crosses, nearest first (the engine descends
+  //     a tree of height maxima to the same cells), and in each piece tests the
+  //     triangle under the piece's start, then the other one: `t` is the piece's
+  //     end's signed distance from the triangle's plane, **in grid units**, and the
+  //     hit is where the piece crosses the plane — or its start, when that is under
+  //     the plane too.
+  //
+  // `t` keeps the engine's units: its callers use it as they find it. Water and
+  // the material byte are not modelled.
+  struct SegmentHit {
+    Vec3f point;
+    float t = 0.0f;
+    Vec3f normal{0.0f, 1.0f, 0.0f};
+  };
+  std::optional<SegmentHit> castSegment(const Vec3f& start, const Vec3f& end) const;
 };
 
 // Mounts the level's server.zip and client.zip at the point Levels/<name>.

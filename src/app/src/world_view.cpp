@@ -125,6 +125,64 @@ WorldView::Look* WorldView::lookFor(const std::string& soldierName, const std::s
   return stored.ready ? &stored : nullptr;
 }
 
+std::optional<Mat4> WorldView::poseBody(std::uint16_t id, const net::bf2::RemoteObject& object,
+                                        DrawnSoldier& drawn, const Mat4& place,
+                                        float frameStep) {
+  if (object.ragdollParticles.empty() || object.ragdollExact == 0) {
+    bodies_.erase(id);
+    return std::nullopt;
+  }
+  if (!ragdollTried_) {
+    ragdollTried_ = true;
+    std::string error;
+    ragdollTemplate_ = anim::RagdollTemplate::load(*files_, {}, &error);
+    std::printf("  ragdoll template: %s\n", ragdollTemplate_ ? "read" : error.c_str());
+  }
+  if (!ragdollTemplate_ || drawn.look == nullptr) return std::nullopt;
+
+  auto found = bodies_.find(id);
+  if (found == bodies_.end()) {
+    // The pose he was drawn in, in the world: the engine's
+    // `makeInstance(objectMatrix, velocity, skeleton)` after `Skeleton::transform`.
+    std::vector<mesh::Mat4> world =
+        drawn.pose.empty() ? mesh::poseSkeleton(drawn.look->skeleton, nullptr, 0) : drawn.pose;
+    for (mesh::Mat4& bone : world) {
+      Mat4 local;
+      std::copy(std::begin(bone.m), std::end(bone.m), std::begin(local.m));
+      const Mat4 placed = place * local;
+      std::copy(std::begin(placed.m), std::end(placed.m), std::begin(bone.m));
+    }
+    anim::Ragdoll ragdoll(*ragdollTemplate_, world, object.lastVelocity);
+    // `enableRagDoll`: not the server, and a remote object — the client's mode.
+    ragdoll.setClient(true);
+    found = bodies_.emplace(id, Body{std::move(ragdoll), 0}).first;
+    std::printf("  soldier %u lies down: a ragdoll of %zu particles\n", id,
+                found->second.ragdoll.particles().size());
+  }
+  Body& body = found->second;
+  if (body.fed != object.ragdollExact) {
+    body.ragdoll.readNetwork(object.ragdollParticles);
+    body.fed = object.ragdollExact;
+  }
+
+  anim::RagdollGround ground;
+  if (const level::Level* terrain = remote_->terrain) {
+    ground.cast = [terrain](const Vec3f& start,
+                            const Vec3f& end) -> std::optional<anim::RagdollGround::Hit> {
+      const auto hit = terrain->castSegment(start, end);
+      if (!hit) return std::nullopt;
+      return anim::RagdollGround::Hit{hit->t, hit->normal};
+    };
+    ground.height = [terrain](const Vec3f& at) { return terrain->groundContactAt(at).height; };
+  }
+  // The level of detail `updateInstances` gives by distance to the camera is not
+  // ported: every body steps at the full rate (+0x6c = 0).
+  const Vec3f centre = body.ragdoll.update(frameStep, ground);
+  if (drawn.pose.empty()) drawn.pose = mesh::poseSkeleton(drawn.look->skeleton, nullptr, 0);
+  body.ragdoll.applyOnSkeleton(drawn.pose);
+  return translation(centre);
+}
+
 Vec3f WorldView::carry(std::uint16_t id, const net::bf2::RemoteObject& object,
                        const net::bf2::GhostPose& pose) {
   Carried& carried = carried_[id];
@@ -396,7 +454,11 @@ void WorldView::collect(std::vector<gfx::MeshRenderer::DrawItem>& out, int frame
           std::printf("\n");
         }
 
-        if (!stages.empty()) drawn.pose = mesh::poseSkeleton(look->skeleton, stages);
+        if (!stages.empty() && bodies_.count(id) == 0) {
+          drawn.pose = mesh::poseSkeleton(look->skeleton, stages);
+        }
+        // Dead: his body, not his animation.
+        if (const auto lying = poseBody(id, object, drawn, place, frameStep)) place = *lying;
         if (look->gpu.vertices != nullptr) {
           gfx::MeshRenderer::DrawItem item{&look->gpu, place};
           // With no clip to stand on he is drawn as the file holds him, which is

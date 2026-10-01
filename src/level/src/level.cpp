@@ -964,4 +964,121 @@ Level::GroundContact Level::groundContactAt(const Vec3f& position) const {
   return contact;
 }
 
+namespace {
+
+// `Vec3::normalize` as the height map's leaf has it (0x6fc510).
+Vec3f leafNormalize(Vec3f v) {
+  const float squared = dot(v, v);
+  if (std::fabs(squared - 1.0f) < 1.1920929e-07f) return v;
+  if (std::fabs(squared) < 1.1920929e-07f) return Vec3f{};
+  return v * (1.0f / std::sqrt(squared));
+}
+
+}  // namespace
+
+std::optional<Level::SegmentHit> Level::castSegment(const Vec3f& start, const Vec3f& end) const {
+  if (heights.empty()) return std::nullopt;
+  const float dx = end.x - start.x;
+  const float dz = end.z - start.z;
+  // Vertical (0x701080): the height and normal at the end.
+  if (dx * dx + dz * dz < 9.999999e-09f) {
+    const GroundContact contact = groundContactAt(end);
+    if (contact.height < end.y) return std::nullopt;
+    return SegmentHit{Vec3f{end.x, contact.height, end.z}, end.y - contact.height,
+                      contact.normal};
+  }
+
+  // Grid space (`intersectRayInLocalCoords`, 0x6fea10): x and the height scaled by
+  // +0x48, z by +0x50 — one over the spacing.
+  const float inverseX = 1.0f / primary.scale.x;
+  const float inverseZ = 1.0f / primary.scale.z;
+  const float half = halfExtent();
+  const auto toGrid = [&](const Vec3f& w) {
+    return Vec3f{w.x * inverseX + half, w.y * inverseX, w.z * inverseZ + half};
+  };
+  const Vec3f gs = toGrid(start);
+  const Vec3f ge = toGrid(end);
+  const auto heightOf = [&](int x, int z) { return heightAt(x, z) * inverseX; };
+  const int last = primary.size - 2;
+
+  // One cell: the triangle under the piece's start first (0x6fc8xx).
+  const auto leaf = [&](int ix, int iz, const Vec3f& ps,
+                        const Vec3f& pe) -> std::optional<SegmentHit> {
+    const float h00 = heightOf(ix, iz), h10 = heightOf(ix + 1, iz);
+    const float h01 = heightOf(ix, iz + 1), h11 = heightOf(ix + 1, iz + 1);
+    const float fx = ps.x - static_cast<float>(ix), fz = ps.z - static_cast<float>(iz);
+    const Vec3f corner{static_cast<float>(ix + 1), h10, static_cast<float>(iz)};
+    const auto toWorld = [&](const Vec3f& g) {
+      return Vec3f{(g.x - half) * primary.scale.x, g.y * primary.scale.x,
+                   (g.z - half) * primary.scale.z};
+    };
+    // One triangle: `lower` is the one at (x, z). `inside` asks the hit to lie in
+    // it (the first test does, the second does not).
+    const auto test = [&](bool lower, bool inside) -> std::optional<SegmentHit> {
+      const Vec3f n = lower ? leafNormalize(Vec3f{h00 - h10, 1.0f, h00 - h01})
+                            : leafNormalize(Vec3f{h01 - h11, 1.0f, h10 - h11});
+      const float t = dot(pe - corner, n);
+      if (!(t <= 0.0f)) return std::nullopt;
+      const float s = dot(pe - ps, n);
+      Vec3f hit;
+      if (t <= s) {
+        // The start is under the plane too: the hit is the start, on the triangle.
+        const float h = lower ? (h10 - h00) * fx + h00 + (h01 - h00) * fz
+                              : h11 + (1.0f - fx) * (h01 - h11) + (h10 - h11) * (1.0f - fz);
+        hit = Vec3f{ps.x, h, ps.z};
+      } else {
+        hit = pe - (pe - ps) * (t / s);
+      }
+      if (inside) {
+        const float sum = (hit.x - static_cast<float>(ix)) + (hit.z - static_cast<float>(iz));
+        if (lower ? !(sum <= 1.0f) : !(1.0f <= sum)) return std::nullopt;
+      }
+      return SegmentHit{toWorld(hit), t, n};
+    };
+    const float endSum = (pe.x - static_cast<float>(ix)) + (pe.z - static_cast<float>(iz));
+    if (fx + fz < 1.0f) {
+      if (auto hit = test(true, true)) return hit;
+      if (1.0f <= endSum) return test(false, false);
+    } else {
+      if (auto hit = test(false, true)) return hit;
+      if (endSum < 1.0f) return test(true, false);
+    }
+    return std::nullopt;
+  };
+
+  // The cells the segment crosses, nearest first.
+  const float gdx = ge.x - gs.x, gdz = ge.z - gs.z;
+  int ix = static_cast<int>(std::floor(gs.x));
+  int iz = static_cast<int>(std::floor(gs.z));
+  const int stepX = gdx > 0.0f ? 1 : -1;
+  const int stepZ = gdz > 0.0f ? 1 : -1;
+  const float deltaX = gdx != 0.0f ? std::fabs(1.0f / gdx) : 1e30f;
+  const float deltaZ = gdz != 0.0f ? std::fabs(1.0f / gdz) : 1e30f;
+  float nextX = gdx != 0.0f
+                    ? (static_cast<float>(gdx > 0.0f ? ix + 1 : ix) - gs.x) / gdx
+                    : 1e30f;
+  float nextZ = gdz != 0.0f
+                    ? (static_cast<float>(gdz > 0.0f ? iz + 1 : iz) - gs.z) / gdz
+                    : 1e30f;
+  float from = 0.0f;
+  for (int guard = 0; guard < 4096; ++guard) {
+    const float to = std::min({nextX, nextZ, 1.0f});
+    if (ix >= 0 && iz >= 0 && ix <= last && iz <= last) {
+      const Vec3f ps = gs + (ge - gs) * from;
+      const Vec3f pe = gs + (ge - gs) * to;
+      if (auto hit = leaf(ix, iz, ps, pe)) return hit;
+    }
+    if (to >= 1.0f) break;
+    if (nextX <= nextZ) {
+      ix += stepX;
+      nextX += deltaX;
+    } else {
+      iz += stepZ;
+      nextZ += deltaZ;
+    }
+    from = to;
+  }
+  return std::nullopt;
+}
+
 }  // namespace obf2::level

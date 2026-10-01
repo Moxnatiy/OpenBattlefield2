@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "obf2/anim/player.h"
+#include "obf2/anim/ragdoll.h"
 #include "obf2/anim/system.h"
 #include "obf2/app/render_context.h"
 #include "obf2/game/object_template.h"
@@ -140,6 +141,22 @@ class WorldView {
   // The vehicle a created object is, by where it was created.
   const gfx::GpuMesh* vehicleMesh(std::uint16_t id, const net::bf2::RemoteObject& object);
 
+  // A dead soldier's body (docs/functions/ragdoll.md). The engine makes it in
+  // `Soldier::enableRagDoll` (Linux 0x556bb0) from the pose he died in; who
+  // starts that on a client — the soldier's +0x4a0, read in `handleUpdate`
+  // 0x54bd81 — is not established, so ours is made at his first ragdoll record,
+  // from the pose he was drawn in. It is fed every record after and drawn instead
+  // of his animation, at its centre with no rotation, as `enableRagDoll` places
+  // the soldier.
+  struct Body {
+    anim::Ragdoll ragdoll;
+    int fed = 0;  // ragdoll records already read into it
+  };
+  // Poses `drawn` by his body and gives the matrix to draw it at; nullopt when he
+  // is not lying dead.
+  std::optional<Mat4> poseBody(std::uint16_t id, const net::bf2::RemoteObject& object,
+                               DrawnSoldier& drawn, const Mat4& place, float frameStep);
+
   FileSystem* files_ = nullptr;
   const game::Registry* registry_ = nullptr;
   gfx::MeshRenderer* renderer_ = nullptr;
@@ -165,6 +182,10 @@ class WorldView {
   std::map<std::uint16_t, DrawnSoldier> drawn_;
   std::map<std::uint16_t, DrawStat> stats_;
   std::uint16_t watched_ = 0;
+  // The soldiers' ragdoll template, read once from the game's data.
+  std::optional<anim::RagdollTemplate> ragdollTemplate_;
+  bool ragdollTried_ = false;
+  std::map<std::uint16_t, Body> bodies_;
 };
 
 }  // namespace obf2::app

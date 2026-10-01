@@ -184,11 +184,10 @@ three bits instead of four, every record carrying the field misses its end.
 
 The ragdoll branch (0x8000) is read now (network-events.md, "The ragdoll
 branch"): a dead soldier's record carries his ragdoll's particles in world space.
-It is **not drawn**: a dead soldier is drawn standing where he died, in his last
-pose, until his object goes. The original lays the body down by the ragdoll —
-`RagDoll::update`, `verlet`, the constraints of `ragDollConstraints.inc`, and
-`applyOnSkeleton` over `ragDoll.toSkeleton` / `lockBone` (`ragDollInit.con`) —
-none of which is reversed. `--watch-ragdoll` holds the camera on such a soldier.
+His body is drawn by the ragdoll (docs/functions/ragdoll.md): from his first
+ragdoll record on, the soldier's mesh is posed by `applyOnSkeleton` and drawn at
+the ragdoll's centre, as `Soldier::enableRagDoll` places him. `--watch-ragdoll`
+holds the camera on such a soldier.
 
 ## Stage 4 — first person
 
