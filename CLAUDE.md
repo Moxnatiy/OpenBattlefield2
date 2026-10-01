@@ -407,6 +407,12 @@ platform-specific outside `obf2/core/platform.h`, paths only through
 Tests: one file per parsed subject. **No parsed format stays without a
 test.**
 
+CI (`.github/workflows/ci.yml`) builds every push to `master` with the
+`macos-arm64` preset and `-DOBF2_WERROR=ON`, runs the tests and keeps
+`openbf2` as an artifact. It has no `reference/ruffle`, so **the build has to
+stand without the Flash module**: anything only the menu's movie uses goes
+under `#if OBF2_HAVE_FLASH`, or an unused field breaks the build there.
+
 ## How we check ourselves
 
 ```bash

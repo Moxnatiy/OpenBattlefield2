@@ -1,32 +1,88 @@
 name: ci
 
+# Every push to master and every pull request is built and tested; a run can
+# also be started by hand from the Actions tab.
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch cancels the run it overtakes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: macOS arm64
-            os: macos-14
-            preset: macos-arm64-debug
-          # A Windows build is not needed yet: the windows-x64 preset in
-          # CMakePresets.json is kept working, but is not run in CI.
+  macos:
+    name: macOS arm64
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - name: Install Ninja
-        uses: seanmiddleditch/gha-setup-ninja@v5
-      - name: Install SDL3 deps
-        run: brew install sdl3
+
+      - name: Install Ninja and SDL3
+        run: brew install ninja sdl3
+
+      # The release preset, with warnings as errors as the debug preset has them.
+      # There is no Ruffle checkout here (reference/ is not in git), so the
+      # Flash menu module is skipped — the build has to stand without it.
       - name: Configure
-        run: cmake --preset ${{ matrix.preset }}
+        run: cmake --preset macos-arm64 -DOBF2_WERROR=ON
+
       - name: Build
-        run: cmake --build --preset ${{ matrix.preset }}
+        run: cmake --build --preset macos-arm64
+
+      # Tests that read an installation of the game pass with a note when there
+      # is none; the network tests run on the captures in tests/data.
       - name: Test
-        run: ctest --test-dir build/${{ matrix.preset }} --output-on-failure
+        run: ctest --preset macos-arm64
+
+      # The executable with the one library it needs that macOS does not have,
+      # SDL3, beside it. The binary is pointed at that copy and both are signed
+      # again ad hoc, which arm64 requires after their load paths change.
+      - name: Package
+        run: |
+          set -euo pipefail
+          name=openbf2-macos-arm64
+          dist="dist/$name"
+          mkdir -p "$dist"
+          cp build/macos-arm64/src/app/openbf2 "$dist/"
+          sdl=$(otool -L "$dist/openbf2" | awk '/libSDL3/ {print $1}')
+          cp "$sdl" "$dist/"
+          lib=$(basename "$sdl")
+          chmod u+w "$dist/$lib"
+          install_name_tool -id "@executable_path/$lib" "$dist/$lib"
+          install_name_tool -change "$sdl" "@executable_path/$lib" "$dist/openbf2"
+          codesign --force --sign - "$dist/$lib"
+          codesign --force --sign - "$dist/openbf2"
+          # Nothing may still point into Homebrew.
+          if otool -L "$dist/openbf2" "$dist/$lib" | grep -q /opt/homebrew; then
+            otool -L "$dist/openbf2" "$dist/$lib"
+            exit 1
+          fi
+          cp README.md LICENSE "$dist/"
+          cat > "$dist/RUN.txt" <<'EOF'
+          openbf2 for macOS on Apple silicon, built by CI from this commit.
+
+          It reads your own installed Battlefield 2 1.5 and ships nothing of it:
+            ./openbf2 --mod "/path/to/Battlefield 2/mods/bf2" --level Dalian_plant
+            ./openbf2 --mod "/path/to/Battlefield 2/mods/bf2" --connect <host>
+
+          This build has no Flash menu (Ruffle is not part of the CI build): start
+          a level with --level, or join a server with --connect.
+
+          The binary is not notarised. If macOS refuses to open it:
+            xattr -dr com.apple.quarantine .
+          EOF
+          # A tarball keeps the executable bit, which the artifact's zip does not.
+          tar -C dist -czf "$name-${GITHUB_SHA::8}.tar.gz" "$name"
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: openbf2-macos-arm64-${{ github.sha }}
+          path: openbf2-macos-arm64-*.tar.gz
+          retention-days: 30
+
+  # The Windows preset is kept building in CMakePresets.json but is not run here
+  # yet: it has not been exercised since the graphics moved to SDL_GPU.

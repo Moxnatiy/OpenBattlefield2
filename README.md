@@ -147,6 +147,12 @@ Some tests read your installation (`Game Files/`) and pass with a note when it
 is not there; the network tests run on captures of a live server kept in
 `tests/data/`.
 
+Every push to `master` is built and tested by GitHub Actions on macOS arm64
+(`.github/workflows/ci.yml`), and the run keeps `openbf2` with its SDL3 beside
+it as an artifact, `openbf2-macos-arm64-<commit>.tar.gz`, for 30 days. That
+build has no Flash menu — Ruffle is not part of it — so it is started with
+`--level` or `--connect`.
+
 ## Run
 
 ```bash

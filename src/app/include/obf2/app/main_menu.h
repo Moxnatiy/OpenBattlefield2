@@ -95,9 +95,9 @@ class MainMenu {
   // **in the same place**. Flash does not separate them when both come at once,
   // and by the next frame the cursor is elsewhere — which Flash counts as
   // "released outside the button", so the button never fires.
+#if OBF2_HAVE_FLASH
   bool pressed_ = false;
   double pressX_ = 0.0, pressY_ = 0.0;
-#if OBF2_HAVE_FLASH
   flash::Movie movie_;
 #endif
 };
