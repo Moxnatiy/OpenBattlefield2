@@ -115,6 +115,13 @@ bool Manager::load(FileSystem& files, engine::Engine& engine, const level::Level
   alpha_["MenuBackgroundAlpha"] = backgroundAlpha_;
   alpha_["MenuMapAlpha"] =
       static_cast<float>(engine.settings().general.minimapTransparency) / 255.0f;
+  // The crosshair's colour: the information layer's constructor (0x468dd0) puts
+  // 1, 1, 0, 1 into its +0x178..+0x184 (0x469294..0x4692b4) — yellow. Who else
+  // writes them is not established (docs/functions/hud-crosshair.md).
+  alpha_["CrossHairColorRed"] = 1.0f;
+  alpha_["CrossHairColorGreen"] = 1.0f;
+  alpha_["CrossHairColorBlue"] = 0.0f;
+  alpha_["CrossHairColorAlpha"] = 1.0f;
 
   buildContexts(engine);
   buildMapWindow(files, level, registry);
@@ -282,6 +289,11 @@ void Manager::buildContexts(engine::Engine& engine) {
     // Numeric and boolean variables live in different dictionaries, while a show
     // condition asks for both — see obf2/hud/states.h.
     return showValue(variables_, values_, variable);
+  };
+  context_.variableNumber = [this](std::string_view variable) -> std::optional<float> {
+    const auto found = values_.find(std::string(variable));
+    if (found == values_.end()) return std::nullopt;
+    return found->second;
   };
   // The alpha: the wide plates under the health and ammo bars (400x39,
   // healthBackground.tga and ammoBackground.tga) hang on exactly it, and in combat
@@ -527,6 +539,12 @@ void Manager::serverSpawnGroups(std::vector<ServerSpawnGroup> groups) {
   spawnDirty_ = true;
 }
 
+void Manager::useServerGroupsOnly() {
+  if (serverGroupsOnly_) return;
+  serverGroupsOnly_ = true;
+  spawnDirty_ = true;
+}
+
 void Manager::localSquad(int squad) {
   if (squad == localSquad_) return;
   localSquad_ = squad;
@@ -623,8 +641,9 @@ void Manager::applySpawnState() {
     marker.texture = controlPointIcon(point.team == 0 ? "" : teamName(point.team),
                                       point.unableToChangeTeam);
     spawnContext_.mapMarkers.push_back(std::move(marker));
-    // Without a server's groups (our own game, or none yet): the level's points.
-    if (serverGroups_.empty() && point.team == selectedTeam) {
+    // Without a server (our own game): the level's points. On a real server none
+    // until its groups arrive — otherwise the circles jump from these to those.
+    if (!serverGroupsOnly_ && serverGroups_.empty() && point.team == selectedTeam) {
       addCircle(point.position.x, point.position.z, point.id);
     }
   }

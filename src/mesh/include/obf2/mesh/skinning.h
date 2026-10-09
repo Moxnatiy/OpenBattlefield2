@@ -96,6 +96,19 @@ inline constexpr std::uint32_t kFirstWeaponBone = 64;
 // How many of a weapon's parts the skeleton can carry — the cap at 0x5560eb.
 inline constexpr std::size_t kMaxWeaponParts = 8;
 
+// The same two numbers in first person. The client's own copy of the binding
+// (`BF2.exe` 0x61f630, the soldier's animation update) keeps them side by side in
+// one table indexed by the view (+0x2b8: 0 first person, 1 third): the first
+// bone **0x36** against 0x40 and the cap **0x10** against 8 (0x61f83d..0x61f85a).
+// The weapon's own transform is the first bone's (`+0xe8`, 0x61f86b) and parts
+// 1 and up go on `first + i` (0x61f967..0x61f9c8) — the same rule as above.
+//
+// 54 is `mesh1` in `1p_setup.ske`, followed by `mesh2`..`mesh16`, the sixteen the
+// cap allows (`ske_info`), and the M4's first-person clips move 54..58 for its
+// five parts (`1p_m4_stand.baf`, `baf_info`).
+inline constexpr std::uint32_t kFirstWeaponBone1p = 0x36;
+inline constexpr std::size_t kMaxWeaponParts1p = 0x10;
+
 // A BundledMesh whose parts are carried by bones, given the bindings that let it
 // be posed like a skinned one: every vertex is tied whole (weight 1) to the bone
 // `firstBone + its part`, and every range gets a rig naming those bones with an
@@ -104,6 +117,7 @@ inline constexpr std::size_t kMaxWeaponParts = 8;
 // This is how a weapon reaches the soldier's hands without a path of its own: it
 // is appended to his mesh (`appendSkinned`) and skinned by the same shader.
 // `vertexPart` empty leaves the mesh untouched.
-void bindPartsToBones(RenderMesh& mesh, std::uint32_t firstBone = kFirstWeaponBone);
+void bindPartsToBones(RenderMesh& mesh, std::uint32_t firstBone = kFirstWeaponBone,
+                      std::size_t maxParts = kMaxWeaponParts);
 
 }  // namespace obf2::mesh

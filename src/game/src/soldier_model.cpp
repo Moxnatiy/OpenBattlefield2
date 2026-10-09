@@ -22,6 +22,10 @@ std::optional<SoldierModel> soldierModel(const Registry& registry, std::string_v
   model.body = std::move(*bodyPart);
   model.skeleton3p = std::string(body->text("skeleton3p"));
   model.animationSystem3p = std::string(body->text("animationsystem3p"));
+  model.body1p = model.body;
+  model.body1p.geometry = kSoldierFirstPersonGeometry;
+  model.skeleton1p = std::string(body->text("skeleton1p"));
+  model.animationSystem1p = std::string(body->text("animationsystem1p"));
 
   const ObjectTemplate* kitTemplate = kit.empty() ? nullptr : registry.find(kit);
   if (kitTemplate != nullptr) {
@@ -43,6 +47,8 @@ std::optional<SoldierModel> soldierModel(const Registry& registry, std::string_v
       // its children** for the third-person view (`Camera::changeSubGeometry`).
       model.weapon = partOf(*item, kSoldierThirdPersonGeometry);
       model.weaponAnimationSystem3p = std::string(item->text("animationsystem3p"));
+      model.weapon1p = partOf(*item, kSoldierFirstPersonGeometry);
+      model.weaponAnimationSystem1p = std::string(item->text("animationsystem1p"));
       break;
     }
   }

@@ -34,13 +34,16 @@ static void testSpecops() {
   files.files["all.con"] =
       "ObjectTemplate.create Soldier mec_light_soldier\n"
       "ObjectTemplate.geometry mec_light_soldier\n"
+      "ObjectTemplate.skeleton1P Objects/Soldiers/Common/Animations/1p_setup.ske\n"
       "ObjectTemplate.skeleton3P Objects/Soldiers/Common/Animations/3p_setup.ske\n"
+      "ObjectTemplate.animationSystem1P Objects/Soldiers/Common/Animations/AnimationSystem1p.inc\n"
       "ObjectTemplate.animationSystem3P Objects/Soldiers/Common/Animations/AnimationSystem3p.inc\n"
       "ObjectTemplate.create GenericFireArm rupis_baghira_silencer\n"
       "ObjectTemplate.geometry rupis_baghira_silencer\n"
       "ObjectTemplate.itemIndex 2\n"
       "ObjectTemplate.create GenericFireArm rurrif_ak74u\n"
       "ObjectTemplate.geometry rurrif_ak74u\n"
+      "ObjectTemplate.animationSystem1P Objects/Weapons/Handheld/rurrif_ak74u/AnimationSystem1p.inc\n"
       "ObjectTemplate.animationSystem3P Objects/Weapons/Handheld/rurrif_ak74u/AnimationSystem3p.inc\n"
       "ObjectTemplate.itemIndex 3\n"
       "ObjectTemplate.create Kit MEC_Specops\n"
@@ -66,6 +69,20 @@ static void testSpecops() {
   if (model->weapon) CHECK_EQ(model->weapon->geometryName, std::string("rurrif_ak74u"));
   CHECK_EQ(model->weaponAnimationSystem3p,
            std::string("Objects/Weapons/Handheld/rurrif_ak74u/AnimationSystem3p.inc"));
+
+  // First person: the same meshes, sub-geometry 0, on the other skeleton.
+  CHECK_EQ(model->skeleton1p, std::string("Objects/Soldiers/Common/Animations/1p_setup.ske"));
+  CHECK_EQ(model->animationSystem1p,
+           std::string("Objects/Soldiers/Common/Animations/AnimationSystem1p.inc"));
+  CHECK_EQ(model->body1p.geometryName, std::string("mec_light_soldier"));
+  CHECK_EQ(model->body1p.geometry, game::kSoldierFirstPersonGeometry);
+  CHECK(model->weapon1p.has_value());
+  if (model->weapon1p) {
+    CHECK_EQ(model->weapon1p->geometryName, std::string("rurrif_ak74u"));
+    CHECK_EQ(model->weapon1p->geometry, game::kSoldierFirstPersonGeometry);
+  }
+  CHECK_EQ(model->weaponAnimationSystem1p,
+           std::string("Objects/Weapons/Handheld/rurrif_ak74u/AnimationSystem1p.inc"));
 
   // A soldier whose kit is not known yet is still a body.
   const auto bare = game::soldierModel(registry, "mec_light_soldier", "");

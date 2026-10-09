@@ -16,6 +16,12 @@ namespace {
 // lifting the instance is the same thing.
 constexpr float kRoadLift = 0.01f;
 
+// The road renderer's depth bias and slope-scaled depth bias, in D3D9's units
+// (the depth range): `RendDX9.dll` constructor 0x10145524, `0xb727c5ac` in both,
+// set on the device at 0x10145700 before every road is drawn.
+constexpr float kRoadDepthBias = -1e-5f;
+constexpr float kRoadSlopeDepthBias = -1e-5f;
+
 // The shaders are supplied as MSL text: SDL_GPU hands them to the Metal compiler
 // at runtime, so for macOS a separate shader build step is not needed yet.
 // When Windows comes, these same shaders will also have to exist as SPIR-V/DXIL.
@@ -1095,6 +1101,19 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   SDL_GPUGraphicsPipelineCreateInfo roadInfo = info;
   roadInfo.target_info.color_target_descriptions = &roadTarget;
   roadInfo.depth_stencil_state.enable_depth_write = false;
+  // And the renderer pulls the road towards the eye by a depth bias the shader
+  // does not carry: `RendDX9.dll` 0x10145700 sets D3DRS_DEPTHBIAS and
+  // D3DRS_SLOPESCALEDEPTHBIAS from its +0x90/+0x94, both −1e-5 (`0xb727c5ac`,
+  // constructor 0x10145524). Its reach in metres grows with the square of the
+  // distance, so far away it keeps the road over whatever lies within that much
+  // under it — the terrain, a pavement (docs/functions/render-camera.md).
+  //
+  // D3D9 counts the constant part in the depth range; SDL_GPU counts it in the
+  // smallest resolvable step, 2⁻²⁴ for D24 and for D32_FLOAT at any depth past
+  // twice the near plane. The slope factor means the same in both.
+  roadInfo.rasterizer_state.enable_depth_bias = true;
+  roadInfo.rasterizer_state.depth_bias_constant_factor = kRoadDepthBias * 16777216.0f;
+  roadInfo.rasterizer_state.depth_bias_slope_factor = kRoadSlopeDepthBias;
   SDL_GPUGraphicsPipeline* roadPipeline = SDL_CreateGPUGraphicsPipeline(gpu, &roadInfo);
 
   // The sky dome is the background: drawn first, with no depth at all, so
@@ -1805,21 +1824,25 @@ void MeshRenderer::setTerrainMaterials(const TerrainMaterial materials[kTerrainM
 }
 
 void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& items,
-                               const Mat4& viewProjection, Color clearColor) {
+                               const Mat4& viewProjection, Color clearColor,
+                               ScenePass scenePass) {
+  const bool world = scenePass == ScenePass::World;
   // First the ground's light, into a buffer of its own — the game's own order:
   // its terrain's ZFillLightmap pass runs before anything that reads the light
   // (`Shaders_client.zip:TerrainShader_Hi.fx:607`, pass p0). Everything lit by
-  // the ground samples the result by screen position afterwards.
+  // the ground samples the result by screen position afterwards. Only the
+  // terrain and the roads read it, so the first-person pass has none.
   SDL_GPUTexture* groundLight =
-      terrainLight_ != nullptr ? terrainLight_->render(frame, items, viewProjection, terrainSky_)
-                               : nullptr;
+      world && terrainLight_ != nullptr
+          ? terrainLight_->render(frame, items, viewProjection, terrainSky_)
+          : nullptr;
 
   SDL_GPUTexture* depth = device_->acquireDepthTarget(frame.width, frame.height);
 
   SDL_GPUColorTargetInfo colorTarget{};
   colorTarget.texture = frame.swapchain;
   colorTarget.clear_color = SDL_FColor{clearColor.r, clearColor.g, clearColor.b, clearColor.a};
-  colorTarget.load_op = SDL_GPU_LOADOP_CLEAR;
+  colorTarget.load_op = world ? SDL_GPU_LOADOP_CLEAR : SDL_GPU_LOADOP_LOAD;
   colorTarget.store_op = SDL_GPU_STOREOP_STORE;
 
   SDL_GPUDepthStencilTargetInfo depthTarget{};
@@ -1836,8 +1859,11 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
   // The view frustum is taken from the same matrix we draw with, so the culling
   // is guaranteed to agree with what the camera sees.
   const Frustum frustum = extractFrustum(viewProjection);
-  drawn_ = 0;
-  culled_ = 0;
+  // The counts are the world's: the first-person pass adds to them.
+  if (world) {
+    drawn_ = 0;
+    culled_ = 0;
+  }
 
   // The fog and the lighting colours are the same for the frame; the light map
   // mode is not, so it has to be pushed before every range.

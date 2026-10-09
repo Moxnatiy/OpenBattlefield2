@@ -15,6 +15,8 @@ add_library(obf2_app
   src/scripted_input.cpp
   src/scoreboard_players.cpp
   src/spawn_circles.cpp
+  src/crosshair.cpp
+  src/first_person.cpp
 )
 add_library(obf2::app ALIAS obf2_app)
 if(TARGET obf2_flash)

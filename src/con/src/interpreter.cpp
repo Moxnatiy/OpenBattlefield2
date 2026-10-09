@@ -93,6 +93,20 @@ std::optional<Vec3> Command::argVec3(std::size_t i) const {
   return found == 3 ? std::optional<Vec3>{v} : std::nullopt;
 }
 
+std::optional<std::array<float, 2>> Command::argVec2(std::size_t i) const {
+  if (i >= args.size()) return std::nullopt;
+  const std::string_view s = args[i];
+  const std::size_t slash = s.find('/');
+  if (slash == std::string_view::npos || s.find('/', slash + 1) != std::string_view::npos) {
+    return std::nullopt;
+  }
+  std::array<float, 2> out{};
+  if (!parseFloat(s.substr(0, slash), out[0]) || !parseFloat(s.substr(slash + 1), out[1])) {
+    return std::nullopt;
+  }
+  return out;
+}
+
 // --- Interpreter -------------------------------------------------------------
 
 struct Interpreter::Frame {

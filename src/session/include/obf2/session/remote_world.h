@@ -184,6 +184,9 @@ struct RemoteWorld {
   std::uint8_t lastServerSequence = 0;
   int ghostPackets = 0, ghostRecords = 0;
   int ghostFlagSet = 0, ghostFlagClear = 0, ghostUnparsed = 0;
+  // When `NEDatabaseComplete` went out, for the stall report in the packet loop.
+  std::optional<std::chrono::steady_clock::time_point> databaseSentAt;
+  bool ghostStallReported = false;
   int ghostControlled = 0;
   int controlStates = 0;
   std::set<std::uint16_t> ghostObjects;
@@ -401,6 +404,12 @@ struct RemoteWorld {
   obf2::server::SoldierLook look{0.0f, 0.0f, 0.0f, 10.0f};
   float yaw() const { return look.yaw(); }
   float pitch() const { return -look.pitch; }
+  // How far the last action turned the look: the yaw's and the pitch's delta
+  // (the pitch positive down, as the engine's). `Soldier::handlePlayerInput`
+  // keeps the same pair in +0x480 and +0x484 (Linux 0x54f7f3, 0x54f7fe), with
+  // the weapon's recoil added — which ours has none of — and the first-person
+  // camera spring reads them (0x552dd9). Kept until the next action.
+  float lastTurn[2] = {0.0f, 0.0f};
 
   // A button pressed for one frame between two ticks (a jump is an edge) would be
   // lost if only the latest frame counted, so presses gather until a tick takes them.
@@ -556,10 +565,13 @@ struct RemoteWorld {
     // live server: the tick whose action lets go of sprint and presses strafe still
     // has its strafe dropped, and the state after it reports the flag down.
     const bool sprinting = sprint.sprinting;
+    const float mouseX = obf2::net::bf2::axisFromWire(played.axes[obf2::net::bf2::kAxisMouseX]);
+    const float mouseY = obf2::net::bf2::axisFromWire(played.axes[obf2::net::bf2::kAxisMouseY]);
     obf2::server::turnSoldier(
-        look, obf2::net::bf2::axisFromWire(played.axes[obf2::net::bf2::kAxisMouseX]),
-        obf2::net::bf2::axisFromWire(played.axes[obf2::net::bf2::kAxisMouseY]),
+        look, mouseX, mouseY,
         obf2::net::bf2::axisFromWire(played.axes[obf2::net::bf2::kAxisThrottle]), physics);
+    lastTurn[0] = mouseX * physics.lookFactorX;
+    lastTurn[1] = mouseY * physics.lookFactorY;
     if (bodyReady && terrain != nullptr && stepBody(played, matrixYaw, sprinting)) {
       // 0x54fe1d: the jump's stamina, straight off.
       sprint.stamina = std::max(0.0f, sprint.stamina - sprint.lossAtJump);
@@ -1025,6 +1037,7 @@ struct RemoteWorld {
           case obf2::net::bf2::JoinStep::Database:
             event(obf2::net::bf2::kNetDatabaseComplete);
             std::printf("  step: the player base was received\n");
+            databaseSentAt = now;
             break;
           case obf2::net::bf2::JoinStep::Simulation:
             event(obf2::net::bf2::kNetStartSimulation);
@@ -1111,6 +1124,17 @@ struct RemoteWorld {
             if (*flag) ++ghostFlagSet; else ++ghostFlagClear;
           } else {
             ++ghostUnparsed;
+          }
+          // A stall seen once in a live session: the server took the player base,
+          // spawned us, kept sending events — and never set the ghost flag, so no
+          // world, no controlled-object state and no clock; the soldier hangs where
+          // he spawned. The cause is not found; this says so the moment it happens.
+          if (databaseSentAt && ghostFlagSet == 0 && !ghostStallReported &&
+              std::chrono::steady_clock::now() - *databaseSentAt > std::chrono::seconds(5)) {
+            ghostStallReported = true;
+            std::printf("  NO GHOST STREAM 5 s after the player base: %d packets with the flag "
+                        "cleared, %d events so far\n",
+                        ghostFlagClear, eventCount);
           }
           // The controlled-object state. From it we take **only** the object's
           // number for now: the triple of numbers in it is the compression

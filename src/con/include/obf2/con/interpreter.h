@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <functional>
 #include <optional>
 #include <string>
@@ -25,6 +26,9 @@ struct Command {
   std::optional<bool> argBool(std::size_t i) const;
   // "0.06/-0.12/0" — BF2's usual way of writing a vector with slashes.
   std::optional<Vec3> argVec3(std::size_t i) const;
+  // "5/15" — the same with two numbers (`animationTrigger.idleTime 5/15`,
+  // `animationSystem.cameraSpring.look 1/1`).
+  std::optional<std::array<float, 2>> argVec2(std::size_t i) const;
   std::string_view argStr(std::size_t i) const;
 };
 

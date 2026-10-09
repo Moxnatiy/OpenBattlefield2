@@ -126,6 +126,20 @@ class WorldView {
     // drawn. The measure for "drops through the floor and pops back".
     int predictedUnder = 0;
     int drawnUnder = 0;
+    // A soldier drawn with no clip playing — the bind pose, arms out — and of
+    // those frames how many his player was in another object (a vehicle); the
+    // highest his feet were drawn over the terrain. The measure for "bodies
+    // hanging in the air".
+    int bindPose = 0;
+    int bindPoseInVehicle = 0;
+    float highestAboveGround = 0.0f;
+    // Frames his player sat in a vehicle (the player's object not a soldier), and
+    // how many of his own ghost records came meanwhile.
+    int framesInVehicle = 0;
+    int recordsAtEntry = -1;
+    int recordsInVehicle = 0;
+    int framesHiddenInVehicle = 0;
+    std::uint16_t vehicle = 0;
   };
 
   const mesh::BoneAnimation* clipAt(const std::string& path);
@@ -149,8 +163,21 @@ class WorldView {
   // of his animation, at its centre with no rotation, as `enableRagDoll` places
   // the soldier.
   struct Body {
+    explicit Body(anim::Ragdoll made) : ragdoll(std::move(made)) {}
     anim::Ragdoll ragdoll;
     int fed = 0;  // ragdoll records already read into it
+    // The measure for "bodies hanging in the air": frames drawn, frames with the
+    // centre more than 0.6 m over the terrain, frames standing (the head 0.8 m
+    // over both feet), and the highest the centre was.
+    int frames = 0;
+    int framesHigh = 0;
+    int framesUpright = 0;
+    float highest = 0.0f;
+    // The same over whatever is under it — a roof as well as the terrain:
+    // frames with the centre more than 0.6 m over the highest surface below it.
+    int framesOverSurface = 0;
+    float highestOverSurface = 0.0f;
+    Vec3f last;
   };
   // Poses `drawn` by his body and gives the matrix to draw it at; nullopt when he
   // is not lying dead.

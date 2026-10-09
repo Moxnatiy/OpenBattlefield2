@@ -239,14 +239,15 @@ void skinMesh(const RenderMesh& bindPose, const std::vector<Mat4>& boneWorld, Re
   }
 }
 
-void bindPartsToBones(RenderMesh& mesh, std::uint32_t firstBone) {
+void bindPartsToBones(RenderMesh& mesh, std::uint32_t firstBone, std::size_t maxParts) {
   if (mesh.vertexPart.size() != mesh.vertices.size() || mesh.vertices.empty()) return;
 
   std::uint8_t parts = 0;
   for (const std::uint8_t part : mesh.vertexPart) parts = std::max(parts, part);
-  // The engine carries eight at most (`kMaxWeaponParts`); a ninth part would read
-  // past `mesh8` into the kit's bones, so it stays on the last one it may have.
-  const std::size_t bones = std::min<std::size_t>(parts + 1u, kMaxWeaponParts);
+  // The engine carries eight at most in third person (`kMaxWeaponParts`) and
+  // sixteen in first (`kMaxWeaponParts1p`); a part past the cap would read past
+  // the last `mesh<n>` bone, so it stays on the last one it may have.
+  const std::size_t bones = std::min<std::size_t>(parts + 1u, std::max<std::size_t>(maxParts, 1));
 
   Rig rig;
   rig.bones.resize(bones);

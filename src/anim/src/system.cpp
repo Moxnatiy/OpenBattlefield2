@@ -52,6 +52,30 @@ void System::feed(const con::Command& command) {
   const std::string& path = command.lowerPath;
   const std::string_view first = command.argStr(0);
 
+  // The first-person camera spring (camera_spring.h). Each command sets one field
+  // of the system's `CameraSpring`; the names and their fields are
+  // `CameraSpring::makeScript`'s (Linux 0x6b9c10).
+  if (path.rfind("animationsystem.cameraspring.", 0) == 0) {
+    const std::string_view field = std::string_view(path).substr(29);
+    const auto vector = [&](Vec3f& out) {
+      if (const auto v = command.argVec3(0)) out = Vec3f{v->x, v->y, v->z};
+    };
+    if (field == "use") cameraSpring_.use = command.argBool(0).value_or(false);
+    else if (field == "amplitude") vector(cameraSpring_.amplitude);
+    else if (field == "zoomdamping") vector(cameraSpring_.zoomDamping);
+    else if (field == "stiffness") vector(cameraSpring_.stiffness);
+    else if (field == "move") vector(cameraSpring_.move);
+    else if (field == "hit") vector(cameraSpring_.hit);
+    else if (field == "fire") vector(cameraSpring_.fire);
+    else if (field == "look") {
+      if (const auto v = command.argVec2(0)) {
+        cameraSpring_.look[0] = (*v)[0];
+        cameraSpring_.look[1] = (*v)[1];
+      }
+    }
+    return;
+  }
+
   if (path == "animationsystem.createanimation") {
     activeAnimation_ = key(first);
     activeBundle_.clear();
@@ -130,10 +154,12 @@ void System::feed(const con::Command& command) {
       // A plain number in the data: `animationTrigger.message 4`.
       trigger.message = static_cast<std::uint32_t>(command.argFloat(0).value_or(0.0f));
     } else if (path == "animationtrigger.idletime") {
-      // Written as one argument, `5/10`, so the lexer gives it as a vector.
-      if (const auto pair = command.argVec3(0)) {
-        trigger.idleMin = pair->x;
-        trigger.idleMax = pair->y;
+      // Written as one argument, `5/10`. It used to be read with `argVec3`, which
+      // takes three numbers and no fewer, so every idle time fell through to the
+      // branch below and came out as the defaults.
+      if (const auto pair = command.argVec2(0)) {
+        trigger.idleMin = (*pair)[0];
+        trigger.idleMax = (*pair)[1];
       } else {
         trigger.idleMin = command.argFloat(0).value_or(trigger.idleMin);
         trigger.idleMax = command.argFloat(1).value_or(trigger.idleMax);

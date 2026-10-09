@@ -86,6 +86,11 @@ struct Context {
   std::function<std::string_view(std::string_view variable)> variableText;
   // A bar's fill, 0..1 (`setBarNodeValueVariable`).
   std::function<float(std::string_view variable)> variableValue;
+  // A number some code has written, or nullopt when nobody has: what a node's
+  // position variable (`setNodePosVariable`) reads. Unlike `variableValue` an
+  // unknown variable is not zero here — a coordinate of zero would throw the
+  // node into the corner.
+  std::function<std::optional<float>(std::string_view variable)> variableNumber;
   // A node's alpha (`setNodeAlphaVariable`). nullopt means we know nothing about
   // that variable, and the node stays visible: most of them are smooth fades, and
   // by default they are on.

@@ -164,6 +164,22 @@ struct Node {
   std::string rotateVariable;    // setPictureNodeRotateVariable
   std::vector<std::string> rgbVariables;  // setNodeRGBVariables
 
+  // The colour a node draws with is not its own field: `setNodeColor` (`BF2.exe`
+  // 0x76ac49), `setNodeRGBVariables` (0x79bc40) and `setNodeAlphaVariable`
+  // (0x79ba80) all go to one `dice::meme::Bf2ColorEffect` (vtable 0x936020) named
+  // `<node>ColorEffect`. 0x79a210 makes it — white, (1, 1, 1, 1), when the first
+  // command is one of the variables — and slots it between the node and what it
+  // holds, so everything under the node draws through it. Its paint (0x7c21f0,
+  // 0x7c22c0) **writes** its colour into the four corners of what it paints with
+  // (0x771fa0) and hands that on: the nearest effect up the tree decides the
+  // colour whole, alpha included, and a node without one takes it from there.
+  bool colorEffect = false;
+  // Filled in by Builder::finish(): the variables of the effect the node draws
+  // through, its own or its nearest ancestor's. `color` becomes that effect's
+  // colour too.
+  std::vector<std::string> effectRgbVariables;
+  std::string effectAlphaVariable;
+
   float offsetX = 0.0f, offsetY = 0.0f;        // setNodeOffset
   float centerX = 0.0f, centerY = 0.0f;        // setPictureNodeCenterPoint
   float textureWidth = 0.0f, textureHeight = 0.0f;  // setObjectMarkerNodeTextureSize

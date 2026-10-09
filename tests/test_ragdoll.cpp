@@ -100,6 +100,15 @@ void testReplay(const anim::RagdollTemplate& t) {
   CHECK(chosen != 0);
   const auto& list = states[chosen];
   std::printf("  soldier %u: %zu ragdoll states\n", chosen, list.size());
+  // How upright the server's body is, state by state: the shoulders' height
+  // over the hips' (the four on the wire are bones 1, 6, 15, 31).
+  std::printf("  the server's shoulders over its hips, state by state:");
+  for (std::size_t i = 0; i < list.size() && i < 16; ++i) {
+    const auto& p = list[i];
+    if (p.size() < 4) continue;
+    std::printf(" %.2f", (p[2].y + p[3].y) * 0.5f - (p[0].y + p[1].y) * 0.5f);
+  }
+  std::printf("\n");
   CHECK(list.size() > 10);
 
   // The ground: flat, under the lowest particle the server sent.

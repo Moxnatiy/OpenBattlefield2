@@ -189,7 +189,214 @@ ragdoll record on, the soldier's mesh is posed by `applyOnSkeleton` and drawn at
 the ragdoll's centre, as `Soldier::enableRagDoll` places him. `--watch-ragdoll`
 holds the camera on such a soldier.
 
+### A soldier in a vehicle
+
+When a player enters a vehicle the server sends `EnterVehicleEvent` naming the
+vehicle; the client hands it on (`BF2.exe` 0x53caf0 → `IGameClient` +0x34, the
+interface `GameClient` answers with `this + 0xa8` (0x4d2a70), its vtable
+0x8aa0f8 → 0x4d6d20 → 0x4d6c00, `GameClient.cpp`: the player, the object by its
+network id (0x6a6c10), the player's +0xa4, then the game client's +0xa0,
+0x4d6820 — which also switches the input map: `Infantry`, `Land`, `Air`,
+`Helicopter` or `SeaPlayerInputControlMap` by the vehicle's kind).
+
+What happens to the soldier is `Soldier::onEnter` (Linux 0x54b2f0): the vehicle
+kept at +0x398, the pose and the pose asked for (+0x3c8, +0x3cc) cleared, the
+spawn point and `updateCameraTransformation` moved to the seat, the kit's vehicle
+mods applied, `updateWeaponIsActiveState`, and, without a hand weapon out,
+`findInverseKinamaticObject` — the hands on the vehicle's handles. +0x591 is set
+when the seat's control object carries something at its +0x70 → +0x28 (purpose
+not established). The soldier is drawn in the seat from there on, not where he
+was.
+
+Measured on the live server: from the entry on, a soldier's own ghost goes silent
+— no record at all for 1600, 1727 and 1730 over thousands of frames — except in
+some seats, where they keep coming (1598: 60 records over 1357 frames, 1663: 146).
+
+Ours: the seats are not read, and neither is a vehicle's rotation, so a soldier
+cannot be put in his seat yet. Until then one whose player sits in a vehicle (the
+player's object a simple object) and whose ghost has said nothing since is **not
+drawn**; one whose records keep coming is drawn where they put him. The
+end-of-run report says, per soldier, the frames in a vehicle, the records meanwhile
+and the frames not drawn. Before this a soldier in a vehicle stood, unanimated,
+where he had climbed in — the "bodies hanging in the air" the maintainer saw at
+the gas station.
+
 ## Stage 4 — first person
 
-Our own arms (the soldier's sub-geometry 0, `skeleton1P`) and weapon, driven by
-the `AnimationSystem1p.inc` files.
+Our own arms and weapon. Drawn on `--connect` since the first-person pass
+(`obf2/app/first_person.h`, `test_first_person`); a screenshot from the live server
+shows the M4 with its sight and both sleeves, moving with its clips.
+
+### What the data gives
+
+* the soldier: `ObjectTemplate.skeleton1P Objects/Soldiers/Common/Animations/1p_setup.ske`
+  and `animationSystem1P .../AnimationSystem1p.inc` (`objects/soldiers/us/us_light_soldier.tweak`).
+  The soldier's own first-person system has **only swimming** in it — four
+  bundles under a `PoseTrigger` whose stand, crouch and prone children are empty;
+* the weapon: its own `animationSystem1P` (`USRIF_M4.tweak`:
+  `Objects/Weapons/Handheld/USRIF_M4/AnimationSystem1p.inc`), and everything the
+  arms do on foot is in it: `completeTree` = `root` (a `SwitchMessageTrigger` on
+  message 4 between `zoom` and `normal`) + `startup` (the `deploy` bundle);
+  `normal` = `still` (an `IdleTrigger` 5/15 over `idle1`/`idle2`, and
+  `1p_m4_stand`), `move` (`1p_move`), `sprint` (`1p_sprint`), and the messages 1
+  (`fire`), 8 (`changeFirerate`) and 2 (`reload`). The value holders are the shared
+  `ValueHolders.inc`'s `1p_*`;
+* `1p_setup.ske` has 70 bones (`ske_info`): 0 `Camerabone` at −0.024 1.504 −0.111,
+  1 `torus` (both roots), the two arms and hands 2..53, and `mesh1`..`mesh16` at
+  54..69. `1p_m4_stand.baf` moves 0..58 of them: the arms and the M4's five parts
+  on 54..58;
+* the meshes: sub-geometry 0 of the soldier (`1p_us_body_c.dds`, 2821 vertices, one
+  lod, rigged on the first-person skeleton's bones) and of the weapon (the M4's
+  4253 triangles; its lod 1 is the scope blur).
+
+### The view number picks all of it — `BF2.exe` 0x61f630
+
+The client's animation update for a soldier (ev_9da664fb…) keeps the view in
++0x2b8: **0 first person, 1 third**.
+
+| what | where | |
+|---|---|---|
+| the soldier's geometry gets the view as its sub-geometry | `geometry->+0x6c(view)` | 0x61f680 |
+| the same geometry gets `soldier-fov1p` in first person, −1.0 in third | `+0x10(…)` | 0x61f68e..0x61f6a0 |
+| and the skeleton of that view | `+0x54(skeleton +0x10, +0x14)`, the skeleton at +0x288 + view × 8 | 0x61f6af |
+| first person updates through 0x61d8a0, third through 0x61ebc0 | | 0x61f7bc.. |
+| the weapon's geometry gets the view as its sub-geometry too | `+0x6c(view)` | 0x61f8e9 |
+| the weapon object stands on the first weapon bone | `weapon->+0xe8(bone(first))` | 0x61f866 |
+| parts 1 and up on `first + i`, at most `cap` | | 0x61f967..0x61f9c8 |
+| `first` = {0x36, 0x40}[view], `cap` = {0x10, 8}[view] | a table on the stack | 0x61f83d..0x61f85a |
+
+`soldier-fov1p` is a variable (`BF2.exe` 0x85b030: `0x3f51eb85` = **0.82**, kept
+at 0x9f4a38); no file of the game's data sets it. One special case sits in the
+same function: when the weapon's object answers +0x84 below 1, its geometry +0x7c
+other than 1 and +0x80 above 2, and its template is named `insgr_rpg`, the
+geometry gets `+0x78(2)` (0x61f8f0..0x61f947). What those slots are is not
+established.
+
+### Where the skeleton stands — Linux 0x552b30, 0x5527a0
+
+`SoldierTemplate::skeleton1P` (Linux 0x5527a0) loads the skeleton into the
+template's +0x2a8, copies its first matrix (`Skeleton` +0x8, the first bone's) into
++0x2e0 and inverts it in place (`Mat4::setInverse`, 0x55293f).
+`Soldier::updateFirstPersonAnimations(float)` (Linux 0x552b30, 0xa8f bytes):
+
+```
+if soldier +0x3f0: return                                      0x552b5e
+weapon  = item(0)->queryInterface(IID_IWeaponObject)            0x552ba5, 0x552bc8
+camera  = getSoldierCamera()->IObject->+0x1d0()                 the absolute transformation, 0x552bf5
+spring  = CameraSpring(); from the soldier's first-person system's template   0x552c19..0x552d3f
+          (amplitude, zoomDamping, stiffness, move, look, fire, and two more)
+if the item at +0x358 is not hidden: spring.merge(its bundle's spring)          0x55350d..0x553564
+three applySpringFunction on +0x474, +0x478, +0x47c              0x552d8d..0x552dc7
+the move part from the velocity minus the ground's (getCollidingMeshTangentSpeed),
+  against the movement matrix, and the pitch recoil (getPitchRecoil) — into the
+  same three, clamped                                            0x552e2b..0x5530d0
+M = template(+0x258)->+0x2e0 × camera                            Mat4::mult, 0x55313d
+M.translation += camera's rotation × (+0x474.. × the amplitude, zoomed when the
+  weapon's zoom is between its two values)                       0x553207..0x5532c5
+skeletons[+0x470]->transform(&M, -1)                             0x5532d8
+```
+
+So the first bone, `Camerabone`, lands on the camera and the arms follow the
+look; the spring adds a sway of a few centimetres on top. Ours: `firstPersonRoot`
+(camera × the sway × inverse of the first bone at rest; it is a root, so its
+matrix is its own).
+
+### The camera spring
+
+The numbers are a system's `CameraSpring` (0x50 bytes, all zero from the
+constructor, Linux 0x6b9850). Which command fills which field is what
+`CameraSpring::makeScript` (0x6b9c10) writes back out:
+
+| command | field | M4 | soldier |
+|---|---|---|---|
+| `cameraSpring.use` | the system's flag | 1 | 1 |
+| `cameraSpring.amplitude` | +0x00 | 0.02/0.02/0.02 | 0.045/0.045/0.045 |
+| `cameraSpring.zoomDamping` | +0x0c | 2.9/2.9/0 | 2.5/2.5/0 |
+| `cameraSpring.stiffness` | +0x18 | 10/10/10 | 10/10/10 |
+| `cameraSpring.move` | +0x24 | 2/2/2 | 3/3/3 |
+| `cameraSpring.hit` | +0x30 | — | — |
+| `cameraSpring.fire` | +0x3c | 0/0/40 | 0/0/150 |
+| `cameraSpring.look` | +0x48, +0x4c | 1/1 | 1/1 |
+
+`merge` (0x6b98b0) puts the weapon's over the soldier's field by field: a vector
+when any part differs from zero by more than 1.19e-7 (0xb2bfb0), `look` when
+|x| + |y| does. The update takes the soldier's first-person system's spring and
+merges the item's in when the item is not hidden (`testb $1, +8`, 0x552d4b).
+
+The state is the soldier's +0x474, +0x478, +0x47c (x right, y up, z forward).
+One frame (0x552d55..0x5530d0), `dt` the frame's time:
+
+```
+applySpringFunction(stiffness.i, state.i, dt) for i = x, y, z          0x552d8d..0x552dc7
+state.x -= dt * soldier+0x480 * look.x                                 0x552dcc..0x552df9
+state.y += dt * soldier+0x484 * look.y                                 0x552e01..0x552e20
+v = velocity − the ground's (getCollidingMeshTangentSpeed); |v|² < 0.49 → 0    0x552e28..0x552f2e
+side = dot(movement right, v) * dt * move.x;  state.x += side          0x552f31..0x552f7f
+state.y += |side| * −0.3 − dot(forward, v) * dt * move.z + dot(up, v) * dt * move.y
+r = getPitchRecoil() * dt;  state += r * fire                           0x552ffa..0x55304f
+each part clamped to [−1, 1]                                            0x55303e..0x5530d0
+```
+
+`applySpringFunction(k, v, dt)` (0x552160) moves `v` toward zero by
+`max(clamp, v² k dt)`, where clamp is `anim-soldier-spring-clamp` = 0.001
+(`BF2.exe` 0x85aeb0; Linux 0x5519c5), and a result within 1e-4 of zero
+(0xb355d0, 0xb4fa50) is zero.
+
++0x480 and +0x484 are the last action's turn: `handlePlayerInput` (0x54f7b8..
+0x54f7fe) stores the yaw's and the pitch's delta there with the recoil added
+(`getYawRecoil`, `getPitchRecoil`); 0x550280 zeroes them on another branch. In
+ours they are `RemoteWorld::lastTurn`, the axis times `phy-soldier-look-factor-*`.
+
+The offset (0x553197..0x5532c5): each amplitude below 0.001 (0xb2f3c4) is zero;
+the root's translation gains `Σ state.i × amplitude.i × camera axis i`. With a
+weapon whose zoom stands between its two values, the amplitude is blended
+toward `amplitude / (anim-soldier-spring-zoom-factor × zoomDamping)`, the factor
+6.0 (`BF2.exe` 0x85aed0) — not taken, ours has no zoom.
+
+Ours: `obf2::anim::CameraSpring` and `CameraSpringTemplate`
+(`test_camera_spring`), read from the systems by `anim::System`. On the live
+server a turn to the right moves the weapon left on screen and it settles back.
+
+### The camera they are drawn with — `RendDX9.dll`
+
+The renderer keeps a second camera for them (+0xfc, docs/functions/render-camera.md):
+
+* its field of view is **0.82**, set by the renderer's constructor
+  (`setFov(0x3f51eb85)`, 0x1002d277) — the same number as `soldier-fov1p`;
+  a console variable `fieldOfView1p` exists (0x100b2617);
+* near 0.01 and far 15 − 0.01 every frame (0x1002c315..0x1002c347);
+* every frame it takes the world camera's transformation
+  (`world->+0x64()` into `1p->+0x60`, 0x1002c34e..0x1002c36b): the same view, its
+  own projection;
+* the angle is the **vertical** one: the camera's projection is
+  `D3DXMatrixPerspectiveFovLH(fov, 1 / +0x30, near, far + near)` (0x10079e10, its
+  arguments from 0x101c2f66..0x101c2f80), and +0x30 is height over width (0.75 by
+  default).
+
+Not read: where in the frame the first-person meshes are drawn and what happens
+to the depth before them. The renderer has the switches `draw1pZOnly` and
+`draw1pMeshes` (0x10054752, 0x100548e2) and the material classes `RSMT1Person`,
+`RSMTDelta1Person`, `RSMTAux1Person` and their `Transparency` twins. Ours draws them
+last, over the finished world, with the depth cleared (`ScenePass::FirstPerson`) —
+**not measured**. The measure: in the original, walk into a wall; whether the
+barrel goes into it says which.
+
+### Not done
+
+* the recoil (`getYawRecoil`, `getPitchRecoil`) and with it the spring's `fire`
+  share; the zoom's blend of the spring's amplitude;
+* the zoom: message 4 switches `root` to `zoom`, and the field of view then is the
+  weapon's (`zoom.addZoomFactor`); nobody raises the message;
+* firing, reloading and changing the rate of fire (messages 1, 2, 8); the idle time
+  for `IdleTrigger` is not counted, so `idle1`/`idle2` never play. (Its range,
+  `idleTime 5/15`, was not read at all until the camera spring's `look 1/1` showed
+  why: `argVec3` takes three numbers and no fewer, so every two-number argument
+  came out as the defaults; `argVec2` reads them now);
+* the speed scaling by pose (`soldierAnim1pSpeedCrouch`/`Prone`, Linux 0x554e58)
+  and the sprinter's forced speed — the state is the predicted body's velocity in
+  the camera's frame, standing;
+* the soldier's own first-person system is updated but only swims;
+* the eye itself: our camera stands 1.7 m over the soldier's position, a number
+  with no source. The data has `poseCameraPosition 0 0/0.47/0.1` (and crouch
+  `0/-0.05/0.1`, prone `0/-0.63/0.1`) in the soldier's tweak, relative to a point
+  not established yet.

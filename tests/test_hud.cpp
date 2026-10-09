@@ -360,9 +360,96 @@ static void testPosVariableTakesAxisFirst() {
   CHECK(std::abs(node.rotation - 180.0f) < 0.01f);
 }
 
+// The variable is the coordinate itself, not an offset (`BF2.exe` 0x7c1d90:
+// `x = *variable`, then the node's own offset and its parents). The sight's top
+// tick at 292 stands at 292 under a parent at the origin, wherever the data
+// created it; a variable nobody wrote leaves it where the data put it.
+static void testPosVariableReplacesTheCoordinate() {
+  hud::Builder builder = build(
+      "hudBuilder.createSplitNode IngameHud Sight\n"
+      "hudBuilder.createPictureNode Sight Up 398 285 8 8\n"
+      "hudBuilder.setNodePosVariable 1 CrosshairUpPos\n");
+  const hud::Node* up = nullptr;
+  for (const hud::Node& node : builder.nodes()) {
+    if (node.name == "Up") up = &node;
+  }
+  CHECK(up != nullptr);
+  if (up == nullptr) return;
+  const hud::Screen screen{800, 600};
+  hud::Context context;
+  context.variableNumber = [](std::string_view name) -> std::optional<float> {
+    if (name == "CrosshairUpPos") return 292.0f;
+    return std::nullopt;
+  };
+  const hud::ScreenRect placed = hud::nodeRect(*up, screen, &context);
+  CHECK(std::abs(placed.y - (up->absY - up->y + 292.0f)) < 0.01f);
+  CHECK(std::abs(placed.x - up->absX) < 0.01f);
+
+  hud::Context silent;
+  silent.variableNumber = [](std::string_view) -> std::optional<float> { return std::nullopt; };
+  const hud::ScreenRect unmoved = hud::nodeRect(*up, screen, &silent);
+  CHECK(std::abs(unmoved.y - up->absY) < 0.01f);
+}
+
+// The crosshair's case: the colour sits on the group and the ticks have none of
+// their own, so they draw through the group's colour effect (`BF2.exe` 0x79a210,
+// 0x7c21f0). A node with a colour of its own has its own effect and keeps it.
+static void testColorEffectColoursTheSubtree() {
+  hud::Builder builder = build(
+      "hudBuilder.createSplitNode IngameHud Sight\n"
+      "hudBuilder.setNodeRGBVariables Red Green Blue\n"
+      "hudBuilder.setNodeAlphaVariable Alpha\n"
+      "hudBuilder.createPictureNode Sight Up 398 285 8 8\n"
+      "hudBuilder.setPictureNodeTexture Ingame/CrossHair/vsp_CrossHair_single.tga\n"
+      "hudBuilder.createPictureNode Sight Own 398 315 8 8\n"
+      "hudBuilder.setPictureNodeTexture Ingame/CrossHair/vsp_CrossHair_single.tga\n"
+      "hudBuilder.setNodeColor 0 0 1 1\n");
+  const hud::Node* up = nullptr;
+  const hud::Node* own = nullptr;
+  for (const hud::Node& node : builder.nodes()) {
+    if (node.name == "Up") up = &node;
+    if (node.name == "Own") own = &node;
+  }
+  CHECK(up != nullptr && own != nullptr);
+  if (up == nullptr || own == nullptr) return;
+  CHECK(!up->colorEffect);
+  CHECK(up->effectAlphaVariable == "Alpha");
+  CHECK(own->effectRgbVariables.empty());
+
+  font::Font font;
+  const hud::Screen screen{800, 600};
+  hud::Context context;
+  // The information layer's defaults, 0x469294: yellow. Alpha a half, and a
+  // negative green, which leaves the effect's own channel.
+  float green = 1.0f;
+  context.variableAlpha = [&green](std::string_view name) -> std::optional<float> {
+    if (name == "Red") return 1.0f;
+    if (name == "Green") return green;
+    if (name == "Blue") return 0.0f;
+    if (name == "Alpha") return 0.5f;
+    return std::nullopt;
+  };
+  const auto tinted = hud::buildNode(*up, font, "", screen, context);
+  CHECK(!tinted.empty());
+  for (const hud::DrawPiece& piece : tinted) {
+    CHECK(piece.tint.r == 1.0f && piece.tint.g == 1.0f && piece.tint.b == 0.0f);
+    CHECK(piece.tint.a == 0.5f);
+  }
+  green = -1.0f;
+  for (const hud::DrawPiece& piece : hud::buildNode(*up, font, "", screen, context)) {
+    CHECK(piece.tint.g == 1.0f);  // the effect's own white
+  }
+  for (const hud::DrawPiece& piece : hud::buildNode(*own, font, "", screen, context)) {
+    CHECK(piece.tint.r == 0.0f && piece.tint.g == 0.0f && piece.tint.b == 1.0f);
+    CHECK(piece.tint.a == 1.0f);
+  }
+}
+
 TEST_MAIN({
+  testColorEffectColoursTheSubtree();
   testEffectsReachTheChildren();
   testPosVariableTakesAxisFirst();
+  testPosVariableReplacesTheCoordinate();
   testShowEffectsAnimate();
   testBarNodeHasDirectionBeforeRect();
   testBarIsClippedByValue();

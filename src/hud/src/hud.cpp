@@ -89,6 +89,27 @@ void Builder::finish() {
     }
     nodes_[i].area = *area;
   }
+  // The colour effect each node draws through (Node::colorEffect): its own, or
+  // the nearest one up the tree. Under none, the corners stay what the paint
+  // started with, which is the default white.
+  for (std::size_t i = 0; i < nodes_.size(); ++i) {
+    int at = static_cast<int>(i);
+    for (int step = 0; at >= 0 && step < 64; ++step) {
+      const Node& current = nodes_[static_cast<std::size_t>(at)];
+      if (current.colorEffect) break;
+      at = current.parent;
+    }
+    Node& node = nodes_[i];
+    if (at < 0 || !nodes_[static_cast<std::size_t>(at)].colorEffect) {
+      node.effectRgbVariables.clear();
+      node.effectAlphaVariable.clear();
+      continue;
+    }
+    const Node& source = nodes_[static_cast<std::size_t>(at)];
+    node.effectRgbVariables = source.rgbVariables;
+    node.effectAlphaVariable = source.alphaVariable;
+    if (&source != &node) node.color = source.color;
+  }
   resolvePositions();
 }
 
@@ -362,6 +383,7 @@ void Builder::feed(const con::Command& command) {
   }
   if (method == "setnodealphavariable") {
     node->alphaVariable = std::string(command.argStr(0));
+    node->colorEffect = true;  // 0x79ba80 → the effect's +0x58 (0x7c21d0)
     return;
   }
   if (method == "setbuttonnodeconcmd") {
@@ -409,6 +431,7 @@ void Builder::feed(const con::Command& command) {
     const float scale = overOne ? 1.0f / 255.0f : 1.0f;
     node->color = Color{values[0] * scale, values[1] * scale, values[2] * scale,
                         overOne ? values[3] * scale : values[3]};
+    node->colorEffect = true;  // 0x76ac49 → 0x79a210 → the effect's +0x40 (0x7c2190)
     return;
   }
   if (method == "setnodeintime") {
@@ -762,6 +785,7 @@ void Builder::feed(const con::Command& command) {
   if (method == "setnodergbvariables") {
     node->rgbVariables.clear();
     for (const std::string& argument : command.args) node->rgbVariables.push_back(argument);
+    node->colorEffect = true;  // 0x79bc40 → the effect's +0x5c (0x7c2380)
     return;
   }
 

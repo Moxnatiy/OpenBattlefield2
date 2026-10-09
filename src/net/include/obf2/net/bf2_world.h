@@ -130,6 +130,14 @@ class WorldView {
   std::uint16_t ownObject() const { return ownObject_; }
 
   const std::map<std::uint32_t, RemotePlayer>& players() const { return players_; }
+  // The player who entered this object (`EnterVehicleEvent`), if any. A soldier's
+  // player who has since entered something else is in that, not in his soldier.
+  const RemotePlayer* ownerOf(std::uint16_t object) const {
+    const auto found = owners_.find(object);
+    if (found == owners_.end()) return nullptr;
+    const auto player = players_.find(found->second);
+    return player == players_.end() ? nullptr : &player->second;
+  }
   const std::map<std::uint16_t, RemoteObject>& objects() const { return objects_; }
   const Vec3f& compressionReference() const { return compressionReference_; }
 

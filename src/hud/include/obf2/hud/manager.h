@@ -128,6 +128,11 @@ class Manager {
   void deadSpawnInfo(int serverGroup, float timeToSpawn);
   // Whether the circles are the server's groups — then DONE names a group number.
   bool circlesAreServerGroups() const { return !serverGroups_.empty(); }
+  // On a real server the circles are the server's groups and nothing else: the
+  // client's `SpawnManager` has none until `CreateSpawnGroupEvent` brings them, so
+  // until then the map has no circles (0x77f6e0 walks an empty list). The level's
+  // own control points stand in only in our own game, which has no such events.
+  void useServerGroupsOnly();
   // The players the scoreboard lists, and which of them is us. The engine's
   // `Scoreboard::update` (0x7a4c80) runs only while the scoreboard is shown, and
   // so does this.
@@ -224,6 +229,7 @@ class Manager {
 
   SpawnInterface spawnScreen_;
   std::vector<ServerSpawnGroup> serverGroups_;
+  bool serverGroupsOnly_ = false;  // useServerGroupsOnly
   int localSquad_ = 0;
   std::vector<level::ControlPoint> controlPoints_;
   std::vector<Context::MapMarker> assetMarkers_;

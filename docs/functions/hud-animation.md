@@ -568,6 +568,12 @@ draws **through** it:
 So a move effect on a split node moves everything under it, and two nested
 groups multiply their alphas and add their offsets.
 
+A node's colour is the same kind of thing: `setNodeColor`, `setNodeRGBVariables`
+and `setNodeAlphaVariable` build one `Bf2ColorEffect` above the node's subtree
+(0x79a210). Unlike the fades it does not multiply — it writes its colour over
+what it paints with, so the nearest one up the tree wins
+(docs/functions/hud-crosshair.md, "The colour").
+
 This is not a corner case — it is where nearly every effect in the game's data
 lives. Of the 84 `addNodeMoveShowEffect` and 137 `addNodeAlphaShowEffect` calls
 in `Menu_client.zip`, almost all sit on a group: `SpawnInfo`, `Kit0NotSelected`,

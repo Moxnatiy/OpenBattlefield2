@@ -31,6 +31,8 @@
 #include "obf2/app/scene_build.h"
 #include "obf2/app/scoreboard_players.h"
 #include "obf2/app/spawn_circles.h"
+#include "obf2/app/crosshair.h"
+#include "obf2/app/first_person.h"
 #include "obf2/app/world_view.h"
 #include "obf2/core/math.h"
 #include "obf2/core/parallel.h"
@@ -377,6 +379,13 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   // What the interface's rebuilds cost, in milliseconds and in number, split
   // between building the geometry and putting it on the card.
   int shownSpawnGroups = -1;  // the session's spawn group revision the HUD has
+  // Our soldier's crosshair, fed once per action we play (obf2/app/crosshair.h),
+  // the newest action it has seen, and what it last put into the HUD — the HUD is
+  // rebuilt only when that changes.
+  obf2::app::Crosshair crosshair;
+  std::optional<std::uint32_t> crosshairAction;
+  std::map<std::string, float> crosshairShown;
+  std::string crosshairKey;
   int hudRebuilds = 0;
   float hudRebuildMs = 0.0f;
   float hudRebuildMax = 0.0f;
@@ -471,9 +480,12 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
             x1 = std::max(x1, px);
             y1 = std::max(y1, py);
           }
-          std::printf("RECT %-14s %-30s %7.1f %7.1f %7.1f %7.1f %-46s [%s]\n", where,
-                      piece.node->name.c_str(), x0, y0, x1 - x0, y1 - y0, piece.texture.c_str(),
-                      piece.node->showVariable.c_str());
+          // The tint last, as the dump's vertex carries it (docs/research/03-frame-dump.md).
+          std::printf("RECT %-14s %-30s %7.1f %7.1f %7.1f %7.1f %-46s [%s] rgba %.3f %.3f %.3f %.3f\n",
+                      where, piece.node->name.c_str(), x0, y0, x1 - x0, y1 - y0,
+                      piece.texture.c_str(), piece.node->showVariable.c_str(),
+                      static_cast<double>(piece.tint.r), static_cast<double>(piece.tint.g),
+                      static_cast<double>(piece.tint.b), static_cast<double>(piece.tint.a));
         }
       };
     }
@@ -588,6 +600,11 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     worldView.init(files, registry, *renderer, resolveTexture, *remote, level ? &*level : nullptr,
                    viewOptions);
   }
+  // Our own arms and weapon, drawn through their own camera over the world
+  // (`obf2/app/first_person.h`).
+  obf2::app::FirstPersonView firstPersonView;
+  std::vector<obf2::gfx::MeshRenderer::DrawItem> firstPersonItems;
+  if (remote != nullptr) firstPersonView.init(files, registry, *renderer, resolveTexture);
 
   std::vector<obf2::gfx::MeshRenderer::DrawItem> items;
   items.reserve(scene.instances.size());
@@ -800,7 +817,10 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       // game, that server on a real one.
       obf2::Vec3f soldierEye =
           remoteSoldier ? *remoteSoldier : hostedClient->interpolatedPosition(localSoldierId);
-      soldierEye.y += 1.7f;  // the soldier's height: the camera at eye level
+      // The eye over the soldier's position: **not measured**. The data has
+      // `poseCameraPosition 0 0/0.47/0.1` (us_light_soldier.tweak) against a
+      // point not established yet (docs/functions/soldier-model.md, "Stage 4").
+      soldierEye.y += 1.7f;
 
       // On a real server the input goes to the same place as in our own game —
       // only in another form: as the player action stream.
@@ -898,12 +918,15 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         acquired->height == 0
             ? 1.0f
             : static_cast<float>(acquired->width) / static_cast<float>(acquired->height);
-    // The near plane. For the game it has to be small: otherwise everything closer
-    // than it disappears — and you can see straight through a wall you walked up to.
-    // For the model viewer the camera is far away anyway, so there we keep a
-    // proportional one — it gives better depth precision.
+    // The near plane. A level is drawn with the renderer's own: `RendDX9.dll` sets
+    // the world camera's near plane to its +0x590 at the top of every frame
+    // (0x1002c2e0), 0.041 from the constructor (0x1002dd16, `0x3d27ef9e`;
+    // console `renderer.tweakNearPlane`, which no game file sets). The roads'
+    // depth bias is measured against it (docs/functions/render-camera.md). The
+    // model viewer is not the game: there the camera is far away, and a near
+    // plane proportional to the model gives better depth precision.
     const bool firstPerson = hostedServer != nullptr || remoteSoldier.has_value();
-    const float nearPlane = firstPerson ? 0.1f : scene.radius * 0.002f + 0.05f;
+    const float nearPlane = level.has_value() ? 0.041f : scene.radius * 0.002f + 0.05f;
 
     // How far we draw is the level's own view distance, scaled by the player's
     // setting — `GameLogic.MaximumLevelViewDistance` in the level's Init.con
@@ -920,6 +943,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     const float farPlane =
         firstPerson && firstPersonFar > 1.0f ? firstPersonFar : scene.radius * 40.0f;
 
+    // The world's vertical field of view: **not measured**. The renderer's camera
+    // takes a vertical angle (`RendDX9.dll` 0x10079e10) and its constructor has 60°;
+    // who sets it in a battle is not read (docs/functions/render-camera.md).
     const obf2::Mat4 projection = obf2::perspective(1.05f, aspect, nearPlane, farPlane);
     // From above "screen up" has to be Z rather than Y (which would coincide with the
     // view). In a left-handed system right is cross(up, forward), so with up = +Z
@@ -960,6 +986,63 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       renderer->setCameraPosition(eye);
       renderer->renderScene(*acquired, *toDraw, projection * view,
                             obf2::gfx::Color{0.42f, 0.55f, 0.68f, 1.0f});
+
+      // Our arms and weapon, when the camera is our soldier's eye: the weapon his
+      // ghost says is out, or what `pickupKit` makes active after a spawn
+      // (crosshair.h), on the first-person skeleton, through the first-person
+      // camera — the same view, its own projection (`RendDX9.dll` 0x1002c35d).
+      firstPersonItems.clear();
+      if (remote != nullptr && remote->playerSpawned && remoteSoldier && !args.watchSoldier) {
+        const auto soldier = remote->world.objects().find(remote->ourSoldier);
+        const std::string* soldierName =
+            soldier != remote->world.objects().end()
+                ? remote->templateNumbers.nameOf(soldier->second.templateId)
+                : nullptr;
+        if (soldierName != nullptr) {
+          const std::uint32_t kit = remote->world.kitTemplateOf(remote->ourSoldier);
+          const std::string* kitName = kit != 0 ? remote->templateNumbers.nameOf(kit) : nullptr;
+          const std::string kitText = kitName != nullptr ? *kitName : std::string();
+          const int item = soldier->second.lastWeaponIndex >= 0
+                               ? soldier->second.lastWeaponIndex
+                               : obf2::app::spawnItemIndex(remote->registry, kitText);
+          if (firstPersonView.setWeapon(*soldierName, kitText, item)) {
+            // The movement in the camera's own frame, as `updateAnimationSystems`
+            // measures it against the movement matrix (Linux 0x554bde): x the side,
+            // z forward, the vertical left out.
+            obf2::anim::State state;
+            const obf2::Vec3f velocity = remote->body.velocity;
+            const float planar = std::sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+            if (planar > 0.001f) {
+              const float yawRadians = yaw * 3.14159265358979323846f / 180.0f;
+              state.speed = planar;
+              state.direction[0] =
+                  (velocity.x * std::cos(yawRadians) - velocity.z * std::sin(yawRadians)) / planar;
+              state.direction[1] = 0.0f;
+              state.direction[2] =
+                  (velocity.x * std::sin(yawRadians) + velocity.z * std::cos(yawRadians)) / planar;
+            }
+            // The spring's input: the last action's turn, the velocity, and the
+            // movement matrix — the soldier camera's own (`getMovementMatrix`,
+            // Linux 0x54ac70).
+            const obf2::Mat4 camera = obf2::app::firstPersonCamera(eye, yaw, pitch);
+            obf2::anim::CameraSpring::Input spring;
+            spring.step = frameStep;
+            spring.turn[0] = remote->lastTurn[0];
+            spring.turn[1] = remote->lastTurn[1];
+            spring.velocity = velocity;
+            spring.right = obf2::transformDirection(camera, obf2::Vec3f{1.0f, 0.0f, 0.0f});
+            spring.up = obf2::transformDirection(camera, obf2::Vec3f{0.0f, 1.0f, 0.0f});
+            spring.forward = obf2::transformDirection(camera, obf2::Vec3f{0.0f, 0.0f, 1.0f});
+            firstPersonView.update(state, frameStep, spring);
+            firstPersonView.collect(firstPersonItems, camera);
+          }
+        }
+      }
+      if (!firstPersonItems.empty()) {
+        renderer->renderScene(*acquired, firstPersonItems,
+                              obf2::app::firstPersonProjection(aspect) * view,
+                              obf2::gfx::Color{}, obf2::gfx::MeshRenderer::ScenePass::FirstPerson);
+      }
 
       // The HUD goes as a second pass over the ready frame — without clearing the
       // target. `--no-hud` skips it: when a frame is being compared against the
@@ -1052,6 +1135,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         }
         // The spawn screen's circles: the server's groups, once it has named any.
         if (remote != nullptr) {
+          hudManager.useServerGroupsOnly();
           remote->spawnWorldSize = hudManager.mapWorldSize();
           if (remote->world.spawnGroupRevision() != shownSpawnGroups) {
             shownSpawnGroups = remote->world.spawnGroupRevision();
@@ -1064,6 +1148,57 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
               static_cast<std::uint32_t>(remote->world.ownPlayer()));
           if (self != remote->world.players().end()) {
             hudManager.localSquad(static_cast<int>(self->second.squad.value_or(0)));
+          }
+
+          // The crosshair. The weapon our soldier has out is what his own ghost's
+          // state says (0x1000) against his kit; every action we played since the
+          // last frame is one `updateDeviation` (BF2.exe 0x5af4ea).
+          const std::uint16_t ours = remote->ourSoldier;
+          const auto soldier = remote->world.objects().find(ours);
+          const obf2::game::ObjectTemplate* weapon = nullptr;
+          int pose = 0;
+          std::string kitText;
+          int item = -1;
+          if (spawned && ours != 0 && soldier != remote->world.objects().end()) {
+            const std::uint32_t kit = remote->world.kitTemplateOf(ours);
+            const std::string* kitName = kit != 0 ? remote->templateNumbers.nameOf(kit) : nullptr;
+            if (kitName != nullptr) kitText = *kitName;
+            // His own state's weapon (0x1000) when the server sends it; it does not
+            // for our own soldier, and then what `pickupKit` makes active.
+            item = soldier->second.lastWeaponIndex >= 0
+                       ? soldier->second.lastWeaponIndex
+                       : obf2::app::spawnItemIndex(remote->registry, kitText);
+            weapon = obf2::app::weaponOut(remote->registry, kitText, item);
+            pose = static_cast<int>(soldier->second.lastPose);
+          }
+          // Which link is missing when there is no crosshair: the kit, the item, or
+          // the kit's child with that item.
+          if (std::string key = kitText + "|" + std::to_string(item); key != crosshairKey) {
+            const bool known = soldier != remote->world.objects().end();
+            std::printf("  crosshair: soldier %u, kit %s, item %d -> %s (his records %d, "
+                        "not read for want of the inventory size %d)\n",
+                        ours, kitText.empty() ? "(unknown)" : kitText.c_str(), item,
+                        weapon != nullptr ? weapon->name.c_str() : "no weapon",
+                        known ? soldier->second.soldierRecords : -1,
+                        known ? soldier->second.withoutInventory : -1);
+            crosshairKey = std::move(key);
+          }
+          crosshair.setWeapon(weapon);
+          for (const auto& [number, action] : remote->sent) {
+            if (crosshairAction && number <= *crosshairAction) continue;
+            crosshair.onAction(action, pose, false);
+            crosshairAction = number;
+          }
+          std::map<std::string, float> shown;
+          crosshair.apply(shown);
+          if (shown != crosshairShown) {
+            for (const char* name :
+                 {"CrosshairUpPos", "CrosshairDownPos", "CrosshairLeftPos", "CrosshairRightPos"}) {
+              hudManager.values().erase(name);
+            }
+            for (const auto& [name, value] : shown) hudManager.values()[name] = value;
+            crosshairShown = std::move(shown);
+            hudManager.markDirty();
           }
         }
         // The spawn bar while dead: the player's own state says which group the
@@ -1302,6 +1437,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   for (OwnedPiece& piece : spawnPieces) renderer->release(piece.mesh);
   for (auto& gpuMesh : gpuMeshes) renderer->release(gpuMesh);
   worldView.release(*renderer);
+  firstPersonView.release(*renderer);
   {
     // Frames per second over everything after the first frame — the loading is
     // not part of it. The measure for "the picture jerks": a number, not a feeling.

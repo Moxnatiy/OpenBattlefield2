@@ -300,8 +300,23 @@ class MeshRenderer {
     pointColor_ = point;
   }
 
+  // Which pass of a frame `renderScene` draws.
+  //
+  //   World        clears the colour and the depth, and runs the ground's light
+  //                first;
+  //   FirstPerson  the player's arms and weapon over the finished world, through
+  //                their own camera (`RendDX9.dll` keeps a second one for them,
+  //                the renderer's +0xfc, docs/functions/render-camera.md). The
+  //                colour is kept and the depth starts empty, since the two
+  //                cameras' depths do not compare. Whether the original clears
+  //                the depth before them is **not measured**: its renderer has a
+  //                `draw1pZOnly` switch and `RSMT1Person` material classes, and
+  //                where it draws them in the frame is not read yet.
+  enum class ScenePass { World, FirstPerson };
+
   void renderScene(const Frame& frame, const std::vector<DrawItem>& items,
-                   const Mat4& viewProjection, Color clearColor);
+                   const Mat4& viewProjection, Color clearColor,
+                   ScenePass scenePass = ScenePass::World);
 
   // How many instances were drawn and how many culled in the last frame.
   int drawnLastFrame() const { return drawn_; }

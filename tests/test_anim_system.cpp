@@ -264,7 +264,9 @@ static void testIdleTrigger() {
       "animationTrigger.addBundle idle1",
       "animationTrigger.addBundle idle2",
       "animationSystem.createTrigger IdleTrigger idle",
-      "animationTrigger.idleTime 5/10",
+      // The M4's first-person numbers. Not 5/10: that is also the default, and a
+      // reading that dropped the argument passed with it.
+      "animationTrigger.idleTime 5/15",
       "animationTrigger.addChild rnd_idle",
   });
 
@@ -273,6 +275,8 @@ static void testIdleTrigger() {
   state.idleTime = 2.0f;
   CHECK(system.select(state).empty());
   state.idleTime = 7.0f;
+  CHECK_EQ(system.select(state).size(), std::size_t(1));
+  state.idleTime = 12.0f;
   CHECK_EQ(system.select(state).size(), std::size_t(1));
   state.idleTime = 20.0f;
   CHECK(system.select(state).empty());

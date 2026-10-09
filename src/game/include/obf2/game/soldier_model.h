@@ -36,6 +36,18 @@ struct SoldierModel {
   // the upper body. Which one is out is the soldier state's 0x1000.
   std::optional<SoldierPart> weapon;
   std::string weaponAnimationSystem3p;
+
+  // First person: the player's own arms and weapon. The body's and the weapon's
+  // sub-geometry is `kSoldierFirstPersonGeometry`, and both are posed on the
+  // first-person skeleton, driven by the soldier's and the weapon's
+  // `animationSystem1P` the way the third-person pair drives the other skeleton.
+  // The kit has no first-person piece: it is a third-person mesh on the other
+  // skeleton's bones.
+  std::string skeleton1p;         // `ObjectTemplate.skeleton1P`
+  std::string animationSystem1p;  // `ObjectTemplate.animationSystem1P` (only swimming)
+  SoldierPart body1p;
+  std::optional<SoldierPart> weapon1p;
+  std::string weaponAnimationSystem1p;
 };
 
 // The sub-geometry anything held or worn is drawn with from outside, and it is
@@ -51,6 +63,12 @@ struct SoldierModel {
 // 998 triangles against 4253, and it is the one textured `usrif_m4_mini_c.dds`)
 // where 0 carries the scope blur — `mesh_info`.
 inline constexpr int kSoldierThirdPersonGeometry = 1;
+
+// The client says the same from its side: the soldier's animation update
+// (`BF2.exe` 0x61f630) hands the soldier's geometry its view number, +0x2b8 —
+// 0 in first person, 1 in third — through the geometry's +0x6c (0x61f680), and
+// the weapon's the same (0x61f8e9). So 0 is the first-person one.
+inline constexpr int kSoldierFirstPersonGeometry = 0;
 
 // `weaponItem` is the `itemIndex` of the weapon he has out — the soldier state's
 // 0x1000 (soldier_state.h). Slot 3, the kit's main weapon, stands in where that is

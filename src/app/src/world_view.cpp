@@ -155,7 +155,7 @@ std::optional<Mat4> WorldView::poseBody(std::uint16_t id, const net::bf2::Remote
     anim::Ragdoll ragdoll(*ragdollTemplate_, world, object.lastVelocity);
     // `enableRagDoll`: not the server, and a remote object — the client's mode.
     ragdoll.setClient(true);
-    found = bodies_.emplace(id, Body{std::move(ragdoll), 0}).first;
+    found = bodies_.emplace(id, Body(std::move(ragdoll))).first;
     std::printf("  soldier %u lies down: a ragdoll of %zu particles\n", id,
                 found->second.ragdoll.particles().size());
   }
@@ -163,6 +163,18 @@ std::optional<Mat4> WorldView::poseBody(std::uint16_t id, const net::bf2::Remote
   if (body.fed != object.ragdollExact) {
     body.ragdoll.readNetwork(object.ragdollParticles);
     body.fed = object.ragdollExact;
+    // The watched body, state by state: where the server has its hips (bone 6,
+    // the second particle on the wire) against where ours are, both over the
+    // terrain.
+    if (id == watched_ && remote_->terrain != nullptr && object.ragdollParticles.size() > 1) {
+      const Vec3f server = object.ragdollParticles[1];
+      const Vec3f ours = body.ragdoll.center();
+      std::printf("    body %u state %d at tick %u: the server's hips at %.2f %.2f %.2f, %.2f over "
+                  "the terrain, ours %.2f\n",
+                  id, body.fed, remote_->world.gameTick(), server.x, server.y, server.z,
+                  server.y - remote_->terrain->groundContactAt(server).height,
+                  ours.y - remote_->terrain->groundContactAt(ours).height);
+    }
   }
 
   anim::RagdollGround ground;
@@ -190,6 +202,34 @@ std::optional<Mat4> WorldView::poseBody(std::uint16_t id, const net::bf2::Remote
   // The level of detail `updateInstances` gives by distance to the camera is not
   // ported: every body steps at the full rate (+0x6c = 0).
   const Vec3f centre = body.ragdoll.update(frameStep, ground);
+  ++body.frames;
+  if (remote_->terrain != nullptr) {
+    const float above = centre.y - remote_->terrain->groundContactAt(centre).height;
+    body.highest = std::max(body.highest, above);
+    if (above > 0.6f) ++body.framesHigh;
+    float surface = remote_->terrain->groundContactAt(centre).height;
+    float onObject = 0.0f;
+    if (remote_->collision != nullptr &&
+        remote_->collision->groundHeight(centre, 20.0f, 0.1f, &onObject)) {
+      surface = std::max(surface, onObject);
+    }
+    const float overSurface = centre.y - surface;
+    body.highestOverSurface = std::max(body.highestOverSurface, overSurface);
+    if (overSurface > 0.6f) ++body.framesOverSurface;
+  }
+  body.last = centre;
+  {
+    const auto& t = *ragdollTemplate_;
+    const auto& ps = body.ragdoll.particles();
+    const int head = t.particleOf(47), left = t.particleOf(4), right = t.particleOf(9);
+    if (head >= 0 && left >= 0 && right >= 0) {
+      const float h = ps[static_cast<std::size_t>(head)].position.y;
+      if (h - ps[static_cast<std::size_t>(left)].position.y > 0.8f &&
+          h - ps[static_cast<std::size_t>(right)].position.y > 0.8f) {
+        ++body.framesUpright;
+      }
+    }
+  }
   // The measure for walls: a particle that a face separates from the centre.
   ++bodyFrames_;
   if (const server::CollisionWorld* collision = remote_->collision) {
@@ -371,6 +411,34 @@ void WorldView::collect(std::vector<gfx::MeshRenderer::DrawItem>& out, int frame
     }
 
     if (soldier) {
+      // In a vehicle: his player's object is a vehicle (`EnterVehicleEvent`), not
+      // this soldier. The engine moves the soldier into the seat
+      // (`Soldier::onEnter`, Linux 0x54b2f0: the vehicle at +0x398, the pose
+      // cleared, the camera and the spawn point to the seat), so his own last
+      // position no longer says where he is — and on the live server his ghost
+      // goes silent there (1600, 1727, 1730: no record in thousands of frames).
+      // The seat itself needs the vehicle's seats and its rotation, which are not
+      // read (CLAUDE.md, "a vehicle's rotation"); until then such a soldier is not
+      // drawn rather than drawn where he left. One whose records keep coming is
+      // drawn where they put him.
+      if (const net::bf2::RemotePlayer* owner = remote_->world.ownerOf(id);
+          owner != nullptr && owner->object != id && owner->object != 0) {
+        const auto seat = remote_->world.objects().find(owner->object);
+        if (seat != remote_->world.objects().end() &&
+            seat->second.netClass == net::bf2::GhostClass::SimpleObject) {
+          DrawStat& stat = stats_[id];
+          if (stat.recordsAtEntry < 0 || stat.vehicle != owner->object) {
+            stat.recordsAtEntry = object.soldierRecords;
+            stat.vehicle = owner->object;
+          }
+          ++stat.framesInVehicle;
+          stat.recordsInVehicle = object.soldierRecords - stat.recordsAtEntry;
+          if (stat.recordsInVehicle == 0) {
+            ++stat.framesHiddenInVehicle;
+            continue;
+          }
+        }
+      }
       const std::string* soldierName = remote_->templateNumbers.nameOf(object.templateId);
       const std::uint32_t kit = remote_->world.kitTemplateOf(id);
       const std::string* kitName = kit != 0 ? remote_->templateNumbers.nameOf(kit) : nullptr;
@@ -481,6 +549,18 @@ void WorldView::collect(std::vector<gfx::MeshRenderer::DrawItem>& out, int frame
         }
         // Dead: his body, not his animation.
         if (const auto lying = poseBody(id, object, drawn, place, frameStep)) place = *lying;
+        {
+          DrawStat& stat = stats_[id];
+          if (stages.empty() && bodies_.count(id) == 0) {
+            ++stat.bindPose;
+            const net::bf2::RemotePlayer* owner = remote_->world.ownerOf(id);
+            if (owner != nullptr && owner->object != id) ++stat.bindPoseInVehicle;
+          }
+          if (remote_->terrain != nullptr && bodies_.count(id) == 0) {
+            const float above = base.y - remote_->terrain->groundContactAt(base).height;
+            stat.highestAboveGround = std::max(stat.highestAboveGround, above);
+          }
+        }
         if (look->gpu.vertices != nullptr) {
           gfx::MeshRenderer::DrawItem item{&look->gpu, place};
           // With no clip to stand on he is drawn as the file holds him, which is
@@ -561,9 +641,37 @@ void WorldView::report() const {
                 id, stat.frames[2], stat.frames[1], stat.frames[0], stat.largestStep,
                 stat.predictedUnder, stat.drawnUnder);
   }
+  for (const auto& [id, stat] : stats_) {
+    if (stat.framesInVehicle == 0) continue;
+    std::printf("  soldier %u in vehicle %u: %d frames, his own records meanwhile %d, not "
+                "drawn %d frames\n",
+                id, stat.vehicle, stat.framesInVehicle, stat.recordsInVehicle,
+                stat.framesHiddenInVehicle);
+  }
+  for (const auto& [id, stat] : stats_) {
+    if (stat.bindPose == 0 && stat.highestAboveGround < 0.5f) continue;
+    const net::bf2::RemoteObject* object = nullptr;
+    if (const auto found = remote_->world.objects().find(id); found != remote_->world.objects().end()) {
+      object = &found->second;
+    }
+    const net::bf2::RemotePlayer* owner = remote_->world.ownerOf(id);
+    std::printf("  soldier %u: bind pose %d frames (%d with his player in object %u), highest "
+                "%.2f m over the terrain, pose %u, ragdoll particles %zu\n",
+                id, stat.bindPose, stat.bindPoseInVehicle, owner ? owner->object : 0,
+                stat.highestAboveGround, object ? object->lastPose : 0u,
+                object ? object->ragdollParticles.size() : 0);
+  }
   if (bodyFrames_ > 0) {
     std::printf("  ragdoll bodies: %d frames drawn, %d with a particle through a face\n",
                 bodyFrames_, bodyFramesThroughFace_);
+  }
+  for (const auto& [id, body] : bodies_) {
+    std::printf("  body %u: %d frames, %d with the centre over 0.6 m (%d over the surface "
+                "below it), %d standing, highest %.2f m (%.2f over the surface), client mode "
+                "%s, fed %d states, last at %.2f %.2f %.2f\n",
+                id, body.frames, body.framesHigh, body.framesOverSurface, body.framesUpright,
+                body.highest, body.highestOverSurface, body.ragdoll.client() ? "yes" : "no",
+                body.fed, body.last.x, body.last.y, body.last.z);
   }
 }
 

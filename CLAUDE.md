@@ -283,6 +283,45 @@ Names from the server are transplanted into the Ghidra project with
 `tools/transplant_symbols.py --script` — after that the functions in
 `BF2.exe` have human names and `decompile_function` can be called by name.
 
+### REA: one function whole, as evidence
+
+[REA](https://github.com/morluto/rea) (MIT, `reference/rea`) drives the same
+Ghidra headless and answers in **Evidence records**: one `function` call gives
+the function whole — pseudocode, assembly, callers, callees, every reference in
+and out, the strings and names it touches, its basic blocks, its value flow —
+together with what Ghidra could not resolve. That is rule 3 in one call, so a
+new function is opened through REA first and through `decompile_function` for
+the follow-ups.
+
+* **In a session**: the `rea` MCP server (registered for Claude Code by `rea
+  setup`). `open_binary` once, then `analyze_function`, `search_strings`,
+  `find_xrefs_to_name`, `get_call_graph`, `resolve_native_call_targets` (an
+  indirect call — our vtables), `read_bytes`; `close_binary` at the end.
+* **From the terminal**: `tools/rea.sh <command> <binary> [args]`. Each call
+  imports the binary again (RendDX9.dll: 2.5 minutes), so every answer is kept
+  in `ghidra_projects/rea/<binary>.json` and the same question is answered from
+  it in seconds.
+* **What it is not**: its Ghidra project is temporary — names and comments made
+  through it vanish on close. What we name stays in our own project (the
+  `ghidra` server above) and in `docs/`.
+* **Its skill** (`~/.agents/skills/reverse-engineer-anything`) asks every
+  conclusion to keep apart what was observed, what was inferred and what is
+  unknown, and to cite the Evidence ID. In `docs/` the address stays the
+  citation (rule 6a); an Evidence ID may stand beside it.
+* It needs **Ghidra 12.1.4 exactly** (4.1.0 refuses 12.1.3) and a JDK 21; it
+  takes our 32-bit PE files (`format: pe, architecture: x86`).
+* **What it costs in practice** (the crosshair pass, docs/functions/hud-crosshair.md):
+  opening `BF2.exe` took a few minutes once; after that each answer is quick.
+  But an `analyze_function` dossier carries the whole value flow — 5 MB for a
+  2.7 KB function — and every MCP answer repeats its payload three times
+  (result, raw, normalized). Such answers land in a file: keep it under
+  `ghidra_projects/rea/dossiers/` and read it with `tools/rea_dossier.py`
+  (`--grep` for the lines that matter). For a byte or two, a constant, or a
+  scan over every instruction, a local script over the PE is cheaper.
+* Its Ghidra project is fresh: no names transplanted from the server, so every
+  function is `FUN_…`. The names come from `tools/linuxded/vtable.py` — the
+  server's vtable, slot by slot, at the client's offsets.
+
 ## Tools
 
 **Binary work goes through MCP `ghidra`** (see "Sources of truth"). The
@@ -296,6 +335,11 @@ constant's value is needed, and no good where control flow is needed.
 | `tools/elf_symbol.py <name> --type f32\|f64\|u32` | the value of a global from the server's ELF | one number, no context |
 | `tools/linuxded/bitfields.py --blocks <Class::method>` | the `readBits` list and block graph in the server | **does not say which bit a field is under** |
 | `tools/linuxded/statefields.py` | a draft "mask bit → field" | **the output cannot be trusted**, see the file |
+| `tools/rea.sh <command> <binary> [args]` | REA from the terminal: a function whole as an Evidence record, string and name search, call targets, bytes (see "REA" above) | each new question costs a fresh import (minutes); repeats come from the snapshot |
+| `tools/rea_dossier.py <answer.json> [--code] [--grep RE]` | a REA function dossier or batch answer read without pulling megabytes into view: identity, callers, callees, strings, the pseudocode or the lines that match | reads what REA returned, nothing more |
+| `tools/linuxded/vtable.py <Class> --msvc` | a class's vtables in the server with every slot named, and the offset the slot has in `BF2.exe` — what `(*obj + 0x50)()` in the client calls | MSVC's layout is derived (4-byte slots, one destructor); a base whose slot order differs between the ABIs would mislead |
+| `tools/control_constants.py` | every `c_PI*` constant with its number — the axis index in a `PlayerInput` and its mask bit (the button mask counts from `c_PIFire`) | reads the registration calls at 0x69045d on; a new register form would be skipped |
+| `tools/pe_field_users.py <pe> <global> <offset>` | every instruction that reaches `[ptr + offset]` right after loading a global pointer into `ptr` — "who touches field X of the object at global G", which Ghidra's xrefs do not answer | a straight-line follow: a pointer passed on, kept on the stack or copied is lost |
 | `tools/linuxded/vars_defaults.py <start> <stop>` | every `Vars::getInt`/`getFloat` a function registers: the name, the default, the global it lands in | follows only immediates and stack slots; what it cannot follow it prints as `?` |
 | `tools/exe_xref.py` | string → who refers to it | Ghidra does this better |
 | `tools/linuxded/gen_events.py` | the game event size table | marks an event conditional when its `deSerialize` reads anything but plain bits (a compressed vector, a string) |
@@ -373,6 +417,8 @@ to look when something does not match.
 | `app/camera`, `app/scripted_input` | where the frame is seen from; `--look-at`, `--move-at`, `--jump-at` | `IO/Input` |
 | `app/model_view`, `app/calibrate`, `app/collision_probe` | the modes that are not the game: one mesh posed by its clips, template numbers matched to names, what collides at a point | — |
 | `app/scoreboard_players` | who the scoreboard lists, from the session's world or our own server | `Menu/Hud/Scoreboard` (its `update`) |
+| `app/crosshair` | our soldier's crosshair: the weapon out, its deviation, the HUD's numbers | `Menu/Hud` + `SoldierDeviationComp` |
+| `app/first_person` | our own arms and weapon: the first-person skeleton on the camera, its clips, its camera | `Soldier::updateFirstPersonAnimations` |
 | `hud/manager` | the whole interface of a round: the tree, the variables, the state machine, the spawn screen, the animation | `Menu/BF2HudManager` |
 | `game/object_mesh` | a template's tree into geometry, and where an object is lost on the way to the screen | `Scene/Object/ObjectUtils` |
 | `session/remote_world` | the live link to a server: handshake, the world it keeps, our action stream | `Game/Common/ClientConnection` |
@@ -468,8 +514,11 @@ know how the original does it. Each has a measure.
 | other players on screen | positions read by class, drawn through the four-update track (`ghost_track.h`); the clock is reversed (`FUN_004d5460` → `FUN_004c4400`, docs/functions/network-events.md), and by it the original extrapolates too whenever its actions are answered later than 100 ms. What is left: the answer takes 172 ms on a LAN (the `ping` row below), and until it is shorter nothing is ever interpolated | `frames drawn` report: a moving player drawn interpolated, largest step between frames within his speed × frame time. The step is met (0.33 m at 7 m/s); the interpolation is not |
 | a soldier sinking into the ground | **done**: other soldiers are carried by the soldier physics the way `predict` seeds it (`carryRemoteSoldier`, Linux 0x5dc314 / 0x6f1de0 / 0x6f2310, docs/functions/network-events.md) and the frame blends the last two ticks. Frames with a soldier's feet more than 5 cm under the terrain, one 2400-frame run: ~8500 predicted, ~130 drawn. What is left: the forces the physics manager accumulates into the node (+0x38, +0xac) are not read. It costs no frame rate: 0.3% of the main thread in `sample`, and an A/B of the same run with `--draw-predicted` gave 79.2 and 82.1 frames a second carried against 82.5 and 80.3 predicted | no drawn soldier's feet under the terrain |
 | a ghost's facing while extrapolated | the engine's extrapolation branch writes an **identity rotation** into the matrix it hands the object (0x5dc2ac), where the interpolation branch builds one from the two updates' yaw and pitch. Whether the facing comes back through `setPredictedState` is not established — the client's copy of it is not read. We keep the newest yaw | the notes say what the original draws a soldier facing while his updates are stale |
-| a vehicle's rotation | the quaternion in a simple object's update is not read; moving vehicles keep the spawner's rotation, and so does their collision (the create event's rotation, whose sign against the level's is seen only on zero rotations) | a turning jeep turns on screen |
+| a vehicle's rotation | the quaternion in a simple object's update is not read; moving vehicles keep the spawner's rotation, and so does their collision (the create event's rotation, whose sign against the level's is seen only on zero rotations). A LAV on Karkand's road is drawn standing a little above it | a turning jeep turns on screen |
+| a soldier in a vehicle | `EnterVehicleEvent` → `GameClient` (0x4d6c00, 0x4d6820) → `Soldier::onEnter` (Linux 0x54b2f0) puts him in the seat; his own ghost goes silent there (docs/functions/soldier-model.md). The seats and the vehicle's rotation are not read, so such a soldier is **not drawn** until his records come again, instead of standing where he climbed in | a passenger sits in his seat on screen |
 | soldiers as models | other soldiers are drawn as body, kit and weapon and animated from their ghost (docs/functions/soldier-model.md, stages 1 to 3); the sub-geometry and the weapon's part-to-bone binding are read from the engine now. The pose (0x20) and the weapon he has out (0x1000) are read and drawn: a crouching bot aiming his pistol is on screen. What is left: `BundlePlayer::update` is not reversed, so there are no fades and no one-shots; the weapon's own messages (firing, reloading — the player state's 0x40/0x80/0x20000) are not read | a bot fires on screen |
+| the weapon in hand | **drawn on `--connect`** (docs/functions/soldier-model.md, stage 4): the soldier's and the weapon's sub-geometry 0 on `1p_setup.ske`, the parts on bones 0x36 + i up to 16 (`BF2.exe` 0x61f630), driven by the weapon's `animationSystem1P`, the skeleton's `Camerabone` on the camera (Linux 0x5527a0, 0x552b30), through the renderer's second camera — vertical field of view 0.82, near 0.01, far 15 (`RendDX9.dll` 0x1002d277, 0x1002c315). The camera spring sways it with the turn and the movement (0x552d55..0x5530d0, `anim::CameraSpring`). What is left: the recoil, zoom, firing and reloading (messages 1, 2, 4, 8), the idle clips, the pose scaling; and where the original draws the pass and what it does to the depth (`draw1pZOnly`, `RSMT1Person`) — ours clears the depth, not measured | walking into a wall shows the barrel the way the original does |
+| the eye and the field of view | two numbers with no source: the eye 1.7 m over the soldier's position (the data's `poseCameraPosition 0 0/0.47/0.1` is relative to a point not established) and the world's vertical field of view 1.05 (the renderer's camera takes a vertical angle, 0x10079e10; who sets it in a battle is not read) | both read from the binary, and a frame of the original matches ours |
 | a sprinter's clip | **the original plays it; we do not** (watched by the maintainer). Read so far, and every piece agrees with itself: `Soldier::updateAnimationSystems` (Linux 0x5545e0) hands a soldier who cannot fire `getSoldierSpeed(4)` = 7.0 straight ahead, otherwise the planar length of `getAbsolutePositionalSpeed` — the node's displacement per update × 30 (`postFrameUpdate`, 0x6ddca0); `stand_sprint` is a `ForwardTrigger` on `3p_sprint` 5.5–6.3; the client's `isWithinRange` (0x7fe720) is `a <= value <= b`. Ruled out by measurement: that displacement speed on our carried soldiers — median 6.64 over 1400 sprinting frames, 27 inside the range. What the original's animation system actually holds for a sprinting remote soldier is not measured, and statics alone will not settle it | a read of the running original's animation system (+0x20 speed, +0x1c forward) for a sprinting bot, and then that bot plays the sprint clip here |
 | tickets on `--connect` | the layout is known; it rides a ghost (`ScoreManager::setNetUpdate`, 0x5c9650), whose class mask is not taken yet | the numbers match the original on the same server |
 | simple object state mask (19 bits) | we know 1 bit out of 19 | all 19 named in the notes |
@@ -488,6 +537,7 @@ soldier through `tickSoldier`.
 
 | what | state | measure |
 |---|---|---|
+| the crosshair | **drawn on `--connect`**, read through REA (docs/functions/hud-crosshair.md): the ticks are the weapon's HUD group under `GuiIndex` (0x78b340), placed by 0x7a5690 from `getDeviation`, `deviationFactor` and `min/maxVisualDeviation`; the deviation is `SoldierDeviationComp::updateDeviation` 0x60ad60, once per input from `Soldier::handlePlayerInput` (0x5af516), its misc flag the jump or the lie-down; the weapon out after a spawn is `pickupKit`'s first slot from 3 up (Linux 0x54dacf). A position variable is the node's coordinate, not an offset (0x7c1d90). The ticks are yellow: a node's colour is a `Bf2ColorEffect` slotted above its subtree (0x79a210, its paint 0x7c21f0), so the group's colour reaches them. What is left: weapon switching, zoom, firing and `postFire`, the jump's vetoes, unlocks; nothing on `--hosted` | the ticks follow a weapon switch |
 | `Kit<N>Show`, `CPInterfaceEnabled` | the fields are found (`HudInformationLayer`, docs/functions/hud-variables.md: +0x202+N and +0xa8); **who writes them is not** | the notes name who writes |
 | ticket colours (`FriendlyTicketRed` +0x158 and neighbours) | the fields are confirmed in the registry (docs/functions/hud-variables.md); the mechanism exists (`setNodeRGBVariables`), the values are unknown | the ticket numbers are the same colour as in the original |
 | `FriendlyTicketBleed` 0x8c | 0x4646b0 writes the neighbouring field 0x88 from `team->+0x90`; whether it is the same is not established | the bar blinks while tickets bleed |

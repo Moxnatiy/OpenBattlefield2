@@ -3,6 +3,7 @@ add_library(obf2_game
   src/object_template.cpp
   src/template_numbers.cpp
   src/soldier_model.cpp
+  src/weapon_hud.cpp
   src/scene.cpp
   src/object_mesh.cpp
 )

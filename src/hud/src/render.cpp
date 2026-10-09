@@ -197,13 +197,26 @@ ScreenRect nodeRect(const Node& node, const Screen& screen, const Context* conte
     shiftX = show.offsetX;
     shiftY = show.offsetY;
   }
-  // `setNodePosVariable <axis> <variable>` — a node's offset from a variable. In
-  // the data this spreads the sight's four rays by the weapon's dispersion
-  // (`HudElementsGenericWeapon.con`). An unknown variable gives zero — the node
-  // stays where the data puts it.
-  if (context != nullptr && context->variableValue) {
-    if (!node.positionVariableX.empty()) shiftX += context->variableValue(node.positionVariableX);
-    if (!node.positionVariableY.empty()) shiftY += context->variableValue(node.positionVariableY);
+  // `setNodePosVariable <axis> <variable>` — the variable **is** the node's
+  // coordinate on that axis, counted from its parent like the one the data gave
+  // it, which it replaces. The command stores the variable in the node's +0x34
+  // (X) or +0x38 (Y) (`BF2.exe` 0x7c1c60, the node's vtable +0xd0), and the
+  // node's update (0x7c1d90) writes `x = *variable` before adding its own
+  // offset (+0x2c/+0x30) and walking up the parents. The sight's ticks are the
+  // case in the data: 0x7a5690 writes them absolute, `CrosshairUpPos` = 292 −
+  // the spread (docs/functions/hud-crosshair.md). A variable nobody writes
+  // leaves the node where the data put it.
+  if (context != nullptr && context->variableNumber) {
+    if (!node.positionVariableX.empty()) {
+      if (const auto value = context->variableNumber(node.positionVariableX)) {
+        shiftX += *value - node.x;
+      }
+    }
+    if (!node.positionVariableY.empty()) {
+      if (const auto value = context->variableNumber(node.positionVariableY)) {
+        shiftY += *value - node.y;
+      }
+    }
   }
   return ScreenRect{(node.absX + shiftX + screen.originX) * scale + padX,
                     (node.absY + shiftY + screen.originY) * scale, node.width * scale,
@@ -640,25 +653,36 @@ std::vector<DrawPiece> buildNode(const Node& node, const font::Font& font,
                                  const Context& context) {
   auto pieces = buildNodeGeometry(node, font, fontAtlas, screen, context);
 
-  // `setNodeRGBVariables <red> <green> <blue>` — a node's colour from variables.
-  // In the data the ticket numbers hang on this (`FriendlyTeamTopRed` and its
-  // neighbours) along with the capture points' bars.
+  // The variables of the colour effect the node draws through (Node::colorEffect),
+  // as its paint reads them (`BF2.exe` 0x7c21f0): a red, green or blue variable
+  // **replaces** the effect's channel and the alpha variable **multiplies** its
+  // alpha — each only when it is 0 or more; a negative one leaves the effect's
+  // own value. In the data the ticket numbers (`FriendlyTeamTopRed` and its
+  // neighbours), the capture points' bars and the crosshair's group hang on this.
   //
-  // The rule is the same as for the alpha: **we do not know the variable, we do
-  // not touch the colour**. Otherwise the ticket numbers would go black, because
-  // an unknown variable is zero. Who writes these variables in the game is **a source not found**.
-  if (node.rgbVariables.size() >= 3 && context.variableAlpha) {
-    const auto channel = [&](std::size_t index) {
-      return context.variableAlpha(node.rgbVariables[index]);
+  // One rule of ours on top: **we do not know the variable, we do not touch the
+  // colour**. Otherwise the ticket numbers would go black, because an unknown
+  // variable is zero.
+  if (context.variableAlpha) {
+    const auto known = [&](const std::string& name) -> std::optional<float> {
+      if (name.empty()) return std::nullopt;
+      const auto value = context.variableAlpha(name);
+      if (!value || *value < 0.0f) return std::nullopt;
+      return value;
     };
-    const auto red = channel(0);
-    const auto green = channel(1);
-    const auto blue = channel(2);
-    if (red || green || blue) {
+    std::optional<float> red, green, blue;
+    if (node.effectRgbVariables.size() >= 3) {
+      red = known(node.effectRgbVariables[0]);
+      green = known(node.effectRgbVariables[1]);
+      blue = known(node.effectRgbVariables[2]);
+    }
+    const auto alpha = known(node.effectAlphaVariable);
+    if (red || green || blue || alpha) {
       for (DrawPiece& piece : pieces) {
         if (red) piece.tint.r = *red;
         if (green) piece.tint.g = *green;
         if (blue) piece.tint.b = *blue;
+        if (alpha) piece.tint.a *= *alpha;
       }
     }
   }
@@ -691,10 +715,13 @@ namespace {
 // node is not drawn. We do the same with `setNodeShowVariable`, and so does the
 // game: `MenuBackgroundAlpha` is the **menu's** background, in combat it is zero,
 // and the wide plates under the health and ammo bars are simply not visible there.
+// The variable is the colour effect's the node draws through, its own or an
+// ancestor's (Node::colorEffect): at zero the whole subtree draws transparent.
 bool hiddenByAlpha(const Node& node, const Context& context) {
-  if (node.alphaVariable.empty() || !context.variableAlpha) return false;
-  const auto alpha = context.variableAlpha(node.alphaVariable);
-  return alpha && *alpha <= 0.0f;
+  if (node.effectAlphaVariable.empty() || !context.variableAlpha) return false;
+  const auto alpha = context.variableAlpha(node.effectAlphaVariable);
+  // A negative value leaves the effect's own alpha (0x7c21f0), so only zero hides.
+  return alpha && *alpha == 0.0f;
 }
 
 }  // namespace

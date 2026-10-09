@@ -29,6 +29,7 @@
 #include <string_view>
 #include <vector>
 
+#include "obf2/anim/camera_spring.h"
 #include "obf2/con/interpreter.h"
 #include "obf2/con/lexer.h"
 #include "obf2/vfs/filesystem.h"
@@ -166,6 +167,8 @@ class System {
 
   const std::map<std::string, Trigger>& triggers() const { return triggers_; }
   const std::map<std::string, ValueHolder>& valueHolders() const { return valueHolders_; }
+  // `animationSystem.cameraSpring.*` — only first-person systems carry one.
+  const CameraSpringTemplate& cameraSpring() const { return cameraSpring_; }
 
   // The tree's roots are the triggers that are nobody's child.
   std::vector<std::string> roots() const;
@@ -187,6 +190,7 @@ class System {
   std::map<std::string, Bundle> bundles_;
   std::map<std::string, Trigger> triggers_;
   std::map<std::string, ValueHolder> valueHolders_;
+  CameraSpringTemplate cameraSpring_;
 
   // Where the following properties go.
   std::string activeAnimation_;

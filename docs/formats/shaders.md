@@ -435,6 +435,11 @@ depth test and drops the depth write, and the colour is blended by the
 texture's alpha. A placement says only `DrawItem::road`; what that means
 is the renderer's business.
 
+Which of the two passes the game draws, and what else it sets, is not in the
+shader: `RendDX9.dll` draws pass 0 (`NV3x`) in a frame and adds a depth bias
+of −1e-5 and a slope-scaled one of −1e-5 the `.fx` has commented out
+(docs/functions/render-camera.md). Ours carries both.
+
 ## A road is two textures and an edge fade
 
 The depth state was only half of it. `Road.fx:73`:
