@@ -1,5 +1,10 @@
 # OpenBattlefield2
 
+> **Help wanted.** This is a big job for a few hands, and any pull request is
+> welcome. What would help most: reversing anything on the debt list in
+> [`CLAUDE.md`](CLAUDE.md), frame dumps and screenshots of the original to
+> measure against, and testing on other machines.
+
 A clean-room reimplementation of DICE's **Refractor 2** engine — the engine
 behind *Battlefield 2* (2005) — in C++20.
 
