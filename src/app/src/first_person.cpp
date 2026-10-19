@@ -34,6 +34,12 @@ std::string modelKey(const std::string& soldier, const std::string& kit, int ite
 
 }  // namespace
 
+Vec3f soldierEye(const Vec3f& feet, float pivotHeight, float bodyYawDegrees,
+                 const Vec3f& poseCamera) {
+  const Vec3f pivot{feet.x, feet.y + pivotHeight, feet.z};
+  return transformPoint(translation(pivot) * rotationY(bodyYawDegrees * kToRadians), poseCamera);
+}
+
 Mat4 firstPersonCamera(const Vec3f& eye, float yawDegrees, float pitchDegrees) {
   // rotationX turns +Z downwards for a positive angle, and our pitch is positive
   // upwards (lookDirection), hence the minus.
@@ -88,6 +94,15 @@ bool FirstPersonView::setWeapon(const std::string& soldier, const std::string& k
   // A new weapon is a new soldier or a switch; the spring's state is the
   // soldier's, but there is nothing to carry over to an empty template either.
   spring_.reset();
+  // A new weapon is a new fire component: its own rates, from the first.
+  onceMessages_ = 0;
+  fire_.setWeapon(game::FireTemplate{});
+  if (const auto chosen = game::soldierModel(*registry_, soldier, kit, item);
+      chosen && chosen->weapon1p) {
+    if (const game::ObjectTemplate* weapon = registry_->find(chosen->weapon1p->templateName)) {
+      fire_.setWeapon(game::fireOf(*weapon));
+    }
+  }
   const auto length = [this](const std::string& path) {
     const mesh::BoneAnimation* clip = clipAt(path);
     return clip != nullptr ? clip->duration() : 0.0f;
@@ -145,11 +160,31 @@ bool FirstPersonView::setWeapon(const std::string& soldier, const std::string& k
   return model_->ready;
 }
 
+bool FirstPersonView::onAction(std::uint32_t tick, bool fireHeld) {
+  if (!ready()) return false;
+  if (!fire_.tick(tick, fireHeld)) return false;
+  onceMessages_ |= 1u;  // a round: `postFire` (Linux 0x60a7e9)
+  return true;
+}
+
 void FirstPersonView::update(const anim::State& state, float step,
                              const anim::CameraSpring::Input& spring) {
   if (!ready()) return;
-  if (model_->body) body_.update(*model_->body, state, step);
-  if (model_->weapon) weapon_.update(*model_->weapon, state, step);
+  // The walk sees the held mask and this update's once-mask together; the
+  // once-mask is gone after it (`AnimationSystem::update`, 0x7f7390: +0x8 |= +0x10
+  // before the walk, +0x8 &= ~+0x10 and +0x10 = 0 after).
+  anim::State walked = state;
+  walked.messages |= onceMessages_;
+  onceMessages_ = 0;
+  if (model_->body) body_.update(*model_->body, walked, step);
+  if (model_->weapon) weapon_.update(*model_->weapon, walked, step);
+  // The measure: frames the weapon's `fire` bundle is on.
+  for (const anim::PlayingAnimation& playing : weapon_.playing()) {
+    if (playing.bundle == "fire" && playing.weight > 0.0f) {
+      ++fireClipFrames_;
+      break;
+    }
+  }
 
   // The soldier's spring, the weapon's merged over it — each only when its
   // system has one (`cameraSpring.use`).

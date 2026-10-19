@@ -71,6 +71,14 @@ Args parseArgs(int argc, char** argv) {
     }
     else if (flag == "--trace-own-state") args.traceOwnState = true;
     else if (flag == "--jump-at" && i + 1 < argc) args.jumps.push_back(std::atoi(argv[++i]));
+    else if (flag == "--fire-at" && i + 1 < argc) {
+      Args::ScheduledFire fire{};
+      if (std::sscanf(argv[++i], "%d:%d", &fire.frame, &fire.frames) != 2) {
+        std::fprintf(stderr, "--fire-at expects <frame>:<frames>, not %s\n", argv[i]);
+        continue;
+      }
+      args.fires.push_back(fire);
+    }
     else if (flag == "--flash" && i + 1 < argc) args.flashSwf = argv[++i];
     else if (flag == "--connect" && i + 1 < argc) args.connectTo = argv[++i];
     else if (flag == "--probe") args.probe = true;

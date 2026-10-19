@@ -381,6 +381,71 @@ last, over the finished world, with the depth cleared (`ScenePass::FirstPerson`)
 **not measured**. The measure: in the original, walk into a wall; whether the
 barrel goes into it says which.
 
+### Who raises the messages
+
+An animation system keeps two masks: `setTriggerMessage` ORs into +0xc,
+`setTriggerOnceMessage` into +0x14, `clearTriggerMessage` takes from +0xc (Linux
+0x6b42a0, 0x6b42b0, 0x6b42c0) — through `IAnimationSystem` they are the slots
++0x60, +0x68, +0x70 on the server, +0x2c, +0x30, +0x34 in MSVC's layout. A
+weapon's own (`AnimatedBundle::setTriggerMessage`, 0x508fb0) passes a message to
+both its systems (+0x248, +0x250). Its components raise them; for the M4 that is
+`DefaultAnimationComp` (`USRIF_M4.tweak`), whose system pointer is +0x28:
+
+| when | message | how | where |
+|---|---|---|---|
+| a round is fired (`postFire`) | 1 | once; held (+0xc) when the template's +0x24 is set | 0x60a7d0 |
+| firing stops (`fireStop(false)`) with that flag | 1 | cleared | 0x60a810 |
+| reloading (`reload(state)`) | 2 | cleared, once or held by the state (a jump table at 0xb78b58) | 0x60aad0 |
+| the fire rate switches (`AnimationComp::postSwitchFireRate`) | 8 | once | 0x609ee0 |
+| zooming in / out (`AnimationComp::updateOnZooming`), when the template's +0x10 is set | 4 | held / cleared | 0x609e80 |
+
+So the fire clip waits for a round actually fired, and that is the weapon's
+`SingleFireComp` and its ammunition. Read so far:
+
+* **the rate of fire.** `FireCompTemplate` (client constructor `BF2.exe` 0x621310,
+  Linux 0x5f5d70) has 600 rounds a minute (+0x3c in the client, `0x258`) and keeps
+  `1800 / rpm` — ticks between rounds, 3 — beside it (+0x40; `setRoundsPerMinute`,
+  Linux 0x5f5d60). The M4 sets neither, so it fires every 3 ticks. Its other
+  defaults: +0x48 = 1, +0x4c = 3 (`getBurstSize` reads it, Linux 0x5f5460), +0x50 = 8,
+  +0x54 and +0x58 = 0x40;
+* **a round** (`SingleFireComp::fire`, Linux 0x5fcec0): the fire tick (+0x44) is
+  now, the next round no earlier than now + those ticks (+0x164, 0x5fcf6e..0x5fcf77),
+  the state 4, `launchProjectile`. A start delay (`fireStartDelay`, template +0x14)
+  instead waits in state 1 and fires from `FireComp::preUpdate` (0x5f5300);
+* **the fire rates** are the template's list (`fire.addFireRate`, M4: 2 then 0) and
+  `switchFireRate` (0x5f62f0) steps to the next one round the list.
+  `FireComp::requestFire` (0x5f5110) treats rate **2** apart — the trigger flag
+  +0x94 follows the button for it alone — which is what an automatic rate would do;
+  that 2 is automatic and 0 single is an inference, not read;
+* **who calls `doFire`** (`GenericFireArm::doFire`, Linux 0x5e6da0, which ends in
+  `postFire` at 0x5e703e and so in the animation's message) is
+  `GenericFireArm::handleUpdate` — Linux 0x5e76c0, the client's **0x5e3ed0** (the
+  only vtable whose +0xac lands in the weapon's code with 760 instructions;
+  ev_b2d3f995…). Each component is updated (its +0x18 with dt and the flags), and
+  when the fire component (+0x184) wants to fire (+0xbc), the tick has reached
+  +0x1d0 and no component is busy (+0x6c on each, `in[0x5c]+0x2c`), the ammunition
+  (+0x194) decides: rounds left (+0x34) → `0x5e3510(state, 1)`, the weapon's fire;
+  none → the fire component's +0x50(1). Which slot is which on the components is
+  **not** the derived MSVC layout (`vtable.py --msvc` names +0x18 `destroy`, which
+  is called with dt): the components are reached through an interface base;
+* **the ready tick and the trigger** (Linux): a component in state 4 is ready again
+  when the tick reaches +0x164 (`SingleFireComp::updateComponent` 0x5fda0c →
+  `fireComplete` → `fireCompleteUpdateStates` 0x5fce40, which clears +0x164,
+  +0x16c and +0x170). `FireComp::requestFire(held, …)` (0x5f5110) on rate 2 sets
+  the fresh-press flag +0x94 to `!held` and allows; on any other rate it refuses a
+  trigger held from before and allows a new press (+0x94 = 1).
+
+Ours: `game::WeaponFire` (`test_weapon_fire`): a round when the button is held and
+the tick has reached the ready tick, held-from-before only on rate 2; the next
+ready tick is the round's + `1800 / rpm`. `FirstPersonView::onAction` plays it once
+per action we send and raises the once-message 1. On the live server with
+`--fire-at 1660:60` (16 actions with the button): 6 rounds — one every third tick
+— and the `fire` bundle on for 78 frames. Not taken: the start delay, the
+ammunition and reloading (the magazine's defaults are 30 rounds and 5 magazines,
+`AmmoCompTemplate` Linux 0x5eafa0, +0x40 and +0x3c — which field is which command
+is not read), the heat, the burst rate, the fire rate's key, and the round itself
+(projectile, sound, muzzle flash).
+
 ### Not done
 
 * the recoil (`getYawRecoil`, `getPitchRecoil`) and with it the spring's `fire`
@@ -396,7 +461,32 @@ barrel goes into it says which.
   and the sprinter's forced speed — the state is the predicted body's velocity in
   the camera's frame, standing;
 * the soldier's own first-person system is updated but only swims;
-* the eye itself: our camera stands 1.7 m over the soldier's position, a number
-  with no source. The data has `poseCameraPosition 0 0/0.47/0.1` (and crouch
-  `0/-0.05/0.1`, prone `0/-0.63/0.1`) in the soldier's tweak, relative to a point
-  not established yet.
+* the eye's move between poses (below, "The eye").
+
+### The eye — `BF2.exe` 0x5a8630, Linux 0x54acb0
+
+`Soldier::updateCameraTransformation` builds the soldier camera's **local**
+transformation — the camera is the soldier's child (`addTemplate SoldierCamera`,
+`setPosition 0/4.1/0`, overwritten here):
+
+```
+return if the soldier's +0x254 (Linux +0x3f0)
+aim yaw +0x240 clamped to ±soldier-lookMaxAngle.x, pitch +0x238 to ±.y
+yaw   = +0x244 + aim yaw;  pitch = clamp(+0x238 + +0x23c)        0x5a865c..
+in a seat: the seat's yaw limits (+0xb8, +0xc0 of its template)   0x5a86f0..
+pose  = +0x230, or 1 in a vehicle (+0x28)
+speed = camera-movement-speed-on-crouch (pose 1, 0x9ec308), -prone (2, 0x9ec230),
+        -stand (otherwise, 0x9ec22c) — 0.5 each (0x854520 and its neighbours)
+rotation = rotX(pitch) · rotY(yaw)                                0x6d9990, 0x6d9a20, 0x6d9cc0
+position = camera position + (poseCameraPosition[pose] − camera position) · speed
+           (0x45b0f0; the template's +0x258 + pose·12)
+camera->+0xe8(the matrix)                                          setTransformation
+```
+
+The soldier's own frame is his pivot (`coll-soldier-pivot-height` 1.0 over the
+feet, soldier-physics.md) turned by the body's yaw, so standing the eye is 1.47
+over the feet and 0.1 ahead, whatever the look's own yaw and pitch. Ours:
+`soldierEye` (`test_first_person`), standing (our soldier does not crouch yet,
+and the server sends no records of him). The 0.5 approach per update is not
+taken: how often the update runs is not read, and with one pose it makes no
+difference once it has arrived.

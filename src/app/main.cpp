@@ -604,6 +604,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   // (`obf2/app/first_person.h`).
   obf2::app::FirstPersonView firstPersonView;
   std::vector<obf2::gfx::MeshRenderer::DrawItem> firstPersonItems;
+  // The newest of our actions the weapon's trigger has played.
+  std::optional<std::uint32_t> firstPersonAction;
+  int firstPersonFireActions = 0;  // for the end-of-run report
   if (remote != nullptr) firstPersonView.init(files, registry, *renderer, resolveTexture);
 
   std::vector<obf2::gfx::MeshRenderer::DrawItem> items;
@@ -717,6 +720,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         frameInput.sprint = scripted.sprint;
       }
       if (scripted.jump) frameInput.jump = true;
+      if (scripted.fire) frameInput.fire = true;
     }
     // The server sends pings and waits for answers: staying silent frame after frame
     // gets us disconnected. So the connection runs together with the picture, and we
@@ -810,6 +814,8 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
 
     // Until the player has spawned there is nothing to look from in first person:
     // there is no soldier yet. The spawn screen's camera from Init.con works then.
+    // The field of view of the soldier's camera, when the frame is seen through it.
+    std::optional<float> soldierFov;
     const auto remoteSoldier =
         remote != nullptr ? remote->soldierPosition() : std::optional<obf2::Vec3f>{};
     if ((hostedServer && hostedClient && localSoldierId != 0) || remoteSoldier) {
@@ -817,9 +823,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       // game, that server on a real one.
       obf2::Vec3f soldierEye =
           remoteSoldier ? *remoteSoldier : hostedClient->interpolatedPosition(localSoldierId);
-      // The eye over the soldier's position: **not measured**. The data has
-      // `poseCameraPosition 0 0/0.47/0.1` (us_light_soldier.tweak) against a
-      // point not established yet (docs/functions/soldier-model.md, "Stage 4").
+      // In our own game the eye over the local server's position is **not
+      // measured**: that server is not the engine's tick (CLAUDE.md, "Physics").
+      // A real server's is the engine's (`soldierEye`, below).
       soldierEye.y += 1.7f;
 
       // On a real server the input goes to the same place as in our own game —
@@ -847,7 +853,6 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         if (raw.sprint) out.buttons |= obf2::net::bf2::kButtonSprint;
         if (raw.jump) out.buttons |= obf2::net::bf2::kButtonAction;
         if (raw.fire) out.buttons |= obf2::net::bf2::kButtonFire;
-
         remote->queueInput(raw.mouseDeltaX * args.mouseScale, raw.mouseDeltaY * args.mouseScale,
                            out);
         // And we compute our own movement at once: waiting for the server's
@@ -856,8 +861,26 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         // Drawn between ticks, as `BF2FrameInterpolator` does (RemoteWorld).
         yaw = remote->cameraYaw();
         pitch = remote->cameraPitch();
-        soldierEye = *remote->drawnSoldierPosition();
-        soldierEye.y += 1.7f;
+        // The eye: the template's `poseCameraPosition` for his pose from his pivot,
+        // turned by the body's yaw (obf2/app/first_person.h). His pose is standing:
+        // the server sends no records of our own soldier, and ours does not crouch.
+        const auto ownObject = remote->world.objects().find(remote->ourSoldier);
+        const std::string* ownTemplate =
+            ownObject != remote->world.objects().end()
+                ? remote->templateNumbers.nameOf(ownObject->second.templateId)
+                : nullptr;
+        const auto poseCamera =
+            ownTemplate != nullptr
+                ? obf2::game::poseCameraPosition(remote->registry, *ownTemplate, 0)
+                : std::nullopt;
+        const obf2::Vec3f offset =
+            poseCamera ? obf2::Vec3f{poseCamera->x, poseCamera->y, poseCamera->z} : obf2::Vec3f{};
+        soldierEye = obf2::app::soldierEye(*remote->drawnSoldierPosition(),
+                                           remote->physics.pivotHeight, remote->look.bodyYaw,
+                                           offset);
+        if (ownTemplate != nullptr) {
+          soldierFov = obf2::game::soldierCameraFov(remote->registry, *ownTemplate);
+        }
       }
       cameraInputs.soldierEye = soldierEye;
       cameraInputs.soldierYaw = yaw;
@@ -943,10 +966,17 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     const float farPlane =
         firstPerson && firstPersonFar > 1.0f ? firstPersonFar : scene.radius * 40.0f;
 
-    // The world's vertical field of view: **not measured**. The renderer's camera
-    // takes a vertical angle (`RendDX9.dll` 0x10079e10) and its constructor has 60°;
-    // who sets it in a battle is not read (docs/functions/render-camera.md).
-    const obf2::Mat4 projection = obf2::perspective(1.05f, aspect, nearPlane, farPlane);
+    // The world's vertical field of view. Through the soldier's eye it is his
+    // camera's (`soldierCameraFov`): a battle hands the renderer the player's
+    // `getFov` (`BF2.exe` 0x453270), `Player::setFov(0, …)` takes the camera's own
+    // (Linux 0x495e32 → `getActiveFOV` 0x5773c0) — which call sets it on foot is not
+    // read — and the renderer's setter fits it to the aspect (`aspectFieldOfView`).
+    // Anywhere else — the spawn screen's camera, the debugging cameras, our own
+    // game — 1.05 is **not measured**.
+    const bool throughSoldier = soldierFov.has_value() && !args.camera && !args.watchSoldier;
+    const float fieldOfView =
+        throughSoldier ? obf2::app::aspectFieldOfView(*soldierFov, 1.0f / aspect) : 1.05f;
+    const obf2::Mat4 projection = obf2::perspective(fieldOfView, aspect, nearPlane, farPlane);
     // From above "screen up" has to be Z rather than Y (which would coincide with the
     // view). In a left-handed system right is cross(up, forward), so with up = +Z
     // right ends up as +X — exactly as on the level's own minimap.
@@ -1006,6 +1036,16 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
                                ? soldier->second.lastWeaponIndex
                                : obf2::app::spawnItemIndex(remote->registry, kitText);
           if (firstPersonView.setWeapon(*soldierName, kitText, item)) {
+            // The trigger, once per action we played — the weapon's update runs
+            // in the same tick as the input (`GenericFireArm::handleUpdate`,
+            // `BF2.exe` 0x5e3ed0).
+            for (const auto& [number, action] : remote->sent) {
+              if (firstPersonAction && number <= *firstPersonAction) continue;
+              const bool fireHeld = (action.buttons & obf2::net::bf2::kButtonFire) != 0;
+              if (fireHeld) ++firstPersonFireActions;
+              firstPersonView.onAction(number, fireHeld);
+              firstPersonAction = number;
+            }
             // The movement in the camera's own frame, as `updateAnimationSystems`
             // measures it against the movement matrix (Linux 0x554bde): x the side,
             // z forward, the vertical left out.
@@ -1437,6 +1477,12 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   for (OwnedPiece& piece : spawnPieces) renderer->release(piece.mesh);
   for (auto& gpuMesh : gpuMeshes) renderer->release(gpuMesh);
   worldView.release(*renderer);
+  if (remote != nullptr) {
+    std::printf("  first person: rounds fired %u, actions with the fire button %d, "
+                "frames with the fire clip %d\n",
+                firstPersonView.roundsFired(), firstPersonFireActions,
+                firstPersonView.fireClipFrames());
+  }
   firstPersonView.release(*renderer);
   {
     // Frames per second over everything after the first frame — the loading is

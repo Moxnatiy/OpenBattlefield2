@@ -22,6 +22,7 @@
 #include "obf2/app/render_context.h"
 #include "obf2/core/math.h"
 #include "obf2/game/object_template.h"
+#include "obf2/game/weapon_fire.h"
 #include "obf2/gfx/mesh_renderer.h"
 #include "obf2/mesh/animation.h"
 #include "obf2/mesh/skeleton.h"
@@ -46,6 +47,20 @@ inline constexpr float kFirstPersonFov = 0.82f;
 // (0x101c2f30: `+0x2c + +0x28`), so 15.0.
 inline constexpr float kFirstPersonNear = 0.01f;
 inline constexpr float kFirstPersonFar = 15.0f;
+
+// Where the eye is. The soldier's camera is his child object, and every update
+// puts it at the template's `poseCameraPosition` for his pose, in his frame
+// (`Soldier::updateCameraTransformation`: `BF2.exe` 0x5a8630, Linux 0x54acb0); his
+// frame stands at his pivot, `coll-soldier-pivot-height` over the feet, turned by
+// the body's yaw only — the look's own yaw and pitch are the camera's rotation and
+// do not move the point. Standing that is 1.47 over the feet and 0.1 ahead.
+//
+// Not included: the camera does not jump to a new pose's point but moves toward it
+// by `camera-movement-speed-on-stand/crouch/prone` (0.5 each, `BF2.exe` 0x854520
+// and its neighbours; Linux 0x548058..0x54808a) per update (0x45b0f0 at 0x5a8960),
+// and how often the update runs is not read. Ours stands at the point itself.
+Vec3f soldierEye(const Vec3f& feet, float pivotHeight, float bodyYawDegrees,
+                 const Vec3f& poseCamera);
 
 // The camera's own frame in the world: at the eye, turned by the look. `+Z` goes
 // to `lookDirection(yaw, pitch)` (camera.h), which is the direction the view is
@@ -79,6 +94,17 @@ class FirstPersonView {
   // again; the same three keep it. False when nothing can be drawn — no weapon
   // out, or a template the registry does not know.
   bool setWeapon(const std::string& soldier, const std::string& kit, int item);
+
+  // One action played (`tick` its number, `fireHeld` its fire button): the
+  // weapon's trigger (`game::WeaponFire`). A round fired is message 1 to the
+  // weapon's animation (`DefaultAnimationComp::postFire`, Linux 0x60a7d0) —
+  // `setTriggerOnceMessage`, so it counts for the next walk only (`BF2.exe`
+  // 0x7f72a0, cleared by 0x7f7390). True when a round was fired.
+  bool onAction(std::uint32_t tick, bool fireHeld);
+  std::uint32_t roundsFired() const { return fire_.roundsFired(); }
+  // Frames drawn with the weapon's `fire` bundle playing — the measure that a
+  // round reaches the animation.
+  int fireClipFrames() const { return fireClipFrames_; }
 
   // One frame of the two animation systems and of the camera spring. The spring
   // is the soldier's system's, with the weapon's merged over it (0x552c1e..
@@ -120,6 +146,10 @@ class FirstPersonView {
   std::vector<mesh::Mat4> pose_;
   anim::CameraSpringTemplate springTemplate_;
   anim::CameraSpring spring_;
+  game::WeaponFire fire_;
+  // The once-mask waiting for the next walk (`AnimationSystem` +0x10).
+  std::uint32_t onceMessages_ = 0;
+  int fireClipFrames_ = 0;
 };
 
 }  // namespace obf2::app

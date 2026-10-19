@@ -157,6 +157,12 @@ void WorldView::feed(std::span<const std::byte> packet) {
     // Kind 3 — the object is gone (GhostManager::readData, 0x445820: the branch
     // calls disableObject and removeActiveDescriptor).
     if (record.kind == 3) {
+      // Our own soldier wiped this way leaves the client without his template and
+      // kit — the weapon in hand and the crosshair go with him. Said once per object.
+      if (record.networkId == ownObject_ && objects_.count(record.networkId) != 0) {
+        std::printf("  our object %u was removed by a ghost record (kind 3)\n",
+                    static_cast<unsigned>(record.networkId));
+      }
       objects_.erase(record.networkId);
       continue;
     }

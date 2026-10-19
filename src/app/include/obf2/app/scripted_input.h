@@ -21,6 +21,7 @@ struct ScriptedFrame {
   float moveRight = 0.0f;
   bool sprint = false;
   bool jump = false;
+  bool fire = false;  // `--fire-at`: the fire button held
 };
 
 // A range is `<frame>:<frames>:...`, so it covers `frame` to `frame + frames - 1`.

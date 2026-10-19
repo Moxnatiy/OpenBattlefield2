@@ -139,6 +139,16 @@ void System::feed(const con::Command& command) {
       bundle.fadeOutTime = command.argFloat(0).value_or(0.0f);
     } else if (path == "animationbundle.islooping") {
       bundle.looping = command.argBool(0).value_or(true);
+    } else if (path == "animationbundle.abruptplayback") {
+      bundle.abruptPlayback = command.argBool(0).value_or(true);
+    } else if (path == "animationbundle.playforever") {
+      bundle.playForever = command.argBool(0).value_or(true);
+    } else if (path == "animationbundle.usespeedastime") {
+      bundle.useSpeedAsTime = command.argBool(0).value_or(true);
+    } else if (path == "animationbundle.playbackward") {
+      bundle.playBackward = command.argBool(0).value_or(true);
+    } else if (path == "animationbundle.jumptolastanimationatstop") {
+      bundle.jumpToLastAnimationAtStop = command.argBool(0).value_or(true);
     }
     return;
   }
@@ -392,6 +402,14 @@ bool System::visit(const Trigger& trigger, const State& state, const Random& ran
   }
   applyBundles(trigger, random, out);
   return true;
+}
+
+std::vector<const Bundle*> System::selectNamed(std::string_view name, const State& state,
+                                               const Random& random) const {
+  std::vector<const Bundle*> out;
+  const auto trigger = triggers_.find(key(name));
+  if (trigger != triggers_.end()) visit(trigger->second, state, random, out, 0);
+  return out;
 }
 
 std::vector<const Bundle*> System::select(const State& state, const Random& random) const {

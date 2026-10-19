@@ -23,6 +23,15 @@ struct CameraView {
 // same as the server computes (docs/functions/soldier-physics.md).
 Vec3f lookDirection(float yawDegrees, float pitchDegrees);
 
+// The vertical field of view the renderer's camera ends up with when the game
+// hands it `fov` through its aspect-aware setter (`RendDX9.dll` camera vtable
+// +0x18, 0x101c2b80), which is how a battle sets it (`BF2.exe` 0x453398, the
+// player's `getFov`). With `aspect` the height over the width (the camera's
+// +0x30): at 0.5625 or less — 16:9 and wider — the angle is multiplied by
+// `aspect × 16/9` (0x10222830, 0x1022282c); at 0.8 or more — 5:4 and narrower —
+// by `aspect × 4/3` (0x10222828, 0x101dd260); in between it is left alone.
+float aspectFieldOfView(float fov, float heightOverWidth);
+
 // The eye and its target for one frame, in the order the owners take precedence:
 //
 //   1. `--camera x/y/z --angles yaw pitch` — stand exactly here and look exactly

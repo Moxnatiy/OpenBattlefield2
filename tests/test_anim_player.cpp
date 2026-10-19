@@ -149,7 +149,73 @@ static void testTimeIsKeptAndWrapped() {
   CHECK_EQ(player.timeOf("stand_run"), 0.0f);
 }
 
+// The M4's first-person tree, cut down (`usrif_m4/animationsystem1p.inc`): `still`
+// loops, `fire` is a one-shot with `abruptPlayback` on message 1, and `deploy`
+// plays once from `startup`. Every clip is 1 s long here.
+anim::System m4System() {
+  return build({
+      "animationSystem.createBundle deploy",
+      "animationBundle.isLooping 0",
+      "animationBundle.addAnimation deploy.baf",
+      "animationSystem.createBundle fire",
+      "animationBundle.isLooping 0",
+      "animationBundle.abruptPlayback 1",
+      "animationBundle.addAnimation fire.baf",
+      "animationSystem.createBundle still",
+      "animationBundle.fadeOutTime 0.5",
+      "animationBundle.addAnimation stand.baf",
+      "animationSystem.createTrigger Trigger still",
+      "animationTrigger.addBundle still",
+      "animationSystem.createTrigger MessageTrigger fire",
+      "animationTrigger.addBundle fire",
+      "animationTrigger.message 1",
+      "animationSystem.createTrigger Trigger root",
+      "animationTrigger.addChild still",
+      "animationTrigger.addChild fire",
+      "animationSystem.createTrigger Trigger startup",
+      "animationTrigger.addBundle deploy",
+  });
+}
+
+bool plays(const anim::Player& player, const std::string& bundle) {
+  for (const anim::PlayingAnimation& playing : player.playing()) {
+    if (playing.bundle == bundle && playing.weight > 0.0f) return true;
+  }
+  return false;
+}
+
+// `BundlePlayer::update` (`BF2.exe` 0x7fe3c0) and `AnimationSystem::update`
+// (0x7f7390): a one-shot asked for once plays on to its end; asked again while it
+// plays it starts over; `startup` plays once.
+static void testOneShotPlaysToItsEnd() {
+  const anim::System system = m4System();
+  anim::Player player;
+  player.setLengthOf([](const std::string&) { return 1.0f; });
+  anim::State state;
+
+  player.update(system, state, 0.1f);
+  CHECK(plays(player, "deploy"));  // the first update walks `startup`
+  CHECK(plays(player, "still"));
+
+  anim::State fired = state;
+  fired.messages = 1;  // one round: the once-message, for this walk only
+  player.update(system, fired, 0.1f);
+  CHECK(plays(player, "fire"));
+  player.update(system, state, 0.3f);
+  CHECK(plays(player, "fire"));  // no message now, still playing
+  CHECK(std::abs(player.timeOf("fire") - 0.4f) < 1e-4f);
+
+  player.update(system, fired, 0.1f);  // a second round restarts it
+  CHECK(std::abs(player.timeOf("fire") - 0.1f) < 1e-4f);
+
+  player.update(system, state, 1.0f);  // past its end: gone
+  CHECK(!plays(player, "fire"));
+  CHECK(!plays(player, "deploy"));      // and `startup` never came back
+  CHECK(plays(player, "still"));
+}
+
 TEST_MAIN({
+  testOneShotPlaysToItsEnd();
   testRunningForward();
   testStrafingLeft();
   testDiagonalBlends();

@@ -417,13 +417,62 @@ is what makes the pair choice above read straight: `b` is the run clip by the
 sign of the forward component, `a` the strafe clip by the sign of the side one,
 and `factor` weighs the run clip against the strafe one.
 
+## A player lives until it ends
+
+`AnimationSystem::update` (`BF2.exe` 0x7f7390, the vtable's +0xc at 0x940d80):
+
+```
+first update only: walk "startup" (+0x59 set at creation), and remember it plays (+0x5b)
+messages: held (+0x8) |= once (+0x10); changed = previous (+0xc) != held
+walk "root" (+0x50), then "postRoot" (+0x54)  — each walk touches players (playBundle)
+held &= ~once; previous = held; once = 0        — a once-message counts for one walk
+for every player in the list (+0x18):
+    BundlePlayer::update(object, dt)              0x7fe3c0
+    drop it when that says ended, or its trigger's +0x2d is set and the messages
+      changed (or it is not the last)
+    a looping bundle's (or +0x2e's) player is untouched again (0x7fdfb0(false))
+```
+
+So the list is not rebuilt each tick: a bundle once asked for keeps its player
+until the player says it has ended. The masks are the three slots of
+`IAnimationSystem`: `setTriggerMessage` +0x2c (0x7f7280), `setTriggerOnceMessage`
++0x30 (0x7f72a0), `clearTriggerMessage` +0x34 (0x7f72c0).
+
+A bundle's properties (`Bundle::makeScript`, Linux 0x6b7c70 — the server's fields
++0x2c..+0x39, the client's 0xc lower): +0x20 `fadeInTime`, +0x24 `fadeOutTime`,
++0x28 `jumpToLastAnimationAtStop`, +0x29 `useSpeedAsTime`, +0x2a `abruptPlayback`,
++0x2b `isLooping` (written only when 0), +0x2c `playBackward`, +0x2d `playForever`.
+
+`BundlePlayer::update(object, dt)` (0x7fe3c0); the player's time +0x10, speed +0x38,
+fade +0x1c, weight +0x28, touched +0x34:
+
+```
+fire the bundle's events the time has passed (object +0x100, the event's bone by type)
+useSpeedAsTime:  time = clamp(speed, 0, 1) * length
+otherwise:       time += dt * speed
+                 past the end:  looping → wrap; playForever → hold at length; else ENDED
+                 below zero:    looping → wrap; else ENDED
+fading out when: a one-shot in its last fadeOutTime (its first, played backwards),
+                 or a looping / speed-driven bundle that no walk touched
+    weight <= 0 or fadeOutTime <= 0 → ENDED
+    fade -= dt / fadeOutTime; <= 0 → ENDED; weight = fade²
+otherwise, while fadeInTime > 0 and weight < 1: fade += dt / fadeInTime, weight = fade²
+otherwise fade = weight = 1
+```
+
+`setIsPlaying(true)` (0x7fdfb0) on a player already touched restarts it when the
+bundle is `abruptPlayback` (and the +0x2e flag is clear) — which is how every round
+of an automatic weapon starts its `fire` one-shot over. Ours: `anim::Player`
+(`test_anim_player`, `testOneShotPlaysToItsEnd`).
+
 ## What is still missing
 
-`BundlePlayer::update` (Linux 0x6b9150) in full: how the time advances through the
-bundle's own length, the fades in and out (`fadeInTime`, `fadeOutTime`), the
-events, and `playForever`, `abruptPlayback`, `jumpToLastAnimationAtStop`. And the
-blend of several players on one skeleton — `applyAnimationsOnSkeleton` with two
-animations and two floats, plus `getSlerpFactor`.
+The events (`addEvent`, fired from `BundlePlayer::update`), the trigger's +0x2d
+and the bundle's +0x2e flags (purpose not established), `playBackward` (not read by
+the player), the left/right-foot phase, and the blend of several players on one
+skeleton — `applyAnimationsOnSkeleton` with two animations and two floats, plus
+`getSlerpFactor`. A new player is appended; the engine inserts it before the first
+one of a higher priority (`playBundle`).
 
 Who fills the state is not established either: `setTriggerMovement`'s caller in
 the client, the frame the direction is measured in, and where the idle time comes
@@ -443,8 +492,10 @@ AnimationValueHolder.stopOnMessage 4
 ```
 
 so bit 4 is "walking" — the two ranges overlap over 0.1..1.5 and nothing else
-separates them. What bits 1 and 2 are (the soldier's `face_anger` watches 1, a
-weapon's triggers 1, 2 and 4) is not established.
+separates them. A weapon's system reads the same bits differently: there 1 is a
+round fired, 2 reloading, 4 zoomed and 8 the fire rate switched
+(docs/functions/soldier-model.md, "Who raises the messages"). What 1 is to the
+soldier's `face_anger` is not established.
 
 ## What the selection gives now
 

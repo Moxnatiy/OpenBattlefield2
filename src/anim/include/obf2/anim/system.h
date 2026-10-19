@@ -47,12 +47,21 @@ struct Animation {
   float fadeInTime = 0.0f;
 };
 
+// A bundle's properties, in the order `Bundle::makeScript` (Linux 0x6b7c70) writes
+// them back: the server's fields +0x2c..+0x39, the client's 0xc lower (+0x20 fade
+// in, +0x24 fade out, +0x28..+0x2d the flags), as `BundlePlayer::update`
+// (`BF2.exe` 0x7fe3c0) reads them.
 struct Bundle {
   std::string name;
   std::vector<std::string> animations;
-  float fadeInTime = 0.0f;
-  float fadeOutTime = 0.0f;
-  bool looping = true;
+  float fadeInTime = 0.0f;          // +0x20
+  float fadeOutTime = 0.0f;         // +0x24
+  bool jumpToLastAnimationAtStop = false;  // +0x28; `setParameters` keeps the speed (0x7fdf40)
+  bool useSpeedAsTime = false;      // +0x29: the time is the speed, 0..1, times the length
+  bool abruptPlayback = false;      // +0x2a: a touch while touched starts it over (0x7fdfb0)
+  bool looping = true;              // +0x2b, `isLooping` (written only when 0)
+  bool playBackward = false;        // +0x2c; not read by the player — purpose not established
+  bool playForever = false;         // +0x2d: a one-shot that has ended holds its last frame
 };
 
 // The value range a MovementTrigger fires on. The first two numbers are the
@@ -157,6 +166,9 @@ class System {
   // screenshot) passes its own. Its argument is the number of choices.
   using Random = std::function<std::size_t(std::size_t)>;
   std::vector<const Bundle*> select(const State& state, const Random& random = {}) const;
+  // The walk of one trigger by name (`startup`); empty when there is none.
+  std::vector<const Bundle*> selectNamed(std::string_view trigger, const State& state,
+                                         const Random& random = {}) const;
 
   const std::map<std::string, Animation>& animations() const { return animations_; }
   const std::map<std::string, Bundle>& bundles() const { return bundles_; }

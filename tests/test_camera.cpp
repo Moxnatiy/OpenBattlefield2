@@ -133,7 +133,18 @@ static void testScriptedInput() {
 
 }  // namespace
 
+// The renderer's aspect-aware setter (`RendDX9.dll` 0x101c2b80): 4:3 and 16:10 keep
+// the angle, 16:9 too (0.5625 × 16/9 is one), 21:9 narrows it, 5:4 widens it.
+static void testAspectFieldOfView() {
+  CHECK(near(app::aspectFieldOfView(1.1f, 0.75f), 1.1f));
+  CHECK(near(app::aspectFieldOfView(1.1f, 0.625f), 1.1f));
+  CHECK(near(app::aspectFieldOfView(1.1f, 0.5625f), 1.1f));
+  CHECK(near(app::aspectFieldOfView(1.1f, 9.0f / 21.0f), 1.1f * (9.0f / 21.0f) * (16.0f / 9.0f)));
+  CHECK(near(app::aspectFieldOfView(1.1f, 0.8f), 1.1f * 0.8f * (4.0f / 3.0f)));
+}
+
 TEST_MAIN({
+  testAspectFieldOfView();
   testLookDirection();
   testFixedCameraWins();
   testSoldierBeatsTheLevelCamera();

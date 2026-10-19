@@ -15,6 +15,12 @@ Vec3f lookDirection(float yawDegrees, float pitchDegrees) {
   return Vec3f{std::sin(yaw) * std::cos(pitch), std::sin(pitch), std::cos(yaw) * std::cos(pitch)};
 }
 
+float aspectFieldOfView(float fov, float heightOverWidth) {
+  if (heightOverWidth <= 0.5625f) return fov * heightOverWidth * (16.0f / 9.0f);
+  if (heightOverWidth >= 0.8f) return fov * heightOverWidth * (4.0f / 3.0f);
+  return fov;
+}
+
 CameraView chooseCamera(const CameraInputs& in) {
   CameraView view;
   view.target = in.sceneCentre;

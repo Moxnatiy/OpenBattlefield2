@@ -108,7 +108,17 @@ static void testWeaponPartsOnTheFirstPersonBones() {
   CHECK_EQ(many.skin[16].boneA, std::uint8_t(15));
 }
 
+// Standing: the pivot a metre over the feet, then 0.47 up and 0.1 ahead along the
+// body — at a body yaw of 90°, ahead is +X.
+static void testEyeStandsOnThePoseCameraPoint() {
+  const Vec3f feet{10.0f, 150.0f, -5.0f};
+  const Vec3f stand{0.0f, 0.47f, 0.1f};
+  CHECK(nearVec(app::soldierEye(feet, 1.0f, 0.0f, stand), Vec3f{10.0f, 151.47f, -4.9f}));
+  CHECK(nearVec(app::soldierEye(feet, 1.0f, 90.0f, stand), Vec3f{10.1f, 151.47f, -5.0f}));
+}
+
 TEST_MAIN({
+  testEyeStandsOnThePoseCameraPoint();
   testCameraLooksWhereTheViewDoes();
   testCameraboneStandsAtTheEye();
   testProjection();

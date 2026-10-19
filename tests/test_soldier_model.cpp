@@ -1,6 +1,7 @@
 // What a soldier is drawn from (`soldier_model.h`). The text is the game's own,
 // cut down: `objects/soldiers/mec/mec_light_soldier.con` with its `.tweak`,
 // `objects/kits/mec/MEC_Specops.con`, and the weapons' `itemIndex` from their tweaks.
+#include <cmath>
 #include <map>
 #include <string>
 
@@ -38,6 +39,13 @@ static void testSpecops() {
       "ObjectTemplate.skeleton3P Objects/Soldiers/Common/Animations/3p_setup.ske\n"
       "ObjectTemplate.animationSystem1P Objects/Soldiers/Common/Animations/AnimationSystem1p.inc\n"
       "ObjectTemplate.animationSystem3P Objects/Soldiers/Common/Animations/AnimationSystem3p.inc\n"
+      "ObjectTemplate.poseCameraPosition 0 0/0.47/0.1\n"
+      "ObjectTemplate.poseCameraPosition 1 0/-0.05/0.1\n"
+      "ObjectTemplate.poseCameraPosition 2 0/-0.63/0.1\n"
+      "ObjectTemplate.addTemplate SoldierCamera\n"
+      "ObjectTemplate.create Camera SoldierCamera\n"
+      "ObjectTemplate.worldFOV 1.1\n"
+      "ObjectTemplate.insideFOV 1.1\n"
       "ObjectTemplate.create GenericFireArm rupis_baghira_silencer\n"
       "ObjectTemplate.geometry rupis_baghira_silencer\n"
       "ObjectTemplate.itemIndex 2\n"
@@ -83,6 +91,20 @@ static void testSpecops() {
   }
   CHECK_EQ(model->weaponAnimationSystem1p,
            std::string("Objects/Weapons/Handheld/rurrif_ak74u/AnimationSystem1p.inc"));
+
+  // The camera's point per pose, and none for a pose the template does not name.
+  const auto stand = game::poseCameraPosition(registry, "mec_light_soldier", 0);
+  CHECK(stand.has_value());
+  if (stand) CHECK(std::abs(stand->y - 0.47f) < 1e-5f && std::abs(stand->z - 0.1f) < 1e-5f);
+  const auto prone = game::poseCameraPosition(registry, "mec_light_soldier", 2);
+  CHECK(prone.has_value() && std::abs(prone->y + 0.63f) < 1e-5f);
+  CHECK(!game::poseCameraPosition(registry, "mec_light_soldier", 3).has_value());
+  CHECK(!game::poseCameraPosition(registry, "nobody", 0).has_value());
+
+  // His camera's field of view; a template that is not a soldier has none.
+  const auto fov = game::soldierCameraFov(registry, "mec_light_soldier");
+  CHECK(fov.has_value() && std::abs(*fov - 1.1f) < 1e-5f);
+  CHECK(!game::soldierCameraFov(registry, "rurrif_ak74u").has_value());
 
   // A soldier whose kit is not known yet is still a body.
   const auto bare = game::soldierModel(registry, "mec_light_soldier", "");

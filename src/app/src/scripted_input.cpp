@@ -19,6 +19,9 @@ ScriptedFrame scriptedInput(const Args& args, int frame) {
   for (const int jumpFrame : args.jumps) {
     if (frame == jumpFrame) out.jump = true;
   }
+  for (const auto& fire : args.fires) {
+    if (frame >= fire.frame && frame < fire.frame + fire.frames) out.fire = true;
+  }
   return out;
 }
 

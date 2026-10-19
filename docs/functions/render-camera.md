@@ -50,11 +50,38 @@ lazily (0x101c2f20, while its +0x42d is set) by its frustum at +0x23c
 that function's angle is vertical and its aspect width over height, so +0x30 is
 height over width.
 
-Slot +0x18 (0x101c2b80) sets the field of view through the aspect: below 0.5625
-(wider than 16:9) the angle is multiplied by `aspect × 16/9`, below 0.8 by
-`aspect × 4/3`, and then `setFov` (+0x1c) takes it. Who calls it in a battle,
-and with what, is **not established**: the 60° is only the constructor's. Ours
-uses 1.05 for the world, a number with no source.
+Slot +0x18 (0x101c2b80) sets the field of view through the aspect: at 0.5625
+or less (16:9 and wider) the angle is multiplied by `aspect × 16/9`
+(0x10222830, 0x1022282c), at 0.8 or more (5:4 and narrower) by `aspect × 4/3`
+(0x10222828, 0x101dd260), and in between it is left alone; then `setFov`
+(+0x1c) takes it. (An earlier reading here had the second test the wrong way
+round: `fcomp` against 0.8 skips when C0 is set, which is below 0.8.)
+
+### Who sets it in a battle — `BF2.exe` 0x453270
+
+The game's frame hands the renderer its camera here:
+
+```
+demo playback (0x54b8f0):  world->+0x1c(0x44cca0()), +0x60(the recording's matrix),
+                           +0x40(0x44cc90())   — the two numbers' meaning not read
+otherwise, with a local player and his camera (+0x17c):
+  matrix = the camera's (0x4531c0)
+  world->+0x18(player->getFov())                                  0x45337f, 0x453398
+  world->+0x60(matrix)
+then: world->+0x38(GSViewDistance × renderer+0x74()->+0x28())    the far plane, 0x4533ae..
+```
+
+`Player::getFov` is the player's +0xe0 (Linux 0x49a4f0). `Player::setFov(fov,
+time)` (Linux 0x495e00) moves it toward `fov` over `time`, and a `fov` of 0
+(0xb2d910) means the camera's own: `getActiveFOV` (0x5773c0), the camera
+template's +0x354 or +0x358 by its mode (+0x2cc) — `insideFOV` and `worldFOV`,
+1.1 both for `SoldierCamera` (`objects/soldiers/common/soldiercamera.tweak`).
+Which call sets the player's fov on foot is **not read**; the slot (+0x118) is
+shared with other classes and the callers found so far were not it.
+
+Ours: through the soldier's eye the world's field of view is his camera's
+`insideFOV` through `aspectFieldOfView` (`app/camera`); anywhere else — the spawn
+screen, the debugging cameras, `--hosted` — it stays 1.05, **not measured**.
 
 The first-person camera's 0.82 (0x1002d277) and its near and far are in
 docs/functions/soldier-model.md, "Stage 4".

@@ -73,6 +73,23 @@ inline constexpr int kSoldierFirstPersonGeometry = 0;
 // `weaponItem` is the `itemIndex` of the weapon he has out — the soldier state's
 // 0x1000 (soldier_state.h). Slot 3, the kit's main weapon, stands in where that is
 // not known yet: a soldier whose full record has not been read.
+// `ObjectTemplate.poseCameraPosition <pose> <x/y/z>` (`us_light_soldier.tweak`:
+// stand 0/0.47/0.1, crouch 0/-0.05/0.1, prone 0/-0.63/0.1) — where the soldier's
+// camera stands in his own frame, from his pivot. The template keeps them from
+// +0x258, twelve bytes a pose (`BF2.exe` 0x5a8630 reads `+0x164 → +(pose·3 + 0x96)·4`;
+// Linux 0x54b165: +0x220). Empty when the soldier or that pose has none.
+std::optional<con::Vec3> poseCameraPosition(const Registry& registry, std::string_view soldier,
+                                            int pose);
+
+// The field of view of the soldier's own camera: his child of class `Camera`
+// (`objects/soldiers/us/us_light_soldier.tweak`: `addTemplate SoldierCamera`) and
+// its `insideFOV` (`objects/soldiers/common/soldiercamera.tweak`: 1.1).
+// `Camera::getActiveFOV` (Linux 0x5773c0) answers the template's +0x354 or +0x358
+// by the camera's mode (+0x2cc); which of the two is `insideFOV` and which
+// `worldFOV` is not read, and the soldier's camera sets both to 1.1. Empty when
+// the soldier has no camera child or it no number.
+std::optional<float> soldierCameraFov(const Registry& registry, std::string_view soldier);
+
 std::optional<SoldierModel> soldierModel(const Registry& registry, std::string_view soldier,
                                          std::string_view kit, int weaponItem = 3);
 

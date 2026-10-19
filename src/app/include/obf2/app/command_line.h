@@ -148,6 +148,12 @@ struct Args {
   std::vector<ScheduledLook> moves;
   // --jump-at <frame> — the jump key pressed for that one frame.
   std::vector<int> jumps;
+  // --fire-at <frame>:<frames> — the fire button held over a range.
+  struct ScheduledFire {
+    int frame;
+    int frames;
+  };
+  std::vector<ScheduledFire> fires;
   // --trace-own-state: every controlled state of our soldier (session::Settings).
   bool traceOwnState = false;
   // --trace-frames <frame>:<frames> — per frame, the camera and every other

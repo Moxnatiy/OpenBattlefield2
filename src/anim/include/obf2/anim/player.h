@@ -45,6 +45,23 @@ class Player {
   float timeOf(const std::string& bundle) const;
 
  private:
+  // One `BundlePlayer` (`BF2.exe`: its update 0x7fe3c0): the time (+0x10), the
+  // speed (+0x38), the fade (+0x1c) and the weight it gives, fade² (+0x28), and
+  // whether a trigger touched it (+0x34).
+  struct Active {
+    const Bundle* bundle = nullptr;
+    float length = 0.0f;
+    float time = 0.0f;
+    float speed = 1.0f;
+    float fade = 0.0f;
+    float weight = 0.0f;
+    bool touched = false;
+  };
+  // One step of a player; false when it has ended.
+  bool advance(Active& active, float step) const;
+
+  std::vector<Active> active_;
+  bool started_ = false;
   LengthOf lengthOf_;
   std::map<std::string, float> time_;
   std::vector<PlayingAnimation> playing_;

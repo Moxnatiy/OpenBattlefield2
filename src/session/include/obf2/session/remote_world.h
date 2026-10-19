@@ -875,7 +875,11 @@ struct RemoteWorld {
     if (bodyReady) return body.position;
     const auto found = objects.find(ourSoldier);
     if (found == objects.end()) return std::nullopt;
-    return found->second;
+    // The feet, like the body's: the networked position is the pivot (see where
+    // the body is placed, below).
+    obf2::Vec3f feet = found->second;
+    feet.y -= physics.pivotHeight;
+    return feet;
   }
 
   // The handshake: the request, the server's reply, the acknowledgement.

@@ -11,6 +11,33 @@ std::optional<SoldierPart> partOf(const ObjectTemplate& object, int geometry) {
 
 }  // namespace
 
+std::optional<con::Vec3> poseCameraPosition(const Registry& registry, std::string_view soldier,
+                                            int pose) {
+  const ObjectTemplate* body = registry.find(soldier);
+  if (body == nullptr) return std::nullopt;
+  const std::vector<Property>* calls = body->propertyHistory("posecameraposition");
+  if (calls == nullptr) return std::nullopt;
+  // The last call for a pose wins, as a setter's does.
+  std::optional<con::Vec3> found;
+  for (const Property& call : *calls) {
+    if (call.asInt(0) == pose) {
+      if (const auto at = call.asVec3(1)) found = *at;
+    }
+  }
+  return found;
+}
+
+std::optional<float> soldierCameraFov(const Registry& registry, std::string_view soldier) {
+  const ObjectTemplate* body = registry.find(soldier);
+  if (body == nullptr) return std::nullopt;
+  for (const ChildTemplate& child : body->children) {
+    const ObjectTemplate* camera = registry.find(child.name);
+    if (camera == nullptr || camera->className != "Camera") continue;
+    return camera->number("insidefov");
+  }
+  return std::nullopt;
+}
+
 std::optional<SoldierModel> soldierModel(const Registry& registry, std::string_view soldier,
                                          std::string_view kit, int weaponItem) {
   const ObjectTemplate* body = registry.find(soldier);
