@@ -138,6 +138,10 @@ openbf2 --connect <host> --width 800 --height 600 --frames 1900 --no-hud \
 * Independently observed install-media identities and patch-package limits are
   recorded in [the source-media notes](docs/research/13-install-media.md); they do not
   certify that an arbitrary install has been patched to 1.5.
+* [Vehicle and protocol research](docs/research/14-vehicle-and-protocol-coverage.md)
+  records replicated vehicle state, control IDs, current driving/bot limits,
+  and an event-body traversal gap; it does not claim local vehicle physics or
+  NPC AI are implemented.
 * macOS on arm64 is the main platform. The `windows-x64` preset is kept
   building but is not exercised.
 * CMake 3.24+, Ninja, a C++20 compiler, **SDL3**.

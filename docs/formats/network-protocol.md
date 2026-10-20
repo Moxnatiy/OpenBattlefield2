@@ -73,7 +73,8 @@ Verified end to end: after it the server sends a ghost stream.
 4. server: a challenge event (type 1 in the event stream)
 5. client: the challenge reply (event type 2)
 6. client: ClientInfo as a data block (block type 1)
-7. server: the level block (block type 5), the player base, world objects
+7. server: the selected map entry (`MapList`, block type 5), the player base,
+   world objects, and the separate `MapInfo` block (type 2)
 8. client: NELoadComplete
 9. client: ContentCheckEvent — three hashes
 10. client: NEDatabaseComplete
@@ -97,21 +98,42 @@ The name's hash: `h = 0x1505`, then for every lower-cased character
 
 The player's final name is assembled by the server as "tag + space + name".
 
-### The level block (block type 5)
+### Selected map entry (`MapList`, block type 5)
+
+Block type 5 is a `MapList`, not the server's `MapInfo`. It can contain
+multiple map/mode entries and a current index; the selected entry supplies the
+level name, mode, and player parameter used to choose what to mount. In the
+one-entry capture described in the research notes, the first two words are
+the entry count and current index, not a challenge ordinal.
 
 | field | size |
 |---|---|
-| challenge number | 1 sign bit + 31 bits |
-| length + level name | u16 + bytes |
-| length + game mode | u16 + bytes |
-| size | u16 |
+| entry count | u16 |
+| current entry index | u16 |
+| each map name | u16 length + bytes |
+| each game mode | u16 length + bytes |
+| each player parameter | u16 |
 
-The first field is read as "a sign plus 31 bits", not as an ordinary `u32`
-(`MapInfo::setFromDataBlock`), so the bytes `01 00 00 00` mean zero.
+### Server map metadata (`MapInfo`, block type 2)
 
-**But it is not the challenge number.** Verified by experiment: the block says
-0, while the content check only passes with the number 5. Where the client
-gets the real number has not been found yet.
+This separate record carries the server's level metadata and challenge
+ordinal. Its two integer fields use sign-and-magnitude encoding (one sign bit
+and 31 magnitude bits), not an ordinary little-endian `u32`.
+
+| field | size |
+|---|---|
+| game mode | u16 length + bytes |
+| level path | u16 length + bytes |
+| level name | u16 length + bytes |
+| player parameter | 1 sign bit + 31 magnitude bits |
+| commander enabled | 1 bit |
+| challenge ordinal | 1 sign bit + 31 magnitude bits |
+| two additional flags | 1 bit each; meanings unresolved |
+| trailing padding | 5 bits |
+
+Do not read the first word of block type 5 as the challenge ordinal. The
+challenge ordinal is in block type 2; see the detailed
+[network-event analysis](../functions/network-events.md#the-challenge-number-found-where-to-take-it-from).
 
 ### ContentCheckEvent (event type 46)
 
