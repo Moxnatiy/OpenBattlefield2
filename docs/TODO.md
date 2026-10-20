@@ -81,8 +81,11 @@ decisions are made on the spot and described in the code or in `docs/`.
   backend.
 - Mesh LODs do not switch: lod 0 is always taken. The data for the other
   levels is in the files (3-4 per mesh).
-- Sound is not implemented: 37 `Sound.con` commands
-  (`objecttemplate.soundFilename`, `sound.masterVolume`) have no handler.
+- Sound playback is not implemented: 37 `Sound.con` commands
+  (`objecttemplate.soundFilename`, `sound.masterVolume`) have no handler, and
+  the HUD's `sound.playSound` binding is currently a no-op. See the
+  [audio coverage note](research/15-audio-command-and-video-coverage.md) for
+  stock weapon, vehicle, menu and environment sound authoring details.
 - The vegetation (`Overgrowth/`) and ambient objects are not loaded: the
   only trees on a level are the ones placed in `StaticObjects.con`.
 - ~~The server only broadcasts world state~~ — done: input, a fixed 30 Hz
@@ -113,7 +116,9 @@ decisions are made on the spot and described in the code or in `docs/`.
 - **Skeletal animation is not implemented**: `.ske` (skeleton) and `.baf`
   (animation) are not read yet, so soldiers and vehicles are motionless
   inside.
-- The intro movies' durations are nominal: we do not decode Bink and do not
-  know the real ones.
+- The intro movies' durations are nominal: the BF2 startup path does not
+  decode or play Bink, so their actual durations are unknown. A separate
+  clean-room decoder's revision limits and the unverified BF2 compatibility
+  question are recorded in the [coverage note](research/15-audio-command-and-video-coverage.md).
 - `stb_image` is built with PNG only — enable JPEG separately if it is ever
   needed.

@@ -54,8 +54,12 @@ What is not there yet, among much else (the full list is in `CLAUDE.md`,
 "Debt"): a complete first-person weapon loop. Basic fire input, rate timing
 and the fire animation produce rounds, but ammunition/reloading, recoil, zoom,
 projectiles, sound and muzzle flash are unfinished. Entering and driving
-vehicles, the commander and squad screens are also not there. Bink video is
-not decoded, there is no anti-cheat, and no game content is redistributed.
+vehicles and the full commander and squad interactions are also unfinished;
+some roster, HUD layout and commander-map state is already parsed. The BF2
+startup path does not decode its intro Bink videos; there is no anti-cheat, and
+no game content is redistributed.
+The [audio, commander/squad, and Bink coverage note](docs/research/15-audio-command-and-video-coverage.md)
+details the existing foundations and research that can guide this work.
 
 ## Screenshots
 
