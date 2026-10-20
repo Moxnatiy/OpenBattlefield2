@@ -51,9 +51,11 @@ Battlefield 2 1.5 installation and an **original dedicated server**:
 * **Singleplayer** — a local server and client on a loop (`--hosted`).
 
 What is not there yet, among much else (the full list is in `CLAUDE.md`,
-"Debt"): firing and the weapons in your own hands, entering and driving
-vehicles, sound, the commander and squad screens. Bink video is not decoded,
-there is no anti-cheat, and no game content is redistributed.
+"Debt"): a complete first-person weapon loop. Basic fire input, rate timing
+and the fire animation produce rounds, but ammunition/reloading, recoil, zoom,
+projectiles, sound and muzzle flash are unfinished. Entering and driving
+vehicles, the commander and squad screens are also not there. Bink video is
+not decoded, there is no anti-cheat, and no game content is redistributed.
 
 ## Screenshots
 
@@ -133,6 +135,9 @@ openbf2 --connect <host> --width 800 --height 600 --frames 1900 --no-hud \
 
 * An installed **Battlefield 2 1.5** (any edition); the mod directory is given
   with `--mod`, default `Game Files/mods/bf2`.
+* Independently observed install-media identities and patch-package limits are
+  recorded in [the source-media notes](docs/research/13-install-media.md); they do not
+  certify that an arbitrary install has been patched to 1.5.
 * macOS on arm64 is the main platform. The `windows-x64` preset is kept
   building but is not exercised.
 * CMake 3.24+, Ninja, a C++20 compiler, **SDL3**.
