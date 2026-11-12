@@ -88,6 +88,10 @@ and the patch are in docs/research/11-ruffle-menu.md. So the comparison is
 no longer between two "maybe"s but between a working picture (Ruffle) and
 a hang (gameswf).
 
+**Later: gameswf after all.** The hang was ours to fix; gameswf now plays the
+menu and the loading screen in `src/swf` (docs/research/12-native-flash.md),
+and Ruffle has been removed from the project.
+
 **What it is worth.** BF2's menu is a 2 MB `mainMenu.swf` and 1485 bridge
 names (docs/functions/menu-bridge.md). Rewriting an interface like that by
 hand is months; playing the original movie with the same code the original

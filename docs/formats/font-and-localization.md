@@ -73,7 +73,8 @@ looks in the original game.
   description** by the key from the `<briefing locid="...">` attribute —
   the same text the game shows, word-wrapped.
 - **The menu**: the game's own `mainMenu.swf` gets its strings from the
-  same lexicon through the bridge (docs/research/11-ruffle-menu.md).
+  same lexicon through the bridge (`src/swf/src/bridge.cpp`,
+  docs/research/12-native-flash.md).
 
 ```bash
 ./build/macos-arm64-debug/src/app/openbf2 --screen loading

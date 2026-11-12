@@ -4,6 +4,10 @@ The menu is to be played natively, in C++, by our own player — not by Ruffle
 (docs/research/11-ruffle-menu.md), which stays only until this one plays the
 menu. The decision of 2026-11-09.
 
+**Done, 2026-11-12:** this player runs the menu and the loading screen, and Ruffle
+is removed — `src/flash`, `tools/ruffle_*` and the `--ruffle` switch are gone.
+The comparisons with Ruffle below were made while it was still there.
+
 ## The base: gameswf at tu-testbed revision 777
 
 `SwiffPlayer.dll` is gameswf with DICE's changes. Which gameswf was measured,

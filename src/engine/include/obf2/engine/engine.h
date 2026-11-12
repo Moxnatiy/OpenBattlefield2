@@ -10,8 +10,8 @@
 //   * the menu is Macromedia Flash, which the engine runs with its FSMoviePlayer
 //     (`dice.hfe.geom.FSMoviePlayer` in the string table).
 //
-// We are not going to reproduce Bink; the menu is played by Ruffle
-// (`src/flash`, docs/research/11-ruffle-menu.md). The states, the transitions,
+// The movies are decoded through FFmpeg (`src/video`); the menu is played by our
+// own player over gameswf (`src/swf`, docs/research/12-native-flash.md). The states, the transitions,
 // the settings and the order files are read in stay the same.
 #include <filesystem>
 #include <map>

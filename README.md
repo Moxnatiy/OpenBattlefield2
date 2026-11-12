@@ -23,8 +23,9 @@ instead of being filled in with a guess.
 A research project in progress. What works today, against an original
 Battlefield 2 1.5 installation and an **original dedicated server**:
 
-* **Main menu** — the game's own `mainMenu.swf`, played by
-  [Ruffle](https://github.com/ruffle-rs/ruffle) with a bridge that answers the
+* **Main menu** — the game's own `mainMenu.swf`, played by our own player over
+  [gameswf](https://github.com/tulrich/tu-testbed) (public domain — the library the
+  original's `SwiffPlayer.dll` is built on), with a bridge that answers the
   calls the movie makes into the engine: localisation, the player's profiles
   from `Documents/Battlefield 2`, the installed maps from each level's `.desc`.
 * **Levels** — the archives read in place, terrain with its detail
@@ -68,7 +69,7 @@ Everything below is our engine on macOS/arm64, reading an original Battlefield
 no hands on the keyboard. `--screenshot` writes a BMP; the images here are the
 same frames as PNG.
 
-The game's own `mainMenu.swf`, under Ruffle with our bridge:
+The game's own `mainMenu.swf`, on our player with our bridge:
 
 ![Main menu](docs/screenshots/menu-main.png)
 
@@ -149,9 +150,8 @@ openbf2 --connect <host> --width 800 --height 600 --frames 1900 --no-hud \
 * macOS on arm64 is the main platform. The `windows-x64` preset is kept
   building but is not exercised.
 * CMake 3.24+, Ninja, a C++20 compiler, **SDL3**.
-* Optional, for the Flash menu: **Rust** and a checkout of Ruffle in
-  `reference/ruffle` (see `docs/research/11-ruffle-menu.md`). Without them the
-  `obf2_flash` module is skipped and everything else still builds.
+* Optional, for the intro movies: **FFmpeg** (`brew install ffmpeg`). Without
+  it the `obf2_video` module is skipped and everything else still builds.
 
 ## Build
 
@@ -168,8 +168,7 @@ is not there; the network tests run on captures of a live server kept in
 Every push to `master` is built and tested by GitHub Actions on macOS arm64
 (`.github/workflows/ci.yml`), and the run keeps `openbf2` with its SDL3 beside
 it as an artifact, `openbf2-macos-arm64-<commit>.tar.gz`, for 30 days. That
-build has no Flash menu — Ruffle is not part of it — so it is started with
-`--level` or `--connect`.
+build has the menu but no intro movies (FFmpeg is not part of it).
 
 ## Run
 
@@ -230,7 +229,8 @@ through a wall, how long the HUD's rebuilds took.
 | `server` | local server, soldier physics, the collision world |
 | `session` | the live link to a server: the handshake, the world it keeps, our action stream |
 | `engine` | console, settings, key bindings |
-| `flash` | the Flash menu: Ruffle behind a C ABI |
+| `swf` | the Flash menu and loading screen: our player over the vendored gameswf, and the menu ↔ game bridge |
+| `video` | the Bink intro movies, through FFmpeg when it is installed |
 | `app` | the `openbf2` executable: command line, scene, renderer, menu, the world on screen |
 
 Where the notes are:

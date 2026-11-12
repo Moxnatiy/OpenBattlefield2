@@ -352,7 +352,8 @@ constant's value is needed, and no good where control flow is needed.
 | `tools/swf_disasm.py` | the menu's byte code itself: branches, function bodies, component parameters | `--tag 26` reads the parameters in `ClipActions` |
 | `tools/swiff_bridge.py` | the objects and methods of the menu → game bridge | `SwiffPlayer.dll`, groups in `.rdata` |
 | `tools/gameswf_probe.cpp` + `gameswf_macos.patch` | build gameswf and read the menu movie with it | docs/research/10-gameswf-on-arm64.md |
-| `tools/ruffle_bf2_bridge.rs` + `.patch` + `ruffle_install.sh` | the menu → game bridge for Ruffle | docs/research/11-ruffle-menu.md |
+| `swf_probe` (built with the project) | a menu movie played by our own player headless: its tree, its orders, a frame | reads the archives, nothing else |
+| `tools/swiff_methods.py`, `tools/swiff_accessors.py` | a bridge object's method table out of `SwiffPlayer.dll`, and one line per method of what it reads | the shapes the accessors take; anything else is printed raw |
 | `tools/bmp_crop.py` | cut a piece out of a screenshot and magnify it | screenshots are BMP |
 | `tools/translate_comments.py` | move comments over to English line by line | refuses to write on a mismatch |
 
@@ -395,7 +396,8 @@ third_party/    vendored single-file libraries: miniz, stb
 | `net` | BitStream, protocol, events, connection |
 | `server` | local server, soldier physics, collision world |
 | `engine` | console, settings, key bindings |
-| `flash` | the Flash menu: Ruffle behind a C ABI |
+| `swf` | the Flash menu: our player over the vendored gameswf (`third_party/gameswf`, public domain — the library `SwiffPlayer.dll` is built on), its rasterizer and the menu ↔ game bridge |
+| `video` | the Bink intro movies, through FFmpeg when it is installed |
 | `session` | the live link to a server: handshake, the world it keeps, our action stream |
 | `app` | the `openbf2` executable and the modules it is assembled from — the command line, the scene, the renderer, the menu, the world on screen (see below) |
 
@@ -458,9 +460,9 @@ test.**
 
 CI (`.github/workflows/ci.yml`) builds every push to `master` with the
 `macos-arm64` preset and `-DOBF2_WERROR=ON`, runs the tests and keeps
-`openbf2` as an artifact. It has no `reference/ruffle`, so **the build has to
-stand without the Flash module**: anything only the menu's movie uses goes
-under `#if OBF2_HAVE_FLASH`, or an unused field breaks the build there.
+`openbf2` as an artifact. The menu (`src/swf`, gameswf vendored) is part of
+that build; FFmpeg is not, so **the build has to stand without the video
+module**: anything only the movies use goes under `#if OBF2_HAVE_VIDEO`.
 
 ## How we check ourselves
 
@@ -561,8 +563,9 @@ soldier through `tickSoldier`.
 
 **Menu.** The menu ↔ game bridge is reversed — seventeen objects, all
 forty methods of `Logic` with addresses (docs/functions/menu-bridge.md).
-The menu itself is the game's own `mainMenu.swf`, played by Ruffle
-(docs/research/11-ruffle-menu.md). Not done: the tables for the other
+The menu itself is the game's own `mainMenu.swf`, played by our own player
+over gameswf (docs/research/12-native-flash.md); the loading screen is the
+game's `endOfRound.swf` on the same player. Not done: the tables for the other
 sixteen objects (the approach is known and mechanical), what `c_GIMenu`
 and `c_GIEscape` do in the game, the screens other than singleplayer, and
 the chevrons on `PLAY NOW` — the movie never asks for

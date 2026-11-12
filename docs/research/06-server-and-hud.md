@@ -146,6 +146,6 @@ counter.
 
 The Flash decision stands, but **its urgency dropped**: everything shown
 during play is drawn by our own interface out of `.con`. Flash is needed only
-for the main menu. (The bet on gameswf later gave way to Ruffle — see
-`docs/research/10-gameswf-on-arm64.md` and
-`docs/research/11-ruffle-menu.md`.)
+for the main menu. (The bet on gameswf gave way to Ruffle for a while —
+`docs/research/10-gameswf-on-arm64.md`, `docs/research/11-ruffle-menu.md` —
+and then came back: `docs/research/12-native-flash.md`.)

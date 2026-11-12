@@ -24,8 +24,8 @@ jobs:
         run: brew install ninja sdl3
 
       # The release preset, with warnings as errors as the debug preset has them.
-      # There is no Ruffle checkout here (reference/ is not in git), so the
-      # Flash menu module is skipped — the build has to stand without it.
+      # The Flash menu is our own player over the vendored gameswf, so it is part
+      # of this build; the intro movies need FFmpeg and are skipped without it.
       - name: Configure
         run: cmake --preset macos-arm64 -DOBF2_WERROR=ON
 
@@ -68,8 +68,8 @@ jobs:
             ./openbf2 --mod "/path/to/Battlefield 2/mods/bf2" --level Dalian_plant
             ./openbf2 --mod "/path/to/Battlefield 2/mods/bf2" --connect <host>
 
-          This build has no Flash menu (Ruffle is not part of the CI build): start
-          a level with --level, or join a server with --connect.
+          Started with no options it opens the game's own menu. It has no intro
+          movies (FFmpeg is not part of the CI build).
 
           The binary is not notarised. If macOS refuses to open it:
             xattr -dr com.apple.quarantine .

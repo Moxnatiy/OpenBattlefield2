@@ -5,8 +5,8 @@
 // docs/functions/menu-bridge.md), and a renderer that paints each frame into an
 // RGBA image the application shows as a texture.
 //
-// It replaces the Ruffle-based `obf2::flash::Movie` and keeps its shape: open a
-// movie, step it, render, feed the mouse, take the orders it gives.
+// Its shape: open a movie, step it, render, feed the mouse, take the orders it
+// gives.
 #include <cstddef>
 #include <cstdint>
 #include <functional>

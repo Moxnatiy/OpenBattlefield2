@@ -45,16 +45,16 @@ Reproducing either from scratch makes no sense — it is a lot of work for
 > public-domain library, and it is exactly what DICE put into
 > `External\gameswf\SwiffPlayer\`. So the "lot of work" is already done
 > and sits under a licence that suits us
-> (docs/research/00-prior-art.md). In the end we went with Ruffle
-> (docs/research/11-ruffle-menu.md); the decision below stands as a
-> choice, not as a dead end.
+> (docs/research/00-prior-art.md). For a while we went with Ruffle
+> (docs/research/11-ruffle-menu.md); in the end gameswf runs after all and
+> Ruffle is removed (docs/research/12-native-flash.md).
 
 | What | Logic | Technology |
 |---|---|---|
 | Settings | 1:1, the same command and file names | ours |
 | States and transitions | 1:1 (Boot → Intro → MainMenu → …) | ours |
-| Intro movies | the order and the fact of playing are kept | Bink is not decoded |
-| Menu | the original `mainMenu.swf` | Flash through Ruffle (11-ruffle-menu.md) |
+| Intro movies | the order and the fact of playing are kept | Bink through FFmpeg (`src/video`) |
+| Menu | the original `mainMenu.swf` | Flash through our player over gameswf (12-native-flash.md) |
 
 The settings command names are the one case where deviating is **not
 allowed at all**: the user writes those files, and they have to stay

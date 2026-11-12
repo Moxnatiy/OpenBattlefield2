@@ -109,7 +109,6 @@ Args parseArgs(int argc, char** argv) {
       args.fires.push_back(fire);
     }
     else if (flag == "--flash" && i + 1 < argc) args.flashSwf = argv[++i];
-    else if (flag == "--ruffle") args.ruffle = true;
     else if (flag == "--connect" && i + 1 < argc) args.connectTo = argv[++i];
     else if (flag == "--probe") args.probe = true;
     else if (flag == "--no-content") args.skipContent = true;

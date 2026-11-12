@@ -313,7 +313,7 @@ through the import at 0x100d7168, whose name Ghidra does not show). So we do
 not supply `gamespy` and the account icon yet — rule 6.
 
 Meanwhile `profileName` and `password` are unambiguous, and it is those our
-bridge puts into the row (`tools/ruffle_bf2_bridge.rs`).
+bridge puts into the row (`src/swf/src/bridge.cpp`).
 
 ## Single-player: how the menu launches a map
 

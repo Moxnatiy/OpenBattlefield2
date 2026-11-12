@@ -1,5 +1,11 @@
 # The menu on Ruffle: visible for the first time
 
+> **Historical.** Ruffle is gone from the project: the module (`src/flash`),
+> its bridge and its install script are removed, and the menu runs on our own
+> player over gameswf (docs/research/12-native-flash.md). This note stays as the
+> record of what Ruffle showed first; the bridge's readings it lists live on in
+> `src/swf/src/bridge.cpp`, and the paths it names below no longer exist.
+
 Battlefield 2's menu is Flash (proven by running the original, see
 docs/functions/menu-bridge.md). The attempt to play it through **gameswf** —
 the same library the original uses — ran into an endless loop

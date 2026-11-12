@@ -169,11 +169,9 @@ void MainMenu::openMovie(FileSystem& files, engine::Engine& engine, const Option
 
   host_ = makeMenuHost(files, engine);
 
-  movie_.useRuffle(options.ruffle);
   const bool opened = movie_.open(host_, path);
   if (opened) {
-    std::printf("menu movie (%s): %s, stage %u x %u\n", movie_.usingRuffle() ? "Ruffle" : "native",
-                path.c_str(), movie_.width(), movie_.height());
+    std::printf("menu movie: %s, stage %u x %u\n", path.c_str(), movie_.width(), movie_.height());
     texture::Texture frame;
     frame.format = texture::Format::Bgra8;
     frame.width = movie_.width();

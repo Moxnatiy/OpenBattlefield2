@@ -7,7 +7,7 @@
 // screen are drawn by the engine itself out of the level's `Info/<level>.desc`
 // (`Game/MenuLogic/LoadGameLogic.cpp`). The movie cannot start a level by
 // itself: it asks, and the asking goes through the console, the same path our own
-// menu used (docs/functions/menu-bridge.md, docs/research/11-ruffle-menu.md).
+// menu used (docs/functions/menu-bridge.md, docs/research/12-native-flash.md).
 #include <optional>
 #include <string>
 #include <vector>
@@ -47,8 +47,6 @@ class MainMenu {
     int width = 800, height = 600;
     // `@HOME@`: where the profiles are (`--home`).
     std::filesystem::path homeDir;
-    // `--ruffle`: play the menu with Ruffle instead of our own player.
-    bool ruffle = false;
   };
 
   // Boots the engine (the profile, the levels, the localisation), binds the

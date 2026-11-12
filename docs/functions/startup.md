@@ -213,8 +213,9 @@ Ours: `Engine::boot` → `loadDefaultProfile`; the menu's login reaches
 menu's LOGIN page, the profile row, SELECT ACCOUNT → `profile: login 0001 —
 loaded`.
 
-Debt: the bridge (`tools/ruffle_bf2_bridge.rs`) still lists the profiles and
-reads `Global.con` itself, apart from the engine — the same logic in two places.
+The bridge (`src/swf/src/bridge.cpp`) takes the profiles from the engine
+(`makeMenuHost`, `Engine::localProfiles`), so the list has one source. (The
+Ruffle bridge it replaced read `Global.con` itself — the same logic in two places.)
 
 ## How a movie is drawn
 

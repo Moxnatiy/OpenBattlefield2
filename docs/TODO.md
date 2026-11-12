@@ -14,14 +14,15 @@ decisions are made on the spot and described in the code or in `docs/`.
   `third_party/` keep their own (miniz — MIT, stb_image — public domain).
   The editor's LGPL navmesh code **does not enter our tree**: we read it as
   a specification of the format and write our own.
-- **Flash — done, the movie is played by Ruffle.** The in-game interface
-  (HUD, scoreboard, spawn screen) is `.con`, not Flash; Flash is left only
-  in the menu (`docs/research/06-server-and-hud.md`). We first bet on
-  gameswf (public domain, the very library the original plays it with),
-  but it would not run on arm64 —
-  `docs/research/10-gameswf-on-arm64.md`. We went with **Ruffle** (Rust,
-  MIT/Apache-2.0): it plays the same `mainMenu.swf` the game opens. The
-  price is Rust in the build and a C ABI to our C++ (`src/flash`).
+- **Flash — done, on gameswf.** The in-game interface (HUD, scoreboard, spawn
+  screen) is `.con`, not Flash; Flash is left only in the menu and the
+  loading screen (`docs/research/06-server-and-hud.md`). The first bet on
+  gameswf (public domain, the very library the original plays it with) stalled
+  on arm64 (`docs/research/10-gameswf-on-arm64.md`), and Ruffle carried the
+  menu for a while (`docs/research/11-ruffle-menu.md`). gameswf now runs —
+  vendored in `third_party/gameswf` with our fixes, under our player in
+  `src/swf` (`docs/research/12-native-flash.md`) — and Ruffle, with Rust in
+  the build, is gone.
 - **The main menu is the original `mainMenu.swf`.** Our own menu built on
   `hudBuilder` existed and was removed: it never showed what is actually in
   the game, and keeping two menus side by side turned out to be actively
@@ -30,7 +31,7 @@ decisions are made on the spot and described in the code or in `docs/`.
   the engine gives it what `SwiffPlayer.dll` gives it in the game: the
   seventeen bridge objects, localisation, the profiles from `Documents`,
   the map list from the `.desc` files
-  (docs/functions/menu-bridge.md, docs/research/11-ruffle-menu.md).
+  (docs/functions/menu-bridge.md, docs/research/12-native-flash.md).
 - **Byte-for-byte compatibility with original servers — not yet.** We read
   and understand the format, but we do not promise compatibility. We may
   come back to it. The rig is already there: the original dedicated server

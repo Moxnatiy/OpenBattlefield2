@@ -1,8 +1,7 @@
 #pragma once
-// The menu's movie behind one face: our native player (obf2::swf, the
-// default) or Ruffle (obf2::flash, `--ruffle`, kept only to compare against
-// until the native one has replaced it everywhere). Both give the same calls
-// the menu uses: open, the stage size, the mouse, the orders, a step, a frame.
+// The menu's movie: our player (obf2::swf, gameswf underneath — the library the
+// original's SwiffPlayer.dll is built on) behind the calls the menu uses: open,
+// the stage size, the mouse, the orders, a step, a frame.
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -10,19 +9,12 @@
 #include "obf2/engine/engine.h"
 #include "obf2/swf/player.h"
 #include "obf2/vfs/filesystem.h"
-#if OBF2_HAVE_FLASH
-#include "obf2/flash/movie.h"
-#endif
 
 namespace obf2::app {
 
 class MenuMovie {
  public:
-  // Ruffle instead of ours — before open.
-  void useRuffle(bool ruffle) { ruffle_ = ruffle; }
-  bool usingRuffle() const { return ruffle_; }
-
-  // Ours needs the engine's side (the bridge's data); Ruffle reads the files.
+  // The host carries the engine's side the movie's bridge answers from.
   bool open(const swf::Host& host, const std::string& path);
   bool isOpen() const;
   std::uint32_t width() const;
@@ -34,19 +26,15 @@ class MenuMovie {
   void mouseButton(double x, double y, bool down);
 
   std::string takeCommand();
-  // One step: ours by the frame's time, Ruffle by one of its frames.
+  // One step by the frame's time.
   void advance(double seconds);
   // RGBA, `width × height × 4`.
   const std::vector<std::uint8_t>& render();
 
  private:
-  bool ruffle_ = false;
   swf::Player native_;
   double mouseX_ = 0, mouseY_ = 0;
   bool down_ = false;
-#if OBF2_HAVE_FLASH
-  flash::Movie flash_;
-#endif
 };
 
 // What a menu movie's bridge answers from the engine: the dictionary, the

@@ -57,96 +57,38 @@ swf::Host makeMenuHost(FileSystem& files, engine::Engine& engine) {
 }
 
 bool MenuMovie::open(const swf::Host& host, const std::string& path) {
-#if OBF2_HAVE_FLASH
-  if (ruffle_) {
-    flash::Movie::setFileReader(host.readFile);
-    const auto bytes = host.readFile ? host.readFile(path) : std::nullopt;
-    return bytes && flash_.openFromMemory(*bytes, path);
-  }
-#endif
   return native_.open(host, path);
 }
 
-bool MenuMovie::isOpen() const {
-#if OBF2_HAVE_FLASH
-  if (ruffle_) return flash_.isOpen();
-#endif
-  return native_.isOpen();
-}
+bool MenuMovie::isOpen() const { return native_.isOpen(); }
 
-std::uint32_t MenuMovie::width() const {
-#if OBF2_HAVE_FLASH
-  if (ruffle_) return flash_.width();
-#endif
-  return native_.width();
-}
+std::uint32_t MenuMovie::width() const { return native_.width(); }
 
-std::uint32_t MenuMovie::height() const {
-#if OBF2_HAVE_FLASH
-  if (ruffle_) return flash_.height();
-#endif
-  return native_.height();
-}
+std::uint32_t MenuMovie::height() const { return native_.height(); }
 
 void MenuMovie::toStage(int windowWidth, int windowHeight, double x, double y, double* sx,
                         double* sy) const {
-#if OBF2_HAVE_FLASH
-  if (ruffle_) {
-    flash_.toStage(windowWidth, windowHeight, x, y, sx, sy);
-    return;
-  }
-#endif
   *sx = windowWidth > 0 ? x * width() / windowWidth : x;
   *sy = windowHeight > 0 ? y * height() / windowHeight : y;
 }
 
 void MenuMovie::mouseMove(double x, double y) {
-#if OBF2_HAVE_FLASH
-  if (ruffle_) {
-    flash_.mouseMove(x, y);
-    return;
-  }
-#endif
   mouseX_ = x;
   mouseY_ = y;
   native_.mouse(mouseX_, mouseY_, down_);
 }
 
 void MenuMovie::mouseButton(double x, double y, bool down) {
-#if OBF2_HAVE_FLASH
-  if (ruffle_) {
-    flash_.mouseButton(x, y, down);
-    return;
-  }
-#endif
   mouseX_ = x;
   mouseY_ = y;
   down_ = down;
   native_.mouse(mouseX_, mouseY_, down_);
 }
 
-std::string MenuMovie::takeCommand() {
-#if OBF2_HAVE_FLASH
-  if (ruffle_) return flash_.takeCommand();
-#endif
-  return native_.takeCommand();
-}
+std::string MenuMovie::takeCommand() { return native_.takeCommand(); }
 
-void MenuMovie::advance(double seconds) {
-#if OBF2_HAVE_FLASH
-  if (ruffle_) {
-    flash_.advance();
-    return;
-  }
-#endif
-  native_.advance(seconds);
-}
+void MenuMovie::advance(double seconds) { native_.advance(seconds); }
 
-const std::vector<std::uint8_t>& MenuMovie::render() {
-#if OBF2_HAVE_FLASH
-  if (ruffle_) return flash_.render();
-#endif
-  return native_.render();
-}
+const std::vector<std::uint8_t>& MenuMovie::render() { return native_.render(); }
 
 }  // namespace obf2::app

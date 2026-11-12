@@ -53,9 +53,6 @@
 #include "obf2/hud/map_node.h"
 #include "obf2/meme/graph.h"
 #include "obf2/hud/render.h"
-#if OBF2_HAVE_FLASH
-#include "obf2/flash/movie.h"
-#endif
 #include "obf2/hud/spawn.h"
 #include "obf2/hud/spawn_interface.h"
 #include "obf2/hud/states.h"
@@ -319,7 +316,6 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
   obf2::app::MainMenu::Options menuOptions;
   menuOptions.screen = args.screen;
   menuOptions.homeDir = homeDir;
-  menuOptions.ruffle = args.ruffle;
   menuOptions.flashSwf = args.flashSwf;
   menuOptions.mouseX = args.mouseX;
   menuOptions.mouseY = args.mouseY;

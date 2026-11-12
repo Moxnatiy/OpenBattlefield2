@@ -2,8 +2,7 @@
 // The bridge the menu movie talks to the engine through: SwiffPlayer.dll's
 // seventeen objects (`_global.Logic`, `_global.dice.bf2.Logic`, …), the
 // settings objects, `dice.General` and `mx.lang.Locale`
-// (docs/functions/menu-bridge.md). Moved over from tools/ruffle_bf2_bridge.rs;
-// the readings and their addresses are the same.
+// (docs/functions/menu-bridge.md), with the addresses each answer was read at.
 #include <string>
 #include <vector>
 

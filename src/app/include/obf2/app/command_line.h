@@ -93,10 +93,9 @@ struct Args {
   //
   std::vector<std::string> execLines;
   // --flash <file.swf>: show the menu's movie instead of our screen.
-  // The game's menu is Flash, played by Ruffle (docs/research/11-ruffle-menu.md).
+  // The game's menu is Flash, played by our gameswf-based player
+  // (docs/research/12-native-flash.md).
   std::string flashSwf;
-  // `--ruffle`: the menu through Ruffle instead of our own player (for comparison).
-  bool ruffle = false;
   std::string connectTo;      // --connect <host[:port]>: a real BF2 server
   // --probe: protocol parsing only, without a window. Without it --connect opens
   // the world, as a client should.
