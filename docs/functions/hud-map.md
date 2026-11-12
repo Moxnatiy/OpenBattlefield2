@@ -136,18 +136,48 @@ size and the position. The world's dimensions come from
 The zoom is an integer 0..2 in field +0x6d0. The console command
 `MiniMap.setZoom` writes it (0x57a97e — it simply puts the argument into that
 field), and in the data it hangs on the `MapZoom` button
-(`HUD/HudSetup/SpawnInterface/HudElementsMapMenu.con`). The smoothed value
-+0x698 is driven towards the index itself, and the magnification is
+(`HUD/HudSetup/SpawnInterface/HudElementsMapMenu.con`). The magnification is
 
 ```
 pow(2.3, +0x698)
 ```
 
 where 2.3 sits as a double constant at 0x930150 and is taken at 0x77397c.
-Three tables of three numbers each (+0x6d8, +0x6e4, +0x6f0) are selected by
-0x77cf6a according to the mode; what exactly is in them is **not
-established**, but the equality of +0x698 and `(float)+0x6d0` at 0x77d4ad
-says these are the indices themselves.
+
+**The index is not the exponent** (an earlier version of this note said it was,
+from a comparison at 0x77d4ad; read whole, the code says otherwise). The
+constructor fills three tables of three floats (0x781ad5..0x781b16):
+
+| table | when | index 0 | 1 | 2 |
+|---|---|---|---|---|
+| +0x6d8 | map collapsed (+0x68e off) | 0.5 | 1.5 | 2.5 |
+| +0x6e4 | map expanded (+0x68e on) | 0.0 | 1.0 | 2.0 |
+| +0x6f0 | commander's screen (HUD manager +0x1ec) | 0.0 | 1.0 | 2.0 (rewritten from the commander camera's height) |
+
+0x77cae2..0x77cbe7 drives +0x698 towards `[map + ((0x92 + +0x68e) * 3 +
+index) * 4]` (or the +0x6f0 row when +0x1ec says so): snapped when closer than
+1e-4 (0x8ebdfc), otherwise `+= (1 − e^(−6·dt)) · (target − value)` (−6.0 at
+0x930328, the exponent clamped to ±10). `getZoomScale` (0x77395a) reads the
+same cell. The index starts at **1** (0x781a88 → +0x6d0 at 0x781ac9).
+
++0x68e is "the map is expanded", written only by `setExpanded` (0x776a7b on,
+0x776a90 off):
+
+* expanding stores the flag, centres the view on the combat area and, if the
+  spawn screen's +0x690 or the commander's +0x691 is on, asks `setZoom(0)`
+  (0x776a72..0x776a8c); otherwise the zoom is left as it was (the big map, M);
+* collapsing clears the flag first and then asks `setZoom` for the zoom the
+  local vehicle type saved — and `setZoom` (0x777980) does nothing unless
+  +0x68e is on, so the index survives the collapse.
+
+The zoom key's own handler is still not found; the HUD's `setZoom` command with
+no argument is `cycleZoom` (executor 0x76bcbb → 0x7779a0 → `applyZoom(-1)`,
+0x776670): index + 1, past 2 back to 0.
+
+So after a spawn the corner map sits at index 0 of the collapsed row, 2.3^0.5 ≈
+1.52 times the combat area's square, and the big map at index 0 shows the
+square whole. Ours: `hud::MapNode` (`kMapZoomExponents`, `cycleZoom`), and the
+combat-area hatch is drawn from the part of its square the zoomed window shows.
 
 At zoom 0 we take the window as a square around the combat area — the one
 measured from the original's frame dump. That the engine shows exactly that

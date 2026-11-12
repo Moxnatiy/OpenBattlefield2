@@ -64,9 +64,10 @@ struct Bundle {
   bool playForever = false;         // +0x2d: a one-shot that has ended holds its last frame
 };
 
-// The value range a MovementTrigger fires on. The first two numbers are the
-// bounds (the order may be reversed for negative ones), and the engine uses the
-// third separately, for the playback speed.
+// The value range a MovementTrigger fires on. The first and the third numbers
+// are the bounds (the order may be reversed for negative ones), and the engine
+// uses the second separately, for the playback speed. An earlier reading took the
+// first two for the bounds, and no speed ever reached `1p_sprint` or `3p_sprint`.
 //
 // The holder also carries two message masks, which `MovementTrigger::update`
 // reads before the range (`BF2.exe` 0x7ff430, the fields at +0x10 and +0x0c):
@@ -79,11 +80,16 @@ struct Bundle {
 inline constexpr const char* kValueHolderFile =
     "Objects/Soldiers/Common/Animations/ValueHolders.inc";
 
+// `AnimationValueHolder.values a b c` is **min, normal, max**: `ValueHolder::makeScript`
+// (Linux 0x6d1dca..0x6d1e3c) writes the holder's +0, +8, +4 in that order. The
+// range a trigger tests is +0..+4 (`MovementTrigger::isWithinRange`, Linux
+// 0x6cd370), so `1p_sprint 5.5 6.3 100` is 5.5 to 100; the normal +8 is the speed
+// a movement bundle's clips were made at (`applyAnimations`, 0x6cdabf).
 struct ValueHolder {
   std::string name;
-  float low = 0.0f;
-  float high = 0.0f;
-  float extra = 0.0f;
+  float low = 0.0f;     // +0x0, min — `values`' first number
+  float high = 0.0f;    // +0x4, max — its third
+  float extra = 0.0f;   // +0x8, the normal speed — its second
   std::uint32_t passOnMessage = 0;
   std::uint32_t stopOnMessage = 0;
 

@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "obf2/server/soldier_node.h"
+#include "obf2/server/soldier_pose.h"
 
 namespace obf2::server {
 namespace {
@@ -62,7 +63,7 @@ void floatSoldier(BodyState& body, const Vec3f& wish, const PhysicsConstants& ph
 Vec3f pushOutOfWalls(BodyState& body, const PhysicsConstants& physics,
                      const CollisionWorld* collision) {
   if (collision == nullptr) return Vec3f{};
-  const std::vector<float> centers = soldierSphereHeights(physics);
+  const std::vector<float> centers = soldierSphereHeights(physics, body.pose);
   Vec3f offset{};
   for (const float center : centers) {
     if (center < physics.stepHeight()) continue;
@@ -142,9 +143,13 @@ bool soldierInput(BodyState& body, const SoldierIntent& intent, const PhysicsCon
   countToMinusOne(body.noAirControl);
   countToMinusOne(body.airControl);
 
-  // 0x54f457..0x54f747: the jump's axis, not while the prone delay runs.
+  // 0x54f457..0x54f747: the jump's axis, not while `jump-delay-after-prone`
+  // (+0x5a8) runs (0x54f72c). What is left is the wish to jump (0x18b on the
+  // stack) — a prone soldier's is the key that gets him up — and only a standing
+  // soldier keeps the axis itself.
+  const bool wantsJump = intent.jump && body.jumpDelay <= 0.0f;
   bool jumped = false;
-  if (body.onGround && intent.jump && body.jumpDelay <= 0.0f) {
+  if (body.onGround && wantsJump && body.pose == kPoseStand) {
     // 0x54fbaa..0x54fe1d.
     body.fireDelay = physics.fireDelayAfterJump;
     body.proneDelay = physics.proneDelayAfterJump;
@@ -171,13 +176,10 @@ bool soldierInput(BodyState& body, const SoldierIntent& intent, const PhysicsCon
 
   if (body.onGround) {
     // `updateSoldierSpeed(false, ...)`, 0x54f043: the surface speed.
-    const float speed = intent.speed * physics.speedFactor;
+    const float speed = intent.blendedSpeed * physics.speedFactor;
     body.surfaceSpeed = Vec3f{intent.wish.x * speed, intent.wish.y * speed, intent.wish.z * speed};
-    return jumped;
-  }
-
-  // `updateSoldierSpeed(true, ...)`, 0x54f0a5 and 0x54eec0: steering in the air.
-  if (body.noAirControl < 0.0f && body.airControl > 0.0f) {
+  } else if (body.noAirControl < 0.0f && body.airControl > 0.0f) {
+    // `updateSoldierSpeed(true, ...)`, 0x54f0a5 and 0x54eec0: steering in the air.
     const float strength = body.airControl * 0.5f * physics.inAirSpeed;
     const float before = std::sqrt(body.velocity.x * body.velocity.x +
                                    body.velocity.z * body.velocity.z);
@@ -190,6 +192,17 @@ bool soldierInput(BodyState& body, const SoldierIntent& intent, const PhysicsCon
       body.velocity.z *= before / after;
     }
   }
+
+  // The pose, last in the input (0x5501bb..0x550033): a prone soldier's jump
+  // with `stand-delay-from-prone` run out gets him up to a crouch and starts
+  // `jump-delay-after-prone` and `fire-delay-from-prone`; then the keys.
+  bool crouch = intent.crouch;
+  if (wantsJump && body.pose == kPoseProne && body.standDelay <= 0.0f) {
+    body.jumpDelay = physics.jumpDelayAfterProne;
+    body.fireFromProneDelay = physics.fireDelayFromProne;
+    crouch = true;
+  }
+  updateSoldierPose(body, intent.prone, crouch, false, intent.canGoProne, physics);
   return jumped;
 }
 
@@ -205,10 +218,22 @@ bool tickSoldier(BodyState& body, SwimState& swim, const SoldierIntent& intent, 
   const Vec3f previous = body.position;
   stepSoldierNode(body, matrixYaw, physics, step);
   collideSoldier(body, previous, matrixYaw, physics, terrain, collision);
+  // The collision pass changes the pose when the new one fits (B2BF's
+  // `ResponsePhysicsManager`, `poseChangeTest` then `executePoseChange`; the
+  // pass's own address in `BF2.exe` is not read).
+  const std::function<bool(int)> fits =
+      intent.poseFits ? intent.poseFits : std::function<bool(int)>([](int) { return true; });
+  if (body.pose != body.requestedPose && poseChangeFits(body, fits)) {
+    executePoseChange(body, intent.sprinting, intent.zoomed, intent.mouseSpeedMod, physics);
+  }
+  // `Soldier::handleFrameUpdate` (Linux 0x548f20..0x548fd8): +0x5a0..+0x5b8.
   countDown(body.fireDelay, step);
   countDown(body.proneDelay, step);
   countDown(body.jumpDelay, step);
+  countDown(body.standDelay, step);
+  countDown(body.proneFromStandDelay, step);
   countDown(body.sprintRechargeDelay, step);
+  countDown(body.fireFromProneDelay, step);
   return jumped;
 }
 

@@ -37,8 +37,25 @@ void Console::registerAliases() {
   });
 }
 
+void Console::observe(std::string_view target, Handler observer) {
+  observers_[toLower(target)] = std::move(observer);
+}
+
 bool Console::execute(const con::Command& command) {
+  bool observed = false;
+  if (!observers_.empty()) {
+    const std::string target = command.lowerPath.substr(0, command.lowerPath.find('.'));
+    const auto watcher = observers_.find(target);
+    if (watcher != observers_.end()) {
+      watcher->second(command);
+      observed = true;
+    }
+  }
   const auto found = handlers_.find(command.lowerPath);
+  if (found == handlers_.end() && observed) {
+    ++executed_;
+    return true;
+  }
   if (found == handlers_.end()) {
     // It may be an alias. The chain is expanded, but not endlessly:
     // `alias a b` + `alias b a` must not hang the console.

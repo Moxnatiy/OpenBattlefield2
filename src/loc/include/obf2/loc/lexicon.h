@@ -25,6 +25,11 @@ class Lexicon {
   // Adds the contents of one .utxt. There are several files per language (the
   // main one, patches, add-ons), and later ones override earlier — as in the game.
   bool addUtxt(std::span<const std::byte> bytes, std::string* error = nullptr);
+  // The same, but a key already present keeps its text: the rest of a language
+  // folder only fills in what the main files lack (English_Falcon.utxt's
+  // OPTIONS_6, FALCON). Which file wins a key both define, in the engine, is not
+  // read; B2BF's reconstruction says the first.
+  bool addUtxtMissing(std::span<const std::byte> bytes, std::string* error = nullptr);
 
   // nullopt when the key is absent: whether to substitute the key itself is up to
   // whoever draws it, because in the game a missing string shows as the key.
@@ -37,6 +42,7 @@ class Lexicon {
 
  private:
   std::unordered_map<std::string, std::string> entries_;
+  bool keepExisting_ = false;  // addUtxtMissing in progress
 };
 
 // UTF-16LE -> UTF-8. Surrogate pairs are combined into one character.

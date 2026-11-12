@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <set>
 
 #include "obf2/core/path.h"
 #include "obf2/game/object_mesh.h"
@@ -88,6 +89,10 @@ bool FirstPersonView::setWeapon(const std::string& soldier, const std::string& k
   const std::string key = modelKey(soldier, kit, item);
   if (key == key_) return ready();
 
+  // The weapon put away keeps its magazines: each weapon of the kit is an object of
+  // its own with its own `AmmoComp` (`ObjectTemplate` per item), so coming back to
+  // it finds what it had.
+  if (!key_.empty()) ammoByKey_[key_] = ammo_;
   key_ = key;
   body_ = anim::Player{};
   weapon_ = anim::Player{};
@@ -96,11 +101,29 @@ bool FirstPersonView::setWeapon(const std::string& soldier, const std::string& k
   spring_.reset();
   // A new weapon is a new fire component: its own rates, from the first.
   onceMessages_ = 0;
+  heldMessages_ = 0;
   fire_.setWeapon(game::FireTemplate{});
+  ammo_.setWeapon(game::AmmoTemplate{});
+  zoom_.setWeapon(std::nullopt);
+  shift_.setWeapon(game::ShiftTemplate{});
+  altHeldBefore_ = false;
+  // A weapon taken out is enabled (`GenericFireArm::enableWeapon`, Linux 0x5e6640)
+  // and may be used `delayToUse` ticks later: +0x310 = tick + the template's +0x228
+  // (seconds × 30, truncated). The tick is the next action's.
+  useDelayTicks_ = 0;
+  awaitUse_ = true;
   if (const auto chosen = game::soldierModel(*registry_, soldier, kit, item);
       chosen && chosen->weapon1p) {
     if (const game::ObjectTemplate* weapon = registry_->find(chosen->weapon1p->templateName)) {
       fire_.setWeapon(game::fireOf(*weapon));
+      ammo_.setWeapon(game::ammoOf(*weapon));
+      if (const auto kept = ammoByKey_.find(key); kept != ammoByKey_.end()) ammo_ = kept->second;
+      zoom_.setWeapon(game::zoomOf(*weapon));
+      shift_.setWeapon(game::shiftOf(*weapon));
+      // `ObjectTemplate.delayToUse`.
+      if (const auto delay = weapon->number("delaytouse")) {
+        useDelayTicks_ = static_cast<int>(*delay * 30.0f);
+      }
     }
   }
   const auto length = [this](const std::string& path) {
@@ -149,6 +172,27 @@ bool FirstPersonView::setWeapon(const std::string& soldier, const std::string& k
     }
     if (const auto uploaded = renderer_->upload(*bind, resolve_)) model.gpu = *uploaded;
     model.ready = model.gpu.vertices != nullptr;
+    // The weapon's zoom lod: the arms again with the weapon's mesh at that level.
+    if (const game::ObjectTemplate* weaponTemplate =
+            registry_->find(soldierModel->weapon1p->templateName)) {
+      if (const auto zoom = game::zoomOf(*weaponTemplate); zoom && zoom->zoomLod > 0) {
+        game::SoldierPart zoomPart = *soldierModel->weapon1p;
+        const std::string path =
+            game::resolveGeometryPath(*files_, zoomPart.templateFile, zoomPart.geometryName);
+        auto arms = loadPart(soldierModel->body1p);
+        auto weapon = path.empty() ? std::nullopt
+                                   : game::loadMesh(*files_, path, zoomPart.geometry,
+                                                    zoom->zoomLod, false);
+        if (arms && weapon) {
+          mesh::bindPartsToBones(*weapon, mesh::kFirstWeaponBone1p, mesh::kMaxWeaponParts1p);
+          mesh::appendSkinned(*arms, *weapon);
+          if (const auto uploaded = renderer_->upload(*arms, resolve_)) {
+            model.gpuZoom = *uploaded;
+            model.zoomLod = zoom->zoomLod;
+          }
+        }
+      }
+    }
     std::printf("  first person %s: %zu vertices, body system %s, weapon system %s, %s\n",
                 key.c_str(), bind->vertices.size(), model.body ? "yes" : "no",
                 model.weapon ? "yes" : "no", model.ready ? "on the gpu" : "not uploaded");
@@ -160,9 +204,59 @@ bool FirstPersonView::setWeapon(const std::string& soldier, const std::string& k
   return model_->ready;
 }
 
-bool FirstPersonView::onAction(std::uint32_t tick, bool fireHeld) {
+bool FirstPersonView::onAction(std::uint32_t tick, bool fireHeld, bool reloadPressed,
+                               bool altHeld) {
   if (!ready()) return false;
-  if (!fire_.tick(tick, fireHeld)) return false;
+  lastTick_ = tick;
+  if (awaitUse_) {
+    useAt_ = tick + static_cast<std::uint32_t>(useDelayTicks_);
+    awaitUse_ = false;
+  }
+  const int stateBefore = ammo_.state();
+  if (reloadPressed) ammo_.requestReload(tick);
+  // The reload's message 2 (`DefaultAnimationComp::reload`, Linux 0x60aad0): once
+  // for state 3, held for 4, let go for 0 and 6.
+  switch (ammo_.update(tick)) {
+    case game::ReloadMessage::Once:
+      onceMessages_ |= 2u;
+      ++reloadsStarted_;
+      break;
+    case game::ReloadMessage::Hold: heldMessages_ |= 2u; break;
+    case game::ReloadMessage::Clear: heldMessages_ &= ~2u; break;
+    case game::ReloadMessage::None: break;
+  }
+  // `GenericFireArm::handleUpdate` runs the ammunition's update and its signals
+  // first (0x5e7a24..0x5e7b44) and the zoom's after (0x5e7ba3..0x5e7be1): a reload
+  // that has begun tells the zoom component, which goes back to level 0
+  // (`DefaultZoomComp::reload`, 0x629b70).
+  if (stateBefore < 2 && ammo_.state() >= 2) zoom_.onReload(tick);
+  // The zoom key's press (`TemplateMessage` 7 → `toggle`), then the component's tick.
+  if (altHeld && !altHeldBefore_) zoom_.press(tick);
+  altHeldBefore_ = altHeld;
+  if (zoom_.update(tick)) ++zoomChanges_;
+  // Message 4, held while zoomed and let go at level 0 (`AnimationComp::
+  // updateOnZooming`, Linux 0x609e80, on by default — `animation.animateOnZoom`'s
+  // constructor value 1, 0x609f7f), handed the level by `GenericFireArm::handleUpdate`
+  // on every update (0x5e7be1..0x5e7c1a).
+  if (zoom_.zoomed()) {
+    heldMessages_ |= 4u;
+  } else {
+    heldMessages_ &= ~4u;
+  }
+  // The bolt-action cycle (`DefaultAnimationComp::updateComponent`): once the fire
+  // component is out of its cooldown a shift asked for starts, message 32 once.
+  if (shift_.update(tick, fire_.busy(tick))) onceMessages_ |= 32u;
+  // A held button the weapon cannot answer is still a held button for the
+  // trigger's "held from before" (`FireComp::requestFire`, Linux 0x5f5158). The
+  // components that may refuse a round: the ammunition and the animation's shift
+  // (`GenericFireArm::requestFire`, 0x5e4370, asks each; 0x60a710).
+  // (And not before the weapon's `delayToUse` is over: `busyExcept` 0x5e35f8.)
+  if (!fire_.tick(tick, fireHeld && ammo_.canFire() && shift_.canFire() && tick >= useAt_)) {
+    return false;
+  }
+  ammo_.onRound(tick);
+  shift_.onRoundComplete(ammo_.roundsInMag());
+  zoom_.onRound();  // `fireComplete`: zoom out after a round, with `zoomOutAfterFire`
   onceMessages_ |= 1u;  // a round: `postFire` (Linux 0x60a7e9)
   return true;
 }
@@ -174,14 +268,48 @@ void FirstPersonView::update(const anim::State& state, float step,
   // once-mask is gone after it (`AnimationSystem::update`, 0x7f7390: +0x8 |= +0x10
   // before the walk, +0x8 &= ~+0x10 and +0x10 = 0 after).
   anim::State walked = state;
-  walked.messages |= onceMessages_;
+  walked.messages |= onceMessages_ | heldMessages_;
+  // +0xc, the previous walk's held mask: `previous = held` after the once-mask
+  // is taken off (0x7f7390). A switch trigger plays its bundle only when its bit
+  // differs from it; without it the zoom's transition started on every frame the
+  // zoom was held.
+  walked.previousMessages = previousHeld_;
+  previousHeld_ = state.messages | heldMessages_;
   onceMessages_ = 0;
   if (model_->body) body_.update(*model_->body, walked, step);
+  // The idle time the `IdleTrigger` reads: it grows while exactly one player is
+  // alive in the system — only the base pose — and is zero with two or more
+  // (`AnimationSystem::update`, 0x7f7390; docs/functions/animation-system.md).
+  // Without it the weapon's `idle1`/`idle2` never played.
+  weaponIdle_ = weapon_.playing().size() == 1 ? weaponIdle_ + step : 0.0f;
+  walked.idleTime = weaponIdle_;
   if (model_->weapon) weapon_.update(*model_->weapon, walked, step);
+  // The measure for every bundle: the frames it played at over half its weight
+  // (several at once — a plain trigger's `still` stays on under `run`).
+  {
+    std::set<std::string> counted;
+    for (const anim::PlayingAnimation& playing : weapon_.playing()) {
+      if (playing.weight > 0.5f && counted.insert(playing.bundle).second) {
+        ++bundleFrames_[playing.bundle];
+      }
+    }
+  }
   // The measure: frames the weapon's `fire` bundle is on.
   for (const anim::PlayingAnimation& playing : weapon_.playing()) {
-    if (playing.bundle == "fire" && playing.weight > 0.0f) {
+    if ((playing.bundle == "fire" || playing.bundle == "zoom_fire") && playing.weight > 0.0f) {
       ++fireClipFrames_;
+      break;
+    }
+  }
+  for (const anim::PlayingAnimation& playing : weapon_.playing()) {
+    if (playing.bundle == "shift" && playing.weight > 0.0f) {
+      ++shiftClipFrames_;
+      break;
+    }
+  }
+  for (const anim::PlayingAnimation& playing : weapon_.playing()) {
+    if (playing.bundle == "reload" && playing.weight > 0.0f) {
+      ++reloadClipFrames_;
       break;
     }
   }
@@ -217,7 +345,10 @@ void FirstPersonView::update(const anim::State& state, float step,
 void FirstPersonView::collect(std::vector<gfx::MeshRenderer::DrawItem>& out, const Mat4& camera) {
   if (!ready() || pose_.empty()) return;
   const Vec3f sway = springTemplate_.use ? spring_.offset(springTemplate_) : Vec3f{};
-  gfx::MeshRenderer::DrawItem item{&model_->gpu, firstPersonRoot(model_->skeleton, camera, sway)};
+  // Zoomed in far enough, the weapon is its zoom lod (`DefaultZoomComp::setZoomLod`).
+  const bool scoped = model_->gpuZoom.vertices != nullptr && zoom_.lod() > 0;
+  gfx::MeshRenderer::DrawItem item{scoped ? &model_->gpuZoom : &model_->gpu,
+                                   firstPersonRoot(model_->skeleton, camera, sway)};
   item.pose = &pose_;
   out.push_back(item);
 }
@@ -225,6 +356,7 @@ void FirstPersonView::collect(std::vector<gfx::MeshRenderer::DrawItem>& out, con
 void FirstPersonView::release(gfx::MeshRenderer& renderer) {
   for (auto& [key, model] : models_) {
     if (model.gpu.vertices != nullptr) renderer.release(model.gpu);
+    if (model.gpuZoom.vertices != nullptr) renderer.release(model.gpuZoom);
   }
   models_.clear();
   model_ = nullptr;

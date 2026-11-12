@@ -95,14 +95,31 @@ void MapNode::applyState(int state) {
       targetPosition_ = mini_;
       targetSize_ = miniSize_;
       commanderMode_ = false;
+      // `setExpanded(false)`: +0x68e is cleared (0x776a90) before the zoom the
+      // vehicle type saved is asked for, and that `setZoom` (0x777980) refuses on
+      // a collapsed map — so the index the map had stays.
+      expanded_ = false;
       break;
 
     case kMapStateSpawn:
+      // 0x777f9a sets +0x690, and `setExpanded(true)` with +0x690 on asks for
+      // zoom 0 (0x776a83 → `setZoom(0)`): the spawn screen always shows the whole
+      // combat area.
+      targetPosition_ = maxi_;
+      targetSize_ = maxiSize_;
+      commanderMode_ = false;
+      expanded_ = true;
+      zoomIndex_ = 0;
+      break;
+
     case kMapStateBigMap:
-      // 0x777f8a and 0x778089: both states take one and the same big rectangle.
-      // They differ only in alpha: on the spawn screen it is fixed (1.0 and 0.5
-      // for the icons), while on the big map it comes from the settings
-      // `MenuMapAlpha`/`MenuMapIconAlpha`.
+      // `setExpanded(true)` with neither +0x690 nor +0x691: the zoom is left
+      // alone (0x776a89 → 0x776ae2).
+      expanded_ = true;
+      // 0x777f8a and 0x778089: the spawn screen and the big map take one and the
+      // same big rectangle. They differ only in alpha: on the spawn screen it is
+      // fixed (1.0 and 0.5 for the icons), while on the big map it comes from the
+      // settings `MenuMapAlpha`/`MenuMapIconAlpha`.
       // We do not drive the alpha yet — see "not measured" below.
       targetPosition_ = maxi_;
       targetSize_ = maxiSize_;
@@ -113,18 +130,23 @@ void MapNode::applyState(int state) {
     case kMapStateCommanderMenu:
       // 0x778299 and 0x778281. In the original these two states also look at the
       // previous state (0x1e4): if we already came from the corresponding menu,
-      // the target is left alone.
+      // the target is left alone. Expanded, with the zoom left alone (neither
+      // +0x690 nor +0x691).
       targetPosition_ = maxi_;
       targetSize_ = maxiSize_;
       commanderMode_ = false;
+      expanded_ = true;
       break;
 
     case kMapStateCommander:
-      // 0x7781b0: only if commander mode is not on yet.
+      // 0x7781b0: only if commander mode is not on yet. With +0x691 on,
+      // `setExpanded(true)` asks for zoom 0 (0x776a72).
       if (!commanderMode_) {
         commanderMode_ = true;
         targetPosition_ = commander_;
         targetSize_ = commanderSize_;
+        expanded_ = true;
+        zoomIndex_ = 0;
       }
       break;
 
@@ -149,6 +171,20 @@ void MapNode::setZoomIndex(int index) {
   zoomIndex_ = index;
 }
 
+void MapNode::cycleZoom() {
+  // 0x776670 with level -1: index + 1, and past 2 back to 0. What it does to the
+  // centre on the wrap (`setViewCenter(getMapCenterOffset())`) and in the
+  // commander's view is not ported: our centre is set every frame from the player.
+  zoomIndex_ = zoomIndex_ + 1 > kMapZoomLevels - 1 ? 0 : zoomIndex_ + 1;
+}
+
+float MapNode::zoomTarget() const {
+  // 0x77cae2: the commander's table when the HUD manager says the commander's
+  // screen is up (+0x1ec), otherwise the row +0x68e picks.
+  const int row = commanderMode_ ? 2 : (expanded_ ? 1 : 0);
+  return kMapZoomExponents[row][zoomIndex_];
+}
+
 float MapNode::zoomScale() const { return std::pow(kMapZoomBase, zoom_); }
 
 void MapNode::update(float dt) {
@@ -169,7 +205,7 @@ void MapNode::update(float dt) {
   // in fractions of the world, so 0.1 would be half the map.
   approach(centre_.x, targetCentre_.x, dt, 0.0001f, snapNow);
   approach(centre_.y, targetCentre_.y, dt, 0.0001f, snapNow);
-  approach(zoom_, static_cast<float>(zoomIndex_), dt, 0.001f, snapNow);
+  approach(zoom_, zoomTarget(), dt, kMapZoomSnapDistance, snapNow);
 
   // 0x77d3a0: both show variables are **derived from the current size**, not from
   // the state number. While the size is in transit neither is on — and that is

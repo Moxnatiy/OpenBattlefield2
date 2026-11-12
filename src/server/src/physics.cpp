@@ -50,6 +50,14 @@ void PhysicsConstants::bind(engine::Console& console) {
     else if (name == "fire-delay-after-jump") fireDelayAfterJump = *value;
     else if (name == "prone-delay-after-jump") proneDelayAfterJump = *value;
     else if (name == "jump-delay-after-prone") jumpDelayAfterProne = *value;
+    else if (name == "stand-delay-from-prone") standDelayFromProne = *value;
+    else if (name == "prone-delay-from-stand") proneDelayFromStand = *value;
+    else if (name == "fire-delay-from-prone") fireDelayFromProne = *value;
+    else if (name == "soldier-prone-inwater-limit") proneInWaterLimit = *value;
+    else if (name == "camera-movement-speed-on-prone") cameraSpeedOnProne = *value;
+    else if (name == "camera-movement-speed-on-crouch") cameraSpeedOnCrouch = *value;
+    else if (name == "camera-movement-speed-on-stand") cameraSpeedOnStand = *value;
+    else if (name == "phy-soldier-swimcrawl-speed") swimCrawlSpeed = *value;
     else if (name == "sprint-recharge-delay-after-jump") sprintRechargeDelayAfterJump = *value;
     else if (name == "p-pos-damp") positionalDamping = *value;
     else if (name == "p-pos-damp-water") positionalDampingWater = *value;
@@ -67,6 +75,30 @@ Vec3f soldierMoveDirection(BodyState& body, float forwardInput, float strafeInpu
   smooth(body.forwardAxis, forwardInput);
   smooth(body.strafeAxis, strafeInput);
   return soldierAxesDirection(body.forwardAxis, body.strafeAxis, forward, right);
+}
+
+int soldierSpeedState(int pose, bool sprinting, bool zoomed) {
+  switch (pose) {
+    case kPoseCrouch: return 1;
+    case kPoseProne: return 0;
+    case kPoseSwim: return sprinting ? 6 : 5;
+    default: return sprinting ? 4 : (zoomed ? 2 : 3);
+  }
+}
+
+float soldierSpeed(const PhysicsConstants& constants, int state, int pose, float mouseSpeedMod) {
+  float speed = constants.runSpeed;
+  switch (state) {
+    case 0: speed = constants.crawlSpeed; break;
+    case 1: speed = constants.crouchSpeed; break;
+    case 2: speed = constants.walkSpeed; break;
+    case 3: speed = constants.runSpeed; break;
+    case 4: speed = constants.sprintSpeed; break;
+    case 5: speed = constants.swimSpeed; break;
+    default: speed = constants.swimCrawlSpeed; break;
+  }
+  if (pose == kPoseCrouch) speed *= mouseSpeedMod;
+  return speed;
 }
 
 Vec3f soldierAxesDirection(float forwardAxis, float strafeAxis, const Vec3f& forward,
@@ -120,10 +152,16 @@ void stepSoldier(BodyState& body, const Vec3f& wish, float maxSpeed, bool jump,
   }
 }
 
-std::vector<float> soldierSphereHeights(const PhysicsConstants& constants) {
-  // For now the soldier always stands: crouching and going prone do not exist yet.
-  const int count = constants.standSpheres;
-  const float height = constants.standHeight;
+std::vector<float> soldierSphereHeights(const PhysicsConstants& constants, int pose) {
+  int count = constants.standSpheres;
+  float height = constants.standHeight;
+  if (pose == kPoseCrouch) {
+    count = constants.crouchSpheres;
+    height = constants.crouchHeight;
+  } else if (pose == kPoseProne) {
+    count = constants.proneSpheres;
+    height = constants.proneHeight;
+  }
   std::vector<float> centers;
   if (count <= 0) return centers;
 

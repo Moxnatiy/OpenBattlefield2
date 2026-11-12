@@ -12,6 +12,7 @@ Args parseArgs(int argc, char** argv) {
   for (int i = 1; i < argc; ++i) {
     const std::string_view flag = argv[i];
     if (flag == "--mod" && i + 1 < argc) args.modDir = argv[++i];
+    else if (flag == "--home" && i + 1 < argc) args.homeDir = argv[++i];
     else if (flag == "--mesh" && i + 1 < argc) args.meshPath = argv[++i];
     else if (flag == "--object" && i + 1 < argc) args.objectName = argv[++i];
     else if (flag == "--level" && i + 1 < argc) args.levelName = argv[++i];
@@ -70,7 +71,35 @@ Args parseArgs(int argc, char** argv) {
       args.watchWeapon = std::atoi(argv[++i]);
     }
     else if (flag == "--trace-own-state") args.traceOwnState = true;
+    else if (flag == "--trace-tails" && i + 1 < argc) args.traceTails.push_back(std::atoi(argv[++i]));
     else if (flag == "--jump-at" && i + 1 < argc) args.jumps.push_back(std::atoi(argv[++i]));
+    else if (flag == "--select-at" && i + 1 < argc) {
+      Args::ScheduledSelect select{};
+      if (std::sscanf(argv[++i], "%d:%d", &select.frame, &select.key) != 2 || select.key < 1 ||
+          select.key > 9) {
+        std::fprintf(stderr, "--select-at expects <frame>:<1..9>, not %s\n", argv[i]);
+        continue;
+      }
+      args.selects.push_back(select);
+    }
+    else if ((flag == "--crouch-at" || flag == "--prone-at") && i + 1 < argc) {
+      Args::ScheduledFire hold{};
+      if (std::sscanf(argv[++i], "%d:%d", &hold.frame, &hold.frames) != 2) {
+        std::fprintf(stderr, "%.*s expects <frame>:<frames>, not %s\n",
+                     static_cast<int>(flag.size()), flag.data(), argv[i]);
+        continue;
+      }
+      (flag == "--crouch-at" ? args.crouches : args.prones).push_back(hold);
+    }
+    else if (flag == "--zoom-at" && i + 1 < argc) {
+      Args::ScheduledFire zoom{};
+      if (std::sscanf(argv[++i], "%d:%d", &zoom.frame, &zoom.frames) != 2) {
+        std::fprintf(stderr, "--zoom-at expects <frame>:<frames>, not %s\n", argv[i]);
+        continue;
+      }
+      args.zooms.push_back(zoom);
+    }
+    else if (flag == "--reload-at" && i + 1 < argc) args.reloads.push_back(std::atoi(argv[++i]));
     else if (flag == "--fire-at" && i + 1 < argc) {
       Args::ScheduledFire fire{};
       if (std::sscanf(argv[++i], "%d:%d", &fire.frame, &fire.frames) != 2) {
@@ -80,6 +109,7 @@ Args parseArgs(int argc, char** argv) {
       args.fires.push_back(fire);
     }
     else if (flag == "--flash" && i + 1 < argc) args.flashSwf = argv[++i];
+    else if (flag == "--ruffle") args.ruffle = true;
     else if (flag == "--connect" && i + 1 < argc) args.connectTo = argv[++i];
     else if (flag == "--probe") args.probe = true;
     else if (flag == "--no-content") args.skipContent = true;

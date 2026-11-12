@@ -3,6 +3,11 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstring>
+#include <fstream>
+#include <iterator>
+
+#include "obf2/core/path.h"
 
 #include "obf2/font/font_file.h"
 #include "obf2/font/text.h"
@@ -11,9 +16,11 @@
 namespace obf2::app {
 namespace {
 
-// The main menu's background. In the game the menu is Flash, which the engine
-// runs with its own player; its assets are ordinary PNGs, and those are what we
-// take.
+// A STAND-IN for the main menu's background. The original's is `Movies/menu.bik`,
+// which the menu movie loads into its own `background` clip (`loadMovie
+// ("?menu.bik")`, `RendDX9.dll` 0x101ba466; docs/functions/startup.md). We do not
+// decode Bink, so a picture from the menu's folder stands in for it — one nothing
+// in the game references.
 std::string findBackground(FileSystem& files) {
   for (const char* candidate : {
            "menu/external/flashmenu/images/background/background_2.png",
@@ -29,7 +36,7 @@ std::string findBackground(FileSystem& files) {
 
 void MainMenu::boot(FileSystem& files, engine::Engine& engine,
                     const std::filesystem::path& modDir, Scene& scene, const Options& options) {
-  engine.boot(files, modDir);
+  engine.boot(files, modDir, options.homeDir);
   const auto& settings = engine.settings();
 
   std::printf("engine start\n  read: ");
@@ -46,18 +53,30 @@ void MainMenu::boot(FileSystem& files, engine::Engine& engine,
               v.terrainQuality, v.effectsQuality, v.geometryQuality, v.textureQuality,
               v.lightingQuality, v.dynamicShadowsQuality, v.dynamicLightingQuality, v.antialiasing,
               v.textureFilteringQuality, static_cast<double>(v.viewDistanceScale));
-  std::printf("  show the intro: %d, movies found: %zu\n", settings.general.viewIntroMovie ? 1 : 0,
-              engine.movies().size());
-  for (const auto& movie : engine.movies()) {
-    std::printf("    %s (%.1f MB)\n", movie.path.c_str(),
-                static_cast<double>(movie.sizeBytes) / (1024.0 * 1024.0));
+  // The queue Init.con filled (`bf2Engine.playMovie`). `viewIntroMovie` is printed
+  // only to say it gates nothing: the client never reads it (movie_queue.h).
+  const auto& movies = engine.movies();
+  std::printf("  movies queued: %zu (viewIntroMovie %d, read by nobody in the engine)\n",
+              movies.queued().size(), settings.general.viewIntroMovie ? 1 : 0);
+  double total = 0.0;
+  for (const auto& movie : movies.queued()) {
+    const auto seconds = engine.openMovie(movie.name);
+    if (seconds) total += *seconds;
+    std::printf("    %-22s flag %d  %s\n", movie.name.c_str(), movie.flag,
+                seconds ? (std::to_string(*seconds).substr(0, 6) + " s").c_str()
+                        : "does not open, skipped");
   }
-  // We do not decode Bink, so each movie is a black screen for a second and a
-  // half. Said out loud, because otherwise the first thing the program does is show
-  // six seconds of nothing and look hung.
-  if (settings.general.viewIntroMovie && !engine.movies().empty()) {
-    std::printf("    the movies are not decoded — %.1f s of black, Space skips one\n",
-                1.5 * static_cast<double>(engine.movies().size()));
+  // Bink is decoded through FFmpeg when the build has it (obf2::video); without
+  // it each movie is black for its own length — said out loud, because otherwise
+  // the first thing the program does is show minutes of nothing and look hung.
+  if (movies.playing()) {
+#if OBF2_HAVE_VIDEO
+    std::printf("    %.1f s of movies, decoded through FFmpeg; Escape skips a flag-0 one\n", total);
+#else
+    std::printf("    the movies are not decoded (built without FFmpeg) — %.1f s of black; "
+                "Escape skips a flag-0 one\n",
+                total);
+#endif
   }
 
   const auto& console = engine.console();
@@ -140,31 +159,21 @@ void MainMenu::boot(FileSystem& files, engine::Engine& engine,
   }
 }
 
-void MainMenu::openMovie(FileSystem& files, const Options& options) {
-#if OBF2_HAVE_FLASH
+void MainMenu::openMovie(FileSystem& files, engine::Engine& engine, const Options& options) {
   // The menu is the game's own movie. It lives in `Menu_client.zip`, mounted as
-  // `Menu`, and nothing is unpacked (rule 5) — so the player is given a reader over
-  // the same file system the rest of the engine uses, and the movie is opened from
-  // bytes. Its pictures and the movies it loads next to itself come through the
-  // same reader.
+  // `Menu`, and nothing is unpacked (rule 5) — the player reads it, its pictures
+  // and every file the bridge needs through the engine's file system.
   const std::string menuMoviePath = "Menu/External/FlashMenu/mainMenu.swf";
-  std::string path = options.flashSwf;
+  std::string path = options.flashSwf.empty() ? menuMoviePath : options.flashSwf;
   if (background_.empty()) background_ = findBackground(files);
-  flash::Movie::setFileReader([&files](const std::string& name) { return files.read(name); });
 
-  bool opened = false;
-  if (!path.empty()) {
-    opened = movie_.open(path);
-  } else if (files.exists(menuMoviePath)) {
-    path = menuMoviePath;
-    const auto bytes = files.read(menuMoviePath);
-    opened = bytes && movie_.openFromMemory(*bytes, menuMoviePath);
-  } else {
-    std::printf("Flash: the menu's movie is not in the archives — %s\n", menuMoviePath.c_str());
-  }
+  host_ = makeMenuHost(files, engine);
 
+  movie_.useRuffle(options.ruffle);
+  const bool opened = movie_.open(host_, path);
   if (opened) {
-    std::printf("Flash: %s, stage %u x %u\n", path.c_str(), movie_.width(), movie_.height());
+    std::printf("menu movie (%s): %s, stage %u x %u\n", movie_.usingRuffle() ? "Ruffle" : "native",
+                path.c_str(), movie_.width(), movie_.height());
     texture::Texture frame;
     frame.format = texture::Format::Bgra8;
     frame.width = movie_.width();
@@ -173,13 +182,9 @@ void MainMenu::openMovie(FileSystem& files, const Options& options) {
         frame.width, frame.height, 0, static_cast<std::uint32_t>(frame.width * frame.height * 4)});
     frame.data.assign(static_cast<std::size_t>(frame.width) * frame.height * 4, std::byte{0});
     flash_ = std::move(frame);
-  } else if (!path.empty()) {
-    std::printf("Flash: did not open — %s\n", path.c_str());
+  } else {
+    std::printf("menu movie: did not open — %s\n", path.c_str());
   }
-#else
-  (void)files;
-  (void)options;
-#endif
 }
 
 std::vector<gfx::MeshRenderer::DrawItem> MainMenu::frame(
@@ -187,8 +192,12 @@ std::vector<gfx::MeshRenderer::DrawItem> MainMenu::frame(
     const TextureResolver& resolve, const gfx::Device::InputState& input, int frameNumber,
     const Options& options, const std::vector<gfx::GpuMesh>& sceneMeshes,
     const std::vector<bool>& sceneOk) {
-  engine.update(1.0f / 60.0f);
-  if (device.consumeSkip()) engine.skipMovie();
+  // Escape skips a movie while the intro plays and closes the program otherwise.
+  const bool intro = engine.state() == engine::State::Intro;
+  device.setEscapeQuits(!intro);
+  const bool escape = device.consumeEscape();
+  engine.update(1.0f / 60.0f, intro && escape);
+  if (intro && engine.state() != engine::State::Intro) device.setEscapeQuits(true);
 
   gfx::Device::InputState menuInput = input;
   // `--mouse` sets the cursor directly: in a screenshot the window may have no
@@ -211,12 +220,67 @@ std::vector<gfx::MeshRenderer::DrawItem> MainMenu::frame(
     screen.push_back(gfx::MeshRenderer::DrawItem{&sceneMeshes[static_cast<std::size_t>(index)],
                                                  Mat4::identity()});
   };
-  push(quad);
+  // The startup movie, when one is playing and we can decode it: its own quad
+  // over the whole window instead of the black fill.
+  bool movieDrawn = false;
+#if OBF2_HAVE_VIDEO
+  const auto& movies = engine.movies();
+  if (engine.state() == engine::State::Intro && movies.playing()) {
+    if (movies.current() != movieName_) {
+      movieName_ = movies.current();
+      const std::filesystem::path path = engine.movieDir() / normalizeAssetPath(movieName_);
+      if (video_.open(path.string())) {
+        texture::Texture frame;
+        frame.format = texture::Format::Bgra8;
+        frame.width = video_.width();
+        frame.height = video_.height();
+        frame.mips.push_back(texture::MipLevel{frame.width, frame.height, 0,
+                                               frame.width * frame.height * 4});
+        frame.data.assign(static_cast<std::size_t>(frame.width) * frame.height * 4,
+                          std::byte{0});
+        movieFrame_ = std::move(frame);
+        std::printf("movie: %s, %u x %u\n", movieName_.c_str(), video_.width(), video_.height());
+      } else {
+        movieFrame_.reset();
+        std::printf("movie: %s does not decode, black for its length\n", movieName_.c_str());
+      }
+      // A new movie may be another size: its quad and texture are made anew.
+      if (movieUploaded_) renderer.release(movieMesh_);
+      movieUploaded_ = false;
+    }
+    if (movieFrame_ && !movieUploaded_) {
+      if (auto uploaded = renderer.upload(mesh::buildScreenQuad("#movie"), resolve)) {
+        movieMesh_ = std::move(*uploaded);
+        movieUploaded_ = true;
+      }
+    }
+    // Each decoded frame goes into the quad's own texture; the quad stays.
+    if (movieFrame_ && movieUploaded_ && video_.advanceTo(movies.elapsed()) && !movieMesh_.ranges.empty()) {
+      const auto& bgra = video_.bgra();
+      if (bgra.size() == movieFrame_->data.size()) {
+        renderer.updateTexture(movieMesh_.ranges[0].texture, reinterpret_cast<const std::byte*>(bgra.data()),
+                               movieFrame_->width, movieFrame_->height);
+      }
+    }
+    if (movieUploaded_) {
+      screen.push_back(gfx::MeshRenderer::DrawItem{&movieMesh_, Mat4::identity()});
+      movieDrawn = true;
+    }
+  } else if (!movieName_.empty()) {
+    movieName_.clear();
+    video_.close();
+    movieFrame_.reset();
+  }
+#endif
+  if (!movieDrawn) push(quad);
   if (loading) {
     for (const int index : loadingTextQuads_) push(index);
   }
 
-#if OBF2_HAVE_FLASH
+  // While a movie plays the main loop takes only the movie arm (`BF2.exe`
+  // 0x40cee9): the menu is neither stepped nor drawn.
+  if (engine.state() == engine::State::Intro) return screen;
+
   if (!movie_.isOpen()) return screen;
 
   std::vector<gfx::MeshRenderer::DrawItem> items;
@@ -278,6 +342,12 @@ std::vector<gfx::MeshRenderer::DrawItem> MainMenu::frame(
       quit_ = true;
       continue;
     }
+    // `Profile.loginOfflineAccount(n)` (SwiffPlayer.dll 0x1005e850) logs the
+    // local profile manager in, which loads that profile's settings.
+    if (order.rfind("login ", 0) == 0) {
+      engine.login(order.substr(6));
+      continue;
+    }
     if (order.rfind("level ", 0) != 0) continue;
     const std::size_t from = 6;
     const std::size_t to = order.find(' ', from);
@@ -294,42 +364,57 @@ std::vector<gfx::MeshRenderer::DrawItem> MainMenu::frame(
         break;
       }
     }
+    // The mode and size after the path (`level <path> <mode> <size>`, the
+    // bridge's createServer) — what the loading screen shows of the round.
+    if (to != std::string::npos) {
+      const std::size_t sizeAt = order.find(' ', to + 1);
+      requestedMode_ = order.substr(to + 1, sizeAt == std::string::npos ? std::string::npos : sizeAt - to - 1);
+      if (sizeAt != std::string::npos) requestedSize_ = std::atoi(order.c_str() + sizeAt + 1);
+    }
     if (requestedLevel_.empty()) {
       std::printf("  the level %s is not among those found\n", path.c_str());
     }
   }
 
   // A step of the movie and the transfer of the frame into a texture. RGBA -> BGRA:
-  // our texture loader expects the channel order of a DDS.
-  movie_.advance();
+  // our texture loader expects the channel order of a DDS. The step is the menu
+  // frame's time, the same 1/60 the engine's update takes above.
+  movie_.advance(1.0 / 60.0);
   const auto& rgba = movie_.render();
   if (flash_ && rgba.size() == flash_->data.size()) {
-    for (std::size_t i = 0; i + 3 < rgba.size(); i += 4) {
-      flash_->data[i + 0] = static_cast<std::byte>(rgba[i + 2]);
-      flash_->data[i + 1] = static_cast<std::byte>(rgba[i + 1]);
-      flash_->data[i + 2] = static_cast<std::byte>(rgba[i + 0]);
-      flash_->data[i + 3] = static_cast<std::byte>(rgba[i + 3]);
+    // Raw pointers, a pixel at a time: through `optional->` and `operator[]`
+    // per byte this loop alone took a third of the debug build's frame.
+    const std::uint8_t* src = rgba.data();
+    auto* dst = reinterpret_cast<std::uint8_t*>(flash_->data.data());
+    const std::size_t n = rgba.size() / 4;
+    for (std::size_t i = 0; i < n; ++i, src += 4, dst += 4) {
+      dst[0] = src[2];
+      dst[1] = src[1];
+      dst[2] = src[0];
+      dst[3] = src[3];
     }
   }
   // The movie is drawn as one rectangle over the whole frame with the texture
-  // `#flash`. Every frame of the movie is its own, so the mesh is reloaded each
-  // time; for the menu that is cheap.
-  if (flashUploaded_) renderer.release(flashMesh_);
-  flashUploaded_ = false;
-  if (auto uploaded = renderer.upload(mesh::buildScreenQuad("#flash"), resolve)) {
-    flashMesh_ = std::move(*uploaded);
-    flashUploaded_ = true;
+  // `#flash`. The rectangle is made once; each frame only its texture's pixels
+  // go to the card (re-making the mesh copied the 3 MB picture twice and
+  // created a texture per frame).
+  if (!flashUploaded_) {
+    if (auto uploaded = renderer.upload(mesh::buildScreenQuad("#flash"), resolve)) {
+      flashMesh_ = std::move(*uploaded);
+      flashUploaded_ = true;
+    }
+  } else if (flash_ && !flashMesh_.ranges.empty()) {
+    renderer.updateTexture(flashMesh_.ranges[0].texture, flash_->data.data(), flash_->width, flash_->height);
+  }
+  if (flashUploaded_) {
     items.push_back(gfx::MeshRenderer::DrawItem{&flashMesh_, Mat4::identity(), {1, 1, 1, 1}});
   }
   return items.empty() ? screen : items;
-#else
-  (void)renderer;
-  (void)resolve;
-  return screen;
-#endif
 }
 
 void MainMenu::release(gfx::MeshRenderer& renderer) {
+  if (movieUploaded_) renderer.release(movieMesh_);
+  movieUploaded_ = false;
   if (flashUploaded_) renderer.release(flashMesh_);
   flashUploaded_ = false;
   if (backgroundReady_) renderer.release(backgroundMesh_);

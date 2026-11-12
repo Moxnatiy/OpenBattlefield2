@@ -120,6 +120,13 @@ void SoldierDeviation::update(const DeviationTemplate& t, const DeviationInput& 
   deviation_ = (t.minDev + misc_ + speed_ + turn_ + shot_) * zoom * pose;
 }
 
+void SoldierDeviation::postFire(const DeviationTemplate& t) {
+  // Linux component +0x2c (the PE's +0x08) += template +0x10 (`fireAdd`), then
+  // capped at template +0x18 (`fireMax`) — the Linux template is 8 bytes on.
+  shot_ += t.fireAdd;
+  if (shot_ > t.fireMax) shot_ = t.fireMax;
+}
+
 CrosshairTicks crosshairTicks(const WeaponHudTemplate& hud, float deviation) {
   // 0x7a5690: the spread in HUD units, `ceil` (the msvcrt import at 0x87f5f4)
   // then truncated; the minimum plus it, capped at the maximum.

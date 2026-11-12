@@ -146,7 +146,7 @@ void soldierVsMeshes(BodyState& body, const Vec3f& previous, const PhysicsConsta
   const Vec3f back = dir * extend;
   // The sphere column (`getSoldierHeight`, 0x6f39f0): standing, five spheres
   // `(stand height - 2r) / 4` apart, the lowest one radius above the feet.
-  const std::vector<float> centres = soldierSphereHeights(physics);
+  const std::vector<float> centres = soldierSphereHeights(physics, body.pose);
 
   std::vector<MeshContact> contacts;
   for (const float centre : centres) {

@@ -6,6 +6,14 @@ ends up in the menu with the real background from BF2's assets.
 
 ## What the game does at start-up
 
+> **Superseded — this section was wrong at every point.** It was recovered
+> from file names, not from the binary. Measured in `BF2.exe` since: none of the
+> `Settings/` files below is read by name (video and general settings come from
+> `@HOME@/Profiles/`), the movies are queued by `Init.con` (five, with welcome,
+> two kinds of flag), and `setViewIntroMovie` gates nothing in the engine. See
+> docs/functions/startup.md. The text is kept as the record of what the first
+> slice assumed.
+
 The order was recovered from the data and from `BF2.exe`'s string table:
 
 1. Reads the settings — `Settings/VideoDefault.con`, `Settings/Video.con`,

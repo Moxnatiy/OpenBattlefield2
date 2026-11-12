@@ -144,6 +144,7 @@ void testTickTakesThePreviousRequest() {
   SoldierIntent intent;
   intent.wish = Vec3f{0.0f, 0.0f, 0.98f * physics.acceleration};
   intent.speed = physics.runSpeed;
+  intent.blendedSpeed = intent.speed;  // no pose change under way
   tickSoldier(body, swim, intent, 0.0f, physics, nullptr, nullptr, kTickTime);
   // The first tick only asks: the friction holds the difference.
   CHECK(std::abs(body.position.z) < 1e-6f);

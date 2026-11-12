@@ -56,6 +56,9 @@ class WeaponFire {
 
   int fireRate() const;
   std::uint32_t roundsFired() const { return rounds_; }
+  // The fire component is busy from a round until its next ready tick — the window
+  // the other components wait out (`SingleFireComp::busy`).
+  bool busy(std::uint32_t tick) const { return armed_ && tick < readyAt_; }
 
  private:
   FireTemplate weapon_;

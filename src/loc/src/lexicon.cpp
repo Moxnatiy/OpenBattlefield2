@@ -100,8 +100,9 @@ bool Lexicon::addUtxt(std::span<const std::byte> bytes, std::string* error) {
     while (!value.empty() && value.back() == kSeparator) value.remove_suffix(1);
     value = trimRight(trimLeft(value));
 
-    entries_[std::string(key)] = std::string(value);
     ++added;
+    if (keepExisting_ && entries_.count(std::string(key)) != 0) continue;
+    entries_[std::string(key)] = std::string(value);
   }
 
   if (added == 0) {
@@ -109,6 +110,13 @@ bool Lexicon::addUtxt(std::span<const std::byte> bytes, std::string* error) {
     return false;
   }
   return true;
+}
+
+bool Lexicon::addUtxtMissing(std::span<const std::byte> bytes, std::string* error) {
+  keepExisting_ = true;
+  const bool ok = addUtxt(bytes, error);
+  keepExisting_ = false;
+  return ok;
 }
 
 std::optional<std::string_view> Lexicon::find(std::string_view key) const {

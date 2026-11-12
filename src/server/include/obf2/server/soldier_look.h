@@ -38,10 +38,23 @@ struct SoldierLook {
 //   pitch, after adding mouseY * phy-soldier-look-factor-y, to ±lookMaxAngle.y
 //   (0x5a8630).
 //
-// Not modelled: the sight's zoom multiplier (0x5a61a0), recoil (0x5a5f40,
-// 0x5a5fa0), and the yaw limits of a seat (`+0x208`), none of which apply to a
-// soldier on foot without a zoomed weapon.
+// Before any of that both look deltas go through the input's own conditioning
+// (0x5ae205..0x5ae288): each axis times its look factor, under 0.001 (0x89abd4)
+// it is zero, and an occupied soldier's are then multiplied by
+// `getMouseSpeedMod` (0x5a61a0, called at 0x5ae27b) — `mouseSpeedMod` here, see
+// `soldierMouseSpeedMod`. The engine applies it itself, so the action carries
+// the axes unscaled.
+//
+// Not modelled: recoil (0x5a5f40, 0x5a5fa0), and the yaw limits of a seat
+// (`+0x208`), which do not apply to a soldier on foot.
 void turnSoldier(SoldierLook& look, float mouseX, float mouseY, float forwardInput,
-                 const PhysicsConstants& constants);
+                 const PhysicsConstants& constants, float mouseSpeedMod = 1.0f);
+
+// `Soldier::getMouseSpeedMod` (`BF2.exe` 0x5a61a0, Linux 0x54e9a0): the player's
+// field of view (+0x8c) over the camera's active one (+0x58) when the camera's is
+// wider, else 1 — times the active weapon's own `getMouseSpeedMod` (vtable
+// +0x10c; `DefaultZoomComp::getMouseSpeedMod`, Linux 0x6295c0: the zoom
+// template's `mouseSpeedMod` above zoom level 0, else 1).
+float soldierMouseSpeedMod(float playerFov, float cameraFov, float weaponMouseSpeedMod);
 
 }  // namespace obf2::server

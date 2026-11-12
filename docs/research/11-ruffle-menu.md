@@ -362,18 +362,26 @@ a localisation method** but the menu's own helper that assembles picture paths
 (`loadString("images/awards/front/AWARD_NAME_" + … + ".png")`). Our mapping of
 `Locale.loadString` onto the dictionary was unnecessary.
 
-## The background is drawn by the engine, not by the movie
+## The background is a Bink video inside the movie — corrected
 
-`mainMenu.swf` contains **not a single** reference to `images/background/`,
-even though it loads the rest of the pictures itself. The menu's background is
-put there by the engine, and Flash goes on top — so we turn the stage
-transparent (`Player::set_window_mode("transparent")`) and put under the movie
-in `--flash` the same picture our own menu used.
+An earlier reading here said the engine draws the menu's background under the
+movie, from `images/background/background_2.png`. **That was wrong**, a
+conclusion drawn from an absence. Measured since (docs/functions/startup.md,
+"The menu's background"):
 
-The movie does ask for its own background, but differently: `loadImg: ?menu.bik`.
-The question mark is a request to the player, and `menu.bik` is a Bink video. We
-do not decode Bink (docs/research/03-startup-and-menu.md), so a still picture
-stays in that place. That is **deliberate debt**, not a bug.
+* no file references `background_*.png` at all — not one `.swf` in
+  `Menu_client.zip`, not `BF2.exe`, `RendDX9.dll` or `SwiffPlayer.dll`;
+* the movie asks for its background itself: `bg.flush()` (DoAction block 43)
+  takes `Logic.getStorageString("BGmovie", "?menu.bik")` and hands it to
+  `background.loadImg`, which is `MovieClip.loadMovie` (DoInitAction block 31);
+* in the original a `loadMovie` URL becomes a texture through
+  `SwiffRender::loadTexture` in `RendDX9.dll`, and a leading `?` there means a
+  Bink video from `<mod>/Movies/` (0x101ba466), registered as a 256 × 256 texture
+  (0x101ba5d7) and advanced a frame each time the fill is drawn.
+
+So the stage is transparent and `background_2.png` lies under it only as a
+**stand-in** for the video we do not decode yet. It is not the original's
+picture; nothing in the game shows it.
 
 ## Time, not frames
 

@@ -112,6 +112,11 @@ struct Context {
   // on the left where the level's map has nothing to show. Empty means no
   // overlay — a level with no combat area, or a screen that does not want one.
   std::string combatAreaTexture;
+  // The square the hatch was rasterized over, in the picture's coordinates — the
+  // map's window at zoom exponent 0. When the map is zoomed in (`MiniMap.setZoom`,
+  // the N key) the window is a part of it, and the hatch is drawn from that part
+  // so that it stays on the ground it marks.
+  float combatAreaU0 = 0.0f, combatAreaV0 = 0.0f, combatAreaU1 = 1.0f, combatAreaV1 = 1.0f;
 
   // The markers on the map: the capture points. The map node draws them itself —
   // the data has no separate nodes for them, only the font and the caption's

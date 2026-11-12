@@ -7,6 +7,18 @@
 | [Project Dalian](https://github.com/chronic8000/ProjectDalian) | A clean-room C++20 recreation of Refractor 2 that reads assets from your own BF2 installation | v0.5.19-alpha; phases 0-7 done: PBR renderer, skeletal animation, ballistics, flight model, basic multiplayer | MIT |
 | [BattlefieldRespawn](https://github.com/rigred/BattlefieldRespawn) | A data-compatible recreation of Refractor/Refractor 2 (compatible with Project Reality) | early | — |
 | [breadflowerdos](https://github.com/kiwidoggie/breadflowerdos) | A "decompilation" of BF2/2142, a modern C++ recreation | early | — |
+| [B2BF/OpenBF2](https://github.com/B2BF/OpenBF2) | A reconstruction of the BF2 1.50 engine from the shipped Windows and Linux binaries: the client, the server, RendDX9, SwiffPlayer, BF2Audio, the editor; 8 214 files, comments carry PE/ELF addresses | in progress (2026-10 on); "a diagnostic executable does not establish a playable game", its README says | **GPL-3.0** |
+
+**B2BF/OpenBF2 is a source of hints and of verification, not of code.** GPL-3.0
+cannot enter our MIT tree, so nothing from it is copied into `src/` (rule 8).
+What it is good for: its comments name the `BF2.exe` address of almost every
+function, so a question is answered by opening that address in the binary and
+checking — much faster than finding the function ourselves. Every point taken
+from it is checked against `BF2.exe` before it goes into our notes, and the
+notes cite the binary's address, not the repository. Its own markers say how far
+to trust a line: `[INFERRED]`, `[CHOSEN, not recovered]`, `[UNRESOLVED]`. The
+first pass with it (the startup movies, docs/functions/startup.md) found its
+reading right at every point checked. Kept in `reference/OpenBF2` (not in git).
 
 **Conclusion:** Project Dalian has already verified byte for byte:
 `.staticmesh`, `.bundledmesh`, `.skinnedmesh`, `.ske`/`.baf` (skeletons +

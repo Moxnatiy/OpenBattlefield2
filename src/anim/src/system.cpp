@@ -185,9 +185,10 @@ void System::feed(const con::Command& command) {
   if (!activeValueHolder_.empty() && path.rfind("animationvalueholder.", 0) == 0) {
     ValueHolder& holder = valueHolders_[activeValueHolder_];
     if (path == "animationvalueholder.values") {
+      // min, normal, max (Linux 0x6d1dca: the holder's +0, +8, +4).
       holder.low = command.argFloat(0).value_or(0.0f);
-      holder.high = command.argFloat(1).value_or(0.0f);
-      holder.extra = command.argFloat(2).value_or(0.0f);
+      holder.extra = command.argFloat(1).value_or(0.0f);
+      holder.high = command.argFloat(2).value_or(0.0f);
     } else if (path == "animationvalueholder.passonmessage") {
       holder.passOnMessage = static_cast<std::uint32_t>(command.argFloat(0).value_or(0.0f));
     } else if (path == "animationvalueholder.stoponmessage") {

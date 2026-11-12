@@ -39,8 +39,11 @@ class Crosshair {
   // One action played: `Soldier::handlePlayerInput` hands it to the weapon's
   // `updateDeviation` (`BF2.exe` 0x5af4ea → 0x60ad60). `pose` is the soldier's
   // (0 stand, 1 crouch, 2 lie); `inVehicle` clears the jump and lie flag the way
-  // the soldier's +0x28 does (0x5ae2fe).
-  void onAction(const net::bf2::PlayerAction& action, int pose, bool inVehicle);
+  // the soldier's +0x28 does (0x5ae2fe). `firing` is the weapon's fire state
+  // (`getFireState() != 0`) during this action, and `fired` that a round left on
+  // its tick — the weapon's own update, after the input, then runs `postFire`.
+  void onAction(const net::bf2::PlayerAction& action, int pose, bool inVehicle,
+                bool zoomed = false, bool firing = false, bool fired = false);
 
   // `GuiIndex` and the four `Crosshair*Pos` into the HUD's numbers; with no
   // weapon `GuiIndex` is 0 and the ticks are left out.

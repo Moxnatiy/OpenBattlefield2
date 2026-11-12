@@ -18,6 +18,12 @@ namespace obf2::app {
 
 struct Args {
   std::filesystem::path modDir = "Game Files/mods/bf2";
+  // `--home <dir>`: what the engine calls `@HOME@`, the user's own Battlefield 2
+  // folder, where `Profiles/` lives (`LocalProfileManager::getProfilesPath`,
+  // `BF2.exe` 0x4a76a0: "@HOME@/Profiles/"). Empty: `~/Documents/Battlefield 2`
+  // when it exists. How the original resolves `@HOME@` is not read; on Windows it
+  // is the user's documents folder, which is where the game wrote these files.
+  std::filesystem::path homeDir;
   std::string meshPath;  // empty -> an ordinary engine run
   std::string objectName;
   std::string levelName;
@@ -29,6 +35,11 @@ struct Args {
   std::vector<std::pair<int, std::string>> screenshotAt;
   std::string screen;  // menu | loading — for deterministic screenshots
   bool hosted = false; // --hosted: the world comes from a local server
+  // A level started from the menu: the round's mode and size, and that the
+  // load runs behind the loading screen (endOfRound.swf, app/loading_screen.h).
+  bool loadingScreen = false;
+  std::string loadingMode;
+  int loadingSize = 0;
   std::optional<obf2::Vec3f> focus;  // where the camera looks
   float mouseX = -1.0f, mouseY = -1.0f;  // --mouse: place the cursor for a screenshot
   // --topdown: strictly from above, +X to the right, -Z up. Needed to check the
@@ -84,6 +95,8 @@ struct Args {
   // --flash <file.swf>: show the menu's movie instead of our screen.
   // The game's menu is Flash, played by Ruffle (docs/research/11-ruffle-menu.md).
   std::string flashSwf;
+  // `--ruffle`: the menu through Ruffle instead of our own player (for comparison).
+  bool ruffle = false;
   std::string connectTo;      // --connect <host[:port]>: a real BF2 server
   // --probe: protocol parsing only, without a window. Without it --connect opens
   // the world, as a client should.
@@ -154,8 +167,24 @@ struct Args {
     int frames;
   };
   std::vector<ScheduledFire> fires;
+  // --reload-at <frame> — the reload key pressed for that one frame.
+  std::vector<int> reloads;
+  // --select-at <frame>:<key> — the number key pressed for that one frame.
+  struct ScheduledSelect {
+    int frame;
+    int key;
+  };
+  std::vector<ScheduledSelect> selects;
+  // --zoom-at <frame>:<frames> — the zoom button (`c_PIAltFire`) held over a range.
+  std::vector<ScheduledFire> zooms;
+  // --crouch-at <frame>:<frames> — the crouch key (`c_PICrouch`) held over a range.
+  std::vector<ScheduledFire> crouches;
+  // --prone-at <frame>:<frames> — the prone key (`c_PILie`) held over a range.
+  std::vector<ScheduledFire> prones;
   // --trace-own-state: every controlled state of our soldier (session::Settings).
   bool traceOwnState = false;
+  // --trace-tails <id>: the bits after the head of a simple object's records.
+  std::vector<int> traceTails;
   // --trace-frames <frame>:<frames> — per frame, the camera and every other
   // soldier drawn: the measure for "the camera jerks, the box hops".
   int traceFrom = -1;

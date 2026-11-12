@@ -16,12 +16,21 @@ add_library(obf2_app
   src/scoreboard_players.cpp
   src/spawn_circles.cpp
   src/crosshair.cpp
+  src/ammo_hud.cpp
+  src/player_hud.cpp
   src/first_person.cpp
+  src/menu_movie.cpp
+  src/loading_screen.cpp
 )
 add_library(obf2::app ALIAS obf2_app)
 if(TARGET obf2_flash)
   target_link_libraries(obf2_app PUBLIC obf2_flash)
 endif()
+if(TARGET obf2_video)
+  target_link_libraries(obf2_app PUBLIC obf2_video)
+endif()
+target_link_libraries(obf2_app PUBLIC obf2_swf)
+target_compile_definitions(obf2_app PRIVATE OBF2_VERSION_STRING="${PROJECT_VERSION}")
 target_include_directories(obf2_app PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(obf2_app PUBLIC obf2_core obf2_con obf2_game obf2_hud obf2_level obf2_mesh obf2_net obf2_server obf2_texture obf2_gfx obf2_anim obf2_engine obf2_font obf2_session obf2_vfs PRIVATE obf2_flags)
 

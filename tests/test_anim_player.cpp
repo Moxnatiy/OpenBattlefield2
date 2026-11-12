@@ -40,7 +40,7 @@ anim::System runSystem() {
       "animationBundle.addAnimation 3p_runBackward.baf",
       "animationBundle.addAnimation 3p_runForward.baf",
       "AnimationSystem.createValueHolder 3p_stand_run",
-      "AnimationValueHolder.values 0.1 3.9 5.8",
+      "AnimationValueHolder.values 0.1 5.8 3.9",  // min, normal, max
       "animationSystem.createTrigger MovementTrigger stand_run",
       "animationTrigger.addBundle stand_run",
       "animationTrigger.valueHolder 3p_stand_run",

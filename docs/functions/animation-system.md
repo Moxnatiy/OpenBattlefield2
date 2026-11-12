@@ -168,8 +168,20 @@ speed times the forward component — through `isWithinRange` (client 0x7fe720,
 the ForwardTrigger vtable at 0x941660, slot 27), which is the same test the
 Linux copy makes: `a <= value <= b`, reversed for a negative `a`.
 
-**An open contradiction.** A standing soldier who cannot fire — which is what a
-sprinting one is — is handed speed 7.0 straight ahead, and `stand_sprint` is a
+**Resolved: the holder's numbers are min, normal, max.** `ValueHolder::makeScript`
+(Linux 0x6d1dca..0x6d1e3c) writes the holder's **+0, +8, +4** in that order, so
+`values a b c` stores a at +0, b at +8 and c at +4; `MovementTrigger::isWithinRange`
+(0x6cd370) tests +0..+4, and `applyAnimations` (0x6cdabf) scales the playback by
++8. `3p_sprint 5.5 6.3 100` is the range **5.5 to 100** with the clips made at
+6.3 m/s — a sprinter at 6.6–7.0 m/s is inside it. Every range we had was the
+first two numbers instead, which is why no sprint clip (first or third person)
+ever played. With the order fixed, on the live server the M4's `run`, `sprint`
+and `zoom_run` all play. What follows is the earlier, mistaken analysis, kept
+because its reading of the speed's source still holds.
+
+**An open contradiction (the first half of it was wrong, see "The client's own copy"
+below: a sprinter *can* fire).** A standing soldier who cannot fire is handed speed
+7.0 straight ahead, and `stand_sprint` is a
 `ForwardTrigger` on `3p_sprint 5.5 6.3 100` (`ValueHolder::makeScript` at
 0x6d1c80 confirms the stored order is as written). By every function read here
 7.0 is out of that range and no sprint clip plays. Measured on our side, 11% of
@@ -177,6 +189,33 @@ the frames a soldier moves are frames with no movement clip at all, every one of
 them at 6–7 m/s: the sprinters stand still while they glide. Either something
 upstream of `setTriggerMovement` hands the original a smaller number, or the
 original shows the same — which only the original can say.
+
+**The client's own copy, read** (`BF2.exe` 0x61e1a0, 1519 bytes, the caller of
+`setTriggerMovement` — `calll *0x38(%edx)` at 0x61e56c — and of the client's
+`getSoldierSpeed`, 0x5a6970, which is just `soldierSpeed[state]` at 0x9ec428 and, with
+the soldier crouching, times the mouse's mod). It builds the speed from the node's
+velocity less the ground's (0x6ea5d0): the planar length at -0x8, the direction in
+the movement matrix's frame (0x5a8600) at -0x24..; then for a soldier on foot in
+animation system 0 (`+0x2b8`, the system array at `+0x28c`): crouch and prone scale
+and clamp the speed; **and when the weapon interface at `+0x15c` cannot fire (slot
+0xac) the speed is `getSoldierSpeed(4)` and the direction (0, 0, 1)** (0x61e52c..
+0x61e546) — the same as the server's. The soldier speed array is filled at 0x8547b0:
+[0] crawl, [1] crouch, [2] walk, [3] run, [4] sprint (0x9ec288, default 7.0
+`0x40e00000` pushed at 0x853bc0), [5], [6] the swim ones. So the contradiction is the
+client's too — but **the premise was wrong**: the predicate is `Soldier::getCanFireWeapon`
+(Linux 0x550f20), and it is only `fireDelay (+0x5a0) <= 0 && +0x5b8 <= 0`
+(`fire-delay-after-jump`, soldier-physics.md) — **nothing to do with sprinting**. A
+sprinting soldier can fire, so he is *not* handed 7.0: the override is for the second
+or so after a jump. A sprinter's animation speed is the real planar speed of his node
+(less the ground's, 0x6ea5d0) and the direction is normalized in the aim matrix's
+frame (0x5a8600; `fmuls` by the matrix's +0x20/+0x28, normalized at 0x61e310/0x61e336),
+so the `ForwardTrigger` value is `speed × cos(angle between his velocity and his aim)`.
+What is left is the number itself: 6.64 median measured on a carried sprinter against
+the range's 6.3 — see the debt row.
+`ForwardTrigger::update` (0x7ff680) has one more branch than the notes above said: a
+byte at the trigger's `+0x34` replaces `speed × forward` with the system's `+0x2c`,
+the forward component of the acceleration `setTriggerMovement` keeps at +0x24..+0x2c;
+nothing in the data we read turns it on for `stand_sprint`.
 
 What differs from ours and is **not** implemented yet, because none of it moves a
 7.0 sprint into range: the direction is smoothed, the side is zeroed while

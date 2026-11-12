@@ -149,14 +149,104 @@ FUN_005a8630: aim clamped to ±max.x, pitch to ±max.y (after += axis5 * look-fa
 
 `max` is `soldier-lookMaxAngle`, a vector registered at 0x854280 as
 **(40, 85, 0)**; `soldier-lookSideRestore` at 0x854260 is **4.0**. The game's
-data sets neither. The yaw limits of a seat (`+0x208`, `ESI` at 0x5ae801),
-the sight's zoom multiplier (0x5a61a0) and recoil (0x5a5f40, 0x5a5fa0) are not
-modelled.
+data sets neither. The yaw limits of a seat (`+0x208`, `ESI` at 0x5ae801) and
+recoil (0x5a5f40, 0x5a5fa0) are not modelled.
 
 Measured on the live server, strafing left with the mouse at -5 degrees a tick:
 aim -36, 0x8 -36, body -271.5 → aim -37, 0x8 -37, body -280.5; at the limit
 aim -40, 0x8 -41, body -9 a tick (the mouse's 5 and the restore's 4). Code:
 `src/server/soldier_look.h`, test `tests/test_soldier_look.cpp`.
+
+**The mouse speed mod.** Before any of the above both look deltas are
+conditioned in the input itself (0x5ae205..0x5ae288): axis × look factor, under
+0.001 (0x89abd4) zero, and then, for an occupied soldier, × `getMouseSpeedMod`
+(0x5a61a0, called at 0x5ae27b):
+
+```
+mod = player fov (+0x8c) < camera active fov (+0x58) ? player / camera : 1   ; 0x5a620d..0x5a6225
+mod *= active weapon's getMouseSpeedMod (vtable +0x10c)                       ; 0x5a625a
+       (DefaultZoomComp, Linux 0x6295c0: zoom.mouseSpeedMod above level 0, else 1)
+```
+
+So the engine slows the zoomed look **itself**. We used to scale the mouse
+before quantizing the action as well, which the server then scaled again; the
+action now carries the axes unscaled and our prediction applies the same mod
+(`turnSoldier`, `soldierMouseSpeedMod`). A crouching soldier's speed takes the
+same mod (`getSoldierSpeed`, Linux 0x54eb34).
+
+## The speed state
+
+`Soldier::updateSpeedState` (Linux 0x54e8d0), run by the input every tick, picks
+an index into a table of speeds (0x108e900: crawl, crouch, walk, run, sprint,
+swim, swimcrawl):
+
+| pose | index |
+|---|---|
+| standing | sprinting **4**, else `isWalking` **2**, else **3** — sprint is tested first |
+| crouching | 1 |
+| prone | 0 |
+| swimming | sprinting 6, else 5 |
+
+`isWalking` (0x5485c0) is the active weapon's `getZoom` (vtable +0x210) ≠ 0:
+**zoomed, a soldier walks** (`phy-soldier-walk-speed` 1.5 against the run's 3.9).
+Ours ran at full speed while zoomed: on the live server a zoomed run drew
+corrections of up to 0.8 m; with the state, none over 0.2 m.
+
+## The pose
+
+Ours: `server/soldier_pose.h`, test `tests/test_soldier_pose.cpp`. The keys are
+`c_PICrouch` (38, left Ctrl, mask bit 30 on the wire; the input reads bit 38 of
+its own mask at 0x54ffd3) and `c_PILie` (37, Z, bit 29; the stack's 0x190 at
+0x54f4ae is that bit).
+
+`Soldier::updateSoldierPose(prone, crouch)` (Linux 0x5468d0), last in the input
+(0x550033):
+
+```
+swimming (+0x48c) or skydiving (+0x4b0): nothing
+prone, latch +0x3e4 bit 2 clear:
+  requested = pose < 2 ? pose : 0
+  if pose != 2 or +0x5ac > 0: requested = 2 when soldierCanGoProne
+  prone -> 0:  +0x5a8 = jump-delay-after-prone, +0x5b0 = prone-delay-from-stand,
+               +0x5b8 = fire-delay-from-prone
+  0 -> prone:  +0x5ac = stand-delay-from-prone
+  latch |= 2
+else latch &= ~2, then
+  crouch: on the press (latch bit 1 clear) requested = 1, latch = 1;
+          pose 2 with request 1: the three delays above
+  none:   latch &= ~3; a crouching soldier asks to stand (requested = 0)
+```
+
+The input's jump: the axis is zeroed while +0x5a8 runs (0x54f72c) or he
+swims; only a standing soldier keeps it, but the wish to jump stays — and a prone
+soldier's wish with +0x5ac run out (0x5501cb) sets +0x5a8 and +0x5b8 and counts
+as the crouch key: the jump key gets him up to a crouch.
+
+`soldierCanGoProne` (0x546840): water ≤ pivot + radius − `soldier-prone-inwater-limit`
+(1.1), and +0x5a4 and +0x5b0 both run out.
+
+`executePoseChange` (0x54eb70) runs in the collision pass when the new pose fits
+(`poseChangeTest`, B2BF's reading of `BF2.exe` 0x6a4450: prone and crouching
+from standing always fit, standing up and crouching from prone are tested;
+`expandSoldierCollision` is **not read** — ours tests the new pose's spheres above
+the current top one against the objects). It keeps `getSoldierSpeed(7)` as the
+blend's start (+0x49c), sets the progress (+0x494) to 0, takes the pose,
+recomputes the speed state, and the blend's length (+0x498) is the table at
+0x108e920 `[old state × 7 + new]` from the `pose-*` variables (0.25 between the
+upright ones, 0.5 to and from crawling and swimming; Linux 0x54792d..0x547e45).
+`updateSoldierSpeed` blends (0x54ec9d..0x54ece0): while the length is over the
+progress, progress += dt and `speed = (speed − start) × progress / length + start`.
+
+`Soldier::handleFrameUpdate` counts all seven timers +0x5a0..+0x5b8 down
+(0x548f20..0x548fd8). The column of spheres follows the pose (above). The eye
+moves `camera-movement-speed-on-{stand,crouch,prone}` (data: 0.15, 0.2, 0.15) of
+the way to the pose's `poseCameraPosition` each tick.
+
+Measured on the live server (`--trace-own-state`, a run crouching, walking
+crouched, going prone, crawling, getting up): the server's pose and ours agree on
+every state, and of 314 states one differs from ours by more than 1 cm (2.6 cm).
+A short Z press (3 ticks) to get up was once not seen by the server at all — the
+action buffer's debt (CLAUDE.md), not the pose.
 
 ## One tick
 

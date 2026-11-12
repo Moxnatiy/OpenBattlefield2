@@ -157,11 +157,19 @@ void WorldView::feed(std::span<const std::byte> packet) {
     // Kind 3 — the object is gone (GhostManager::readData, 0x445820: the branch
     // calls disableObject and removeActiveDescriptor).
     if (record.kind == 3) {
-      // Our own soldier wiped this way leaves the client without his template and
-      // kit — the weapon in hand and the crosshair go with him. Said once per object.
+      // Kind 3 stops the object's ghost (`disableObject`, `removeActiveDescriptor`);
+      // it is not the object's end. Our own soldier gets one when his state moves
+      // to the controlled-object state, and erasing him here lost his template and
+      // his kit — the weapon in hand and the crosshair with them (seen in 1 spawn
+      // of 3, whenever the record came after the create event in the same
+      // packet). His object stays; his position is ours, predicted.
       if (record.networkId == ownObject_ && objects_.count(record.networkId) != 0) {
-        std::printf("  our object %u was removed by a ghost record (kind 3)\n",
-                    static_cast<unsigned>(record.networkId));
+        if (!ownGhostStopReported_) {
+          std::printf("  our object %u: ghost stopped by the server (kind 3), kept\n",
+                      static_cast<unsigned>(record.networkId));
+          ownGhostStopReported_ = true;
+        }
+        continue;
       }
       objects_.erase(record.networkId);
       continue;
@@ -205,6 +213,10 @@ void WorldView::feed(std::span<const std::byte> packet) {
       if (state.kit) player.kit = state.kit;
       if (state.commander) player.commander = state.commander;
       if (state.sprint) player.sprint = state.sprint;
+      if (state.firing[0]) {
+        player.firing = state.firing[0]->on;
+        ++player.firingStates;
+      }
       if (state.spawnGroup) player.spawnGroup = state.spawnGroup;
       if (state.spawnAtTick) player.spawnAtTick = state.spawnAtTick;
       if (state.manDown) player.manDown = state.manDown;
@@ -285,6 +297,21 @@ void WorldView::feed(std::span<const std::byte> packet) {
                                         ? ", reference set (same)"
                                         : ", REFERENCE MOVED this packet")
                                  : "");
+    }
+    if (!record.tail.empty() && tailTrace_.count(record.networkId) != 0) {
+      std::string bits;
+      for (const std::uint8_t bit : record.tail) bits.push_back(bit != 0 ? '1' : '0');
+      std::printf("  tail %u: tick %u, kind %u, baseline %d, mask 0x%x, head %u bits, tail %zu "
+                  "bits: %s\n",
+                  static_cast<unsigned>(record.networkId), header ? header->time : 0u,
+                  record.kind, record.baseline ? 1 : 0, record.stateMask, record.readBits,
+                  record.tail.size(), bits.c_str());
+    }
+    if (record.rotation) {
+      objects_[record.networkId].rotation = record.rotation;
+      ++rotations_;
+      // The measure: a quaternion read from the right place is 1 long.
+      if (std::abs(record.rotationLength - 1.0f) < 0.01f) ++rotationsUnit_;
     }
     if (!record.position) continue;
     RemoteObject& object = objects_[record.networkId];

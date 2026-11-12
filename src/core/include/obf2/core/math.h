@@ -95,6 +95,26 @@ inline Mat4 rotationZ(float radians) {
   return out;
 }
 
+// A unit quaternion (x, y, z, w) as a rotation, in this file's column-major
+// convention: the standard matrix of a quaternion rotating column vectors. The
+// engine's quaternions are row-vector ones (D3DX's): a simple object's rotation
+// from the network comes out with its yaw's sign turned against its spawner's
+// unless conjugated first (measured on the live server, 20 objects).
+inline Mat4 rotationFromQuaternion(const std::array<float, 4>& q) {
+  const float x = q[0], y = q[1], z = q[2], w = q[3];
+  Mat4 out = Mat4::identity();
+  out.m[0] = 1.0f - 2.0f * (y * y + z * z);
+  out.m[1] = 2.0f * (x * y + z * w);
+  out.m[2] = 2.0f * (x * z - y * w);
+  out.m[4] = 2.0f * (x * y - z * w);
+  out.m[5] = 1.0f - 2.0f * (x * x + z * z);
+  out.m[6] = 2.0f * (y * z + x * w);
+  out.m[8] = 2.0f * (x * z + y * w);
+  out.m[9] = 2.0f * (y * z - x * w);
+  out.m[10] = 1.0f - 2.0f * (x * x + y * y);
+  return out;
+}
+
 // BF2 gives rotations as a triple of degrees yaw/pitch/roll (Y, X, Z) — and
 // they are applied in exactly that order.
 inline Mat4 rotationYawPitchRoll(float yawDegrees, float pitchDegrees, float rollDegrees) {

@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -42,12 +43,20 @@ class Device {
 
   static std::unique_ptr<Device> create(const WindowDesc& desc, std::string* error = nullptr);
 
-  // false means the user closed the window or pressed Esc.
+  // false means the user closed the window, or pressed Esc while Esc quits.
   bool pumpEvents();
 
-  // Space or Enter — like skipping an intro in the game. The flag is read once,
-  // so that one press does not skip several movies in a row.
-  bool consumeSkip();
+  // Escape went down since the last call. In the game it is the one key that
+  // skips an intro movie (`BF2.exe` 0x40cf49: `keyPressed(1)`, IDKey_Escape = 1 at
+  // 0x6b40be). Read once, so that one press does not skip several movies.
+  bool consumeEscape();
+  // Caps Lock is on (its lock state, as Windows' GetKeyState(VK_CAPITAL) & 1
+  // answers — what the menu's Logic.isCapsLockPressed asks, SwiffPlayer.dll
+  // 0x1004d450).
+  static bool capsLockOn();
+  // Whether Escape also closes the program — ours, not the game's: on by default,
+  // off while the intro plays so that Escape can skip a movie there.
+  void setEscapeQuits(bool quits) { escapeQuits_ = quits; }
 
   // Keyboard and mouse state for driving the player. The engine does nothing
   // with it itself — it is raw material for ControlMap and for the input sent to the server.
@@ -59,6 +68,12 @@ class Device {
     bool sprint = false;
     bool fire = false;
     bool jump = false;
+    bool reload = false;  // R, `c_PIReload`
+    bool altFire = false;  // the mouse's second button, `c_PIAltFire` — zoom
+    bool crouch = false;   // left Ctrl, `c_PICrouch` (Controls.con)
+    bool prone = false;    // Z, `c_PILie` (Controls.con)
+    // The number keys 1..9 held, bit N-1 for key N (`c_PIWeaponSelectN`).
+    std::uint32_t weaponKeys = 0;
 
     // The cursor's absolute position in window pixels — for the menu, where the
     // mouse is not captured.
@@ -104,7 +119,8 @@ class Device {
   SDL_GPUDevice* gpu_ = nullptr;
   std::string driver_;
   bool quit_ = false;
-  bool skip_ = false;
+  bool escape_ = false;
+  bool escapeQuits_ = true;
   bool mouseWasDown_ = false;
   float mouseDeltaX_ = 0.0f;
   float mouseDeltaY_ = 0.0f;

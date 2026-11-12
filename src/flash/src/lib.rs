@@ -397,11 +397,12 @@ fn build(
         .with_autoplay(true)
         .build();
 
-    // The menu's background is drawn by the engine, not by the movie: in
-    // `mainMenu.swf` there is not a single reference to `images/background/`,
-    // while the game puts `background_2.png` there
-    // (docs/research/03-startup-and-menu.md). So the stage has to be transparent —
-    // otherwise the movie floods the frame with its own colour.
+    // The stage is transparent so that the host's stand-in can show under it.
+    // The original's background is not under the movie but in it: `loadMovie
+    // ("?menu.bik")`, a Bink video that `RendDX9.dll` turns into a 256 x 256
+    // texture (0x101ba466..0x101ba5d7, docs/functions/startup.md). We do not
+    // decode Bink, so the host puts `background_2.png` underneath — a stand-in
+    // nothing in the game references.
     player.lock().unwrap().set_window_mode("transparent");
 
     Some(Movie { player, width, height, executor })

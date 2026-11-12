@@ -172,8 +172,29 @@ void testAliases() {
   CHECK(!console.executeLine("a"));
 }
 
+// An observer sees every command to its target, bound or not; an unbound one
+// counts as known. How GeneralSettings/GameServerSettings keep what the profile
+// and the menu give them.
+static void testObserver() {
+  engine::Console console;
+  std::map<std::string, std::string> kept;
+  int bound = 0;
+  console.bind("GeneralSettings.setHUDTransparency", [&](const con::Command&) { ++bound; });
+  console.observe("GeneralSettings", [&](const con::Command& c) {
+    kept[std::string(c.method())] = std::string(c.argStr(0));
+  });
+  CHECK(console.executeLine("GeneralSettings.setMaxBots 16"));
+  CHECK(console.executeLine("generalsettings.setHUDTransparency 204"));
+  CHECK_EQ(kept["setMaxBots"], std::string("16"));
+  CHECK_EQ(kept["setHUDTransparency"], std::string("204"));
+  CHECK_EQ(bound, 1);
+  CHECK_EQ(console.unknownCount(), 0LL);
+  CHECK(!console.executeLine("OtherObject.setX 1"));
+}
+
 TEST_MAIN({
   testDispatch();
+  testObserver();
   testAliases();
   testDispatchIsCaseInsensitive();
   testUnknownCommandsAreCounted();

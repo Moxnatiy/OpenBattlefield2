@@ -204,7 +204,7 @@ minus 8 (the server's setters: `setFireDev` Linux 0x5ef230, `setTurnDev`
 | property | argument | client field | what 0x60ad60 does with it |
 |---|---|---|---|
 | `setFireDev a b c` | a | +0x10 | in `getMaxDeviation` only |
-| | b | +0x08 | added per shot (`postFire`, not taken apart) |
+| | b | +0x08 | added per shot: `DeviationComp::postFire` (Linux 0x5ef52f..0x5ef551) adds it to the shot term (Linux +0x2c) and caps it at a |
 | | c | +0x0c | the shot accumulator's fall per update |
 | `minDev` | | +0x14 | the floor of the sum |
 | (`subProjectileDev`, by position) | | +0x18 | not used here |
@@ -317,7 +317,10 @@ and on the live server the M4's four ticks carry (1, 1, 0, 1).
 
 Not done:
 
-* weapon switching (`c_PIWeaponSelect*`), zoom, firing and `postFire`, the
-  jump's vetoes, `altGuiIndex`, and unlocked weapons (`ItemContainer`) — a kit's
-  slot is its plain child's;
+* `getFireState` itself: the fire state is taken as "the trigger held on a
+  weapon that can fire" (inferred); a round's `postFire` and our own pose (the
+  prediction's, corrected by the server's 0x20) are in. Live: a burst widens the
+  ticks, crouching narrows them;
+* the jump's vetoes, `altGuiIndex`, and unlocked weapons (`ItemContainer`) — a
+  kit's slot is its plain child's;
 * `--hosted` has no crosshair: our own server does not run the weapon.

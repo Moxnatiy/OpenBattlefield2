@@ -280,6 +280,19 @@ inline constexpr std::uint32_t kButtonFire = 1u << 0;    // c_PIFire   (8)
 inline constexpr std::uint32_t kButtonAction = 1u << 1;  // c_PIAction (9) — jump
 inline constexpr std::uint32_t kButtonUse = 1u << 2;     // c_PIUse    (10)
 inline constexpr std::uint32_t kButtonSprint = 1u << 5;  // c_PISprint (13)
+// `tools/control_constants.py`: c_PIReload is 32. The key is R (Controls.con,
+// `ControlMap.addKeyToTriggerMapping c_PIReload IDFKeyboard IDKey_R`).
+inline constexpr std::uint32_t kButtonReload = 1u << 24;  // c_PIReload (32)
+// c_PIAltFire is 31 (tools/control_constants.py); Controls.con puts it on the mouse's
+// second button (`ControlMap.addButtonToTriggerMapping c_PIAltFire IDFMouse IDButton_1`).
+inline constexpr std::uint32_t kButtonAltFire = 1u << 23;  // c_PIAltFire (31) — zoom
+// c_PILie is 37 and c_PICrouch 38 (tools/control_constants.py); Controls.con puts
+// them on Z and the left Ctrl. The soldier's input reads the crouch at bit 38 of
+// its own mask (Linux 0x54ffd3), the constant's number.
+inline constexpr std::uint32_t kButtonLie = 1u << 29;     // c_PILie    (37) — prone
+inline constexpr std::uint32_t kButtonCrouch = 1u << 30;  // c_PICrouch (38)
+// c_PIWeaponSelect1..9 are 14..22 (tools/control_constants.py), so key N is bit N + 5.
+inline constexpr std::uint32_t kButtonWeaponSelect(int n) { return 1u << (n + 5); }
 
 // The whole action stream from a packet.
 struct PlayerActions {

@@ -67,6 +67,10 @@ struct DeviationInput {
 class SoldierDeviation {
  public:
   void update(const DeviationTemplate& tmpl, const DeviationInput& input);
+  // A round fired (`DeviationComp::postFire`, Linux 0x5ef52f..0x5ef551): the shot
+  // term grows by `setFireDev`'s second number and is held to its first. The
+  // deviation shown takes it at the next `update`.
+  void postFire(const DeviationTemplate& tmpl);
   float deviation() const { return deviation_; }
 
   float speed() const { return speed_; }

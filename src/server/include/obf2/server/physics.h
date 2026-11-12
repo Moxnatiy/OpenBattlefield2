@@ -110,9 +110,37 @@ struct PhysicsConstants {
   float fireDelayAfterJump = 0.7f;          // fire-delay-after-jump
   float proneDelayAfterJump = 0.3f;         // prone-delay-after-jump
   float sprintRechargeDelayAfterJump = 0.7f;  // sprint-recharge-delay-after-jump
-  // `jump-delay-after-prone` (0x854440 registers 1.0; the data sets 0.8). No pose
-  // but standing is modelled, so nothing starts it yet.
-  float jumpDelayAfterProne = 0.8f;
+  // The pose delays (`Soldier::updateSoldierPose`, Linux 0x5468d0). Linux 0x547fdb..
+  // 0x54803f registers them with 1.0 each and 0.6 for the last; the values are the
+  // game's data (`Objects/Soldiers/Common/Common.con`) where it sets them.
+  float jumpDelayAfterProne = 0.8f;   // jump-delay-after-prone  → +0x5a8
+  float standDelayFromProne = 0.8f;   // stand-delay-from-prone  → +0x5ac
+  float proneDelayFromStand = 0.8f;   // prone-delay-from-stand  → +0x5b0
+  float fireDelayFromProne = 0.6f;    // fire-delay-from-prone   → +0x5b8 (not set by the data)
+  // `soldier-prone-inwater-limit` (Linux 0x547f77, 1.1): `soldierCanGoProne`
+  // (0x546840) refuses while the water stands higher than the feet plus the
+  // radius less this.
+  float proneInWaterLimit = 1.1f;
+  // How far the eye goes towards the pose's camera position per input tick
+  // (`updateCameraTransformation`; Linux 0x548058..0x54808a register 0.5 each).
+  float cameraSpeedOnProne = 0.15f;   // camera-movement-speed-on-prone
+  float cameraSpeedOnCrouch = 0.2f;   // camera-movement-speed-on-crouch
+  float cameraSpeedOnStand = 0.15f;   // camera-movement-speed-on-stand
+  // The seconds a change of speed state blends over, [from][to], in the speed
+  // states' order crawl, crouch, walk, run, sprint, swim, swimcrawl (Linux
+  // 0x108e920, filled by the static initialiser from the `pose-*` variables,
+  // 0x54792d..0x547e45; the data sets none). The swim rows reuse the
+  // `pose-sprint-*` names; that a second registration of a name returns the
+  // first one's value is **inferred**, not read in `Vars::getFloat`.
+  float poseTransition[7][7] = {
+      {0.0f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f, 0.5f},
+      {0.5f, 0.0f, 0.25f, 0.25f, 0.25f, 0.5f, 0.5f},
+      {0.5f, 0.25f, 0.0f, 0.25f, 0.25f, 0.5f, 0.5f},
+      {0.5f, 0.25f, 0.25f, 0.0f, 0.25f, 0.5f, 0.5f},
+      {0.5f, 0.25f, 0.25f, 0.25f, 0.0f, 0.5f, 0.5f},
+      {0.5f, 0.25f, 0.25f, 0.25f, 0.5f, 0.0f, 0.5f},
+      {0.5f, 0.25f, 0.25f, 0.25f, 0.5f, 0.5f, 0.0f},
+  };
 
   // The ground contact's material means (`SoldierResponsePhysics::internalImpulseOn`,
   // Linux 0x6f2930..0x6f28cf: `+0xf4` friction and `+0xfc` resistance are the
@@ -136,6 +164,7 @@ struct PhysicsConstants {
   float crouchSpeed = 2.0f;    // phy-soldier-crouch-speed
   float crawlSpeed = 0.8f;     // phy-soldier-crawl-speed
   float swimSpeed = 2.1f;      // phy-soldier-swim-speed
+  float swimCrawlSpeed = 3.645f;  // phy-soldier-swimcrawl-speed (Linux 0x5478ab)
   float inAirSpeed = 2.0f;     // phy-soldier-inair-speed
 
   // The soldier's shape: a column of spheres. How many depends on the pose.
@@ -225,8 +254,22 @@ struct BodyState {
   // while above zero.
   float fireDelay = 0.0f;              // +0x5a0
   float proneDelay = 0.0f;             // +0x5a4
-  float jumpDelay = 0.0f;              // +0x5a8
+  float jumpDelay = 0.0f;              // +0x5a8 jump-delay-after-prone
+  float standDelay = 0.0f;             // +0x5ac stand-delay-from-prone
+  float proneFromStandDelay = 0.0f;    // +0x5b0 prone-delay-from-stand
   float sprintRechargeDelay = 0.0f;    // +0x5b4
+  float fireFromProneDelay = 0.0f;     // +0x5b8 fire-delay-from-prone
+
+  // The pose (soldier_pose.h). Linux offsets: +0x3c8 the pose, +0x3cc the one
+  // asked for (both in the state's 0x20), +0x3e4 the keys' latch, +0x490 the speed
+  // state, +0x494/+0x498/+0x49c the speed blend's progress, length and start.
+  int pose = 0;
+  int requestedPose = 0;
+  unsigned poseLatch = 0;
+  int speedState = 3;
+  float poseProgress = 0.0f;
+  float poseDuration = 0.0f;
+  float poseFromSpeed = 0.0f;
 };
 
 // The soldier's direction from its smoothed axes: forward * forwardAxis + right *
@@ -256,6 +299,26 @@ Vec3f soldierMoveDirection(BodyState& body, float forwardInput, float strafeInpu
                            const Vec3f& forward, const Vec3f& right,
                            const PhysicsConstants& constants);
 
+// The soldier's poses, `Soldier +0x3c8` (Linux) — the order `updateSpeedState`
+// switches on.
+inline constexpr int kPoseStand = 0;
+inline constexpr int kPoseCrouch = 1;
+inline constexpr int kPoseProne = 2;
+inline constexpr int kPoseSwim = 3;
+
+// `Soldier::updateSpeedState` (Linux 0x54e8d0): the speed state, an index into the
+// table the speeds are copied into (0x108e900, filled from the `phy-soldier-*-speed`
+// variables in the order crawl, crouch, walk, run, sprint, swim, swimcrawl):
+//   standing:  sprinting 4, else `isWalking` 2, else 3  (sprint before zoom)
+//   crouching: 1      prone: 0      swimming: sprinting 6, else 5
+// `isWalking` (0x5485c0) is the active weapon's `getZoom` (vtable +0x210) not 0.
+int soldierSpeedState(int pose, bool sprinting, bool zoomed);
+
+// `Soldier::getSoldierSpeed(state)` (Linux 0x54eac0): the table's speed, and a
+// crouching soldier with a player in him multiplies it by `getMouseSpeedMod`
+// (0x54eb34).
+float soldierSpeed(const PhysicsConstants& constants, int state, int pose, float mouseSpeedMod);
+
 // One step of a soldier's movement — our own local server's, not the engine's.
 //
 // wish is the desired direction in the plane (already rotated by the look angle),
@@ -268,6 +331,8 @@ void stepSoldier(BodyState& body, const Vec3f& wish, float maxSpeed, bool jump,
 
 // The centres of the soldier's spheres above foot level. The count and the step
 // follow the engine's formula: spacing = (height - 2 * radius) / (count - 1).
-std::vector<float> soldierSphereHeights(const PhysicsConstants& constants);
+// `getSoldierHeight` (0x6f39f0) by pose: standing 5 over the stand height,
+// crouching 3 over the crouch height, prone 1 (docs/functions/soldier-physics.md).
+std::vector<float> soldierSphereHeights(const PhysicsConstants& constants, int pose = 0);
 
 }  // namespace obf2::server

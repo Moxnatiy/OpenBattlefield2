@@ -257,6 +257,40 @@ def edit_text(chunk):
     return variable, initial
 
 
+def font_record(chunk):
+    """DefineFont2/3: (id, name, glyph count, flags, the codes it carries)."""
+    reader = Reader(chunk)
+    ident = reader.u16()
+    flags = reader.u8()
+    reader.u8()  # language
+    size = reader.u8()
+    name = reader.d[reader.at:reader.at + size].rstrip(b"\0").decode("latin-1")
+    reader.at += size
+    count = reader.u16()
+    wide_offsets = bool(flags & 0x08)
+    wide_codes = bool(flags & 0x04)
+    offsets = [reader.u32() if wide_offsets else reader.u16() for _ in range(count)]
+    codes = []
+    if count:
+        code_table = reader.u32() if wide_offsets else reader.u16()
+        reader.at = (2 + 1 + 1 + 1 + size + 2) + code_table  # from the offset table's start
+        for _ in range(count):
+            codes.append(reader.u16() if wide_codes else reader.u8())
+    del offsets
+    return ident, name, count, flags, codes
+
+
+def edit_text_font(chunk):
+    """DefineEditText: (id, font id or None, the variable's name, its initial text)."""
+    reader = Reader(chunk)
+    ident = reader.u16()
+    rect(reader)
+    flags = reader.u16()
+    font = reader.u16() if flags & 0x0001 else None
+    variable, initial = edit_text(chunk)
+    return ident, font, variable, initial
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -267,12 +301,33 @@ def main():
     parser.add_argument("--calls", metavar="OBJECT", action="append",
                         help="methods called on this bridge object")
     parser.add_argument("--labels", action="store_true", help="frame labels (FrameLabel)")
+    parser.add_argument("--fonts", action="store_true",
+                        help="fonts (DefineFont2/3: id, name, glyphs, flags, the characters) "
+                             "and the text fields using each")
     parser.add_argument("--grep", help="keep the lines with this substring (case-insensitive)")
     parser.add_argument("--unique", action="store_true", help="no repeats, alphabetical")
     args = parser.parse_args()
 
     signature, version, length, body = unpack(args.path)
     items = tags(body)
+
+    if args.fonts:
+        users = {}
+        for chunk in walk(items, 37):
+            try:
+                ident, font, variable, initial = edit_text_font(chunk)
+            except (IndexError, ValueError):
+                continue
+            users.setdefault(font, []).append(f"{ident}:{variable or initial[:20]!r}")
+        for want in (48, 75):
+            for chunk in walk(items, want):
+                ident, name, count, flags, codes = font_record(chunk)
+                shown = "".join(chr(c) if 32 <= c < 0x10000 else "?" for c in codes)
+                print(f"font {ident} {name!r} tag {want} glyphs {count} flags 0x{flags:02x} "
+                      f"chars {shown[:60]!r}")
+                for user in users.get(ident, [])[:6]:
+                    print(f"    used by text {user}")
+        return
 
     if not (args.symbols or args.text or args.actions or args.labels or args.calls):
         print(f"{signature}, version {version}, {length} bytes, {len(items)} tags")

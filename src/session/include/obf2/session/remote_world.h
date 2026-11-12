@@ -38,6 +38,7 @@
 #include "obf2/server/collision_world.h"
 #include "obf2/server/physics.h"
 #include "obf2/server/soldier_move.h"
+#include "obf2/server/soldier_pose.h"
 #include "obf2/server/soldier_look.h"
 #include "obf2/server/soldier_sprint.h"
 #include "obf2/vfs/filesystem.h"
@@ -272,6 +273,7 @@ struct RemoteWorld {
   struct MovableCollision {
     std::uint32_t handle = 0;
     obf2::Vec3f position;
+    std::optional<std::array<float, 4>> rotation;
   };
   std::map<std::uint16_t, MovableCollision> movableCollision;
   // Networked ids decided to have nothing to add, so they are not asked again.
@@ -302,11 +304,13 @@ struct RemoteWorld {
       }
       const obf2::Mat4 transform = [&] {
         obf2::Mat4 m = obf2::translation(object.position);
-        // The create event's rotation, in the level's yaw/pitch/roll form
-        // (bf2_events.h). Its sign convention against the level's is checked only
-        // on a zero rotation; the object's own quaternion (0x1 in its update) is
-        // not read, so a turned vehicle keeps it.
-        if (object.createdRotation) {
+        // The object's own quaternion (0x1 in its update, conjugated: the engine's
+        // are row-vector ones — obf2/core/math.h), else the create event's
+        // rotation in the level's yaw/pitch/roll form (bf2_events.h).
+        if (object.rotation) {
+          const auto& r = *object.rotation;
+          m = m * obf2::rotationFromQuaternion({-r[0], -r[1], -r[2], r[3]});
+        } else if (object.createdRotation) {
           m = m * obf2::rotationYawPitchRoll(object.createdRotation->x, object.createdRotation->y,
                                              object.createdRotation->z);
         }
@@ -316,9 +320,10 @@ struct RemoteWorld {
       if (found != movableCollision.end()) {
         const obf2::Vec3f& was = found->second.position;
         if (was.x != object.position.x || was.y != object.position.y ||
-            was.z != object.position.z) {
+            was.z != object.position.z || found->second.rotation != object.rotation) {
           collision->placeMovable(found->second.handle, transform);
           found->second.position = object.position;
+          found->second.rotation = object.rotation;
         }
         continue;
       }
@@ -344,7 +349,7 @@ struct RemoteWorld {
         continue;
       }
       const std::uint32_t handle = collision->addMovable(pieces, transform);
-      movableCollision[id] = {handle, object.position};
+      movableCollision[id] = {handle, object.position, object.rotation};
       std::printf("  collision: object %u %s at %.2f %.2f %.2f rotation %.1f %.1f %.1f, %zu pieces\n",
                   id, name->c_str(), object.position.x, object.position.y, object.position.z,
                   object.createdRotation ? object.createdRotation->x : 0.0f,
@@ -353,6 +358,43 @@ struct RemoteWorld {
     }
   }
   float maxSpeed = 3.9f;  // phy-soldier-run-speed; filled in from the game's data
+
+  // What the soldier's input reads besides the action: whether the weapon is
+  // zoomed (`isWalking`, the walk speed) and the look's `getMouseSpeedMod`. The
+  // frame sets `actionContext`; each action keeps the one it was first played
+  // with, so a replay after a correction plays it the same way. (The pose is the
+  // body's own, `BodyState::pose`.)
+  struct ActionContext {
+    bool zoomed = false;
+    float mouseSpeedMod = 1.0f;
+  };
+  ActionContext actionContext;
+  std::array<ActionContext, 256> contextAt{};
+  // Our soldier's health, 0..1, as his last controlled state said (0x40).
+  std::optional<float> ownHealth;
+
+  // The eye over the pivot: the soldier template's `poseCameraPosition` for each
+  // pose (standing, crouching, prone), set by the caller once the template is
+  // known, and the camera's own position, which `updateCameraTransformation`
+  // moves `camera-movement-speed-on-*` of the way to its pose's every input tick
+  // (B2BF's reading of Linux 0x5527a0; the follow factors are Linux 0x548058..
+  // 0x54808a and the game's data). A camera is the client's own, so it moves
+  // once per tick played for the first time, not again on a replay.
+  std::array<obf2::Vec3f, 3> poseCamera{};
+  bool poseCameraKnown = false;
+  obf2::Vec3f eyeOffset{};
+  bool eyeKnown = false;
+  void advanceEye() {
+    if (!poseCameraKnown) return;
+    const int pose = std::clamp(body.pose, 0, 2);
+    const obf2::Vec3f target = poseCamera[static_cast<std::size_t>(pose)];
+    if (!eyeKnown) {
+      eyeOffset = target;
+      eyeKnown = true;
+      return;
+    }
+    eyeOffset = eyeOffset + (target - eyeOffset) * obf2::server::poseCameraFollow(pose, physics);
+  }
 
   // A correction from the server: we put the body where the server sees it.
   void correct(const obf2::Vec3f& position) {
@@ -527,7 +569,9 @@ struct RemoteWorld {
       // for a whole spawn screen. Ours, not the binary's.
       while (sent.size() > 256) sent.pop_front();
 
+      contextAt[number % contextAt.size()] = actionContext;
       playAction(number, action);
+      advanceEye();
       sendAction();
       if (bodyReady && terrain != nullptr) {
         // Where the body is, every two seconds of ticks, for the first minute of a
@@ -567,12 +611,14 @@ struct RemoteWorld {
     const bool sprinting = sprint.sprinting;
     const float mouseX = obf2::net::bf2::axisFromWire(played.axes[obf2::net::bf2::kAxisMouseX]);
     const float mouseY = obf2::net::bf2::axisFromWire(played.axes[obf2::net::bf2::kAxisMouseY]);
+    const ActionContext& context = contextAt[number % contextAt.size()];
     obf2::server::turnSoldier(
         look, mouseX, mouseY,
-        obf2::net::bf2::axisFromWire(played.axes[obf2::net::bf2::kAxisThrottle]), physics);
-    lastTurn[0] = mouseX * physics.lookFactorX;
-    lastTurn[1] = mouseY * physics.lookFactorY;
-    if (bodyReady && terrain != nullptr && stepBody(played, matrixYaw, sprinting)) {
+        obf2::net::bf2::axisFromWire(played.axes[obf2::net::bf2::kAxisThrottle]), physics,
+        context.mouseSpeedMod);
+    lastTurn[0] = mouseX * physics.lookFactorX * context.mouseSpeedMod;
+    lastTurn[1] = mouseY * physics.lookFactorY * context.mouseSpeedMod;
+    if (bodyReady && terrain != nullptr && stepBody(played, matrixYaw, sprinting, context)) {
       // 0x54fe1d: the jump's stamina, straight off.
       sprint.stamina = std::max(0.0f, sprint.stamina - sprint.lossAtJump);
     }
@@ -608,9 +654,6 @@ struct RemoteWorld {
     const float radians = degrees * (3.14159265358979323846f / 180.0f);
     return {std::cos(radians), 0.0f, -std::sin(radians)};
   }
-  // The speed state (`Soldier::updateSpeedState`, Linux 0x54e8d0): standing, a
-  // sprinting soldier takes `phy-soldier-sprint-speed`, the rest run.
-  float speedOf(bool sprinting) const { return sprinting ? physics.sprintSpeed : maxSpeed; }
 
   // The server's state of our soldier, and the actions it has not played yet on
   // top of it — `FUN_004d4b30`, the prediction component the controlled-object
@@ -669,6 +712,12 @@ struct RemoteWorld {
     // input reads.
     if (state.flag4000) sprint.sprinting = *state.flag4000;
     if (state.value4000) sprint.stamina = *state.value4000;
+    // The health (0x40): `ceil(max(hit points, 0)) / max hit points × 255`, 8 bits
+    // (`SoldierNetworkable::updateStateMask`, Linux 0x5db45b..0x5db4bb).
+    if (state.value40) ownHealth = static_cast<float>(*state.value40) / 255.0f;
+    // The pose and the one asked for (0x20, `Soldier +0x3c8`/`+0x3cc`).
+    if (state.pose) body.pose = static_cast<int>(*state.pose);
+    if (state.requestedPose) body.requestedPose = static_cast<int>(*state.requestedPose);
 
     // How long this answer took: the action the counter names was sent by us, and
     // the state that answers it is here now.
@@ -740,22 +789,24 @@ struct RemoteWorld {
     vec(s.vector200, friction, sizeof(friction));
     vec(s.vector40000, linear, sizeof(linear));
     std::printf("  own state %d: pos %.4f %.4f %.4f vel %s acc %s fric %s lin %s ground %d "
-                "axes %.3f %.3f sprint %d stamina %.3f\n",
+                "axes %.3f %.3f sprint %d stamina %.3f pose %d/%d\n",
                 counter, s.position->x, s.position->y, s.position->z, velocity, acceleration,
                 friction, linear, s.bitD ? 1 : 0, s.value400.value_or(-99.0f),
                 s.value800.value_or(-99.0f), s.flag4000.value_or(false) ? 1 : 0,
-                s.value4000.value_or(-1.0f));
+                s.value4000.value_or(-1.0f), s.pose ? static_cast<int>(*s.pose) : -1,
+                s.requestedPose ? static_cast<int>(*s.requestedPose) : -1);
     if (counter < 0) return;
     const BodyRecord& ours = bodyAt[static_cast<std::uint32_t>(counter) % bodyAt.size()];
     if (ours.number != static_cast<std::uint32_t>(counter)) return;
     const obf2::Vec3f pivot = ours.body.position + obf2::Vec3f{0.0f, physics.pivotHeight, 0.0f};
     std::printf("  ours  %d: pos %.4f %.4f %.4f vel %.4f %.4f %.4f acc %.4f %.4f %.4f fric %.4f "
-                "%.4f %.4f lin %.4f %.4f %.4f ground %d (off %.4f %.4f %.4f)\n",
+                "%.4f %.4f lin %.4f %.4f %.4f ground %d pose %d/%d (off %.4f %.4f %.4f)\n",
                 counter, pivot.x, pivot.y, pivot.z, ours.body.velocity.x, ours.body.velocity.y,
                 ours.body.velocity.z, ours.body.acceleration.x, ours.body.acceleration.y,
                 ours.body.acceleration.z, ours.body.friction.x, ours.body.friction.y,
                 ours.body.friction.z, ours.body.linearSpeed.x, ours.body.linearSpeed.y,
-                ours.body.linearSpeed.z, ours.body.onGround ? 1 : 0, pivot.x - s.position->x,
+                ours.body.linearSpeed.z, ours.body.onGround ? 1 : 0, ours.body.pose,
+                ours.body.requestedPose, pivot.x - s.position->x,
                 pivot.y - s.position->y, pivot.z - s.position->z);
   }
 
@@ -763,7 +814,8 @@ struct RemoteWorld {
   float yawCorrectionMax = 0.0f;
   float yawCorrectionSum = 0.0f;
 
-  bool stepBody(const obf2::net::bf2::PlayerAction& action, float matrixYaw, bool sprinting) {
+  bool stepBody(const obf2::net::bf2::PlayerAction& action, float matrixYaw, bool sprinting,
+                const ActionContext& context) {
     // The axes as the server reads them back from the wire (0x5bc6a0). A soldier
     // strafes with the yaw axis: the engine has no separate strafe axis. A
     // sprinting soldier does not strafe: `updateSoldierSpeed` zeroes that input
@@ -780,8 +832,46 @@ struct RemoteWorld {
     intent.wish = wish;
     intent.forward = facingOf(matrixYaw);
     intent.right = rightOf(matrixYaw);
-    intent.speed = speedOf(sprinting);
+    // `getSoldierSpeed(7)` over `updateSpeedState` (Linux 0x54eac0, 0x54e8d0), run
+    // by the input every tick: zoomed, a standing soldier walks; crouching and
+    // prone take their own speeds. The surface speed blends across a pose change.
+    body.speedState = obf2::server::soldierSpeedState(body.pose, sprinting, context.zoomed);
+    intent.speed =
+        obf2::server::soldierSpeed(physics, body.speedState, body.pose, context.mouseSpeedMod);
+    intent.blendedSpeed =
+        obf2::server::blendPoseSpeed(body, intent.speed, obf2::server::kTickTime);
     intent.jump = (action.buttons & obf2::net::bf2::kButtonAction) != 0;
+
+    // The pose keys and what `executePoseChange` reads.
+    intent.prone = (action.buttons & obf2::net::bf2::kButtonLie) != 0;
+    intent.crouch = (action.buttons & obf2::net::bf2::kButtonCrouch) != 0;
+    const float water = terrain != nullptr ? terrain->terrain.seaLevel : -1.0e9f;
+    intent.canGoProne = obf2::server::soldierCanGoProne(body, water, physics);
+    intent.sprinting = sprinting;
+    intent.zoomed = context.zoomed;
+    intent.mouseSpeedMod = context.mouseSpeedMod;
+    // Whether the new pose's sphere column is clear of the objects where he
+    // stands — ours; the engine's `expandSoldierCollision` is not read. Only the
+    // spheres above the current pose's top one are tested: the ones below touch
+    // the floor he stands on in either pose.
+    if (collision != nullptr) {
+      intent.poseFits = [this](int pose) {
+        float currentTop = 0.0f;
+        for (const float centre : obf2::server::soldierSphereHeights(physics, body.pose)) {
+          currentTop = std::max(currentTop, centre);
+        }
+        std::vector<obf2::server::MeshContact> contacts;
+        for (const float centre : obf2::server::soldierSphereHeights(physics, pose)) {
+          if (centre <= currentTop + 1e-4f) continue;
+          const obf2::Vec3f at{body.position.x, body.position.y + centre, body.position.z};
+          collision->sphereContacts(at, obf2::Vec3f{}, physics.radius, contacts);
+        }
+        for (const auto& contact : contacts) {
+          if (contact.depth < 0.0f) return false;
+        }
+        return true;
+      };
+    }
 
     // The engine's tick: the input, the node, the collision (`tickSoldier`). The
     // node's matrix, which the drag reads, is the body's after this action's turn
@@ -1251,6 +1341,8 @@ struct RemoteWorld {
                 // on a respawn they carried its air steering into his first ticks.
                 body = obf2::server::BodyState{};
                 bodyAt.fill(BodyRecord{UINT32_MAX, obf2::server::BodyState{}});
+                eyeKnown = false;
+                ownHealth.reset();
                 correct(feet);
                 std::printf("  the body was placed at %.1f %.1f %.1f (the soldier's creation position), "
                             "terrain %.2f\n",
@@ -1625,6 +1717,8 @@ struct RemoteWorld {
     std::printf("  objects created in the game (other soldiers and vehicles): %zu, "
                 "position updates from the ghost stream: %d\n",
                 world.objects().size(), positionUpdates);
+    std::printf("  simple objects' rotations read: %d, 1 long as read: %d\n", world.rotations(),
+                world.rotationsUnit());
     if (world.rejected() > 0) {
       std::printf("  positions rejected as unreadable: %d\n", world.rejected());
     }

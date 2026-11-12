@@ -22,7 +22,10 @@
 #include "obf2/app/render_context.h"
 #include "obf2/core/math.h"
 #include "obf2/game/object_template.h"
+#include "obf2/game/weapon_ammo.h"
 #include "obf2/game/weapon_fire.h"
+#include "obf2/game/weapon_shift.h"
+#include "obf2/game/weapon_zoom.h"
 #include "obf2/gfx/mesh_renderer.h"
 #include "obf2/mesh/animation.h"
 #include "obf2/mesh/skeleton.h"
@@ -100,11 +103,35 @@ class FirstPersonView {
   // weapon's animation (`DefaultAnimationComp::postFire`, Linux 0x60a7d0) —
   // `setTriggerOnceMessage`, so it counts for the next walk only (`BF2.exe`
   // 0x7f72a0, cleared by 0x7f7390). True when a round was fired.
-  bool onAction(std::uint32_t tick, bool fireHeld);
+  //
+  // The weapon's ammunition runs in the same tick (`game::WeaponAmmo`): the
+  // component updates first, then the trigger (`GenericFireArm::handleUpdate`
+  // 0x5e3ed0 calls `updateComponent` before it asks to fire), and a round is
+  // refused while the magazine is empty or a reload is on. `reloadPressed` is
+  // `c_PIReload` in this action. A reload raises message 2 on the weapon's
+  // animation (`DefaultAnimationComp::reload`, Linux 0x60aad0).
+  //
+  // `altHeld` is `c_PIAltFire`, the zoom key (`ZoomCompTemplate` input 0x1f): its
+  // press toggles the weapon's zoom (`game::WeaponZoom`).
+  bool onAction(std::uint32_t tick, bool fireHeld, bool reloadPressed = false,
+                bool altHeld = false);
   std::uint32_t roundsFired() const { return fire_.roundsFired(); }
+  const game::WeaponAmmo& ammo() const { return ammo_; }
+  // A new soldier (a respawn): every weapon starts full again.
+  void newSoldier() { ammoByKey_.clear(); key_.clear(); }
+  const game::WeaponZoom& zoom() const { return zoom_; }
+  const game::WeaponShift& shift() const { return shift_; }
+  int zoomChanges() const { return zoomChanges_; }
+  // Reloads that started and finished, for the end-of-run report.
+  int reloadsStarted() const { return reloadsStarted_; }
+  int reloadClipFrames() const { return reloadClipFrames_; }
+  int shiftClipFrames() const { return shiftClipFrames_; }
+  std::uint32_t lastTick() const { return lastTick_; }
   // Frames drawn with the weapon's `fire` bundle playing — the measure that a
   // round reaches the animation.
   int fireClipFrames() const { return fireClipFrames_; }
+  // Frames each of the weapon's bundles carried the most weight, by name.
+  const std::map<std::string, int>& bundleFrames() const { return bundleFrames_; }
 
   // One frame of the two animation systems and of the camera spring. The spring
   // is the soldier's system's, with the weapon's merged over it (0x552c1e..
@@ -124,6 +151,10 @@ class FirstPersonView {
  private:
   struct Model {
     gfx::GpuMesh gpu;
+    // The same arms with the weapon at its zoom lod (`zoomLod`), when it has one
+    // — the scope's inside, drawn once the zoom has settled (`WeaponZoom::lod`).
+    gfx::GpuMesh gpuZoom;
+    int zoomLod = 0;
     mesh::Skeleton skeleton;
     std::optional<anim::System> body;
     std::optional<anim::System> weapon;
@@ -147,9 +178,28 @@ class FirstPersonView {
   anim::CameraSpringTemplate springTemplate_;
   anim::CameraSpring spring_;
   game::WeaponFire fire_;
-  // The once-mask waiting for the next walk (`AnimationSystem` +0x10).
+  game::WeaponAmmo ammo_;
+  game::WeaponZoom zoom_;
+  game::WeaponShift shift_;
+  std::map<std::string, game::WeaponAmmo> ammoByKey_;  // the weapons put away
+  bool altHeldBefore_ = false;
+  int useDelayTicks_ = 0;
+  bool awaitUse_ = true;
+  std::uint32_t useAt_ = 0;
+  int zoomChanges_ = 0;
+  // The once-mask waiting for the next walk (`AnimationSystem` +0x10), and the
+  // held one the weapon keeps raised (+0x8): message 2 while a partial reload
+  // loops (`DefaultAnimationComp::reload` state 4).
   std::uint32_t onceMessages_ = 0;
+  std::uint32_t heldMessages_ = 0;
+  std::uint32_t previousHeld_ = 0;  // +0xc
+  float weaponIdle_ = 0.0f;
   int fireClipFrames_ = 0;
+  std::map<std::string, int> bundleFrames_;
+  int reloadClipFrames_ = 0;
+  int shiftClipFrames_ = 0;
+  int reloadsStarted_ = 0;
+  std::uint32_t lastTick_ = 0;
 };
 
 }  // namespace obf2::app

@@ -290,7 +290,36 @@ static void testKilledByEventIsWalked() {
   }
 }
 
+// A simple object's head (`readSimpleObjectState`): the rotation behind an
+// angular velocity that a physical object sends and another does not. The same
+// quaternion — 90° about Y — has to come out of both, 1 long.
+static void testSimpleObjectRotation() {
+  const auto quaternion = [](obf2::net::BitWriter& w) {
+    const float wxyz[4] = {0.70710678f, 0.0f, 0.70710678f, 0.0f};
+    for (const float v : wxyz) {
+      w.writeBits(static_cast<std::uint32_t>(std::lround((v + 1.0f) * 0.5f * 16383.0f)), 14);
+    }
+  };
+  for (const bool physical : {true, false}) {
+    std::array<std::byte, 64> buffer{};
+    obf2::net::BitWriter writer(buffer);
+    writer.writeBits(0x9, 19);  // angular velocity and rotation
+    if (physical) writer.writeBits(7, 3);  // the wide vector's level 7: the base itself
+    quaternion(writer);
+    obf2::net::BitReader reader(buffer);
+    const auto state = obf2::net::bf2::readSimpleObjectState(reader, obf2::Vec3f{});
+    CHECK(state.has_value());
+    if (!state || !state->rotation) continue;
+    CHECK(std::abs(state->rotationLength - 1.0f) < 0.001f);
+    CHECK(std::abs((*state->rotation)[1] - 0.70710678f) < 0.001f);  // y
+    CHECK(std::abs((*state->rotation)[3] - 0.70710678f) < 0.001f);  // w
+    CHECK_EQ(reader.bitPosition(), writer.bitPosition());
+    CHECK_EQ(state->angular.has_value(), physical);
+  }
+}
+
 TEST_MAIN({
+  testSimpleObjectRotation();
   testKilledByEventIsWalked();
   testKitAndPickupAreRead();
   testWorldCaptureIsFullyDecoded();

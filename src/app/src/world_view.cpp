@@ -354,11 +354,23 @@ void WorldView::collect(std::vector<gfx::MeshRenderer::DrawItem>& out, int frame
       // A static placement is skipped: the level draws it already.
       if (knownStatic) continue;
       if (const gfx::GpuMesh* vehicle = vehicleMesh(id, object)) {
-        // The rotation is the spawner's: a simple object's own rotation travels in
-        // its record and is not read yet.
+        // The rotation is the object's own from its record (bit 0x1, a
+        // quaternion — docs/functions/network-events.md), and the spawner's until
+        // one has arrived.
         const level::PlacedAt& placed = resolved_[id].placed;
         Mat4 place = translation(drawAt);
-        if (placed.hasRotation) {
+        if (object.rotation) {
+          // The engine's quaternion is a row-vector one: conjugated for ours.
+          const auto& r = *object.rotation;
+          const Mat4 q = rotationFromQuaternion({-r[0], -r[1], -r[2], r[3]});
+          place = place * q;
+          if (placed.hasRotation && rotationReported_.insert(id).second) {
+            const float yaw = std::atan2(q.m[8], q.m[10]) * 180.0f / 3.14159265f;
+            std::printf("  object %u's rotation: yaw %.1f from its record, %.1f from its "
+                        "spawner\n",
+                        id, yaw, placed.rotation.x);
+          }
+        } else if (placed.hasRotation) {
           place = place * rotationYawPitchRoll(placed.rotation.x, placed.rotation.y,
                                                placed.rotation.z);
         }
@@ -489,6 +501,26 @@ void WorldView::collect(std::vector<gfx::MeshRenderer::DrawItem>& out, int frame
           animState.direction[2] = forward;
         }
         if (look->legs) drawn.legs.update(*look->legs, animState, frameStep);
+        // A round: while his player's firing state is on (`setFiringState`, the
+        // player's 0x40), one once-message 1 every `1800 / rpm` ticks — the
+        // weapon's own rate, the default 600 a minute (weapon_fire.h) — to his
+        // weapon's system (`DefaultAnimationComp::postFire`). That the state is
+        // "firing" and the cadence is the rate is **inferred**: how the client
+        // turns the state into rounds for a ghost is not read.
+        {
+          const net::bf2::RemotePlayer* firer = remote_->world.ownerOf(id);
+          if (firer != nullptr && firer->object == id && firer->firing.value_or(false)) {
+            drawn.fireClock += frameStep;
+            const float interval = 3.0f / 30.0f;
+            if (drawn.fireClock >= interval) {
+              drawn.fireClock -= interval;
+              animState.messages |= 1u;
+              ++firedAnimations_;
+            }
+          } else {
+            drawn.fireClock = 0.0f;
+          }
+        }
         if (look->hasWeapon) drawn.weapon.update(look->weapon, animState, frameStep);
 
         // The legs first and the weapon over them: a clip touches only its own
@@ -662,6 +694,7 @@ void WorldView::report() const {
                 object ? object->ragdollParticles.size() : 0);
   }
   if (bodyFrames_ > 0) {
+    std::printf("  other soldiers' round messages sent to their weapons: %d\n", firedAnimations_);
     std::printf("  ragdoll bodies: %d frames drawn, %d with a particle through a face\n",
                 bodyFrames_, bodyFramesThroughFace_);
   }

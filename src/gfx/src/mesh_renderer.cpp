@@ -364,7 +364,15 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
     // `_ALPHATEST_` the shader keeps `totalDiffuse.a` and only scales it by
     // Transparency, while without it the alpha is thrown away and the detail's
     // becomes gloss instead (`RaShaderSTM.fx:282`).
-    if (in.material.w > 0.5 && albedo.a < 127.0 / 255.0) discard_fragment();
+    //
+    // A bundled mesh's own shader (`BundledMesh.fx`, a weapon, a vehicle) sets
+    // `AlphaRef = 0` with `AlphaFunc = GREATER` in every technique (lines 430, 483,
+    // 506, 679, 710): a pixel is cut only where its alpha is zero. The material's
+    // number tells the two apart: `1 + reference` — 1 for a bundled one.
+    if (in.material.w > 0.5) {
+        const float reference = in.material.w - 1.0;
+        if (reference < 0.001 ? albedo.a < 0.5 / 255.0 : albedo.a < reference) discard_fragment();
+    }
 
     // A road is two textures, not one. The template names both and a factor to
     // mix them by, and the shader mixes them exactly that way
@@ -1004,6 +1012,7 @@ MeshRenderer::~MeshRenderer() {
   if (device_ == nullptr) return;
   SDL_GPUDevice* gpu = device_->gpu();
   for (SDL_GPUTexture* texture : sharedTextures_) SDL_ReleaseGPUTexture(gpu, texture);
+  if (streamTransfer_ != nullptr) SDL_ReleaseGPUTransferBuffer(gpu, streamTransfer_);
   if (placeholder_ != nullptr) SDL_ReleaseGPUTexture(gpu, placeholder_);
   if (overlayPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, overlayPipeline_);
   if (roadPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, roadPipeline_);
@@ -1256,6 +1265,45 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   return renderer;
 }
 
+bool MeshRenderer::updateTexture(SDL_GPUTexture* texture, const std::byte* bgra, std::uint32_t width,
+                                 std::uint32_t height) {
+  if (texture == nullptr || bgra == nullptr || width == 0 || height == 0) return false;
+  SDL_GPUDevice* gpu = device_->gpu();
+  const std::uint32_t size = width * height * 4;
+  if (streamTransfer_ == nullptr || streamTransferSize_ < size) {
+    if (streamTransfer_ != nullptr) SDL_ReleaseGPUTransferBuffer(gpu, streamTransfer_);
+    SDL_GPUTransferBufferCreateInfo transferInfo{};
+    transferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+    transferInfo.size = size;
+    streamTransfer_ = SDL_CreateGPUTransferBuffer(gpu, &transferInfo);
+    streamTransferSize_ = streamTransfer_ != nullptr ? size : 0;
+    if (streamTransfer_ == nullptr) return false;
+  }
+  // `cycle`: the driver hands a fresh region if the last frame's copy is
+  // still in flight, so the CPU never waits on the GPU here.
+  void* mapped = SDL_MapGPUTransferBuffer(gpu, streamTransfer_, true);
+  if (mapped == nullptr) return false;
+  std::memcpy(mapped, bgra, size);
+  SDL_UnmapGPUTransferBuffer(gpu, streamTransfer_);
+
+  SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(gpu);
+  if (commands == nullptr) return false;
+  SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(commands);
+  SDL_GPUTextureTransferInfo location{};
+  location.transfer_buffer = streamTransfer_;
+  location.pixels_per_row = width;
+  location.rows_per_layer = height;
+  SDL_GPUTextureRegion region{};
+  region.texture = texture;
+  region.w = width;
+  region.h = height;
+  region.d = 1;
+  SDL_UploadToGPUTexture(copy, &location, &region, true);
+  SDL_EndGPUCopyPass(copy);
+  SDL_SubmitGPUCommandBuffer(commands);
+  return true;
+}
+
 SDL_GPUTexture* MeshRenderer::uploadTexture(const texture::Texture& source) {
   SDL_GPUDevice* gpu = device_->gpu();
   const SDL_GPUTextureFormat format = toGpuFormat(source.format);
@@ -1360,7 +1408,8 @@ void MeshRenderer::fillRanges(GpuMesh& gpuMesh, const mesh::RenderMesh& source,
       if (slot < 0 || !resolve) return nullptr;
       if (static_cast<std::size_t>(slot) >= source_range.maps.size()) return nullptr;
       const std::string& name = source_range.maps[static_cast<std::size_t>(slot)];
-      const bool shareable = name != "#flash";
+      // `#flash`, `#movie`: pictures that change every frame, each its own.
+      const bool shareable = name.empty() || name[0] != '#';
       if (shareable) {
         const auto found = textureByPath_.find(name);
         if (found != textureByPath_.end()) return found->second;
@@ -1426,6 +1475,7 @@ void MeshRenderer::fillRanges(GpuMesh& gpuMesh, const mesh::RenderMesh& source,
       // Karkand's lines hung there as an opaque sheet
       // (`obf2::mesh::materialAlphaTest`).
       range.alphaTest = mesh::materialAlphaTest(source_range.technique, source_range.alphaMode);
+      range.bundledAlpha = source_range.fxFile.find("BundledMesh") != std::string::npos;
       range.leaf = source_range.leaf;
     }
     gpuMesh.ranges.push_back(range);
@@ -2059,7 +2109,8 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
             (terrain && terrainMaterialsReady_ && range.chartA != nullptr) ? 1.0f : 0.0f;
         uniforms.terrainNear[3] = range.chartB != nullptr ? 1.0f : 0.0f;
         uniforms.material[0] = range.detailMultiply ? 1.0f : 0.0f;
-        uniforms.material[3] = range.alphaTest ? 1.0f : 0.0f;
+        uniforms.material[3] =
+            range.alphaTest ? 1.0f + (range.bundledAlpha ? 0.0f : 127.0f / 255.0f) : 0.0f;
         uniforms.treeSunColor[3] = range.leaf ? 1.0f : 0.0f;
         uniforms.fogShape[1] =
             range.normalMap == nullptr ? 0.0f : (range.normalOnDetailUv ? 2.0f : 1.0f);

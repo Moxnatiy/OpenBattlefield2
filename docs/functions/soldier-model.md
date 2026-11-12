@@ -440,10 +440,9 @@ the tick has reached the ready tick, held-from-before only on rate 2; the next
 ready tick is the round's + `1800 / rpm`. `FirstPersonView::onAction` plays it once
 per action we send and raises the once-message 1. On the live server with
 `--fire-at 1660:60` (16 actions with the button): 6 rounds — one every third tick
-— and the `fire` bundle on for 78 frames. Not taken: the start delay, the
-ammunition and reloading (the magazine's defaults are 30 rounds and 5 magazines,
-`AmmoCompTemplate` Linux 0x5eafa0, +0x40 and +0x3c — which field is which command
-is not read), the heat, the burst rate, the fire rate's key, and the round itself
+— and the `fire` bundle on for 78 frames. Ammunition and reloading are
+done since: docs/functions/weapon-ammo.md (30 rounds and 5 magazines by default,
++0x40 `magSize`, +0x3c `nrOfMags`). Not taken: the start delay, the heat, the burst rate, the fire rate's key, and the round itself
 (projectile, sound, muzzle flash).
 
 ### Not done

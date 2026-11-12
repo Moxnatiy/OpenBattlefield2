@@ -149,16 +149,57 @@ void testCentreFollowsThePlayer() {
   CHECK(std::abs(map.centre().y - 0.25f) < 0.001f);
 }
 
-// The zoom: every next index magnifies by 2.3, and the value is driven towards it
-// rather than switched.
+// The zoom: the index picks an exponent from the table of the map's row
+// (BF2.exe 0x781ad5..0x781b16), the magnification is 2.3 to it, and the value is
+// driven towards it rather than switched.
 void testZoomIsAPowerOfBase() {
   hud::MapNode map;
-  CHECK(std::abs(map.zoomScale() - 1.0f) < 0.001f);
+  // A new map snaps to the collapsed row at index 1 (0x781a88): 2.3^1.5.
+  CHECK_EQ(map.zoomIndex(), 1);
+  map.update(1.0f / 30.0f);
+  CHECK(std::abs(map.zoom() - 1.5f) < 0.001f);
 
   map.setZoomIndex(2);
   for (int i = 0; i < 120; ++i) map.update(1.0f / 30.0f);
-  CHECK(std::abs(map.zoom() - 2.0f) < 0.01f);
-  CHECK(std::abs(map.zoomScale() - 2.3f * 2.3f) < 0.05f);
+  CHECK(std::abs(map.zoom() - 2.5f) < 0.01f);
+  CHECK(std::abs(map.zoomScale() - std::pow(2.3f, 2.5f)) < 0.05f);
+}
+
+// The spawn screen expands the map at zoom 0 (the whole combat area); back in
+// the game the map collapses and keeps the index, on the collapsed row: 2.3^0.5.
+void testSpawnThenIngameZoom() {
+  hud::MapNode map;
+  map.applyState(hud::kMapStateSpawn);
+  map.snap();
+  map.update(1.0f / 30.0f);
+  CHECK(map.expanded());
+  CHECK_EQ(map.zoomIndex(), 0);
+  CHECK(std::abs(map.zoomScale() - 1.0f) < 0.001f);
+
+  map.applyState(hud::kMapStateIngame);
+  map.snap();
+  map.update(1.0f / 30.0f);
+  CHECK(!map.expanded());
+  CHECK_EQ(map.zoomIndex(), 0);
+  CHECK(std::abs(map.zoom() - 0.5f) < 0.001f);
+
+  // The big map (M) expands without touching the index.
+  map.cycleZoom();
+  map.applyState(hud::kMapStateBigMap);
+  map.snap();
+  map.update(1.0f / 30.0f);
+  CHECK_EQ(map.zoomIndex(), 1);
+  CHECK(std::abs(map.zoom() - 1.0f) < 0.001f);
+}
+
+// cycleZoom: 0 → 1 → 2 → 0 (0x776670 with level -1).
+void testCycleZoomWraps() {
+  hud::MapNode map;
+  map.setZoomIndex(2);
+  map.cycleZoom();
+  CHECK_EQ(map.zoomIndex(), 0);
+  map.cycleZoom();
+  CHECK_EQ(map.zoomIndex(), 1);
 }
 
 // There are exactly three indices — the map node's tables hold no more.
@@ -181,5 +222,7 @@ TEST_MAIN({
   testShortestWayAroundZero();
   testCentreFollowsThePlayer();
   testZoomIsAPowerOfBase();
+  testSpawnThenIngameZoom();
+  testCycleZoomWraps();
   testZoomIndexIsClamped();
 });

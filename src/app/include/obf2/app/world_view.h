@@ -99,6 +99,7 @@ class WorldView {
     std::vector<mesh::Mat4> pose;
     anim::Player legs;
     anim::Player weapon;
+    float fireClock = 0.0f;  // seconds since the last round's message
     std::string key;
   };
 
@@ -201,6 +202,8 @@ class WorldView {
   std::unordered_map<std::string, gfx::GpuMesh*> vehicleByName_;
   std::unordered_map<std::uint16_t, Resolved> resolved_;
   std::set<std::uint16_t> boxReported_;
+  int firedAnimations_ = 0;  // round messages sent to other soldiers' weapons
+  std::set<std::uint16_t> rotationReported_;  // the record's yaw against the spawner's, once
   std::unordered_map<std::uint16_t, Carried> carried_;
   std::unordered_map<std::string, Look> looks_;
   // A clip that could not be read is remembered as empty so it is not looked for

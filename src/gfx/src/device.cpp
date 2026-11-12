@@ -99,8 +99,10 @@ bool Device::pumpEvents() {
         mouseDeltaY_ += event.motion.yrel;
         break;
       case SDL_EVENT_KEY_DOWN:
-        if (event.key.key == SDLK_ESCAPE) quit_ = true;
-        if (event.key.key == SDLK_SPACE || event.key.key == SDLK_RETURN) skip_ = true;
+        if (event.key.key == SDLK_ESCAPE && !event.key.repeat) {
+          escape_ = true;
+          if (escapeQuits_) quit_ = true;
+        }
         break;
       default:
         break;
@@ -173,12 +175,21 @@ Device::InputState Device::readInput() {
     if (keys[SDL_SCANCODE_A]) state.moveRight -= 1.0f;
     state.sprint = keys[SDL_SCANCODE_LSHIFT] || keys[SDL_SCANCODE_RSHIFT];
     state.jump = keys[SDL_SCANCODE_SPACE];
+    state.reload = keys[SDL_SCANCODE_R];
+    // Controls.con: `c_PICrouch IDFKeyboard IDKey_LeftCtrl`, `c_PILie IDFKeyboard IDKey_Z`.
+    state.crouch = keys[SDL_SCANCODE_LCTRL];
+    state.prone = keys[SDL_SCANCODE_Z];
+    // Controls.con: `c_PIWeaponSelectN` on the key N.
+    for (int n = 1; n <= 9; ++n) {
+      if (keys[SDL_SCANCODE_1 + n - 1]) state.weaponKeys |= 1u << (n - 1);
+    }
   }
 
   float mouseX = 0.0f;
   float mouseY = 0.0f;
   const SDL_MouseButtonFlags buttons = SDL_GetMouseState(&mouseX, &mouseY);
   state.fire = (buttons & SDL_BUTTON_LMASK) != 0;
+  state.altFire = (buttons & SDL_BUTTON_RMASK) != 0;
   state.mouseX = mouseX;
   state.mouseY = mouseY;
 
@@ -199,9 +210,11 @@ void Device::setRelativeMouse(bool enabled) {
   if (window_ != nullptr) SDL_SetWindowRelativeMouseMode(window_, enabled);
 }
 
-bool Device::consumeSkip() {
-  const bool pressed = skip_;
-  skip_ = false;
+bool Device::capsLockOn() { return (SDL_GetModState() & SDL_KMOD_CAPS) != 0; }
+
+bool Device::consumeEscape() {
+  const bool pressed = escape_;
+  escape_ = false;
   return pressed;
 }
 

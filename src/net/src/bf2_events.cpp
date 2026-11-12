@@ -669,11 +669,29 @@ std::vector<GhostRecord> readGhostRecords(
           }
         }
       } else if (record.netClass == GhostClass::SimpleObject && payload.skipBits(payloadStart)) {
-        if (const auto mask = payload.readBits(kObjectStateMaskBits)) {
-          record.stateMask = *mask;
-          if ((*mask & kObjectStatePosition) != 0) {
-            const auto at = payload.readCompressedVector(reference, kObjectPositionPrecision);
-            if (at && payload.bitPosition() <= payloadEnd) record.position = *at;
+        if (const auto state = readSimpleObjectState(payload, reference)) {
+          record.stateMask = state->mask;
+          record.readBits = static_cast<std::uint32_t>(payload.bitPosition() - payloadStart);
+          if (payload.bitPosition() <= payloadEnd) {
+            record.position = state->position;
+            if (state->rotation) {
+              const auto& q = *state->rotation;
+              const float n = state->rotationLength;
+              record.rotationLength = n;
+              // 0x62ebc0: a length under 1.19e-7 becomes the identity.
+              record.rotation = n < 1.1920929e-7f
+                                    ? std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f}
+                                    : std::array<float, 4>{q[0] / n, q[1] / n, q[2] / n, q[3] / n};
+            }
+          }
+          // What follows the head is the object's other networkables, each with its
+          // own mask (docs/functions/network-events.md, "What follows the head"):
+          // kept bit by bit, a byte a bit, for the notes' analysis.
+          BitReader tail = payload;
+          while (tail.bitPosition() < payloadEnd && record.tail.size() < 512) {
+            const auto bit = tail.readBits(1);
+            if (!bit) break;
+            record.tail.push_back(static_cast<std::uint8_t>(*bit));
           }
         }
       }
@@ -681,6 +699,68 @@ std::vector<GhostRecord> readGhostRecords(
     out.push_back(record);
   }
   return out;
+}
+
+namespace {
+
+std::optional<SimpleObjectState> readSimpleObjectHead(BitReader& reader, const Vec3f& reference,
+                                                      bool physical) {
+  SimpleObjectState out;
+  const auto mask = reader.readBits(kObjectStateMaskBits);
+  if (!mask) return std::nullopt;
+  out.mask = *mask;
+  const Vec3f zero{};
+  if ((out.mask & kObjectStatePosition) != 0) {
+    out.position = reader.readCompressedVector(reference, kObjectPositionPrecision);
+    if (!out.position) return std::nullopt;
+  }
+  if (physical && (out.mask & kObjectStateVelocity) != 0) {
+    out.velocity = reader.readCompressedVector(zero, kObjectVelocityPrecision);
+    if (!out.velocity) return std::nullopt;
+  }
+  if (physical && (out.mask & kObjectStateAngular) != 0) {
+    out.angular = reader.readWideVector(zero, kObjectAngularPrecision);
+    if (!out.angular) return std::nullopt;
+  }
+  if ((out.mask & kObjectStateRotation) != 0) {
+    // 0x6b7270: each of w, x, y, z is n bits over 2^n − 1 mapped to 2u − 1.
+    constexpr float kTop = static_cast<float>((1u << kObjectQuaternionBits) - 1u);
+    float wxyz[4];
+    for (float& value : wxyz) {
+      const auto raw = reader.readBits(kObjectQuaternionBits);
+      if (!raw) return std::nullopt;
+      value = 2.0f * (static_cast<float>(*raw) / kTop) - 1.0f;
+    }
+    out.rotation = std::array<float, 4>{wxyz[1], wxyz[2], wxyz[3], wxyz[0]};
+    out.rotationLength = std::sqrt(wxyz[0] * wxyz[0] + wxyz[1] * wxyz[1] + wxyz[2] * wxyz[2] +
+                                   wxyz[3] * wxyz[3]);
+  }
+  return out;
+}
+
+}  // namespace
+
+std::optional<SimpleObjectState> readSimpleObjectState(BitReader& reader, const Vec3f& reference) {
+  // Whether the object is physical decides whether 0x4 and 0x8 are in the record,
+  // and the client asks the object (`(*(object+0x44))->+0x130`), not the stream.
+  // The stream's own test tells it apart: read as physical, the rotation behind
+  // those fields is 1 long; read past fields that are not there, it is not.
+  // Measured on the live server: the vehicles (jeep, tank, LAV) come out 1 long
+  // read as physical, the radars, the guns and the bipods read as not.
+  BitReader physicalReader = reader;
+  auto physical = readSimpleObjectHead(physicalReader, reference, true);
+  const bool needsAsk = physical && physical->rotation &&
+                        (physical->mask & (kObjectStateVelocity | kObjectStateAngular)) != 0;
+  if (needsAsk && std::abs(physical->rotationLength - 1.0f) > 0.01f) {
+    BitReader plainReader = reader;
+    auto plain = readSimpleObjectHead(plainReader, reference, false);
+    if (plain && plain->rotation && std::abs(plain->rotationLength - 1.0f) <= 0.01f) {
+      reader = plainReader;
+      return plain;
+    }
+  }
+  reader = physicalReader;
+  return physical;
 }
 
 std::optional<bool> ghostFlag(std::span<const std::byte> packet) {

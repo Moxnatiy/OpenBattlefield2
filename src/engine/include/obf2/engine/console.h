@@ -26,6 +26,13 @@ class Console {
   // The name in the form "target.method"; case does not matter, as in the game.
   void bind(std::string_view name, Handler handler);
 
+  // Every command to `target` (`GeneralSettings`, any method) goes through
+  // `observer` first, whether or not a handler of its own is bound; a command
+  // with no handler but an observer counts as known. How the settings objects
+  // keep every value they are given — the profile's `.con` and the menu's
+  // bridge reach the same object (SwiffPlayer.dll looks it up by name).
+  void observe(std::string_view target, Handler observer);
+
   // true means a handler was found. Unknown commands are counted rather than
   // silently ignored: that counter is the port's measure of readiness.
   bool execute(const con::Command& command);
@@ -56,6 +63,7 @@ class Console {
 
  private:
   std::unordered_map<std::string, Handler> handlers_;
+  std::unordered_map<std::string, Handler> observers_;  // lower-case target → observer
   std::unordered_map<std::string, std::string> aliases_;
   std::map<std::string, int> unknownByName_;
   long long executed_ = 0;

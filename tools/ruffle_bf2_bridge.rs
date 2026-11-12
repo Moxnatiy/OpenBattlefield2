@@ -1115,6 +1115,11 @@ fn login_offline<'gc>(
         .map(|entry| entry.id.clone());
     tracing::info!(target: "bf2_bridge", "login to profile {}: {:?}", wanted, found);
     let ok = found.is_some();
+    // The engine loads the profile's settings (`loadCurrentProfile`, BF2.exe
+    // 0x4ab1d0); the movie only learns whether it worked.
+    if let Some(id) = &found {
+        commands().lock().unwrap().push(format!("login {}", id));
+    }
     *login().lock().unwrap() = found;
     Ok(ok.into())
 }

@@ -34,6 +34,10 @@ struct GpuMesh {
     // says so: 0 or 2 are the only values in the game's static meshes, and 2 is
     // what leaves, fences and grates carry.
     bool alphaTest = false;
+    // The test's reference: a material of `BundledMesh.fx` keeps every pixel whose
+    // alpha is above 0 (`AlphaRef = 0`, `AlphaFunc = GREATER`, in each of its
+    // techniques); the static-mesh shader's reference is 127 of 255.
+    bool bundledAlpha = false;
     // Drawn as leaves: its own shader in the original, and its own two colours
     // (`obf2::mesh::markVegetationLeaves`).
     bool leaf = false;
@@ -139,6 +143,13 @@ class MeshRenderer {
   // atlas, which many placements share. The renderer keeps it and frees it with
   // itself; nullptr when the upload failed.
   SDL_GPUTexture* uploadSharedTexture(const texture::Texture& source);
+
+  // New pixels for a texture already on the card, its top level only, BGRA8,
+  // width × height × 4 bytes. For a picture that changes every frame (the
+  // menu movie, a video) the texture and its mesh stay; one staging buffer
+  // is kept and reused. False when the upload could not be made.
+  bool updateTexture(SDL_GPUTexture* texture, const std::byte* bgra, std::uint32_t width,
+                     std::uint32_t height);
 
   // A full pass: clear the colour and the depth, then draw every range.
   void render(const Frame& frame, const GpuMesh& gpuMesh, const Mat4& modelViewProjection,
@@ -335,6 +346,9 @@ class MeshRenderer {
                   const TextureResolver& resolve);
 
   Device* device_ = nullptr;
+  // updateTexture's staging buffer and its size.
+  SDL_GPUTransferBuffer* streamTransfer_ = nullptr;
+  std::uint32_t streamTransferSize_ = 0;
   SDL_GPUGraphicsPipeline* pipeline_ = nullptr;
   SDL_GPUGraphicsPipeline* roadPipeline_ = nullptr;
   SDL_GPUGraphicsPipeline* skyPipeline_ = nullptr;

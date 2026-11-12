@@ -47,7 +47,8 @@ void Crosshair::setWeapon(const game::ObjectTemplate* weapon) {
   template_ = game::deviationOf(*weapon_);
 }
 
-void Crosshair::onAction(const net::bf2::PlayerAction& action, int pose, bool inVehicle) {
+void Crosshair::onAction(const net::bf2::PlayerAction& action, int pose, bool inVehicle,
+                         bool zoomed, bool firing, bool fired) {
   if (weapon_ == nullptr) return;
   game::DeviationInput input;
   // The axes as the engine plays them: the wire value × 0.01 (0x5bc6a0).
@@ -61,12 +62,15 @@ void Crosshair::onAction(const net::bf2::PlayerAction& action, int pose, bool in
   const bool jump = (action.buttons & net::bf2::kButtonAction) != 0;
   const bool lie = (action.buttons & kButtonLie) != 0;
   input.jumpOrLie = !inVehicle && (jump || lie);
-  // We do not fire: `getFireState` is 0 and the shot term only falls.
-  input.firing = false;
+  input.firing = firing;
   input.pose = pose;
-  // Zoom is not modelled: `setZoom` is never called.
-  input.zoomed = false;
+  // The weapon's zoom level above 0 (`GenericFireArm::handleUpdate` hands `getZoom`
+  // to the deviation's `setZoom`, Linux 0x5e7be1..0x5e7c02; `devModZoom` applies).
+  input.zoomed = zoomed;
   deviation_.update(template_, input);
+  // The weapon's update follows the soldier's input in the tick; a round it fires
+  // runs the components' `postFire` (`GenericFireArm::postFire`, Linux 0x5e6900).
+  if (fired) deviation_.postFire(template_);
 }
 
 void Crosshair::apply(std::map<std::string, float>& values) const {

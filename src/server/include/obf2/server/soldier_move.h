@@ -9,6 +9,8 @@
 // So here too it is **one** function, not two similar ones. When it was
 // duplicated, the client's half knew only the ground's height — and the soldier
 // walked through walls on a real server, even though he did not in our own game.
+#include <functional>
+
 #include "obf2/core/math.h"
 #include "obf2/level/level.h"
 #include "obf2/server/collision_world.h"
@@ -66,10 +68,27 @@ struct SoldierIntent {
   // jump keeps the speed along them.
   Vec3f forward{0.0f, 0.0f, 1.0f};
   Vec3f right{1.0f, 0.0f, 0.0f};
-  // `getSoldierSpeed(7)`, the speed state's speed.
+  // `getSoldierSpeed(7)`, the speed state's speed — the jump's limit.
   float speed = 0.0f;
+  // The same after the pose change's blend (`updateSoldierSpeed`, Linux
+  // 0x54ec9d..0x54ece0) — what the ground's surface speed is made of. The caller
+  // runs the blend (`blendPoseSpeed`), once per tick.
+  float blendedSpeed = 0.0f;
   // The action's jump axis (mask 0x200).
   bool jump = false;
+
+  // The pose keys: `c_PILie` (mask bit 29) and `c_PICrouch` (bit 30, read at
+  // Linux 0x54ffd3), and whether he may go prone now (`soldierCanGoProne`).
+  bool prone = false;
+  bool crouch = false;
+  bool canGoProne = false;
+  // What `executePoseChange` needs to recompute the speed state.
+  bool sprinting = false;
+  bool zoomed = false;
+  float mouseSpeedMod = 1.0f;
+  // Whether a pose fits at the soldier's position (soldier_pose.h,
+  // `poseChangeFits`). Empty: every pose fits.
+  std::function<bool(int pose)> poseFits;
 };
 
 // The movement half of `Soldier::handlePlayerInput` (Linux 0x54f160): the air

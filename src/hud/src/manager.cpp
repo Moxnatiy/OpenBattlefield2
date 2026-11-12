@@ -223,11 +223,14 @@ void Manager::bindCommands(engine::Console& console) {
   // `MiniMap.setZoom <index>` — the engine's command: in the data it hangs on the
   // `MapZoom` button (HudElementsMapMenu.con), and in the client 0x57a97e writes
   // the number straight into the map node's field +0x6d0. With no argument — the
-  // next zoom in a cycle, because that is how the button behaves.
+  // next zoom in a cycle: the HUD's own `setZoom` without arguments is
+  // `cycleZoom` (executor 0x76bcbb → 0x7779a0).
   console.bind("MiniMap.setZoom", [this](const con::Command& command) {
-    const int next = command.args.empty() ? (map_.zoomIndex() + 1) % kMapZoomLevels
-                                          : command.argInt(0).value_or(0);
-    map_.setZoomIndex(next);
+    if (command.args.empty()) {
+      map_.cycleZoom();
+    } else {
+      map_.setZoomIndex(command.argInt(0).value_or(0));
+    }
     std::printf("  map: zoom %d\n", map_.zoomIndex());
   });
   // The scoreboard's three tabs. The buttons in the data run
@@ -385,6 +388,10 @@ void Manager::buildMapWindow(FileSystem& files, const level::Level* level,
       const WorldSquare square{centerX - half, centerZ - half, centerX + half, centerZ + half};
       combatArea_ = buildCombatAreaOverlay(*hatch, gameplay->combatArea.points, square);
       context_.combatAreaTexture = std::string(kCombatAreaTexture);
+      context_.combatAreaU0 = context_.mapU0;
+      context_.combatAreaU1 = context_.mapU1;
+      context_.combatAreaV0 = context_.mapV0;
+      context_.combatAreaV1 = context_.mapV1;
       std::printf("  map: combat-area hatch over %.0f..%.0f / %.0f..%.0f, %zu points\n", square.minX,
                   square.maxX, square.minZ, square.maxZ, gameplay->combatArea.points.size());
     } else {
@@ -949,9 +956,10 @@ void Manager::zoomKey(bool down) {
   // `c_GIMapSize`'s 0x23 in the table the game builds at 0x690222.
   //
   // **The engine's handler for that action has not been found**, only the action
-  // itself. Cycling through the three levels is ours, and it is debt.
+  // itself. That it steps the map the way the HUD's `setZoom` does
+  // (`cycleZoom`, 0x7779a0) is our assumption, and it is debt.
   if (down && !zoomKeyWasDown_) {
-    map_.setZoomIndex((map_.zoomIndex() + 1) % kMapZoomLevels);
+    map_.cycleZoom();
     std::printf("  map: zoom %d\n", map_.zoomIndex());
   }
   zoomKeyWasDown_ = down;
@@ -1037,12 +1045,15 @@ void Manager::animate(float seconds, float yaw, const Vec3f& eye) {
     dirty_ = true;
   }
 
-  // The map's window. The thumbnail in the corner follows the player and zooms in
-  // by the zoom index; the big map shows the whole combat area. How exactly the
-  // engine blends these two centres — 0x773870 takes the weight from +0x694 — has
-  // **not been worked out**, so for now there are simply two branches.
+  // The map's window: the combat area's square divided by `pow(2.3, +0x698)`
+  // (`getZoomScale`, 0x77397c: the factor is the texture over the square). The
+  // thumbnail in the corner follows the player; the big map is centred on the
+  // combat area (`setExpanded(true)` → `setViewCenter(getMapCenterOffset())`,
+  // 0x776a65). How exactly the engine blends these two centres — 0x773870 takes
+  // the weight from +0x694 — has **not been worked out**, so for now there are
+  // simply two branches.
   if (mapBaseHalfU_ > 0.0f) {
-    const float scale = map_.minSize() ? map_.zoomScale() : 1.0f;
+    const float scale = map_.zoomScale();
     const float halfU = mapBaseHalfU_ / scale;
     const float halfV = mapBaseHalfV_ / scale;
     const float cu = map_.minSize() ? map_.centre().x : mapBaseCentreU_;

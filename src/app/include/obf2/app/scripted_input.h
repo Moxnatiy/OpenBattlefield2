@@ -22,6 +22,11 @@ struct ScriptedFrame {
   bool sprint = false;
   bool jump = false;
   bool fire = false;  // `--fire-at`: the fire button held
+  bool reload = false;  // `--reload-at`: the reload key pressed for this frame
+  bool altFire = false;  // `--zoom-at`: the zoom button held for this frame
+  bool crouch = false;   // `--crouch-at`: the crouch key held
+  bool prone = false;    // `--prone-at`: the prone key held
+  std::uint32_t weaponKeys = 0;  // `--select-at`: the number keys pressed (bit N-1)
 };
 
 // A range is `<frame>:<frames>:...`, so it covers `frame` to `frame + frames - 1`.

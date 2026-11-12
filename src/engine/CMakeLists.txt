@@ -3,6 +3,9 @@ add_library(obf2_engine
   src/settings.cpp
   src/control_map.cpp
   src/engine.cpp
+  src/bink.cpp
+  src/movie_queue.cpp
+  src/load_stat.cpp
 )
 add_library(obf2::engine ALIAS obf2_engine)
 

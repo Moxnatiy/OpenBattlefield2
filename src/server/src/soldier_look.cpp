@@ -7,9 +7,23 @@
 
 namespace obf2::server {
 
+float soldierMouseSpeedMod(float playerFov, float cameraFov, float weaponMouseSpeedMod) {
+  // 0x5a620d..0x5a6225: the ratio only when the camera is the wider.
+  float mod = 1.0f;
+  if (cameraFov > playerFov && cameraFov > 0.0f) mod = playerFov / cameraFov;
+  return mod * weaponMouseSpeedMod;
+}
+
 void turnSoldier(SoldierLook& look, float mouseX, float mouseY, float forwardInput,
-                 const PhysicsConstants& constants) {
-  const float delta = mouseX * constants.lookFactorX;
+                 const PhysicsConstants& constants, float mouseSpeedMod) {
+  // 0x5ae205..0x5ae288: factor, the 0.001 dead zone, then the speed mod.
+  float lookX = mouseX * constants.lookFactorX;
+  float lookY = mouseY * constants.lookFactorY;
+  if (std::abs(lookX) < 0.001f) lookX = 0.0f;
+  if (std::abs(lookY) < 0.001f) lookY = 0.0f;
+  lookX *= mouseSpeedMod;
+  lookY *= mouseSpeedMod;
+  const float delta = lookX;
   const float maxYaw = constants.lookMaxYaw;
   float bodyDelta = delta;
 
@@ -41,7 +55,7 @@ void turnSoldier(SoldierLook& look, float mouseX, float mouseY, float forwardInp
   while (look.bodyYaw >= 360.0f) look.bodyYaw -= 360.0f;
   while (look.bodyYaw <= -360.0f) look.bodyYaw += 360.0f;
 
-  look.pitch += mouseY * constants.lookFactorY;
+  look.pitch += lookY;
   look.aimYaw = std::clamp(look.aimYaw, -maxYaw, maxYaw);
   look.pitch = std::clamp(look.pitch, -constants.lookMaxPitch, constants.lookMaxPitch);
 }

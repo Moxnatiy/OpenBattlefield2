@@ -25,12 +25,15 @@
 #include "obf2/app/command_line.h"
 #include "obf2/app/scripted_input.h"
 #include "obf2/app/hosted_game.h"
+#include "obf2/app/loading_screen.h"
 #include "obf2/app/main_menu.h"
 #include "obf2/app/model_view.h"
 #include "obf2/app/render_context.h"
 #include "obf2/app/scene_build.h"
 #include "obf2/app/scoreboard_players.h"
 #include "obf2/app/spawn_circles.h"
+#include "obf2/app/ammo_hud.h"
+#include "obf2/app/player_hud.h"
 #include "obf2/app/crosshair.h"
 #include "obf2/app/first_person.h"
 #include "obf2/app/world_view.h"
@@ -170,8 +173,12 @@ int runProbe(const Args& args, obf2::FileSystem& files) {
   return 0;
 }
 
-int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel,
-               RemoteWorld* remote = nullptr) {
+// `shared`: the window and renderer of the whole run — the menu's session
+// makes them, the game's session after it takes the same ones, as the original
+// keeps one window from the intro to the round. Each session releases what it
+// uploaded before it ends.
+int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorld* remote,
+               obf2::app::RenderContext& shared) {
   // --- preparing the scene ---------------------------------------------
 
   // The scene and everything the level adds to it (`obf2/app/scene.h`).
@@ -192,7 +199,44 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   std::unique_ptr<obf2::server::GameClient> hostedClient;
   std::uint32_t localSoldierId = 0;
 
+  obf2::engine::Engine engine;
+  // The player's documents folder: `--home`, or `~/Documents/Battlefield 2`.
+  std::filesystem::path homeDir = args.homeDir;
+  if (homeDir.empty()) {
+    if (const char* home = std::getenv("HOME")) {
+      const std::filesystem::path documents = std::filesystem::path(home) / "Documents" / "Battlefield 2";
+      std::error_code ec;
+      if (std::filesystem::is_directory(documents, ec)) homeDir = documents;
+    }
+  }
+
+  // A level started from the menu loads behind the loading screen
+  // (`obf2/app/loading_screen.h`): the window and the engine's settings and
+  // dictionary are made first, and the screen is drawn between the phases.
+  obf2::app::RenderContext& render = shared;
+  obf2::app::LoadingScreen loadingScreen;
+  if (args.loadingScreen && !args.levelName.empty()) {
+    engine.boot(files, args.modDir, homeDir);
+    engine.skipAllMovies();
+    std::string renderError;
+    if (!render.device || !render.renderer) {
+      render = obf2::app::createRenderContext(args.width, args.height, &renderError);
+    }
+    if (render.device && render.renderer) {
+      loadingScreen.open(files, engine, args.levelName, args.loadingMode, args.loadingSize);
+    }
+  }
+  // One phase of our load done and the next begun. The parts are our loader's,
+  // each weighted 1 — not the engine's parts (engine/load_stat.h).
+  const auto loadPhase = [&](const char* name) {
+    if (!loadingScreen.isOpen()) return;
+    loadingScreen.stat().step();
+    loadingScreen.stat().nextPart(name, 1, 1.0f);
+    loadingScreen.frame(*render.device, *render.renderer);
+  };
+
   if (!args.levelName.empty()) {
+    loadPhase("Level");
     std::string error;
     if (!obf2::level::mountLevel(files, args.modDir, args.levelName, &error)) {
       std::fprintf(stderr, "level %s not mounted: %s\n", args.levelName.c_str(), error.c_str());
@@ -211,10 +255,12 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
                 level->terrain.seaLevel);
     std::printf("  static objects: %zu, roads: %zu\n", level->objects.size(),
                 level->roads.size());
+    loadPhase("Terrain");
     levelScene = obf2::app::buildLevelScene(files, *level, scene);
 
     if (remote != nullptr) remote->keepAlive();
     std::printf("  loading: the level's own files took %.2f s\n", secondsSince(started));
+    loadPhase("Objects");
     const auto registryStarted = std::chrono::steady_clock::now();
     registry = buildRegistry(files);
     std::printf("  registry: %zu templates (%.2f s)\n", registry.size(),
@@ -229,6 +275,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     std::vector<obf2::level::StaticObject> placement = level->objects;
 
     if (args.hosted) {
+      loadPhase("Server");
       collisionLibrary = std::make_unique<obf2::server::CollisionLibrary>(files, registry);
       obf2::app::HostedGame hosted = obf2::app::startHostedGame(files, *level, *collisionLibrary);
       hostedServer = std::move(hosted.server);
@@ -241,6 +288,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     sceneOptions.geometryIndex = args.geometryIndex;
     sceneOptions.lodIndex = args.lodIndex;
     sceneOptions.noLightmaps = args.noLightmaps;
+    loadPhase("Placement");
     obf2::app::placeObjects(files, registry, placement, sceneOptions, levelScene, scene,
                             [remote]() {
                               if (remote != nullptr) remote->keepAlive();
@@ -264,13 +312,14 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
 
   // --- the remaining modes ---------------------------------------------
 
-  obf2::engine::Engine engine;
   const bool bootMode = args.levelName.empty() && args.objectName.empty() && args.meshPath.empty();
   // The screens before a round (`obf2/app/main_menu.h`): the intro, the loading
   // screen and the game's own Flash menu.
   obf2::app::MainMenu menu;
   obf2::app::MainMenu::Options menuOptions;
   menuOptions.screen = args.screen;
+  menuOptions.homeDir = homeDir;
+  menuOptions.ruffle = args.ruffle;
   menuOptions.flashSwf = args.flashSwf;
   menuOptions.mouseX = args.mouseX;
   menuOptions.mouseY = args.mouseY;
@@ -305,7 +354,9 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   // --- GPU --------------------------------------------------------------
 
   std::string error;
-  obf2::app::RenderContext render = obf2::app::createRenderContext(args.width, args.height, &error);
+  if (!render.device || !render.renderer) {
+    render = obf2::app::createRenderContext(args.width, args.height, &error);
+  }
   if (!render.device || !render.renderer) {
     std::fprintf(stderr, "%s\n", error.c_str());
     return 1;
@@ -328,7 +379,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
 
   // The menu's movie is opened here, before the texture resolver below: the
   // resolver hands its current frame out under `#flash`.
-  if (!args.flashSwf.empty() || bootMode) menu.openMovie(files, menuOptions);
+  if (!args.flashSwf.empty() || bootMode) menu.openMovie(files, engine, menuOptions);
 
   auto resolveTexture =
       [&](const std::string& mapName) -> std::optional<obf2::texture::Texture> {
@@ -340,6 +391,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       return obf2::texture::solidColor(color.x, color.y, color.z);
     }
     if (mapName == "#flash") return menu.flashFrame();
+    if (mapName == "#movie") return menu.movieFrame();
     // The spawn screen's red hatch, under `#combatarea` — like `#flash`, a picture
     // we make rather than a file: the game's own `map_CombatArea32.dds` with the
     // alpha cleared inside the level's combat area. The manager builds it.
@@ -383,9 +435,21 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   // the newest action it has seen, and what it last put into the HUD — the HUD is
   // rebuilt only when that changes.
   obf2::app::Crosshair crosshair;
+  // The item our own number key last picked, and the soldier it was for.
+  std::optional<int> ownItem;
+  std::uint16_t ownItemSoldier = 0;
   std::optional<std::uint32_t> crosshairAction;
   std::map<std::string, float> crosshairShown;
+  // The weapon's firing per action tick, from the first-person weapon to the
+  // crosshair's deviation (bit 0 a round fired, bit 1 the fire state).
+  std::array<std::uint8_t, 256> weaponFireAt{};
+  std::array<std::uint32_t, 256> weaponFireTick{};
   std::string crosshairKey;
+  // The weapon's ammunition on the HUD (obf2/app/ammo_hud.h) and the last
+  // `PrimaryReloadTime`, which the next frame's block reads (0x7a8b2f).
+  obf2::app::AmmoHud ammoShown;
+  obf2::app::AmmoHud playerShown;
+  float ammoReloadProgress = 1.0f;
   int hudRebuilds = 0;
   float hudRebuildMs = 0.0f;
   float hudRebuildMax = 0.0f;
@@ -572,6 +636,7 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     }
   }
 
+  loadPhase("Upload");
   const auto uploadStarted = std::chrono::steady_clock::now();
   obf2::app::UploadedScene uploaded = obf2::app::uploadScene(
       *renderer, textureCache, resolveTexture, scene, levelScene, level ? &*level : nullptr, files);
@@ -681,6 +746,15 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
     SDL_WarpMouseInWindow(device->window(), args.mouseX, args.mouseY);
   }
 
+  // The load is over: the loading screen's flag goes off and its movie waits
+  // for JOIN GAME or Escape, as the original's does. A scripted run (`--frames`)
+  // cannot press either, so it leaves after three seconds — ours, for runs only.
+  if (loadingScreen.isOpen()) {
+    loadingScreen.finish(*device, *renderer, args.frames > 0 ? 3.0 : 0.0);
+    loadingScreen.release(*renderer);
+    if (loadingScreen.closed()) return 0;
+  }
+
   int frame = 0;
   const auto firstFrameAt = std::chrono::steady_clock::now();
   bool execDone = false;  // --exec is run once
@@ -721,6 +795,11 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
       }
       if (scripted.jump) frameInput.jump = true;
       if (scripted.fire) frameInput.fire = true;
+      if (scripted.reload) frameInput.reload = true;
+      if (scripted.altFire) frameInput.altFire = true;
+      if (scripted.crouch) frameInput.crouch = true;
+      if (scripted.prone) frameInput.prone = true;
+      frameInput.weaponKeys |= scripted.weaponKeys;
     }
     // The server sends pings and waits for answers: staying silent frame after frame
     // gets us disconnected. So the connection runs together with the picture, and we
@@ -853,6 +932,38 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         if (raw.sprint) out.buttons |= obf2::net::bf2::kButtonSprint;
         if (raw.jump) out.buttons |= obf2::net::bf2::kButtonAction;
         if (raw.fire) out.buttons |= obf2::net::bf2::kButtonFire;
+        if (raw.reload) out.buttons |= obf2::net::bf2::kButtonReload;
+        if (raw.altFire) out.buttons |= obf2::net::bf2::kButtonAltFire;
+        if (raw.crouch) out.buttons |= obf2::net::bf2::kButtonCrouch;
+        if (raw.prone) out.buttons |= obf2::net::bf2::kButtonLie;
+        for (int key = 1; key <= 9; ++key) {
+          if ((raw.weaponKeys & (1u << (key - 1))) != 0) {
+            out.buttons |= obf2::net::bf2::kButtonWeaponSelect(key);
+          }
+        }
+        // Zoomed, the look is slower — but the engine does that itself, inside the
+        // soldier's input, after the axes come off the wire (`getMouseSpeedMod`,
+        // `BF2.exe` 0x5a61a0, called at 0x5ae27b). So the action carries the axes
+        // unscaled, and our prediction applies the same mod: the field of view the
+        // player has (the zoom level's, else the camera's) over the camera's, times
+        // the weapon's `mouseSpeedMod`. We used to scale the axes here, which the
+        // server then scaled a second time.
+        {
+          const auto own = remote->world.objects().find(remote->ourSoldier);
+          const std::string* ownName =
+              own != remote->world.objects().end()
+                  ? remote->templateNumbers.nameOf(own->second.templateId)
+                  : nullptr;
+          const float cameraFov =
+              ownName != nullptr
+                  ? obf2::game::soldierCameraFov(remote->registry, *ownName).value_or(0.0f)
+                  : 0.0f;
+          const auto& zoom = firstPersonView.zoom();
+          const float playerFov = zoom.fov() > 0.0f ? zoom.fov() : cameraFov;
+          remote->actionContext.zoomed = zoom.zoomed();
+          remote->actionContext.mouseSpeedMod =
+              obf2::server::soldierMouseSpeedMod(playerFov, cameraFov, zoom.mouseSpeedMod());
+        }
         remote->queueInput(raw.mouseDeltaX * args.mouseScale, raw.mouseDeltaY * args.mouseScale,
                            out);
         // And we compute our own movement at once: waiting for the server's
@@ -862,24 +973,33 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
         yaw = remote->cameraYaw();
         pitch = remote->cameraPitch();
         // The eye: the template's `poseCameraPosition` for his pose from his pivot,
-        // turned by the body's yaw (obf2/app/first_person.h). His pose is standing:
-        // the server sends no records of our own soldier, and ours does not crouch.
+        // turned by the body's yaw (obf2/app/first_person.h), approached a share per
+        // tick as the pose changes (RemoteWorld::advanceEye).
         const auto ownObject = remote->world.objects().find(remote->ourSoldier);
         const std::string* ownTemplate =
             ownObject != remote->world.objects().end()
                 ? remote->templateNumbers.nameOf(ownObject->second.templateId)
                 : nullptr;
-        const auto poseCamera =
-            ownTemplate != nullptr
-                ? obf2::game::poseCameraPosition(remote->registry, *ownTemplate, 0)
-                : std::nullopt;
-        const obf2::Vec3f offset =
-            poseCamera ? obf2::Vec3f{poseCamera->x, poseCamera->y, poseCamera->z} : obf2::Vec3f{};
+        if (ownTemplate != nullptr && !remote->poseCameraKnown) {
+          for (int pose = 0; pose < 3; ++pose) {
+            if (const auto at = obf2::game::poseCameraPosition(remote->registry, *ownTemplate, pose)) {
+              remote->poseCamera[static_cast<std::size_t>(pose)] = obf2::Vec3f{at->x, at->y, at->z};
+            }
+          }
+          remote->poseCameraKnown = true;
+        }
+        const obf2::Vec3f offset = remote->eyeKnown ? remote->eyeOffset : remote->poseCamera[0];
         soldierEye = obf2::app::soldierEye(*remote->drawnSoldierPosition(),
                                            remote->physics.pivotHeight, remote->look.bodyYaw,
                                            offset);
         if (ownTemplate != nullptr) {
           soldierFov = obf2::game::soldierCameraFov(remote->registry, *ownTemplate);
+          // Zoomed, the player's field of view is the weapon's level (`Player::setFov`
+          // by `DefaultZoomComp::updateComponent`, Linux 0x6298e0); 0 is the
+          // camera's own.
+          if (const float zoomFov = firstPersonView.zoom().fov(); zoomFov > 0.0f) {
+            soldierFov = zoomFov;
+          }
         }
       }
       cameraInputs.soldierEye = soldierEye;
@@ -1032,18 +1152,46 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
           const std::uint32_t kit = remote->world.kitTemplateOf(remote->ourSoldier);
           const std::string* kitName = kit != 0 ? remote->templateNumbers.nameOf(kit) : nullptr;
           const std::string kitText = kitName != nullptr ? *kitName : std::string();
-          const int item = soldier->second.lastWeaponIndex >= 0
-                               ? soldier->second.lastWeaponIndex
-                               : obf2::app::spawnItemIndex(remote->registry, kitText);
+          // The item our own number key picked, for this soldier only.
+          if (ownItemSoldier != remote->ourSoldier) {
+            ownItem.reset();
+            ownItemSoldier = remote->ourSoldier;
+            firstPersonView.newSoldier();
+          }
+          const int item = ownItem.has_value()
+                               ? *ownItem
+                               : soldier->second.lastWeaponIndex >= 0
+                                     ? soldier->second.lastWeaponIndex
+                                     : obf2::app::spawnItemIndex(remote->registry, kitText);
           if (firstPersonView.setWeapon(*soldierName, kitText, item)) {
             // The trigger, once per action we played — the weapon's update runs
             // in the same tick as the input (`GenericFireArm::handleUpdate`,
             // `BF2.exe` 0x5e3ed0).
             for (const auto& [number, action] : remote->sent) {
               if (firstPersonAction && number <= *firstPersonAction) continue;
+              // `c_PIWeaponSelectN` picks the kit's item with `itemIndex` N (the
+              // keys and the data agree: 1 knife, 2 pistol, 3 rifle, 4 grenade; the
+              // engine's own mapping is **not read**). A key for an item the kit
+              // lacks does nothing.
+              for (int key = 1; key <= 9; ++key) {
+                if ((action.buttons & obf2::net::bf2::kButtonWeaponSelect(key)) == 0) continue;
+                if (key == ownItem.value_or(item)) continue;
+                if (obf2::app::weaponOut(remote->registry, kitText, key) == nullptr) continue;
+                ownItem = key;
+                firstPersonView.setWeapon(*soldierName, kitText, key);
+              }
               const bool fireHeld = (action.buttons & obf2::net::bf2::kButtonFire) != 0;
               if (fireHeld) ++firstPersonFireActions;
-              firstPersonView.onAction(number, fireHeld);
+              const bool fired = firstPersonView.onAction(
+                  number, fireHeld, (action.buttons & obf2::net::bf2::kButtonReload) != 0,
+                  (action.buttons & obf2::net::bf2::kButtonAltFire) != 0);
+              // For the crosshair's deviation, by action tick: bit 0 a round left,
+              // bit 1 the weapon's fire state. The fire state as "the trigger held
+              // on a weapon that can fire" is **inferred** — `getFireState` itself
+              // is not read.
+              weaponFireAt[number % weaponFireAt.size()] = static_cast<std::uint8_t>(
+                  (fired ? 1u : 0u) | (fireHeld && firstPersonView.ammo().canFire() ? 2u : 0u));
+              weaponFireTick[number % weaponFireTick.size()] = number;
               firstPersonAction = number;
             }
             // The movement in the camera's own frame, as `updateAnimationSystems`
@@ -1205,9 +1353,11 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
             if (kitName != nullptr) kitText = *kitName;
             // His own state's weapon (0x1000) when the server sends it; it does not
             // for our own soldier, and then what `pickupKit` makes active.
-            item = soldier->second.lastWeaponIndex >= 0
-                       ? soldier->second.lastWeaponIndex
-                       : obf2::app::spawnItemIndex(remote->registry, kitText);
+            item = ownItem.has_value() && ownItemSoldier == ours
+                       ? *ownItem
+                       : soldier->second.lastWeaponIndex >= 0
+                             ? soldier->second.lastWeaponIndex
+                             : obf2::app::spawnItemIndex(remote->registry, kitText);
             weapon = obf2::app::weaponOut(remote->registry, kitText, item);
             pose = static_cast<int>(soldier->second.lastPose);
           }
@@ -1224,9 +1374,15 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
             crosshairKey = std::move(key);
           }
           crosshair.setWeapon(weapon);
+          // Our own soldier's pose is our prediction's (the server's state corrects
+          // it); his ghost records, which `pose` above reads, are not sent for him.
+          pose = remote->body.pose;
           for (const auto& [number, action] : remote->sent) {
             if (crosshairAction && number <= *crosshairAction) continue;
-            crosshair.onAction(action, pose, false);
+            const std::size_t slot = number % weaponFireAt.size();
+            const std::uint8_t fire = weaponFireTick[slot] == number ? weaponFireAt[slot] : 0;
+            crosshair.onAction(action, pose, false, firstPersonView.zoom().zoomed(),
+                               (fire & 2u) != 0, (fire & 1u) != 0);
             crosshairAction = number;
           }
           std::map<std::string, float> shown;
@@ -1239,6 +1395,31 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
             for (const auto& [name, value] : shown) hudManager.values()[name] = value;
             crosshairShown = std::move(shown);
             hudManager.markDirty();
+          }
+          // The ammunition: only while a weapon is out and its first-person model
+          // runs (`FirstPersonView::onAction` plays the component).
+          if (weapon != nullptr && firstPersonView.ready()) {
+            obf2::app::AmmoHud ammoNow = obf2::app::ammoHud(
+                firstPersonView.ammo(), firstPersonView.lastTick(), ammoReloadProgress);
+            // A skipped block keeps what the layer already holds.
+            for (const auto& [name, value] : ammoShown.values) {
+              ammoNow.values.emplace(name, value);
+            }
+            for (const auto& [name, value] : ammoShown.strings) {
+              ammoNow.strings.emplace(name, value);
+            }
+            for (const auto& [name, value] : ammoShown.flags) {
+              ammoNow.flags.emplace(name, value);
+            }
+            if (ammoNow.values != ammoShown.values || ammoNow.strings != ammoShown.strings ||
+                ammoNow.flags != ammoShown.flags) {
+              for (const auto& [name, value] : ammoNow.values) hudManager.values()[name] = value;
+              for (const auto& [name, value] : ammoNow.strings) hudManager.strings()[name] = value;
+              for (const auto& [name, value] : ammoNow.flags) hudManager.variables()[name] = value;
+              hudManager.markDirty();
+              ammoShown = std::move(ammoNow);
+            }
+            ammoReloadProgress = ammoShown.values["PrimaryReloadTime"];
           }
         }
         // The spawn bar while dead: the player's own state says which group the
@@ -1257,6 +1438,22 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
                 wait = left > 0 ? static_cast<float>(left) / 30.0f : 0.0f;
               }
               hudManager.deadSpawnInfo(static_cast<int>(own->second.spawnGroup.value_or(0)), wait);
+            }
+            // The bottom-left bars and the killed state (obf2/app/player_hud.h).
+            obf2::app::PlayerHudInput playerInput;
+            playerInput.health = remote->ownHealth;
+            playerInput.stamina = remote->sprint.stamina;
+            playerInput.sprinting = remote->sprint.sprinting;
+            playerInput.alive = alive;
+            playerInput.manDown = own->second.manDown.value_or(false);
+            const obf2::app::AmmoHud playerNow = obf2::app::playerHud(playerInput);
+            if (playerNow.values != playerShown.values || playerNow.strings != playerShown.strings ||
+                playerNow.flags != playerShown.flags) {
+              for (const auto& [name, value] : playerNow.values) hudManager.values()[name] = value;
+              for (const auto& [name, value] : playerNow.strings) hudManager.strings()[name] = value;
+              for (const auto& [name, value] : playerNow.flags) hudManager.variables()[name] = value;
+              hudManager.markDirty();
+              playerShown = playerNow;
             }
           }
         }
@@ -1482,6 +1679,21 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
                 "frames with the fire clip %d\n",
                 firstPersonView.roundsFired(), firstPersonFireActions,
                 firstPersonView.fireClipFrames());
+    std::printf("  first-person bundles (frames on top):");
+    for (const auto& [bundle, frames] : firstPersonView.bundleFrames()) {
+      std::printf(" %s %d", bundle.c_str(), frames);
+    }
+    std::printf("\n");
+    std::printf("  ammunition: %d in the magazine, %d spare, reloads started %d, "
+                "frames with the reload clip %d\n",
+                firstPersonView.ammo().roundsInMag(), firstPersonView.ammo().spareMags(),
+                firstPersonView.reloadsStarted(), firstPersonView.reloadClipFrames());
+    std::printf("  bolt action: %d shifts, frames with the shift clip %d\n",
+                firstPersonView.shift().shifts(), firstPersonView.shiftClipFrames());
+    std::printf("  zoom: level %d of the weapon's %zu, field of view %.3f, changes %d\n",
+                firstPersonView.zoom().index(),
+                firstPersonView.zoom().levels(),
+                firstPersonView.zoom().fov(), firstPersonView.zoomChanges());
   }
   firstPersonView.release(*renderer);
   {
@@ -1509,7 +1721,15 @@ int runSession(const Args& args, obf2::FileSystem& files, std::string* nextLevel
   }
   worldView.report();
   menu.release(*renderer);
-  if (nextLevel != nullptr) *nextLevel = menu.requestedLevel();
+  if (next != nullptr && !menu.requestedLevel().empty()) {
+    *next = args;
+    next->levelName = menu.requestedLevel();
+    next->loadingMode = menu.requestedMode();
+    next->loadingSize = menu.requestedSize();
+    next->loadingScreen = true;
+    next->hosted = true;
+    next->screen.clear();
+  }
   return 0;
 }
 
@@ -1539,6 +1759,7 @@ int main(int argc, char** argv) {
   // is assigned by it, not by us.
   if (!args.connectTo.empty()) {
     RemoteWorld remote(sessionSettings(args), files);
+    for (const int id : args.traceTails) remote.world.traceTails(static_cast<std::uint16_t>(id));
     remote.drawabilityOf = [&](const std::string& name) {
       return checkDrawable(files, remote.registry, name, args);
     };
@@ -1563,7 +1784,8 @@ int main(int argc, char** argv) {
       if (args.distance <= 0.0f) args.distance = 60.0f;
     }
 
-    const int code = runSession(args, files, nullptr, &remote);
+    obf2::app::RenderContext shared;
+    const int code = runSession(args, files, nullptr, &remote, shared);
     remote.report();
     remote.disconnect();
     return code;
@@ -1571,14 +1793,14 @@ int main(int argc, char** argv) {
 
   // The menu and the game are two sessions in a row: a level chosen in the menu
   // simply starts the next one with different arguments.
+  obf2::app::RenderContext shared;  // one window for the whole run
   while (true) {
-    std::string nextLevel;
-    const int code = runSession(args, files, &nextLevel);
-    if (code != 0 || nextLevel.empty()) return code;
+    Args next;
+    const int code = runSession(args, files, &next, nullptr, shared);
+    if (code != 0 || next.levelName.empty()) return code;
 
-    std::printf("menu -> game: %s\n", nextLevel.c_str());
-    args.levelName = nextLevel;
-    args.hosted = true;
-    args.screen.clear();
+    std::printf("menu -> game: %s %s %d\n", next.levelName.c_str(), next.loadingMode.c_str(),
+                next.loadingSize);
+    args = next;
   }
 }

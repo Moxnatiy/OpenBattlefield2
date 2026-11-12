@@ -13,6 +13,7 @@
 // Some events cannot be skipped by the table: their fields sit behind conditions
 // and the length depends on the contents. Those are marked separately, and their
 // parsing is written by hand.
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -438,9 +439,16 @@ struct GhostRecord {
   std::optional<PlayerState> player;
   // A spawn group's state, likewise.
   std::optional<SpawnGroupState> spawnGroup;
+  // A simple object's rotation (x, y, z, w, normalised) and the length it had as
+  // read (readSimpleObjectState).
+  std::optional<std::array<float, 4>> rotation;
+  float rotationLength = 0.0f;
   // How many bits the content's reader took — the check that a layout is right:
   // a record read whole ends exactly at `payloadBits`.
   std::uint32_t readBits = 0;
+  // A simple object's bits after the head (readBits..payloadBits), one per byte:
+  // the other networkables of its descriptor, not read yet.
+  std::vector<std::uint8_t> tail;
 };
 
 // A record's contents are read by the object's networked class. For everything
@@ -462,6 +470,39 @@ struct GhostRecord {
 inline constexpr unsigned kObjectStateMaskBits = 19;
 inline constexpr std::uint32_t kObjectStatePosition = 0x2;
 inline constexpr float kObjectPositionPrecision = 0.0005f;
+
+// The head of the update, in the client's order (`BF2.exe` 0x6306b0,
+// docs/functions/network-events.md "A vehicle's update, read whole"):
+//
+//   0x2  position, compressed against the stream's vector, 0.0005
+//   0x4  linear velocity, compressed from zero, 0.001          (a physical object)
+//   0x8  angular velocity: the wide vector from zero, 0.01     (a physical object;
+//        an object of physics type 3 sends a compressed one, 0.001 — not taken)
+//   0x1  rotation, a quaternion of four 14-bit values (0x6b7270), w x y z
+//
+// "Physical" is asked of the object on the client and not sent; a bit the server
+// set is taken to mean the field is there. What follows the rotation depends on
+// the object (a range from one of its interfaces, its control object) and is not
+// read: the record's length passes it.
+inline constexpr std::uint32_t kObjectStateRotation = 0x1;
+inline constexpr std::uint32_t kObjectStateVelocity = 0x4;
+inline constexpr std::uint32_t kObjectStateAngular = 0x8;
+inline constexpr float kObjectVelocityPrecision = 0.001f;
+inline constexpr float kObjectAngularPrecision = 0.01f;
+inline constexpr unsigned kObjectQuaternionBits = 14;
+
+struct SimpleObjectState {
+  std::uint32_t mask = 0;
+  std::optional<Vec3f> position;
+  std::optional<Vec3f> velocity;
+  std::optional<Vec3f> angular;
+  // (x, y, z, w) as read, before normalising, and its length — a quaternion read
+  // from the right place is 1 long (the measure the notes name).
+  std::optional<std::array<float, 4>> rotation;
+  float rotationLength = 0.0f;
+};
+
+std::optional<SimpleObjectState> readSimpleObjectState(BitReader& reader, const Vec3f& reference);
 
 // **Which layout a record has is the object's class, not who sits in it.** A
 // record carries the networkables of the object (`GhostManager::readData`,

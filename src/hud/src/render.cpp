@@ -96,17 +96,59 @@ mesh::RenderMesh disc(const ScreenRect& rect, const Screen& screen, const std::s
   const float vMid = (v0 + v1) * 0.5f;
   const float uHalf = (u1 - u0) * 0.5f;
   const float vHalf = (v1 - v0) * 0.5f;
-  out.vertices.push_back(mesh::Vertex{{toNdcX(cx), toNdcY(cy), 0.0f}, normal, {uMid, vMid}});
-  for (int i = 0; i <= segments; ++i) {
+
+  // The circle as a polygon: screen position and texture coordinate together.
+  struct Corner {
+    float x, y, u, v;
+  };
+  std::vector<Corner> polygon;
+  polygon.reserve(static_cast<std::size_t>(segments) + 8);
+  for (int i = 0; i < segments; ++i) {
     const float angle =
         2.0f * 3.14159265358979f * static_cast<float>(i) / static_cast<float>(segments);
     const float ox = std::cos(angle);
     const float oy = std::sin(angle);
-    out.vertices.push_back(mesh::Vertex{{toNdcX(cx + ox * rx), toNdcY(cy + oy * ry), 0.0f},
-                                        normal,
-                                        {uMid + ox * uHalf, vMid + oy * vHalf}});
+    polygon.push_back(Corner{cx + ox * rx, cy + oy * ry, uMid + ox * uHalf, vMid + oy * vHalf});
   }
-  for (int i = 1; i <= segments; ++i) {
+
+  // Cut at the picture's edge. The minimap is drawn by the same call as the big
+  // map (`BF2.exe` 0x774A60, called from the minimap's paint at 0x7CEA42 and the
+  // big map's at 0x784D50), and the big map's picture is cut where it leaves the
+  // texture rather than stretched — measured on the original's spawn-screen dump
+  // (docs/research/spawn-screen-named.md). Sampling past 1 is what drew the
+  // edge row down the circle as streaks near Karkand's southern edge. The texture
+  // coordinate is linear in the screen position, so clipping in it is clipping the
+  // picture's rectangle on screen.
+  const auto clip = [&polygon](int axis, float bound, bool keepBelow) {
+    std::vector<Corner> kept;
+    kept.reserve(polygon.size() + 2);
+    const auto value = [axis](const Corner& c) { return axis == 0 ? c.u : c.v; };
+    const auto inside = [&](const Corner& c) { return keepBelow ? value(c) <= bound : value(c) >= bound; };
+    for (std::size_t i = 0; i < polygon.size(); ++i) {
+      const Corner& current = polygon[i];
+      const Corner& previous = polygon[(i + polygon.size() - 1) % polygon.size()];
+      const bool in = inside(current), wasIn = inside(previous);
+      if (in != wasIn) {
+        const float t = (bound - value(previous)) / (value(current) - value(previous));
+        kept.push_back(Corner{previous.x + (current.x - previous.x) * t,
+                              previous.y + (current.y - previous.y) * t,
+                              previous.u + (current.u - previous.u) * t,
+                              previous.v + (current.v - previous.v) * t});
+      }
+      if (in) kept.push_back(current);
+    }
+    polygon = std::move(kept);
+  };
+  clip(0, 0.0f, false);
+  clip(0, 1.0f, true);
+  clip(1, 0.0f, false);
+  clip(1, 1.0f, true);
+
+  // A convex polygon stays convex under the cut: a fan from its first corner.
+  for (const Corner& c : polygon) {
+    out.vertices.push_back(mesh::Vertex{{toNdcX(c.x), toNdcY(c.y), 0.0f}, normal, {c.u, c.v}});
+  }
+  for (std::size_t i = 1; i + 1 < polygon.size(); ++i) {
     out.indices.push_back(0);
     out.indices.push_back(static_cast<std::uint32_t>(i));
     out.indices.push_back(static_cast<std::uint32_t>(i + 1));
@@ -368,7 +410,18 @@ std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& fon
         over.height -= kBarInset;
         Color tint = node.color;
         tint.a *= kCombatAreaAlpha;
-        pieces.push_back(DrawPiece{quad(over, screen, context.combatAreaTexture),
+        // The part of the hatch's square the window shows (the whole of it at
+        // zoom 0, where the window is that square).
+        const float spanU = context.combatAreaU1 - context.combatAreaU0;
+        const float spanV = context.combatAreaV1 - context.combatAreaV0;
+        float s0 = 0.0f, s1 = 1.0f, t0 = 0.0f, t1 = 1.0f;
+        if (spanU > 0.0f && spanV > 0.0f) {
+          s0 = (context.mapU0 - context.combatAreaU0) / spanU;
+          s1 = (context.mapU1 - context.combatAreaU0) / spanU;
+          t0 = (context.mapV0 - context.combatAreaV0) / spanV;
+          t1 = (context.mapV1 - context.combatAreaV0) / spanV;
+        }
+        pieces.push_back(DrawPiece{quad(over, screen, context.combatAreaTexture, s0, s1, t0, t1),
                                    context.combatAreaTexture, &node, tint});
       }
 

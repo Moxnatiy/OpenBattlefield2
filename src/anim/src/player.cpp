@@ -98,8 +98,8 @@ void Player::update(const System& system, const State& state, float step,
     if (bundle == nullptr || bundle->animations.empty()) continue;
 
     // The playback speed: a movement bundle runs at the ground speed divided by
-    // the speed its clips were animated at — the third number of the trigger's
-    // value holder. Which holder belongs to a bundle is not in the bundle itself,
+    // the speed its clips were animated at — the second number of the trigger's
+    // value holder (+0x8, `applyAnimations` Linux 0x6cdabf). Which holder belongs to a bundle is not in the bundle itself,
     // so the trigger that asked for it is found by its name.
     float speed = 1.0f;
     if (const ValueHolder* holder = system.holderForBundle(bundle->name);

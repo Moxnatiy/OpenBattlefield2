@@ -1719,9 +1719,111 @@ The readers:
   10, 8 bits per component (the table at 0x9791c4 starts with 28 at level 0), times
   the precision, plus the base.
 
-Still to check on data: which objects are physical (a quaternion read from the
-right place has a length of 1 before normalising — the test for it), and the
-quaternion's convention against a spawner's rotation from the level.
+Checked on data (the live Karkand server, one run, 568 rotations): read as
+physical, every vehicle's quaternion (jeep, tank, LAV) is 1 long; the radars,
+the guns and the bipods are 1 long only read as **not** physical — their full
+record carries 0x8 in the mask and no angular velocity. So whether 0x4 and 0x8 are
+there is the object's, as the client asks it; ours tells it by that length
+(`readSimpleObjectState`), and then all 568 were 1 long. The convention: the
+quaternion is a row-vector one — read straight, its yaw is the spawner's with the
+sign turned on all 20 objects compared; conjugated, it is the spawner's to the
+degree. Ours draws a vehicle and places its collision by it.
+
+### What follows the head: the rest of the record is more networkables
+
+A vehicle's record is longer than its simple-object update. Measured on the live
+Karkand server (full records, mask 0x5849b, bits after the head — `readBits` is
+the head, the rest is the tail):
+
+| object | head | tail |
+|---|---|---|
+| radars, towers (`mobileradar_*_dest`, `aircontroltower*`) | 137–173 | 19 |
+| a jeep (1824) | 140 | 119 |
+| a tank (1830, T90) | 200 | 130 |
+| an M1A2 (1847), a Hum-Vee (1841) | 176 | 130, 107 |
+| a LAV (1832) | 140 | 213 |
+| guns, bipods, other props | 137–173 | 70–81 |
+
+A delta record (a mask with fewer bits) carries a tail of 29–90 bits on the jeep
+and tank. The tail is the object's other networkables, each with **its own mask**
+before its fields: `FUN_005b81c0` (0x5b81c0) calls `+0x30` (`setNetUpdate`) of
+every networkable of the descriptor in order, and the descriptor is built from the
+template tree by `FUN_006aaa10` (0x6aaa10, the `NetworkManager.cpp` error 0x34a:
+"Object … has too many statemasks (n) … and will crash the network" — more than 12
+unique networkable objects per descriptor). The classes in the client:
+`SimpleObject`, `PlayerControlObject`, `RotationalBundle` (a turret, a barrel, a
+spring), `Engine`, `Spring`, `DestroyableObject`, `DestroyableWindowsBundle`,
+`TargetObject`, `TriggerableTarget`, `Item`, `GenericProjectile`, `ControlPoint`,
+`Soldier`, the cameras (`Networkables\*.cpp`). Their layouts are in the Linux
+server (`bitfields.py --blocks <Class>::setNetUpdate`, 40 blocks for
+`RotationalBundleNetworkable` alone: a 16-bit field at 0x5d5e70, a string at
+0x5d5d88). **Two of the classes, read whole in the client** (`BF2.exe`, ev_09ba8b51…,
+ev_3688829f…):
+
+`RotationalBundleNetworkable::setNetUpdate` (0x6322e0), a turret, a barrel, a hud
+spring — a record's slot is 0x30 bytes at +0x58 of the networkable:
+
+| order | condition | read | slot field |
+|---|---|---|---|
+| mask | always | **7 bits** | |
+| 1 | 0x1 | `FUN_004fda60(n)` × 180 | +0x14, rotation about X, degrees |
+| 2 | 0x2 | the same | +0x18, about Y |
+| 3 | 0x4 | the same | +0x1c, about Z |
+| 4 | 0x8 | the same × `|template +0x250| × 16` | +0x08, a rate (the template's limit) |
+| 5 | 0x10 | the same × `|+0x254| × 16` | +0x0c |
+| 6 | 0x20 | the same × `|+0x258| × 16` | +0x10 |
+| 7 | 0x40 | 16 bits over 65535 mapped to −1..1 (under 3.05e-5 is 0) × 41 | +0x20 |
+
+`n` is 12 bits, 16 when the update is a baseline (`param_5 == 3`);
+`FUN_004fda60(n)` is `2 × (u / (2^n − 1)) − 1` with anything within
+`2 / (2^n − 1)` of zero taken as zero (0x4fda60; `n = 0x20` reads a raw float).
+Values under 0.001 are then zeroed. The object takes the three angles (its
++0x158..), the three rates (+0x164..) and the 0x40 value (+0x180), through
+`FUN_0066cff0`. The Linux mask is 0x3f (6 bits): the client's 0x40 is the one
+field the server's full mask does not carry.
+
+`PlayerControlObjectNetworkable::setNetUpdate` (0x635b40): it finds the control
+object up the chain (the interface 0xc4c5). With no seat list on that object it
+reads **11 bits**, a network id, and hands the update on to that child's own
+networkable (when the object's +0x140 allows); with seats, a **4-bit** mask:
+0x1, 0x2, 0x4 each a 4-bit ranged value (`ranged(0, 8) − 1`) choosing an item for
+seat 0, 1, 2 (`+0x6c(i)` list, `+0x78` to set it), and 0x8 one bit (`+0x12c`).
+
+**How the descriptor is made** (`FUN_006aaa10`, 0x6aaa10, with 0x6a8600 and
+0x6a8970): the tree is walked for every object that answers 0xc4c5 — each is a
+**group** — and for a group the walk goes down its children **except other
+control objects** (those are groups of their own), each object that has a
+networkable adding its class, in tree order (first child +0xec, siblings +0x2c).
+So a vehicle is a group per seat plus the root's, and the record is their
+networkables one after another, each reading its own mask (as above).
+**Not read:** which classes a given template class adds (the interface 0xc378's
+`+0xd4`, `+0x10`), so the tail cannot yet be cut into networkables for a
+particular vehicle; the wheel springs and the engine (`EngineNetworkable` mask
+0x327, `SpringNetworkable`) are unread. The tail passes by the record's length.
+
+**The tails, measured** (`openbf2 --connect … --trace-tails <id>` prints every record's bits
+after the head, `GhostRecord::tail`; Karkand's Humvee 1841, jeep 1824, T90 1830, LAV 1832):
+
+* a parked Humvee's record is **head 19 bits (mask 0) + a tail of exactly 29 bits, all zero**,
+  113 times of 114: with nothing changed the tail is only its networkables' own masks, so the
+  masks of a Humvee's descriptor add up to 29 bits. The same Humvee's full record carries a
+  107-bit tail: 78 bits of fields;
+* the other vehicles' tails grow in **steps of 12 bits** (jeep 41, 53, 65, 81; tank 41, 53,
+  65, 77, 89, 105…; LAV 90, 102, 106, 118…) with +4 and +16 steps between — the 12-bit
+  fields of `RotationalBundleNetworkable` (above) and 4-bit ones;
+* the **first seven bits** of a moving tank's, LAV's or jeep's tails are 1 or 9 in nine
+  records of ten (`1` = bit 0 alone, `9` = bits 0 and 3): read as a `RotationalBundle` mask
+  that is "rotation about X" with or without its rate — not what a turret does, so
+  **the first networkable of the tail is not the turret's** (or not a `RotationalBundle`).
+
+What this leaves is the **composition**: which networkable classes a template's descriptor holds
+and in which order. `FUN_006aa300..0x6aaa10` builds it from the template tree
+(`FUN_006a8970` collects every object whose slot `+0xd4` is not null — class id from
+`template->+0x10` — and `FUN_006a5e20` merges equal ones: the same class and the same
+wheel parameters (`0x947d`/`0x9472`) share one entry). With the per-class layouts
+(`EngineNetworkable` has 40-odd blocks including a string; `SpringNetworkable`, the target and
+destroyable ones are unread) the totals above are the check: every record has to end exactly.
+
 
 ## The client's clock and its tick budget
 

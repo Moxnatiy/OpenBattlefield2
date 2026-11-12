@@ -54,9 +54,30 @@ inline constexpr float kMapSizeTolerance = 3.0f;
 // 2.3.
 inline constexpr float kMapZoomBase = 2.3f;
 
-// There are three zoom indices: the tables in the map node hold three numbers
-// each (+0x6d8, +0x6e4, +0x6f0 — chosen at 0x77cf6a).
+// There are three zoom indices, and the index is not the exponent: it picks a
+// number out of one of three tables the constructor fills (`BF2.exe`
+// 0x781ad5..0x781b16), each of three floats:
+//   +0x6d8  the map collapsed into the corner (+0x68e off): 0.5, 1.5, 2.5
+//   +0x6e4  the map expanded (+0x68e on):                  0.0, 1.0, 2.0
+//   +0x6f0  the commander's view (HUD manager +0x1ec):      0.0, 1.0, 2.0
+// The row is `+0x68e`, the column the index: 0x77cb03..0x77cb14 computes
+// `[map + ((0x92 + row) * 3 + index) * 4]`, and 0x77395a reads it the same way.
+// (The commander's third number is rewritten from his camera's height by
+// 0x773870's neighbour, `updateCommanderZoom`, which we do not port.)
 inline constexpr int kMapZoomLevels = 3;
+inline constexpr float kMapZoomExponents[3][kMapZoomLevels] = {
+    {0.5f, 1.5f, 2.5f},
+    {0.0f, 1.0f, 2.0f},
+    {0.0f, 1.0f, 2.0f},
+};
+
+// The index the map starts at: `mov eax, 1` at 0x781a88, stored into +0x6d0 at
+// 0x781ac9.
+inline constexpr int kMapZoomInitialIndex = 1;
+
+// Closer than this the smoothed exponent snaps onto its target: the float at
+// 0x8ebdfc (1e-4), compared at 0x77cb2d. The speed is the -6.0 at 0x930328.
+inline constexpr float kMapZoomSnapDistance = 0.0001f;
 
 // The HUD state numbers the map distinguishes (`BF2.exe`, 0x777e11 — a switch on
 // the state number; the state table is docs/functions/hud-states.md).
@@ -141,13 +162,23 @@ class MapNode {
   void setZoomIndex(int index);
   int zoomIndex() const { return zoomIndex_; }
 
+  // The zoom key's step: `cycleZoom` (0x7779a0 → `applyZoom(-1, true)` at
+  // 0x776670) — the next index, and past 2 back to 0. Unlike `setZoom`
+  // (0x777980, which does nothing unless the map is expanded) it works on the
+  // collapsed map too.
+  void cycleZoom();
+
+  // +0x68e: the map is expanded (`setExpanded`, written at 0x776a7b and
+  // 0x776a90) — the row of the zoom table.
+  bool expanded() const { return expanded_; }
+
   MapPoint position() const { return position_; }
   MapPoint size() const { return size_; }
 
   // +0x748/+0x74c — the smoothed centre, and it is what gets drawn.
   MapPoint centre() const { return centre_; }
 
-  // +0x698 — the smoothed zoom index.
+  // +0x698 — the smoothed zoom exponent.
   float zoom() const { return zoom_; }
 
   // How many times magnified. `pow(2.3, zoom)` — the base lies as a double
@@ -182,12 +213,14 @@ class MapNode {
   MapPoint targetCentre_{0.5f, 0.5f};
   MapPoint centre_{0.5f, 0.5f};
 
-  // The zoom: the index (+0x6d0) and the smoothed value (+0x698). The value is
-  // driven towards the index itself — visible from the comparison at 0x77d4ad,
-  // where +0x698 is checked against `(float)+0x6d0`.
-  int zoomIndex_ = 0;
+  // The zoom: the index (+0x6d0) and the smoothed exponent (+0x698), driven
+  // towards `kMapZoomExponents[row][index]` (0x77cae2..0x77cbe7). An earlier note
+  // here had it driven towards the index itself; the tables say otherwise.
+  int zoomIndex_ = kMapZoomInitialIndex;
   float zoom_ = 0.0f;
+  float zoomTarget() const;
 
+  bool expanded_ = false;
   bool commanderMode_ = false;
   bool snapNext_ = true;
   bool fullSize_ = false;

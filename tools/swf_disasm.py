@@ -315,16 +315,17 @@ def main():
         if args.block is not None and index != args.block:
             continue
         if args.list:
-            print("block %3d: %6d bytes" % (index, len(code)))
+            # A tag-26 block is named "<number> <instance>", the others are numbers.
+            print("block %3s: %6d bytes" % (index, len(code)))
             continue
         rows = disasm(code)
         if args.grep is None:
-            print("=== block %d (tag %d) ===" % (index, args.tag))
+            print("=== block %s (tag %d) ===" % (index, args.tag))
             render(rows)
             continue
         for i, row in enumerate(rows):
             if args.grep in row[3] or args.grep in row[2]:
-                print("=== block %d, line %d ===" % (index, i))
+                print("=== block %s, line %d ===" % (index, i))
                 render(rows[max(0, i - args.context):i + args.context])
     return 0
 

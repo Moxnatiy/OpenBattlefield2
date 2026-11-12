@@ -19,8 +19,9 @@
 #include "obf2/texture/dds.h"
 #include "obf2/vfs/filesystem.h"
 
-#if OBF2_HAVE_FLASH
-#include "obf2/flash/movie.h"
+#include "obf2/app/menu_movie.h"
+#if OBF2_HAVE_VIDEO
+#include "obf2/video/video.h"
 #endif
 
 namespace obf2::app {
@@ -44,6 +45,10 @@ class MainMenu {
     };
     std::vector<Click> clicks;
     int width = 800, height = 600;
+    // `@HOME@`: where the profiles are (`--home`).
+    std::filesystem::path homeDir;
+    // `--ruffle`: play the menu with Ruffle instead of our own player.
+    bool ruffle = false;
   };
 
   // Boots the engine (the profile, the levels, the localisation), binds the
@@ -53,7 +58,7 @@ class MainMenu {
             Scene& scene, const Options& options);
 
   // Opens the movie the original opens. `--flash` only overrides which one.
-  void openMovie(FileSystem& files, const Options& options);
+  void openMovie(FileSystem& files, engine::Engine& engine, const Options& options);
 
   // The movie's current frame, handed to the texture resolver under `#flash` —
   // like the combat-area hatch, a picture we make rather than a file.
@@ -71,6 +76,8 @@ class MainMenu {
 
   // What the menu asked the game for.
   const std::string& requestedLevel() const { return requestedLevel_; }
+  const std::string& requestedMode() const { return requestedMode_; }
+  int requestedSize() const { return requestedSize_; }
   bool quit() const { return quit_; }
 
   void release(gfx::MeshRenderer& renderer);
@@ -80,6 +87,8 @@ class MainMenu {
   int loadingQuad_ = -1;
   std::vector<int> loadingTextQuads_;
   std::string requestedLevel_;
+  std::string requestedMode_;
+  int requestedSize_ = 0;
   bool quit_ = false;
 
   // The background under the movie. `mainMenu.swf` holds no reference to
@@ -91,15 +100,30 @@ class MainMenu {
   bool backgroundReady_ = false;
   gfx::GpuMesh flashMesh_;
   bool flashUploaded_ = false;
+  // The startup movie on screen: `FSMoviePlayer::drawFrame` draws it as one quad
+  // over the whole window, corners ±1, UV 0..1 (`RendDX9.dll` 0x100a2aa5..
+  // 0x100a2af6) — stretched, no bars. Its picture goes out under `#movie`.
+  std::optional<texture::Texture> movieFrame_;
+  std::string movieName_;
+  gfx::GpuMesh movieMesh_;
+  bool movieUploaded_ = false;
+#if OBF2_HAVE_VIDEO
+  video::Video video_;
+#endif
+
+ public:
+  const std::optional<texture::Texture>& movieFrame() const { return movieFrame_; }
+
+ private:
   // A click is sent as two events: down first, and the release on the next frame,
   // **in the same place**. Flash does not separate them when both come at once,
   // and by the next frame the cursor is elsewhere — which Flash counts as
   // "released outside the button", so the button never fires.
-#if OBF2_HAVE_FLASH
   bool pressed_ = false;
   double pressX_ = 0.0, pressY_ = 0.0;
-  flash::Movie movie_;
-#endif
+  MenuMovie movie_;
+  // The engine's side the native player's bridge reads (kept alive with it).
+  swf::Host host_;
 };
 
 }  // namespace obf2::app

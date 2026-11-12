@@ -12,6 +12,7 @@
 // Keeping this in the frame loop makes no sense: there is no window here, no
 // time and no input — only packets. So it lives separately and is checked by a
 // test on captured traffic (`tests/data/bf2-spawned.bin`) rather than "by eye in the game".
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -33,6 +34,8 @@ struct RemoteObject {
   // The rotation it gave, when it gave one (bf2_events.h, CreateObject::rotation).
   std::optional<Vec3f> createdRotation;
   std::optional<float> yaw;  // degrees, when a yaw arrived: body yaw plus aim (soldier_state.h)
+  // A simple object's rotation from its record (x, y, z, w), the newest.
+  std::optional<std::array<float, 4>> rotation;
   // What the object is on the network, from its first full ghost record
   // (bf2_events.h, GhostClass). A soldier is a soldier by class — a jeep with a
   // player in it stays a jeep.
@@ -104,6 +107,11 @@ struct RemotePlayer {
   std::optional<int> kit;
   std::optional<bool> commander;
   std::optional<bool> sprint;
+  // The firing state, 0x40 (`setFiringState`, Linux 0x340): on while the player
+  // holds his weapon's trigger — the newest the server said. How the client turns
+  // it into rounds is not read.
+  std::optional<bool> firing;
+  int firingStates = 0;  // records that carried it, for the report
   std::optional<std::uint32_t> spawnGroup;   // 0x2, `getSpawnGroup`
   std::optional<std::uint32_t> spawnAtTick;  // 0x20
   std::optional<bool> manDown;               // 0x20
@@ -157,6 +165,12 @@ class WorldView {
 
   // How many positions arrived from the stream and how many we rejected as unreadable.
   int positionUpdates() const { return positionUpdates_; }
+  // Simple objects' rotations read, and how many of them were 1 long as read.
+  int rotations() const { return rotations_; }
+  int rotationsUnit() const { return rotationsUnit_; }
+  // `--trace-tails <id>`: print the bits after the head of every record of that
+  // simple object (bf2_events.h, GhostRecord::tail).
+  void traceTails(std::uint16_t id) { tailTrace_.insert(id); }
   // The server's spawn groups as the client's spawn manager keeps them: made or
   // updated by `CreateSpawnGroupEvent` (the same number is the same group,
   // `getCreateSpawnGroup`), dropped by `RemoveSpawnGroupEvent`, and changed by
@@ -237,6 +251,10 @@ class WorldView {
   std::function<float(const Vec3f&)> ground_;
   std::function<int(std::uint32_t)> inventorySize_;
   int positionUpdates_ = 0;
+  bool ownGhostStopReported_ = false;
+  int rotations_ = 0;
+  int rotationsUnit_ = 0;
+  std::set<std::uint16_t> tailTrace_;
   int rejected_ = 0;
   std::map<std::uint16_t, std::uint32_t> playerOf_;  // a player's network id -> his index
   std::vector<CreateSpawnGroup> spawnGroups_;
