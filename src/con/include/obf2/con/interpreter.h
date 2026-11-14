@@ -55,6 +55,23 @@ class FileProvider {
   virtual std::optional<std::string> loadText(std::string_view normalizedPath) = 0;
 };
 
+// A provider that passes every request on and remembers the paths asked for —
+// how a loader learns which files a run reached through `include` and `run`, so
+// that it does not run them a second time on their own.
+class RecordingProvider : public FileProvider {
+ public:
+  explicit RecordingProvider(FileProvider& inner) : inner_(inner) {}
+  std::optional<std::string> loadText(std::string_view normalizedPath) override {
+    loaded_.emplace_back(normalizedPath);
+    return inner_.loadText(normalizedPath);
+  }
+  const std::vector<std::string>& loaded() const { return loaded_; }
+
+ private:
+  FileProvider& inner_;
+  std::vector<std::string> loaded_;
+};
+
 struct Options {
   int maxIncludeDepth = 64;
   bool stopOnError = false;

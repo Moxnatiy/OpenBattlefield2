@@ -62,6 +62,13 @@ struct Bundle {
   bool looping = true;              // +0x2b, `isLooping` (written only when 0)
   bool playBackward = false;        // +0x2c; not read by the player — purpose not established
   bool playForever = false;         // +0x2d: a one-shot that has ended holds its last frame
+  // The priority of the trigger that plays it (`Trigger` +0x1c, given by
+  // `TriggerManager::setPriosForTriggers`, see `System::assignPriorities`): its
+  // player goes before the first of a higher one (`playBundle`), so the higher
+  // is laid on the skeleton last and wins its bones. A bundle under two triggers
+  // takes the later one's in the walk — the engine passes the priority of
+  // whichever trigger plays it, which ours does not track.
+  int priority = 0;
 };
 
 // The value range a MovementTrigger fires on. The first and the third numbers
@@ -177,6 +184,13 @@ class System {
                                          const Random& random = {}) const;
 
   const std::map<std::string, Animation>& animations() const { return animations_; }
+  // The length an animation plays over: `animationManager.length` when the
+  // system set one, else 0 (the file's own). `BoneAnimation::setLength` stores it
+  // with its reciprocal, and the sampler spreads **all** the clip's frames over it
+  // (`updateFrameCache`: `normalised = time * m_invLength`, OpenBF2
+  // BoneAnimation.cpp) — the M4's `1p_m4_tozoom.baf` plays in 0.083 s, not its
+  // file's 0.45.
+  float lengthOf(std::string_view path) const;
   const std::map<std::string, Bundle>& bundles() const { return bundles_; }
   // The value holder of the trigger that asks for this bundle, or null. The
   // holder's third number is the speed a movement bundle's clips were animated
@@ -192,6 +206,12 @@ class System {
   std::vector<std::string> roots() const;
 
   void feed(const con::Command& command);
+  // `TriggerManager::setPriosForTriggers` (OpenBF2 TriggerManager.cpp): every
+  // root, in the map's case-blind order, numbered depth first from 1 — a trigger
+  // before its children, each visit taking the next number; a trigger reached
+  // twice keeps the later. Each trigger's bundles take its number. `load` calls it
+  // once the script has run; a system fed by hand calls it itself.
+  void assignPriorities();
 
  private:
   // One trigger's `update`: false is the engine's "my child said no", which stops

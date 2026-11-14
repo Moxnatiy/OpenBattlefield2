@@ -23,8 +23,10 @@ field), setters 0x629620 (`setZoomDelay`), 0x629640 (`setChangeFovDelay`), 0x629
 | +0x54 | `zoom.disableMuzzleWhenZoomed` | 0 |
 
 The M24 (`usrif_m24.tweak`) is `zoomDelay 0.125`, `zoomLod 1`, factors 0 and **0.2**,
-`changeFovDelay 0.08`, `zoomOutAfterFire 1`, `disableMuzzleWhenZoomed 1`. The M4 and
-the SCAR have no zoom component at all.
+`changeFovDelay 0.08`, `zoomOutAfterFire 1`, `disableMuzzleWhenZoomed 1`. The M4
+(`USRIF_M4.tweak`) is `zoomDelay 0.08`, `zoomLod 1`, factors 0 and **0.7**,
+`disableMuzzleWhenZoomed 1`. An earlier note here said the M4 had no zoom
+component; it read the `.con`, and the component is in the `.tweak`.
 
 A zoom factor is the camera's field of view in radians, vertical (0.2 ≈ 11.5°
 against the soldier camera's own 1.1): `changeZoom` hands it to `Player::setFov(fov,
@@ -80,6 +82,33 @@ lod `zoomLod` at once when `zoomDelay` is 0 and otherwise leaves a flag (+0x3c) 
 change. Ours builds the arms a second time with the weapon at that lod and draws it
 instead (`FirstPersonView`, `Model::gpuZoom`). On the live server the scoped sniper
 shows the reticle over a view narrowed to 0.2 radians.
+
+### The M4's zoom lod is blended, not opaque
+
+The M4's lod 1 (`mesh_info … usrif_m4.bundledmesh 0 1`) is one range: `BundledMesh.fx`,
+technique `Alpha`, `alphaMode 1`, texture `usrif_m4_blurscope_c.dds` — a blurred
+picture of the scope's body whose alpha is zero in the eyepiece and around it. The
+shader's technique alpha (`BundledMesh.fx:668`) draws it `ZWriteEnable = FALSE,
+CullMode = NONE, AlphaBlendEnable = TRUE, SrcBlend = SRCALPHA, DestBlend =
+INVSRCALPHA`, alpha test at 0. Our renderer had no blended pass for meshes, so the
+picture covered the whole view opaque — a dark disc where the world should show.
+Now `GpuMesh::Range::alphaBlend` (a bundled mesh's `materialAlphaBlend`) is drawn
+after the opaque geometry through two blend pipelines (plain and skinned); live,
+the M4 shows the street through the eyepiece. The order of blended geometry is
+ours (unsorted), not read. `BundledMesh.fx` also has a technique `alphascope`
+(alpha × `1 − smoothstep(0.965, 1, N·E)`, no depth test); no string in
+`RendDX9.dll` names it, and which material would take it is not established.
+
+### The turn while zoomed
+
+The tick turns the look by the axes times `getMouseSpeedMod` (0x5ae27b; the
+player's field of view over the camera's — 0.2 / 1.1 for the M24). The frame between
+ticks showed the look plus the mouse not yet sent **without** that factor, so on a
+steady turn the view went 5.5 times too far each frame and stepped back at each tick
+(`--trace-frames`: yaw 90.6, 90.9, 90.71, 91.01, 90.82…). That was the scope's
+jitter and the weapon's jerking. The frame now scales the pending mouse by the same
+mod (`RemoteWorld::cameraYaw`): 0.0545° every frame on the same turn. That the
+original's per-frame camera (`FUN_0045c190`) takes the mod is not read.
 
 ## The bolt action (`DefaultAnimationComp`)
 

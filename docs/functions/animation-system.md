@@ -510,8 +510,25 @@ The events (`addEvent`, fired from `BundlePlayer::update`), the trigger's +0x2d
 and the bundle's +0x2e flags (purpose not established), `playBackward` (not read by
 the player), the left/right-foot phase, and the blend of several players on one
 skeleton — `applyAnimationsOnSkeleton` with two animations and two floats, plus
-`getSlerpFactor`. A new player is appended; the engine inserts it before the first
-one of a higher priority (`playBundle`).
+`getSlerpFactor`.
+
+**Priorities — done.** `TriggerManager::setPriosForTriggers` (OpenBF2
+TriggerManager.cpp) numbers every root in the map's case-blind order, depth first
+from 1, a trigger before its children; `playBundle` inserts a new player before the
+first of a higher priority. Ours: `System::assignPriorities` (after `load`), the
+bundle's `priority`, `Player` inserting by it. Before, a new player was appended:
+a run begun in the middle of a reload went after it and covered the reload's arms
+(live: `run` then `reload` in the list now, the reload pose on screen while
+walking). A bundle under two triggers takes the later one's number in the walk —
+the engine passes the playing trigger's, which ours does not track.
+
+**`animationManager.length` — done.** `BoneAnimation::setLength` stores the length
+and its reciprocal, and the sampler spreads all the clip's frames over it
+(`updateFrameCache`: `normalised = time * m_invLength`). 533 of the game's
+animation lines set one (`1p_m4_tozoom.baf` 0.083 s, `1p_m4_run.baf` 0.667 s). We
+read it and dropped it: the M4's zoom transition played 0.45 s instead of 0.083.
+Now `System::lengthOf` gives the player's length and the frame sampled is
+`time / length × frameCount` (first person and the world's soldiers).
 
 Who fills the state is not established either: `setTriggerMovement`'s caller in
 the client, the frame the direction is measured in, and where the idle time comes

@@ -13,6 +13,8 @@
 // Some events cannot be skipped by the table: their fields sit behind conditions
 // and the length depends on the contents. Those are marked separately, and their
 // parsing is written by hand.
+// Every event type the server sends is walked to its length here; which of them
+// are also decoded and acted on is docs/todo/network.md, §4–§7.
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -25,6 +27,9 @@
 #include "obf2/core/math.h"
 #include "obf2/net/bitstream.h"
 #include "obf2/net/player_state.h"
+#include "obf2/net/control_point_state.h"
+#include "obf2/net/projectile_state.h"
+#include "obf2/net/score_state.h"
 #include "obf2/net/soldier_state.h"
 
 namespace obf2::net::bf2 {
@@ -82,21 +87,32 @@ struct DataBlockPiece {
   std::vector<std::byte> chunk;
 };
 
-// The level's details — block type 5, which the server sends right after
-// registration (`GameServer::sendClientMapInfo` hands over the `MapInfo`).
-struct MapInfo {
+// The server's map rotation — block type 5, sent with the server info right
+// after authentication (`GameServer::authOk`; OpenBF2 MapList.cpp,
+// `generateDataBlock` / `updateFromDataBlock`): a u16 count, a u16 index of the
+// map being played, then per entry a u16-length name, a u16-length game mode and
+// a u16 size, all little-endian. It is **not** the level the client loads — that
+// is block 2 (`GameClient::handleDataBlock` case 2). We once took this block's
+// first entry for the level, which is wrong whenever the rotation has more than
+// one map.
+struct MapListEntry {
   std::string levelName;
   std::string gameMode;
   int size = 0;
-  // The block's first number. It looks like the "challenge number" — the same
-  // line in the fingerprint files the server checks the content with. It is
-  // verified against a live server rather than taken on trust.
-  std::uint32_t first = 0;
+};
+struct MapList {
+  int current = 0;
+  std::vector<MapListEntry> entries;
+  // The entry the server is playing, or null when the index is out of range.
+  const MapListEntry* currentEntry() const {
+    return current >= 0 && static_cast<std::size_t>(current) < entries.size() ? &entries[current]
+                                                                               : nullptr;
+  }
 };
 
-inline constexpr std::uint32_t kMapInfoBlock = 5;
+inline constexpr std::uint32_t kMapListBlock = 5;
 
-std::optional<MapInfo> parseMapInfo(std::span<const std::byte> block);
+std::optional<MapList> parseMapList(std::span<const std::byte> block);
 
 // Block type 2 is the **real** `MapInfo`, the one assembled by
 // `MapInfo::updateNetBuffer` (0x4168b0). Block 5 beside it is simpler and carries
@@ -329,6 +345,12 @@ struct Event {
   // network id, 16). `executeClient` (Linux 0x42e1b0) has the client's spawn
   // manager drop the group (`removeClientSpawnGroup`, vtable 0x98).
   std::optional<std::uint8_t> removeSpawnGroup;
+  // `DestroyObjectEvent` (7): the network id (16) of an object the server
+  // destroyed — the client destroys it (`GameClient::destroyObject`, OpenBF2,
+  // `BF2.exe` 0x4d1f40). `DestroyPlayerEvent` (8): the id (8) of a player who
+  // left (`GameClient::destroyPlayer`).
+  std::optional<std::uint16_t> destroyObject;
+  std::optional<std::uint8_t> destroyPlayer;
   // `BeginRoundEvent` (type 56): the round's begin state and the tick it changes
   // next (`BeginRoundEvent::serialize`, Linux 0x41f3d0: 32 bits from +0x10, 32 bits
   // from +0x14). The states are `ServerGameLogic::uPlaying`'s: 0 not begun, 1
@@ -338,6 +360,47 @@ struct Event {
     std::uint32_t nextChangeTick = 0;
   };
   std::optional<BeginRound> beginRound;
+  // `EndOfRoundEvent` (type 48; OpenBF2 Game/GameEvents/EndOfRoundEvent.cpp,
+  // `deSerialize` Linux 0x8070a00): three 32-bit numbers in field order. The
+  // first is the rounds still to play on this map (the server sends
+  // `roundsPerMap - roundsPlayed - 1`, `ServerGameLogic::endGame`); the client
+  // hands it to the end-of-round movie, which offers "join game" only while it is
+  // above zero. Then the winning team and the victory type
+  // (`ScoreManager::forceSetWinner`, `setVictoryType`).
+  struct EndOfRound {
+    std::int32_t roundsLeft = 0;
+    std::int32_t winner = 0;
+    std::int32_t victoryType = 0;
+  };
+  std::optional<EndOfRound> endOfRound;
+  // `KilledByEvent` (type 21; OpenBF2 Game/GameEvents/KilledByEvent.cpp,
+  // `deSerialize`, Linux 0x42a920): killer 8, victim 8, "killer alive" 1, the
+  // material 16 (`fillKilledByData` narrows it), the **weapon's** template 32
+  // (`KilledByData +0x0C`), the killer's **vehicle** template 32 (+0x08 — his
+  // soldier on foot), the last hit bone 8, and the last hit direction, a
+  // compressed vector at 1/1000. The order is the wire's, not the struct's: a
+  // live kill from a T-90 came as `Coaxial_mg_mec` then `rutnk_t90`
+  // (tests/data/bf2-killed-by.bin).
+  struct KilledBy {
+    std::uint32_t killer = 0;
+    std::uint32_t victim = 0;
+    bool killerAlive = false;
+    std::uint32_t material = 0;
+    std::uint32_t weaponTemplate = 0;
+    std::uint32_t vehicleTemplate = 0;
+    std::uint32_t lastHitBone = 0;
+    Vec3f lastHitDirection;
+  };
+  std::optional<KilledBy> killedBy;
+  // `StringBlockEvent` (type 15; OpenBF2 StringBlockEvent.cpp `deSerialize`): a
+  // "new string" bit, then the string's size (8), or a chunk — an 8-bit length
+  // and the bytes (chat_string.h assembles them).
+  struct StringBlock {
+    bool isNew = false;
+    std::uint32_t size = 0;
+    std::vector<std::uint8_t> chunk;
+  };
+  std::optional<StringBlock> stringBlock;
   // The squads (OpenBF2 Game/GameEvents/<Name>.cpp, `deSerialize`):
   // `ChangeSquadNameEvent` (22) squad 8, team 8, player 8, an 8-bit length and
   // the name; `SetPrivateSquadEvent` (23) squad 8, team 8, private 1. The server
@@ -452,6 +515,14 @@ enum class GhostClass {
   Player,
   // `SpawnGroup`: known by the network id `CreateSpawnGroupEvent` names.
   SpawnGroup,
+  // `ScoreManager`: the static networkable 0x0201 (score_state.h).
+  ScoreManager,
+  // `ControlPointNetworkable` (control_point_state.h): an object the caller
+  // marked as one of the level's control points.
+  ControlPoint,
+  // `GenericProjectileNetworkable` (projectile_state.h): an object whose
+  // template's class is `GenericProjectile`, told by its create event's template.
+  Projectile,
 };
 
 // One ghost stream record (`GhostManager::readData`):
@@ -480,6 +551,13 @@ struct GhostRecord {
   std::optional<PlayerState> player;
   // A spawn group's state, likewise.
   std::optional<SpawnGroupState> spawnGroup;
+  // The round's score (score_state.h), likewise.
+  std::optional<ScoreState> score;
+  // A control point's state (control_point_state.h), likewise.
+  std::optional<ControlPointState> controlPoint;
+  // A projectile's state (projectile_state.h): kept whenever it fitted into the
+  // content, read whole or not (`complete` says which).
+  std::optional<ProjectileState> projectile;
   // A simple object's rotation (x, y, z, w, normalised) and the length it had as
   // read (readSimpleObjectState).
   std::optional<std::array<float, 4>> rotation;
@@ -594,7 +672,10 @@ std::optional<GhostHeader> readGhostHeader(std::span<const std::byte> packet);
 std::vector<GhostRecord> readGhostRecords(
     std::span<const std::byte> packet, const Vec3f& reference = {},
     const std::function<GhostClass(std::uint16_t)>& classOf = {},
-    const std::function<int(std::uint16_t)>& inventoryOf = {});
+    const std::function<int(std::uint16_t)>& inventoryOf = {},
+    // A projectile's armor (projectile_state.h): nothing for none; the outer
+    // optional empty when it is not known.
+    const std::function<std::optional<std::optional<ProjectileArmor>>(std::uint16_t)>& armorOf = {});
 
 // How a packet's event list was walked: how many the packet declares, how many
 // were read, and — when the walk broke off — the type it broke on. A broken walk
@@ -603,6 +684,11 @@ struct EventWalk {
   std::uint32_t declared = 0;
   std::uint32_t read = 0;
   std::optional<std::uint32_t> brokeOn;
+  // The block's own number (5 bits) and the resend bit (`GameEventManager::
+  // transmit`); `hasBlock` false when the packet carries no events.
+  bool hasBlock = false;
+  std::uint32_t block = 0;
+  bool resend = false;
 };
 
 // Walks a data packet and returns every event in it.

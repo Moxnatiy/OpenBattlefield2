@@ -128,7 +128,12 @@ WorldView::Look* WorldView::lookFor(const std::string& soldierName, const std::s
 std::optional<Mat4> WorldView::poseBody(std::uint16_t id, const net::bf2::RemoteObject& object,
                                         DrawnSoldier& drawn, const Mat4& place,
                                         float frameStep) {
-  if (object.ragdollParticles.empty() || object.ragdollExact == 0) {
+  // Our own soldier dead: no record of his body comes (the server stopped his ghost
+  // when he became our controlled object, and does not start it again), so his
+  // ragdoll is ours to run — `enableRagDoll`'s non-client mode, the one for an
+  // object that is not remote.
+  const bool ownDead = id == remote_->ourSoldier && !remote_->playerSpawned;
+  if (!ownDead && (object.ragdollParticles.empty() || object.ragdollExact == 0)) {
     bodies_.erase(id);
     return std::nullopt;
   }
@@ -152,15 +157,16 @@ std::optional<Mat4> WorldView::poseBody(std::uint16_t id, const net::bf2::Remote
       const Mat4 placed = place * local;
       std::copy(std::begin(placed.m), std::end(placed.m), std::begin(bone.m));
     }
-    anim::Ragdoll ragdoll(*ragdollTemplate_, world, object.lastVelocity);
+    anim::Ragdoll ragdoll(*ragdollTemplate_, world,
+                          ownDead ? remote_->body.velocity : object.lastVelocity);
     // `enableRagDoll`: not the server, and a remote object — the client's mode.
-    ragdoll.setClient(true);
+    ragdoll.setClient(!ownDead);
     found = bodies_.emplace(id, Body(std::move(ragdoll))).first;
     std::printf("  soldier %u lies down: a ragdoll of %zu particles\n", id,
                 found->second.ragdoll.particles().size());
   }
   Body& body = found->second;
-  if (body.fed != object.ragdollExact) {
+  if (!ownDead && body.fed != object.ragdollExact) {
     body.ragdoll.readNetwork(object.ragdollParticles);
     body.fed = object.ragdollExact;
     // The watched body, state by state: where the server has its hips (bone 6,
@@ -297,6 +303,79 @@ std::vector<WorldView::MapObject> WorldView::mapObjects() const {
   return out;
 }
 
+Mat4 WorldView::objectRotation(std::uint16_t id, const net::bf2::RemoteObject& object) {
+  if (object.rotation) {
+    // The engine's quaternion is a row-vector one: conjugated for ours.
+    const auto& r = *object.rotation;
+    return rotationFromQuaternion({-r[0], -r[1], -r[2], r[3]});
+  }
+  const auto found = resolved_.find(id);
+  if (found != resolved_.end() && found->second.placed.hasRotation) {
+    const auto& rotation = found->second.placed.rotation;
+    return rotationYawPitchRoll(rotation.x, rotation.y, rotation.z);
+  }
+  return Mat4::identity();
+}
+
+const std::vector<game::VehicleSeat>& WorldView::seatsOf(const std::string& vehicle) {
+  auto found = seatsByVehicle_.find(vehicle);
+  if (found == seatsByVehicle_.end()) {
+    found = seatsByVehicle_.emplace(vehicle, game::vehicleSeats(remote_->registry, vehicle)).first;
+  }
+  return found->second;
+}
+
+const anim::System* WorldView::seatSystem(const std::string& path) {
+  if (path.empty()) return nullptr;
+  auto found = seatSystems_.find(path);
+  if (found == seatSystems_.end()) {
+    found = seatSystems_.emplace(path, anim::System::load(*files_, normalizeAssetPath(path))).first;
+    if (!found->second) std::printf("  seat animation %s: did not load\n", path.c_str());
+  }
+  return found->second ? &*found->second : nullptr;
+}
+
+std::optional<Vec3f> WorldView::seatedAt(std::uint16_t soldier) {
+  const net::bf2::RemotePlayer* owner = remote_->world.ownerOf(soldier);
+  if (owner == nullptr || owner->object == soldier || owner->object == 0) return std::nullopt;
+  const auto seat = seatOf(owner->object);
+  if (!seat || !seat->seat->hasSeatInformation) return std::nullopt;
+  return transformPoint(seat->place, Vec3f{0.0f, 0.0f, 0.0f});
+}
+
+std::optional<WorldView::SeatAt> WorldView::seatOf(std::uint16_t seatId) {
+  // The vehicle is the nearest object at or below the seat's id whose template
+  // has that many seats (`analyseObject` numbers the seats on from the vehicle).
+  const auto& objects = remote_->world.objects();
+  for (std::uint16_t back = 0; back < 16 && back <= seatId; ++back) {
+    const std::uint16_t vehicleId = static_cast<std::uint16_t>(seatId - back);
+    const auto found = objects.find(vehicleId);
+    if (found == objects.end() || found->second.netClass == net::bf2::GhostClass::Soldier) continue;
+    const std::string* byNumber = remote_->templateNumbers.nameOf(found->second.templateId);
+    std::string name = byNumber != nullptr ? *byNumber : std::string{};
+    if (name.empty() || seatsOf(name).empty()) {
+      const auto placed = resolved_.find(vehicleId);
+      if (placed != resolved_.end()) name = placed->second.placed.templateName;
+    }
+    if (name.empty()) continue;
+    const auto& seats = seatsOf(name);
+    if (back >= seats.size()) continue;
+    SeatAt at;
+    at.vehicle = vehicleId;
+    at.seat = &seats[back];
+    const auto pose = remote_->world.poseOf(vehicleId, remote_->tick.pending / server::kTickTime);
+    const Vec3f position = pose ? pose->position : found->second.position;
+    at.place = translation(position) * objectRotation(vehicleId, found->second) * at.seat->transform;
+    if (seatReported_.insert(seatId).second) {
+      std::printf("  seat: object %u is %s's seat %d (%s%s)\n", seatId, name.c_str(), back,
+                  at.seat->templateName.c_str(),
+                  at.seat->hasSeatInformation ? "" : ", closed: no seatInformation");
+    }
+    return at;
+  }
+  return std::nullopt;
+}
+
 const gfx::GpuMesh* WorldView::vehicleMesh(std::uint16_t id,
                                            const net::bf2::RemoteObject& object) {
   // What it is, by the spot it was **created** on — a jeep that drove off stays a
@@ -343,7 +422,9 @@ void WorldView::collect(std::vector<gfx::MeshRenderer::DrawItem>& out, int frame
 
   for (const auto& [id, object] : remote_->world.objects()) {
     // We do not draw ourselves from inside.
-    if (id == remote_->ourSoldier && !options_.showOwnBox) continue;
+    // Dead, we are not inside him any more: the death camera looks at his body
+    // (obf2/app/death_camera.h), and the body is drawn like any other.
+    if (id == remote_->ourSoldier && remote_->playerSpawned && !options_.showOwnBox) continue;
     // By class, not by team: a jeep a player entered has a team and is still a
     // jeep, and a soldier whose `EnterVehicleEvent` came before we joined has none
     // and is still a soldier.
@@ -353,6 +434,13 @@ void WorldView::collect(std::vector<gfx::MeshRenderer::DrawItem>& out, int frame
     const auto pose = remote_->world.poseOf(id, remote_->tick.pending / server::kTickTime);
     Vec3f drawAt = pose ? pose->position : object.position;
     if (soldier && pose && !options_.drawPredicted) drawAt = carry(id, object, *pose);
+    // Our own body falls where our prediction left him: his ghost stopped when he
+    // became ours (kind 3), so its last record is older than his life. The body's
+    // position is his feet; the networked one is his pivot.
+    const bool ownDead = id == remote_->ourSoldier && !remote_->playerSpawned;
+    if (ownDead) {
+      drawAt = remote_->body.position + Vec3f{0.0f, remote_->physics.pivotHeight, 0.0f};
+    }
 
     // The measure of smoothness: how the pose was made, and the largest step
     // between two frames for an object that is moving.
@@ -375,26 +463,22 @@ void WorldView::collect(std::vector<gfx::MeshRenderer::DrawItem>& out, int frame
         // quaternion — docs/functions/network-events.md), and the spawner's until
         // one has arrived.
         const level::PlacedAt& placed = resolved_[id].placed;
-        Mat4 place = translation(drawAt);
-        if (object.rotation) {
-          // The engine's quaternion is a row-vector one: conjugated for ours.
-          const auto& r = *object.rotation;
-          const Mat4 q = rotationFromQuaternion({-r[0], -r[1], -r[2], r[3]});
-          place = place * q;
-          if (placed.hasRotation && rotationReported_.insert(id).second) {
-            const float yaw = std::atan2(q.m[8], q.m[10]) * 180.0f / 3.14159265f;
-            std::printf("  object %u's rotation: yaw %.1f from its record, %.1f from its "
-                        "spawner\n",
-                        id, yaw, placed.rotation.x);
-          }
-        } else if (placed.hasRotation) {
-          place = place * rotationYawPitchRoll(placed.rotation.x, placed.rotation.y,
-                                               placed.rotation.z);
+        const Mat4 rotation = objectRotation(id, object);
+        const Mat4 place = translation(drawAt) * rotation;
+        if (object.rotation && placed.hasRotation && rotationReported_.insert(id).second) {
+          const float yaw = std::atan2(rotation.m[8], rotation.m[10]) * 180.0f / 3.14159265f;
+          std::printf("  object %u's rotation: yaw %.1f from its record, %.1f from its "
+                      "spawner\n",
+                      id, yaw, placed.rotation.x);
         }
         out.push_back(gfx::MeshRenderer::DrawItem{vehicle, place});
         continue;
       }
       if (resolved_[id].placed.kind == level::PlacedAt::Kind::Static) continue;
+      // A projectile with no geometry (a smoke grenade's `Smokeflare`) has no mesh
+      // to draw; what the original shows of it is its effects, which we do not
+      // play yet (docs/functions/projectiles.md). No box stands in for it.
+      if (object.netClass == net::bf2::GhostClass::Projectile) continue;
     }
 
     // Every object that ends up a box says why, once: a box is a debt.
@@ -417,7 +501,11 @@ void WorldView::collect(std::vector<gfx::MeshRenderer::DrawItem>& out, int frame
     Vec3f base = drawAt;
     if (soldier) base.y -= remote_->physics.pivotHeight;
     Mat4 place = translation(base);
-    if (soldier && pose) place = place * rotationY(pose->bodyYaw * 3.14159265f / 180.0f);
+    if (ownDead) {
+      place = place * rotationY(remote_->look.bodyYaw * 3.14159265f / 180.0f);
+    } else if (soldier && pose) {
+      place = place * rotationY(pose->bodyYaw * 3.14159265f / 180.0f);
+    }
     // The watched soldier's height as drawn: the pose the track gave, how it was
     // made, and the newest update's vertical velocity — which the extrapolation
     // runs along (`SoldierNetworkable::predict`, Linux 0x5dc278).
@@ -450,7 +538,27 @@ void WorldView::collect(std::vector<gfx::MeshRenderer::DrawItem>& out, int frame
       // read (CLAUDE.md, "a vehicle's rotation"); until then such a soldier is not
       // drawn rather than drawn where he left. One whose records keep coming is
       // drawn where they put him.
+      // A seat we can find (vehicle_seats.h) puts him in it: the vehicle's place
+      // times the seat's `seatInformation`, in its `seatAnimationSystem`'s pose.
+      // A seat with no `seatInformation` (a tank's driver, a LAV's passengers) is
+      // closed and he is not drawn — **inferred** from the data, which gives such
+      // a seat no place; the engine's own rule for hiding him is not read.
+      std::optional<SeatAt> seated;
       if (const net::bf2::RemotePlayer* owner = remote_->world.ownerOf(id);
+          owner != nullptr && owner->object != id && owner->object != 0) {
+        seated = seatOf(owner->object);
+      }
+      if (seated) {
+        DrawStat& stat = stats_[id];
+        stat.vehicle = seated->vehicle;
+        ++stat.framesInVehicle;
+        if (!seated->seat->hasSeatInformation) {
+          ++stat.framesInClosedSeat;
+          continue;
+        }
+        ++stat.framesSeated;
+        place = seated->place;
+      } else if (const net::bf2::RemotePlayer* owner = remote_->world.ownerOf(id);
           owner != nullptr && owner->object != id && owner->object != 0) {
         const auto seat = remote_->world.objects().find(owner->object);
         if (seat != remote_->world.objects().end() &&
@@ -486,12 +594,19 @@ void WorldView::collect(std::vector<gfx::MeshRenderer::DrawItem>& out, int frame
           drawn = DrawnSoldier{};
           drawn.look = look;
           drawn.key = key;
-          const auto length = [this](const std::string& path) {
+          // A clip's `animationManager.length` when its system gives one
+          // (`anim::System::lengthOf`); a seat's system is checked where it plays.
+          const auto length = [this, look](const std::string& path) {
+            if (look->legs) {
+              if (const float set = look->legs->lengthOf(path); set > 0.0f) return set;
+            }
+            if (const float set = look->weapon.lengthOf(path); set > 0.0f) return set;
             const mesh::BoneAnimation* clip = clipAt(path);
             return clip != nullptr ? clip->duration() : 0.0f;
           };
           drawn.legs.setLengthOf(length);
           drawn.weapon.setLengthOf(length);
+          drawn.seat.setLengthOf(length);
         }
 
         // The state the conditions read: the speed and the direction the server
@@ -517,7 +632,14 @@ void WorldView::collect(std::vector<gfx::MeshRenderer::DrawItem>& out, int frame
           animState.direction[1] = 0.0f;
           animState.direction[2] = forward;
         }
-        if (look->legs) drawn.legs.update(*look->legs, animState, frameStep);
+        const anim::System* seatAnimation =
+            seated ? seatSystem(seated->seat->animationSystem) : nullptr;
+        if (seatAnimation != nullptr) {
+          // In a seat the seat's system is the whole pose: its `still` clip.
+          drawn.seat.update(*seatAnimation, anim::State{}, frameStep);
+        } else if (look->legs) {
+          drawn.legs.update(*look->legs, animState, frameStep);
+        }
         // A round: while his player's firing state is on (`setFiringState`, the
         // player's 0x40), one once-message 1 every `1800 / rpm` ticks — the
         // weapon's own rate, the default 600 a minute (weapon_fire.h) — to his
@@ -538,7 +660,9 @@ void WorldView::collect(std::vector<gfx::MeshRenderer::DrawItem>& out, int frame
             drawn.fireClock = 0.0f;
           }
         }
-        if (look->hasWeapon) drawn.weapon.update(look->weapon, animState, frameStep);
+        if (look->hasWeapon && seatAnimation == nullptr) {
+          drawn.weapon.update(look->weapon, animState, frameStep);
+        }
 
         // The legs first and the weapon over them: a clip touches only its own
         // bones, and the weapon's clips own the upper body (`mesh::poseSkeleton`).
@@ -552,12 +676,33 @@ void WorldView::collect(std::vector<gfx::MeshRenderer::DrawItem>& out, int frame
             // frames and wraps itself, the way the engine does
             // (`BoneAnimation::sample`). Rounding this down to a whole frame is what
             // made a soldier at sixty frames a second look like ten.
-            const float at = playing.time * mesh::kAnimationFramesPerSecond;
+            // A clip given its own length spreads all its frames over it
+            // (`BoneAnimation::updateFrameCache`, `anim::System::lengthOf`).
+            float set = look->legs ? look->legs->lengthOf(playing.path) : 0.0f;
+            if (set <= 0.0f) set = look->weapon.lengthOf(playing.path);
+            if (set <= 0.0f && seatAnimation != nullptr) set = seatAnimation->lengthOf(playing.path);
+            const float at = set > 0.0f
+                                 ? playing.time / set * static_cast<float>(clip->frameCount)
+                                 : playing.time * mesh::kAnimationFramesPerSecond;
             stages.push_back(mesh::PoseStage{clip, at, playing.weight});
           }
         };
-        addStages(drawn.legs);
-        addStages(drawn.weapon);
+        if (seatAnimation != nullptr) {
+          addStages(drawn.seat);
+          if (stats_[id].framesSeated == 30) {
+            std::printf("  seated %u: %s, clips playing %zu, stages %zu", id,
+                        seated->seat->animationSystem.c_str(), drawn.seat.playing().size(),
+                        stages.size());
+            for (const anim::PlayingAnimation& playing : drawn.seat.playing()) {
+              std::printf(" [%s weight %.2f clip %s]", playing.path.c_str(), playing.weight,
+                          clipAt(playing.path) != nullptr ? "loaded" : "MISSING");
+            }
+            std::printf("\n");
+          }
+        } else {
+          addStages(drawn.legs);
+          addStages(drawn.weapon);
+        }
         if (tracing) {
           // The yaw the direction is measured against, next to the heading of the
           // velocity itself. A sprinting soldier cannot strafe
@@ -605,7 +750,7 @@ void WorldView::collect(std::vector<gfx::MeshRenderer::DrawItem>& out, int frame
             const net::bf2::RemotePlayer* owner = remote_->world.ownerOf(id);
             if (owner != nullptr && owner->object != id) ++stat.bindPoseInVehicle;
           }
-          if (remote_->terrain != nullptr && bodies_.count(id) == 0) {
+          if (remote_->terrain != nullptr && bodies_.count(id) == 0 && !seated) {
             const float above = base.y - remote_->terrain->groundContactAt(base).height;
             stat.highestAboveGround = std::max(stat.highestAboveGround, above);
           }
@@ -624,6 +769,28 @@ void WorldView::collect(std::vector<gfx::MeshRenderer::DrawItem>& out, int frame
   }
 }
 
+std::uint16_t WorldView::watchProjectile() {
+  if (remote_ == nullptr) return 0;
+  const auto& objects = remote_->world.objects();
+  const auto drawable = [&](std::uint16_t id) {
+    const auto found = objects.find(id);
+    // In flight: it has moved since its first update — a placed charge (the
+    // level's C4) is a projectile too, and stands still.
+    return found != objects.end() &&
+           found->second.netClass == net::bf2::GhostClass::Projectile &&
+           found->second.travelled > 1.0f && vehicleMesh(id, found->second) != nullptr;
+  };
+  if (watchedProjectile_ != 0 && drawable(watchedProjectile_)) return watchedProjectile_;
+  watchedProjectile_ = 0;
+  for (const auto& [id, object] : objects) {
+    if (object.netClass != net::bf2::GhostClass::Projectile || !drawable(id)) continue;
+    watchedProjectile_ = id;
+    std::printf("  watching projectile %u\n", static_cast<unsigned>(id));
+    break;
+  }
+  return watchedProjectile_;
+}
+
 std::uint16_t WorldView::watchSoldier(const Vec3f& from) {
   // The camera holds on to **one** soldier. Taking the nearest every frame made it
   // jump from one to another as they passed each other, which reads as the watched
@@ -635,14 +802,16 @@ std::uint16_t WorldView::watchSoldier(const Vec3f& from) {
            id != remote_->ourSoldier;
   };
   if (watched_ != 0 && !stillThere(watched_)) watched_ = 0;
-  if (options_.watchPose >= 0 || options_.watchWeapon >= 0 || options_.watchRagdoll) {
+  if (options_.watchPose >= 0 || options_.watchWeapon >= 0 || options_.watchRagdoll ||
+      options_.watchSeated) {
     // `--watch-pose`, `--watch-weapon`, `--watch-ragdoll`: keep to a soldier in
     // that pose, with that item out, or lying as a ragdoll — the nearest there is.
     const auto inPose = [&](std::uint16_t id) {
       const net::bf2::RemoteObject& object = objects.at(id);
       return (options_.watchPose < 0 || static_cast<int>(object.lastPose) == options_.watchPose) &&
              (options_.watchWeapon < 0 || object.lastWeaponIndex == options_.watchWeapon) &&
-             (!options_.watchRagdoll || !object.ragdollParticles.empty());
+             (!options_.watchRagdoll || !object.ragdollParticles.empty()) &&
+             (!options_.watchSeated || seatedAt(id).has_value());
     };
     if (watched_ != 0 && inPose(watched_)) return watched_;
     float nearestInPose = 1e9f;
@@ -692,10 +861,10 @@ void WorldView::report() const {
   }
   for (const auto& [id, stat] : stats_) {
     if (stat.framesInVehicle == 0) continue;
-    std::printf("  soldier %u in vehicle %u: %d frames, his own records meanwhile %d, not "
-                "drawn %d frames\n",
-                id, stat.vehicle, stat.framesInVehicle, stat.recordsInVehicle,
-                stat.framesHiddenInVehicle);
+    std::printf("  soldier %u in vehicle %u: %d frames — seated %d, in a closed seat %d, seat "
+                "not found and not drawn %d (his own records meanwhile %d)\n",
+                id, stat.vehicle, stat.framesInVehicle, stat.framesSeated, stat.framesInClosedSeat,
+                stat.framesHiddenInVehicle, stat.recordsInVehicle);
   }
   for (const auto& [id, stat] : stats_) {
     if (stat.bindPose == 0 && stat.highestAboveGround < 0.5f) continue;

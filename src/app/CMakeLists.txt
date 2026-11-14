@@ -14,6 +14,8 @@ add_library(obf2_app
   src/collision_probe.cpp
   src/scripted_input.cpp
   src/scoreboard_players.cpp
+  src/kill_feed.cpp
+  src/death_camera.cpp
   src/spawn_circles.cpp
   src/crosshair.cpp
   src/ammo_hud.cpp

@@ -62,6 +62,18 @@ class ListData {
                   float y, Color color);
   // A cell with nothing in it: the engine's empty texture name (0x7c8090 with "").
   void addEmpty(int column);
+  // The cell at `row` of a column turned into a text cell, the font it starts with
+  // given (OpenBF2 BfListBoxData `setWideCell` / `setWideCell0x7c87f0`). A row
+  // past the column's end is ignored, as there.
+  void setText(int column, int row, std::string text, Color color, int font = 0);
+  // The text of a cell, empty when there is none.
+  const std::string& text(int column, int row) const;
+  // Every column's cell at `from` moved over `to`, the source emptied (`moveRow`
+  // = `copyRow` + `clearCell`), and a row's cells emptied in every column
+  // (`clearRow`).
+  void moveRow(int from, int to);
+  void clearRow(int row);
+
   // The row's background, on column 0's cell of that row (0x7c4af0).
   void setRowBackground(int row, Color color, float x, float y, float height);
 

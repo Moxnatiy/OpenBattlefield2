@@ -1,4 +1,5 @@
 add_library(obf2_game
+  src/vehicle_seats.cpp
   src/controls.cpp
   src/object_template.cpp
   src/template_numbers.cpp

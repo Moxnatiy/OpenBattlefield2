@@ -93,7 +93,33 @@ static void testOurAcknowledgement() {
   CHECK_EQ(static_cast<int>(link.pingHeader().sequence), static_cast<int>(header.sequence));
 }
 
+// The server's blocks are executed in their order: one that overtook a lost
+// block waits for it, a repeat is dropped (`processReceivedPacket`).
+static void testReceivedBlocksInOrder() {
+  Link link;
+  auto one = [](std::uint32_t type) {
+    bf2::Event event;
+    event.type = type;
+    return std::vector<bf2::Event>{event};
+  };
+  auto first = link.receiveBlock(0, one(10));
+  CHECK_EQ(first.size(), std::size_t{1});
+  CHECK(link.receiveBlock(2, one(12)).empty());  // block 1 lost: 2 waits
+  CHECK_EQ(link.blocksHeldBack(), 1);
+  CHECK_EQ(link.blocksOutOfOrder(), 1);
+  const auto both = link.receiveBlock(1, one(11));  // the resend frees both
+  CHECK_EQ(both.size(), std::size_t{2});
+  CHECK_EQ(both[0][0].type, 11u);
+  CHECK_EQ(both[1][0].type, 12u);
+  CHECK_EQ(link.blocksHeldBack(), 0);
+  CHECK(link.receiveBlock(1, one(11)).empty());  // a repeat
+  CHECK_EQ(link.blocksRepeated(), 1);
+  // The index wraps at 32.
+  for (unsigned i = 3; i < 34; ++i) CHECK_EQ(link.receiveBlock(i, one(i)).size(), std::size_t{1});
+}
+
 TEST_MAIN({
+  testReceivedBlocksInOrder();
   testOneBlockPerPacket();
   testLostBlockIsResent();
   testOurAcknowledgement();

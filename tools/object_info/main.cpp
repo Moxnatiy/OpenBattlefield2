@@ -4,14 +4,18 @@
 //   object_info <modDir> <name>          — show one template
 //   object_info <modDir> --tree <name>   — a template with its child hierarchy
 //   object_info <modDir> --collision <name> — the soldier's collision pieces of its tree
+//   object_info <modDir> --seats <name>  — a vehicle's seats in network order (vehicle_seats.h)
 
 #include <algorithm>
 #include <cstdio>
+#include <cctype>
 #include <map>
+#include <set>
 #include <string>
 
 #include "obf2/core/path.h"
 #include "obf2/game/object_template.h"
+#include "obf2/game/vehicle_seats.h"
 #include "obf2/server/collision_objects.h"
 #include "obf2/vfs/filesystem.h"
 
@@ -36,10 +40,25 @@ void buildRegistry(obf2::FileSystem& files, obf2::game::Registry& registry) {
   std::sort(paths.begin(), paths.end());
   paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
 
-  for (const auto& path : paths) {
-    obf2::con::Interpreter interpreter(
-        files, [&](const obf2::con::Command& command) { registry.feed(command); });
-    interpreter.runFile(path);
+  // The `.con` files first, then only the `.tweak`s none of them included — the
+  // same rule as the session's `buildRegistry` (a tweak run twice repeats its
+  // `addTemplate`s).
+  std::set<std::string> reached;
+  const auto key = [](std::string_view path) {
+    std::string out = obf2::normalizeAssetPath(path);
+    for (char& c : out) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return out;
+  };
+  for (const bool tweaks : {false, true}) {
+    for (const auto& path : paths) {
+      if ((obf2::assetExtension(path) == "tweak") != tweaks) continue;
+      if (tweaks && reached.count(key(path)) != 0) continue;
+      obf2::con::RecordingProvider recording(files);
+      obf2::con::Interpreter interpreter(
+          recording, [&](const obf2::con::Command& command) { registry.feed(command); });
+      interpreter.runFile(path);
+      for (const auto& loaded : recording.loaded()) reached.insert(key(loaded));
+    }
   }
 }
 
@@ -129,6 +148,20 @@ int main(int argc, char** argv) {
     std::sort(sorted.begin(), sorted.end(), [](auto& a, auto& b) { return a.second > b.second; });
     for (std::size_t i = 0; i < sorted.size() && i < 15; ++i) {
       std::printf("  %-28s %d\n", sorted[i].first.c_str(), sorted[i].second);
+    }
+    return 0;
+  }
+
+  // A vehicle's seats: the network id offset, the control object, the place.
+  if (what == "--seats" && argc > 3) {
+    const auto seats = obf2::game::vehicleSeats(registry, argv[3]);
+    std::printf("%s: %zu seats\n", argv[3], seats.size());
+    for (const auto& seat : seats) {
+      const obf2::Vec3f at = obf2::transformPoint(seat.transform, obf2::Vec3f{0, 0, 0});
+      std::printf("  +%d %-36s on %-28s at %7.3f %7.3f %7.3f  %s\n", seat.index,
+                  seat.templateName.c_str(),
+                  seat.hasSeatInformation ? seat.seatObject.c_str() : "(no seatInformation)", at.x,
+                  at.y, at.z, seat.animationSystem.c_str());
     }
     return 0;
   }

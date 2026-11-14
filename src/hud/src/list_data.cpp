@@ -80,6 +80,44 @@ void ListData::setRowBackground(int row, Color color, float x, float y, float he
   }
 }
 
+void ListData::setText(int column, int row, std::string text, Color color, int font) {
+  if (column < 0 || static_cast<std::size_t>(column) >= columns_.size()) return;
+  auto& cells = columns_[static_cast<std::size_t>(column)].cells;
+  if (row < 0 || static_cast<std::size_t>(row) >= cells.size()) return;
+  ListCell cell;
+  cell.text = std::move(text);
+  cell.color = color;
+  cell.font = font;
+  cells[static_cast<std::size_t>(row)] = std::move(cell);
+}
+
+const std::string& ListData::text(int column, int row) const {
+  static const std::string kEmpty;
+  if (column < 0 || static_cast<std::size_t>(column) >= columns_.size()) return kEmpty;
+  const auto& cells = columns_[static_cast<std::size_t>(column)].cells;
+  if (row < 0 || static_cast<std::size_t>(row) >= cells.size()) return kEmpty;
+  return cells[static_cast<std::size_t>(row)].text;
+}
+
+void ListData::moveRow(int from, int to) {
+  for (ListColumn& column : columns_) {
+    if (from < 0 || to < 0 || static_cast<std::size_t>(from) >= column.cells.size() ||
+        static_cast<std::size_t>(to) >= column.cells.size()) {
+      continue;
+    }
+    column.cells[static_cast<std::size_t>(to)] = column.cells[static_cast<std::size_t>(from)];
+    // `BfListBoxData::moveRow` is `copyRow` then `clearCell` of the source.
+    column.cells[static_cast<std::size_t>(from)] = ListCell{};
+  }
+}
+
+void ListData::clearRow(int row) {
+  for (ListColumn& column : columns_) {
+    if (row < 0 || static_cast<std::size_t>(row) >= column.cells.size()) continue;
+    column.cells[static_cast<std::size_t>(row)] = ListCell{};
+  }
+}
+
 int ListData::rows() const {
   return columns_.empty() ? 0 : static_cast<int>(columns_.front().cells.size());
 }

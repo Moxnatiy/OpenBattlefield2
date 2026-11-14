@@ -66,6 +66,13 @@ Args parseArgs(int argc, char** argv) {
       args.watchSoldier = true;
       args.watchRagdoll = true;
     }
+    else if (flag == "--watch-projectile" && i + 1 < argc) {
+      args.watchProjectileShot = argv[++i];
+    }
+    else if (flag == "--watch-seated") {
+      args.watchSoldier = true;
+      args.watchSeated = true;
+    }
     else if (flag == "--watch-weapon" && i + 1 < argc) {
       args.watchSoldier = true;
       args.watchWeapon = std::atoi(argv[++i]);
@@ -100,6 +107,7 @@ Args parseArgs(int argc, char** argv) {
       args.zooms.push_back(zoom);
     }
     else if (flag == "--reload-at" && i + 1 < argc) args.reloads.push_back(std::atoi(argv[++i]));
+    else if (flag == "--suicide-at" && i + 1 < argc) args.suicides.push_back(std::atoi(argv[++i]));
     else if (flag == "--fire-at" && i + 1 < argc) {
       Args::ScheduledFire fire{};
       if (std::sscanf(argv[++i], "%d:%d", &fire.frame, &fire.frames) != 2) {

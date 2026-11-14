@@ -21,6 +21,7 @@
 #include "obf2/anim/system.h"
 #include "obf2/app/render_context.h"
 #include "obf2/game/object_template.h"
+#include "obf2/game/vehicle_seats.h"
 #include "obf2/gfx/mesh_renderer.h"
 #include "obf2/level/level.h"
 #include "obf2/level/placement_index.h"
@@ -55,6 +56,8 @@ class WorldView {
     int watchWeapon = -1;
     // `--watch-ragdoll`: the same, for a dead soldier whose ragdoll the server sends.
     bool watchRagdoll = false;
+    // `--watch-seated`: a soldier sitting in a vehicle's open seat.
+    bool watchSeated = false;
   };
 
   // The server's vehicles and strategic objects as the map shows them: what each
@@ -80,6 +83,9 @@ class WorldView {
   // none — the camera then stays where it was.
   std::uint16_t watchSoldier(const Vec3f& from);
   std::uint16_t watched() const { return watched_; }
+  // `--watch-projectile`: a projectile in flight that has a mesh to draw, the same
+  // one while it lasts; 0 when there is none.
+  std::uint16_t watchProjectile();
 
   // How each object was drawn: interpolated, extrapolated or from the newest
   // update, the largest step between frames, and the feet under the terrain.
@@ -109,6 +115,7 @@ class WorldView {
     std::vector<mesh::Mat4> pose;
     anim::Player legs;
     anim::Player weapon;
+    anim::Player seat;  // his seat's `seatAnimationSystem`, while he sits
     float fireClock = 0.0f;  // seconds since the last round's message
     std::string key;
   };
@@ -150,8 +157,29 @@ class WorldView {
     int recordsAtEntry = -1;
     int recordsInVehicle = 0;
     int framesHiddenInVehicle = 0;
+    int framesSeated = 0;         // drawn in his seat
+    int framesInClosedSeat = 0;   // in a seat with no `seatInformation`: not drawn
     std::uint16_t vehicle = 0;
   };
+
+  // A seat's network id taken back to its vehicle (vehicle_seats.h): the
+  // vehicle's object, the seat, and where it is on screen now.
+  struct SeatAt {
+    std::uint16_t vehicle = 0;
+    const game::VehicleSeat* seat = nullptr;
+    Mat4 place = Mat4::identity();
+  };
+  std::optional<SeatAt> seatOf(std::uint16_t seatId);
+ public:
+  // Where a seated soldier is on screen (his seat's place), for the camera that
+  // watches him; nothing when he is not in an open seat.
+  std::optional<Vec3f> seatedAt(std::uint16_t soldier);
+ private:
+  // An object's rotation as drawn: its record's quaternion (conjugated — the
+  // engine's are row-vector ones), else its spawner's, else none.
+  Mat4 objectRotation(std::uint16_t id, const net::bf2::RemoteObject& object);
+  const std::vector<game::VehicleSeat>& seatsOf(const std::string& vehicle);
+  const anim::System* seatSystem(const std::string& path);
 
   const mesh::BoneAnimation* clipAt(const std::string& path);
   // A soldier, his kit and the `itemIndex` of the weapon he has out make one look.
@@ -221,7 +249,11 @@ class WorldView {
   std::unordered_map<std::string, std::optional<mesh::BoneAnimation>> clips_;
   std::map<std::uint16_t, DrawnSoldier> drawn_;
   std::map<std::uint16_t, DrawStat> stats_;
+  std::map<std::string, std::vector<game::VehicleSeat>> seatsByVehicle_;
+  std::map<std::string, std::optional<anim::System>> seatSystems_;
+  std::set<std::uint16_t> seatReported_;
   std::uint16_t watched_ = 0;
+  std::uint16_t watchedProjectile_ = 0;
   // The soldiers' ragdoll template, read once from the game's data.
   std::optional<anim::RagdollTemplate> ragdollTemplate_;
   bool ragdollTried_ = false;

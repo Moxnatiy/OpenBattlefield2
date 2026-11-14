@@ -853,8 +853,10 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
         color = mix(in.fogColor.rgb, color, visibility);
     }
     // Roads blend into the terrain by the alpha of their own texture
-    // (`Shaders_client.zip:Road.fx:78`, `outcolor.a = tex0.a`); everything else
-    // is opaque.
+    // (`Shaders_client.zip:Road.fx:78`, `outcolor.a = tex0.a`). A bundled mesh's
+    // `Alpha` material blends by its base map's alpha (`BundledMesh.fx`, technique
+    // alpha, `psAlpha`), flagged by `roadParams.y`; everything else is opaque.
+    if (in.roadParams.y > 0.5) return float4(color, albedo.a);
     return float4(color, in.material.y > 0.5 ? albedo.a * in.vertexAlpha : 1.0);
 }
 )MSL";
@@ -1018,6 +1020,10 @@ MeshRenderer::~MeshRenderer() {
   if (roadPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, roadPipeline_);
   if (skyPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, skyPipeline_);
   if (skinnedPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, skinnedPipeline_);
+  if (blendPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, blendPipeline_);
+  if (skinnedBlendPipeline_ != nullptr) {
+    SDL_ReleaseGPUGraphicsPipeline(gpu, skinnedBlendPipeline_);
+  }
   if (sampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, sampler_);
   if (normalSampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, normalSampler_);
   if (clampSampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, clampSampler_);
@@ -1163,7 +1169,19 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   std::memcpy(skinnedAttributes, attributes, sizeof(attributes));
   skinnedAttributes[9] = SDL_GPUVertexAttribute{9, 1, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, 0};
 
+  // A bundled mesh's `Alpha` material — a scope's blurred body, glass, a
+  // canopy: `BundledMesh.fx:668`, technique alpha, `ZEnable = TRUE,
+  // ZWriteEnable = FALSE, CullMode = NONE, AlphaBlendEnable = TRUE, SrcBlend =
+  // SRCALPHA, DestBlend = INVSRCALPHA`, with the alpha test at 0 kept. The same
+  // blend as the roads, without their depth bias.
+  SDL_GPUGraphicsPipelineCreateInfo blendInfo = info;
+  blendInfo.target_info.color_target_descriptions = &roadTarget;
+  blendInfo.depth_stencil_state.enable_depth_write = false;
+  blendInfo.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+  SDL_GPUGraphicsPipeline* blendPipeline = SDL_CreateGPUGraphicsPipeline(gpu, &blendInfo);
+
   SDL_GPUGraphicsPipeline* skinnedPipeline = nullptr;
+  SDL_GPUGraphicsPipeline* skinnedBlendPipeline = nullptr;
   if (skinnedVertexShader != nullptr) {
     SDL_GPUGraphicsPipelineCreateInfo skinnedInfo = info;
     skinnedInfo.vertex_shader = skinnedVertexShader;
@@ -1172,6 +1190,13 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
     skinnedInfo.vertex_input_state.vertex_attributes = skinnedAttributes;
     skinnedInfo.vertex_input_state.num_vertex_attributes = 10;
     skinnedPipeline = SDL_CreateGPUGraphicsPipeline(gpu, &skinnedInfo);
+    // The same blend for skinned geometry: the weapon in hand hangs on the
+    // first-person skeleton.
+    SDL_GPUGraphicsPipelineCreateInfo skinnedBlendInfo = skinnedInfo;
+    skinnedBlendInfo.target_info.color_target_descriptions = &roadTarget;
+    skinnedBlendInfo.depth_stencil_state.enable_depth_write = false;
+    skinnedBlendInfo.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+    skinnedBlendPipeline = SDL_CreateGPUGraphicsPipeline(gpu, &skinnedBlendInfo);
     SDL_ReleaseGPUShader(gpu, skinnedVertexShader);
   }
 
@@ -1181,6 +1206,8 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   if (roadPipeline == nullptr) return fail("road pipeline");
   if (skyPipeline == nullptr) return fail("sky pipeline");
   if (skinnedPipeline == nullptr) return fail("skinned pipeline");
+  if (blendPipeline == nullptr) return fail("blend pipeline");
+  if (skinnedBlendPipeline == nullptr) return fail("skinned blend pipeline");
 
   auto renderer = std::unique_ptr<MeshRenderer>(new MeshRenderer());
   renderer->device_ = &device;
@@ -1188,6 +1215,8 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   renderer->roadPipeline_ = roadPipeline;
   renderer->skyPipeline_ = skyPipeline;
   renderer->skinnedPipeline_ = skinnedPipeline;
+  renderer->blendPipeline_ = blendPipeline;
+  renderer->skinnedBlendPipeline_ = skinnedBlendPipeline;
 
   // The ground's light. Its own pass, its own file: what it is and what the
   // game does with it is in `obf2/gfx/terrain_light.h`. A failure here is not
@@ -1476,6 +1505,11 @@ void MeshRenderer::fillRanges(GpuMesh& gpuMesh, const mesh::RenderMesh& source,
       // (`obf2::mesh::materialAlphaTest`).
       range.alphaTest = mesh::materialAlphaTest(source_range.technique, source_range.alphaMode);
       range.bundledAlpha = source_range.fxFile.find("BundledMesh") != std::string::npos;
+      // Only a bundled mesh's: its shader's technique alpha is the one read
+      // (`BundledMesh.fx:668`). A static or skinned mesh's blended materials go
+      // through other shaders, not read, and stay opaque.
+      range.alphaBlend = range.bundledAlpha &&
+                         mesh::materialAlphaBlend(source_range.technique, source_range.alphaMode);
       range.leaf = source_range.leaf;
     }
     gpuMesh.ranges.push_back(range);
@@ -1994,10 +2028,17 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
   // frame allocates it once instead of once per soldier.
   std::vector<mesh::Mat4> palette;
   BoneUniforms boneUniforms{};
-  auto drawLayer = [&](Layer wanted) {
+  // `blended`: the second walk, over the ranges blended by their alpha only
+  // (`GpuMesh::Range::alphaBlend`), after everything opaque; the first walk
+  // leaves them out.
+  auto drawLayer = [&](Layer wanted, bool blended) {
     for (const DrawItem& item : items) {
       if (layerOf(item) != wanted) continue;
       if (item.mesh == nullptr || item.mesh->vertices == nullptr) continue;
+      if (blended && std::none_of(item.mesh->ranges.begin(), item.mesh->ranges.end(),
+                                  [](const GpuMesh::Range& r) { return r.alphaBlend; })) {
+        continue;
+      }
 
       Mat4 transform = item.transform;
       if (item.road) transform.m[13] += kRoadLift;
@@ -2007,11 +2048,11 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
       if (!item.sky && item.mesh->boundsRadius > 0.0f) {
         const Vec3f center = transformPoint(transform, item.mesh->boundsCenter);
         if (!frustum.intersectsSphere(center, item.mesh->boundsRadius)) {
-          ++culled_;
+          if (!blended) ++culled_;
           continue;
         }
       }
-      ++drawn_;
+      if (!blended) ++drawn_;
 
       const bool skinned = wanted == Layer::Skinned;
       const SDL_GPUBufferBinding vertexBindings[2] = {{item.mesh->vertices, 0},
@@ -2039,6 +2080,7 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
 
       for (const GpuMesh::Range& range : item.mesh->ranges) {
         if (range.indexCount == 0) continue;
+        if (range.alphaBlend != blended) continue;
 
         // Slot 1 is the light map. For the terrain it belongs to the range —
         // one patch, one map. For a placed object it belongs to the **item**:
@@ -2109,8 +2151,13 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
             (terrain && terrainMaterialsReady_ && range.chartA != nullptr) ? 1.0f : 0.0f;
         uniforms.terrainNear[3] = range.chartB != nullptr ? 1.0f : 0.0f;
         uniforms.material[0] = range.detailMultiply ? 1.0f : 0.0f;
+        // A blended range keeps its technique's test too: `AlphaRef = 0`,
+        // `AlphaFunc = GREATER` (`BundledMesh.fx:678`).
         uniforms.material[3] =
-            range.alphaTest ? 1.0f + (range.bundledAlpha ? 0.0f : 127.0f / 255.0f) : 0.0f;
+            range.alphaTest || range.alphaBlend
+                ? 1.0f + (range.bundledAlpha ? 0.0f : 127.0f / 255.0f)
+                : 0.0f;
+        uniforms.roadParams[1] = range.alphaBlend ? 1.0f : 0.0f;
         uniforms.treeSunColor[3] = range.leaf ? 1.0f : 0.0f;
         uniforms.fogShape[1] =
             range.normalMap == nullptr ? 0.0f : (range.normalOnDetailUv ? 2.0f : 1.0f);
@@ -2143,13 +2190,19 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
   };
 
   SDL_BindGPUGraphicsPipeline(pass, skyPipeline_);
-  drawLayer(Layer::Sky);
+  drawLayer(Layer::Sky, false);
   SDL_BindGPUGraphicsPipeline(pass, pipeline_);
-  drawLayer(Layer::Solid);
+  drawLayer(Layer::Solid, false);
   SDL_BindGPUGraphicsPipeline(pass, skinnedPipeline_);
-  drawLayer(Layer::Skinned);
+  drawLayer(Layer::Skinned, false);
   SDL_BindGPUGraphicsPipeline(pass, roadPipeline_);
-  drawLayer(Layer::Road);
+  drawLayer(Layer::Road, false);
+  // The blended ranges last, over everything opaque. Not sorted by distance:
+  // the order the original draws its transparent geometry in is not read.
+  SDL_BindGPUGraphicsPipeline(pass, blendPipeline_);
+  drawLayer(Layer::Solid, true);
+  SDL_BindGPUGraphicsPipeline(pass, skinnedBlendPipeline_);
+  drawLayer(Layer::Skinned, true);
 
   SDL_EndGPURenderPass(pass);
 }

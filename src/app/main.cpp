@@ -30,11 +30,13 @@
 #include "obf2/app/model_view.h"
 #include "obf2/app/render_context.h"
 #include "obf2/app/scene_build.h"
+#include "obf2/app/kill_feed.h"
 #include "obf2/app/scoreboard_players.h"
 #include "obf2/app/spawn_circles.h"
 #include "obf2/app/ammo_hud.h"
 #include "obf2/app/player_hud.h"
 #include "obf2/app/crosshair.h"
+#include "obf2/app/death_camera.h"
 #include "obf2/app/first_person.h"
 #include "obf2/app/world_view.h"
 #include "obf2/core/math.h"
@@ -461,6 +463,8 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
   std::function<void()> rebuildIngame;
   std::function<void()> rebuildSpawn;
   std::chrono::steady_clock::time_point lastAnimationTick = std::chrono::steady_clock::now();
+  int controlPointRevisionSeen = -1;  // the world's control-point revision on our map
+
 
   if (!bootMode) {
     obf2::hud::Manager::Setup hudSetup;
@@ -473,6 +477,10 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
     hudSetup.kit = args.kit;
     hudSetup.team = args.team;
     hudSetup.levelName = args.levelName;
+    if (remote != nullptr && !remote->serverGameMode.empty()) {
+      hudSetup.gameMode = remote->serverGameMode;
+      if (remote->serverSize > 0) hudSetup.size = remote->serverSize;
+    }
 
     obf2::hud::Manager::Hooks hooks;
     // What DONE does. There are two paths, and both are equally "real":
@@ -698,6 +706,7 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
     viewOptions.watchPose = args.watchPose;
     viewOptions.watchWeapon = args.watchWeapon;
     viewOptions.watchRagdoll = args.watchRagdoll;
+    viewOptions.watchSeated = args.watchSeated;
     worldView.init(files, registry, *renderer, resolveTexture, *remote, level ? &*level : nullptr,
                    viewOptions);
   }
@@ -792,6 +801,20 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
   }
 
   int frame = 0;
+  // `--watch-projectile`: frames the current projectile has been watched, and
+  // whether its screenshot was taken.
+  int projectileWatchedFrames = 0;
+  bool projectileShotTaken = false;
+  // Between a death and the next life (obf2/app/death_camera.h): the camera, where
+  // the soldier last stood and faced, his object, and `BF2HudManager`'s countdown
+  // to reopening the spawn screen (+0x2a8, from +0x2ac 5.0 — OpenBF2
+  // BF2HudManager.cpp, the constructor and `setDone`).
+  obf2::app::DeathCamera deathCamera;
+  bool aliveLastFrame = false;
+  obf2::Vec3f lastAliveAt;
+  float lastAliveYaw = 0.0f;
+  std::uint16_t deadSoldier = 0;
+  float respawnCountdown = 5.0f;
   const auto firstFrameAt = std::chrono::steady_clock::now();
   bool execDone = false;  // --exec is run once
   // How much time passed since the previous frame. The movement prediction has to
@@ -820,6 +843,9 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
     obf2::gfx::Device::InputState frameInput = device->readInput();
     // What the run gives itself: a turn, a run and a jump on named frames
     // (`obf2/app/scripted_input.h`).
+    for (const int suicideFrame : args.suicides) {
+      if (frame == suicideFrame && remote != nullptr) remote->commitSuicide();
+    }
     {
       const obf2::app::ScriptedFrame scripted = obf2::app::scriptedInput(args, frame);
       frameInput.mouseDeltaX += scripted.mouseDeltaX;
@@ -1024,7 +1050,7 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
           }
           remote->poseCameraKnown = true;
         }
-        const obf2::Vec3f offset = remote->eyeKnown ? remote->eyeOffset : remote->poseCamera[0];
+        const obf2::Vec3f offset = remote->eyeKnown ? remote->drawnEyeOffset() : remote->poseCamera[0];
         soldierEye = obf2::app::soldierEye(*remote->drawnSoldierPosition(),
                                            remote->physics.pivotHeight, remote->look.bodyYaw,
                                            offset);
@@ -1067,7 +1093,8 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
         const auto& object = objects.at(watched);
         const auto pose =
             remote->world.poseOf(watched, remote->tick.pending / obf2::server::kTickTime);
-        const obf2::Vec3f at = pose ? pose->position : object.position;
+        const auto seated = worldView.seatedAt(watched);
+        const obf2::Vec3f at = seated ? *seated : pose ? pose->position : object.position;
         lookTarget = at;
         eye = at + obf2::Vec3f{2.8f, 0.6f, 2.8f};
 
@@ -1090,6 +1117,78 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
                       fromUs, at.x, at.y, at.z, object.lastPose, object.lastWeaponIndex,
                       object.ragdollParticles.size());
         }
+      }
+    }
+
+    // A death: `GameLogic::killPlayer` turns the camera to view mode 6 on the
+    // dead soldier, and it stays there until the next life
+    // (obf2/app/death_camera.h). Without it the view froze where he fell.
+    if (remote != nullptr) {
+      const bool alive = remote->playerSpawned;
+      if (alive) {
+        if (const auto at = remote->drawnSoldierPosition()) lastAliveAt = *at;
+        lastAliveYaw = remote->look.bodyYaw;
+        deadSoldier = remote->ourSoldier;
+        deathCamera.stop();
+        respawnCountdown = 5.0f;
+      } else if (aliveLastFrame) {
+        // The body's matrix's third row: its facing.
+        const obf2::Mat4 facing =
+            obf2::rotationY(lastAliveYaw * 3.14159265358979323846f / 180.0f);
+        // The radius is the root's visual bounding radius × 3, at least 3
+        // (`setViewMode`); a soldier's radius is **not measured** here, and the
+        // engine's floor of 3 is what we take.
+        // The target is the soldier object's position — his pivot, not his feet.
+        deathCamera.start(lastAliveAt + obf2::Vec3f{0.0f, remote->physics.pivotHeight, 0.0f},
+                          obf2::Vec3f{facing.m[8], facing.m[9], facing.m[10]}, 0.0f);
+        std::printf("  death camera: on the body at %.1f %.1f %.1f, %s\n", lastAliveAt.x,
+                    lastAliveAt.y, lastAliveAt.z,
+                    remote->tracePlayer ? "turning from the killer" : "no killer to trace");
+      }
+      aliveLastFrame = alive;
+      if (deathCamera.active()) {
+        const auto& objects = remote->world.objects();
+        // The engine follows the body object while it exists. Ours has no record
+        // after his ghost stopped (kind 3), so the stored one is older than his
+        // life: the target stays where he died. That his object's position follows
+        // the ragdoll in the engine is **not read**.
+        std::optional<obf2::Vec3f> body;
+        (void)deadSoldier;
+        std::optional<obf2::Vec3f> killer;
+        if (remote->tracePlayer) {
+          const auto& players = remote->world.players();
+          if (const auto who = players.find(*remote->tracePlayer);
+              who != players.end() && who->second.alive.value_or(false)) {
+            if (const auto object = objects.find(who->second.object); object != objects.end()) {
+              killer = object->second.position;
+            }
+          }
+        }
+        const obf2::level::Level* ground = remote->terrain;
+        const auto view = deathCamera.update(
+            frameStep, body, killer, [ground](float x, float z) {
+              return ground != nullptr ? ground->groundHeightAt(obf2::Vec3f{x, 0.0f, z})
+                                       : -1e9f;
+            });
+        eye = view.eye;
+        lookTarget = view.target;
+      }
+    }
+
+    // `--watch-projectile`: the camera three metres beside a projectile in
+    // flight, looking at it — ours, for a screenshot, not the game's.
+    if (!args.watchProjectileShot.empty() && remote != nullptr && remote->playerSpawned) {
+      const std::uint16_t watched = worldView.watchProjectile();
+      const auto& objects = remote->world.objects();
+      if (watched != 0 && objects.count(watched) != 0) {
+        const auto pose =
+            remote->world.poseOf(watched, remote->tick.pending / obf2::server::kTickTime);
+        const obf2::Vec3f at = pose ? pose->position : objects.at(watched).position;
+        lookTarget = at;
+        eye = at + obf2::Vec3f{2.0f, 0.8f, 2.0f};
+        ++projectileWatchedFrames;
+      } else {
+        projectileWatchedFrames = 0;
       }
     }
 
@@ -1129,7 +1228,8 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
     // read — and the renderer's setter fits it to the aspect (`aspectFieldOfView`).
     // Anywhere else — the spawn screen's camera, the debugging cameras, our own
     // game — 1.05 is **not measured**.
-    const bool throughSoldier = soldierFov.has_value() && !args.camera && !args.watchSoldier;
+    const bool throughSoldier = soldierFov.has_value() && !args.camera && !args.watchSoldier &&
+                                args.watchProjectileShot.empty() && !deathCamera.active();
     const float fieldOfView =
         throughSoldier ? obf2::app::aspectFieldOfView(*soldierFov, 1.0f / aspect) : 1.05f;
     const obf2::Mat4 projection = obf2::perspective(fieldOfView, aspect, nearPlane, farPlane);
@@ -1178,7 +1278,8 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
       // (crosshair.h), on the first-person skeleton, through the first-person
       // camera — the same view, its own projection (`RendDX9.dll` 0x1002c35d).
       firstPersonItems.clear();
-      if (remote != nullptr && remote->playerSpawned && remoteSoldier && !args.watchSoldier) {
+      if (remote != nullptr && remote->playerSpawned && remoteSoldier && !args.watchSoldier &&
+          args.watchProjectileShot.empty()) {
         const auto soldier = remote->world.objects().find(remote->ourSoldier);
         const std::string* soldierName =
             soldier != remote->world.objects().end()
@@ -1259,6 +1360,21 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
             spring.forward = obf2::transformDirection(camera, obf2::Vec3f{0.0f, 0.0f, 1.0f});
             firstPersonView.update(state, frameStep, spring);
             firstPersonView.collect(firstPersonItems, camera);
+            if (frame >= args.traceFrom && frame < args.traceFrom + args.traceFrames) {
+              std::string playing;
+              for (const auto* player : {&firstPersonView.bodyPlayer(),
+                                         &firstPersonView.weaponPlayer()}) {
+                playing += player == &firstPersonView.bodyPlayer() ? " body:" : " | weapon:";
+                for (const auto& clip : player->playing()) {
+                  char line[96];
+                  std::snprintf(line, sizeof line, " %s %.3fs w%.2f", clip.bundle.c_str(),
+                                clip.time, clip.weight);
+                  playing += line;
+                }
+              }
+              std::printf("  trace frame %d first person: messages 0x%x, step %.4f,%s\n", frame,
+                          state.messages, frameStep, playing.c_str());
+            }
           }
         }
       }
@@ -1344,7 +1460,28 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
         // The map key toggles state 0 <-> 2. In the state table state 2
         // (BF2.exe 0x787008) turns on `MapShow` alone: the rest of the HUD
         // disappears on the big map.
-        hudManager.gameState(spawned ? (hudManager.bigMap() ? 2 : 0) : 1);
+        // Dead with DONE pressed, the spawn screen stays shut: the player watches the
+        // death camera and the server spawns him at his group. It opens when the
+        // group stops taking him for `+0x2ac` seconds — the countdown runs only then —
+        // and the HUD then takes the group back (`selectSpawnGroup(player, 0)`,
+        // `setDone(false)`). Without DONE it opens at once (`BF2HudManager::update`,
+        // OpenBF2 BF2HudManagerUpdate.cpp).
+        bool deadWaiting = false;
+        if (!spawned && remote != nullptr && deathCamera.active() &&
+            hudManager.spawnScreen().requested()) {
+          if (!remote->chosenGroupValid() && respawnCountdown >= 0.0f) {
+            respawnCountdown -= frameStep;
+          }
+          if (respawnCountdown <= 0.0f) {
+            respawnCountdown = 5.0f;
+            hudManager.spawnScreen().setRequested(false);
+            remote->clearSpawnGroup();
+            std::printf("  spawn screen: reopened, the chosen group no longer takes us\n");
+          } else {
+            deadWaiting = true;
+          }
+        }
+        hudManager.gameState(spawned || deadWaiting ? (hudManager.bigMap() ? 2 : 0) : 1);
         // Tab, held: the scoreboard over whatever the HUD is on, and back to it on
         // release (the game-input handler 0x758770, docs/functions/hud-states.md).
         // `--hud-screen Scoreboard` holds it for a screenshot.
@@ -1692,6 +1829,68 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
           const auto now = std::chrono::steady_clock::now();
           const float dt = std::chrono::duration<float>(now - lastAnimationTick).count();
           lastAnimationTick = now;
+          // The tickets on a live server: the score manager's ghost (score_state.h)
+          // through `HudInformationLayer::updateTickets` — our team's and the
+          // other's (`(team != 2) + 1`).
+          if (remote != nullptr && remote->world.score().known) {
+            const auto& score = remote->world.score();
+            const int own = remote->world.ownTeam() == 2 ? 2 : 1;
+            const int other = (own != 2) + 1;
+            const auto team = [&](int index) {
+              const auto& t = score.teams[static_cast<std::size_t>(index - 1)];
+              return obf2::hud::Manager::TeamTickets{t.tickets, t.ticketBleed, t.ticketState};
+            };
+            hudManager.updateTickets(team(own), team(other), dt);
+          }
+          // The kill feed: each `KilledByEvent` as the HUD's lines (kill_feed.h).
+          if (remote != nullptr && !remote->kills.empty()) {
+            const auto local = obf2::app::localForHud(remote->world.players(),
+                                                      remote->world.ownPlayer(),
+                                                      remote->world.ownTeam());
+            for (const auto& kill : remote->kills) {
+              hudManager.killedBy(obf2::app::killForHud(kill, remote->world.players(),
+                                                        remote->world.ownPlayer(),
+                                                        remote->templateNumbers, remote->registry),
+                                  local);
+            }
+            remote->kills.clear();
+          }
+          // The chat: each assembled string as `Game::outputChatString` routes it.
+          if (remote != nullptr && !remote->chats.empty()) {
+            const auto& players = remote->world.players();
+            const int own = remote->world.ownPlayer();
+            for (const auto& chat : remote->chats) {
+              obf2::hud::Manager::ChatLine line;
+              line.channel = chat.channel;
+              line.type = chat.type;
+              line.text = chat.text;
+              if (const auto found = players.find(static_cast<std::uint32_t>(chat.sender));
+                  found != players.end()) {
+                line.senderKnown = true;
+                line.senderName = found->second.name;
+                line.senderTeam = found->second.team;
+                line.senderCommander = found->second.commander.value_or(false);
+                if (const auto self = players.find(static_cast<std::uint32_t>(own)); self != players.end()) {
+                  const auto squad = found->second.squad.value_or(0);
+                  line.speaker.squadColour = squad != 0 && self->second.team == found->second.team &&
+                                             self->second.squad.value_or(0) == squad;
+                }
+                line.speaker.commander = line.senderCommander;
+              }
+              hudManager.chatString(line, own >= 0);
+            }
+            remote->chats.clear();
+          }
+          // The control points' owners from their ghosts (control_point_state.h).
+          if (remote != nullptr &&
+              remote->world.controlPointRevision() != controlPointRevisionSeen) {
+            controlPointRevisionSeen = remote->world.controlPointRevision();
+            std::map<int, int> teams;
+            for (const auto& [id, point] : remote->world.controlPoints()) {
+              if (point.stateKnown) teams[point.levelId] = point.team;
+            }
+            hudManager.controlPointTeams(teams);
+          }
           hudManager.animate(dt, yaw, eye);
         }
 
@@ -1779,6 +1978,10 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
     for (const auto& [at, file] : args.screenshotAt) {
       if (at == frame) shotHere = &file;
     }
+    if (!projectileShotTaken && projectileWatchedFrames == 6) {
+      shotHere = &args.watchProjectileShot;
+      projectileShotTaken = true;
+    }
     if (shotHere != nullptr) {
       if (device->submitAndSave(*acquired, shotHere->c_str(), &error)) {
         std::printf("screenshot: %s (frame %d)\n", shotHere->c_str(), frame);
@@ -1801,6 +2004,12 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
     }
 
     if (menu.quit()) break;
+    // The server moved to another map: this session's level is gone (the session
+    // dropped every pointer into it), and the next session opens the new one.
+    if (remote != nullptr && remote->levelChanged) {
+      std::printf("  the server changed the map at frame %d: this level's session ends\n", frame);
+      break;
+    }
     // A level from the menu: we end the menu's session and pass the choice upwards.
     if (!menu.requestedLevel().empty()) break;
 
@@ -1935,7 +2144,26 @@ int main(int argc, char** argv) {
     }
 
     obf2::app::RenderContext shared;
-    const int code = runSession(args, files, nullptr, &remote, shared);
+    int code = runSession(args, files, nullptr, &remote, shared);
+    // A map change ends a session; the connection stays and the next level opens
+    // in the same window once the server has named it and we have mounted it.
+    while (code == 0 && remote.levelChanged) {
+      remote.levelChanged = false;
+      for (int i = 0; i < 60 && !remote.levelReady; ++i) remote.pump(500);
+      if (!remote.levelReady) {
+        std::fprintf(stderr, "the server did not name its next level\n");
+        break;
+      }
+      std::printf("next map: %s\n", remote.levelName.c_str());
+      args.levelName = remote.levelName;
+      args.focus.reset();
+      for (int i = 0; i < 20 && remote.objects.size() < 4; ++i) remote.pump(200);
+      if (!remote.objects.empty()) {
+        args.focus = remote.objects.begin()->second;
+        if (args.distance <= 0.0f) args.distance = 60.0f;
+      }
+      code = runSession(args, files, nullptr, &remote, shared);
+    }
     remote.report();
     remote.disconnect();
     return code;

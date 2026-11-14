@@ -279,6 +279,20 @@ static void testKilledByEventIsWalked() {
   if (events.size() == 2) {
     CHECK_EQ(events[0].type, 21u);
     CHECK_EQ(events[1].type, 11u);
+    // The kill read whole: a killer, a victim, two template numbers.
+    CHECK(events[0].killedBy.has_value());
+    if (events[0].killedBy) {
+      const auto& kill = *events[0].killedBy;
+      // Measured: a bot in a T-90 (5035, `rutnk_t90`) killing with its coaxial
+      // machine gun (5294, `Coaxial_mg_mec`), template numbers per
+      // template_numbers.h.
+      CHECK_EQ(kill.killer, 251u);
+      CHECK_EQ(kill.victim, 247u);
+      CHECK(kill.killerAlive);
+      CHECK_EQ(kill.weaponTemplate, 5294u);
+      CHECK_EQ(kill.vehicleTemplate, 5035u);
+      CHECK_EQ(kill.lastHitBone, 12u);
+    }
   }
   std::uint32_t previous = 0;
   for (const auto& packet : packets) {
@@ -320,6 +334,65 @@ static void testRoundResetIsWalked() {
 // The squad events as OpenBF2's `deSerialize` reads them: the name (22), the
 // lock (23) and the leader (28, `JoinSquadEvent`'s codec), then the server info
 // block's head (block 0) up to `votingEnabled`.
+// `DestroyObjectEvent` (7, a 16-bit id) and `DestroyPlayerEvent` (8, an 8-bit
+// id), as the client destroys what they name (OpenBF2 `GameClient`).
+static void testDestroyEvents() {
+  std::vector<std::byte> buffer(16);
+  obf2::net::BitWriter writer(buffer);
+  writer.writeBits(7, obf2::net::bf2::kEventTypeBits);
+  writer.writeBits(1795, 16);
+  writer.writeBits(8, obf2::net::bf2::kEventTypeBits);
+  writer.writeBits(251, 8);
+  obf2::net::BitReader reader(std::span<const std::byte>(buffer.data(), writer.byteSize()));
+  const auto object = obf2::net::bf2::readEvent(reader);
+  CHECK(object && object->destroyObject == 1795);
+  const auto player = obf2::net::bf2::readEvent(reader);
+  CHECK(player && player->destroyPlayer == 251);
+}
+
+// `EndOfRoundEvent` (48): rounds left, winner, victory type, 32 bits each; and
+// the map rotation (block 5): u16 count, u16 current, then name, mode, size.
+static void testEndOfRoundAndMapList() {
+  std::vector<std::byte> buffer(16);
+  obf2::net::BitWriter writer(buffer);
+  writer.writeBits(48, obf2::net::bf2::kEventTypeBits);
+  writer.writeBits(0, 32);
+  writer.writeBits(2, 32);
+  writer.writeBits(3, 32);
+  obf2::net::BitReader reader(std::span<const std::byte>(buffer.data(), writer.byteSize()));
+  const auto event = obf2::net::bf2::readEvent(reader);
+  CHECK(event && event->endOfRound);
+  CHECK_EQ(event->endOfRound->roundsLeft, 0);
+  CHECK_EQ(event->endOfRound->winner, 2);
+  CHECK_EQ(event->endOfRound->victoryType, 3);
+
+  std::vector<std::byte> block;
+  const auto u16 = [&](int value) {
+    block.push_back(static_cast<std::byte>(value & 0xFF));
+    block.push_back(static_cast<std::byte>(value >> 8));
+  };
+  const auto text = [&](const std::string& value) {
+    u16(static_cast<int>(value.size()));
+    for (const char c : value) block.push_back(static_cast<std::byte>(c));
+  };
+  u16(2);
+  u16(1);
+  text("strike_at_karkand");
+  text("gpm_cq");
+  u16(64);
+  text("dalian_plant");
+  text("gpm_coop");
+  u16(16);
+  const auto list = obf2::net::bf2::parseMapList(block);
+  CHECK(list.has_value());
+  CHECK_EQ(list->entries.size(), std::size_t{2});
+  CHECK(list->currentEntry() != nullptr);
+  CHECK(list->currentEntry()->levelName == "dalian_plant");
+  CHECK_EQ(list->currentEntry()->size, 16);
+  block.pop_back();  // a cut block does not parse
+  CHECK(!obf2::net::bf2::parseMapList(block).has_value());
+}
+
 static void testSquadEventsAndServerInfo() {
   std::vector<std::byte> buffer(64);
   obf2::net::BitWriter writer(buffer);
@@ -400,6 +473,8 @@ TEST_MAIN({
   testKilledByEventIsWalked();
   testRoundResetIsWalked();
   testSquadEventsAndServerInfo();
+  testDestroyEvents();
+  testEndOfRoundAndMapList();
   testKitAndPickupAreRead();
   testWorldCaptureIsFullyDecoded();
   testHeightsAreOnTheTerrain();

@@ -35,9 +35,11 @@
 #include <string_view>
 #include <deque>
 #include <functional>
+#include <map>
 #include <utility>
 #include <vector>
 
+#include "obf2/net/bf2_events.h"
 #include "obf2/net/bf2_protocol.h"
 #include "obf2/net/bitstream.h"
 
@@ -85,6 +87,18 @@ class Link {
   ExtendedHeader pingHeader() const;
   // Whether the send window has room for another data packet.
   bool canSend() const;
+
+  // The server's event blocks, executed in their order (`GameEventManager::
+  // processReceivedPacket`): a block waits until every block before it has come,
+  // then it and the ones waiting behind it are handed back, oldest first. A block
+  // already handed back, or already waiting, is dropped — the original would
+  // take a repeat for an error, but a repeat does happen when the server's answer
+  // about our acknowledgement is lost [CHOSEN, not recovered]: a block up to 16
+  // behind the next expected is taken for such a repeat.
+  std::vector<std::vector<Event>> receiveBlock(unsigned index, std::vector<Event> events);
+  int blocksHeldBack() const { return static_cast<int>(pending_.size()); }
+  int blocksRepeated() const { return blocksRepeated_; }
+  int blocksOutOfOrder() const { return blocksOutOfOrder_; }
 
   // Queue an event for the next data packet.
   void queue(EventBits event) { sendQueue_.push_back(std::move(event)); }
@@ -139,6 +153,12 @@ class Link {
   int nextSendBlock_ = 0;          // +0x7c
   int lastConfirmedBlock_ = 31;    // +0x84, "just before block zero"
   bool confirmed_[32] = {};        // +0xa4, a delivered block awaiting its turn
+
+  // The receiving side.
+  unsigned nextReceive_ = 0;                                   // +0x80
+  std::map<unsigned, std::vector<Event>> pending_;            // the parked blocks
+  int blocksRepeated_ = 0;
+  int blocksOutOfOrder_ = 0;
 
   int blocksSent_ = 0;
   int blocksResent_ = 0;

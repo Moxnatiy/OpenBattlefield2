@@ -1,7 +1,7 @@
 // capture_scan — walks a `--record` capture packet by packet and shows where the
 // walk goes astray.
 //
-//   capture_scan <capture.bin> [--all | --remote]
+//   capture_scan <capture.bin> [--all | --remote | --ghosts]
 //
 // A capture is what `openbf2 --connect … --record <file>` writes: for each data
 // packet a 32-bit length and the bytes. For every packet the tool reads the
@@ -11,11 +11,18 @@
 // walk that lost its place among the events. A flagged packet is printed with
 // every event type in it, in order, so the event whose length is wrong is in
 // front of you. `--all` prints every packet; `--remote` lists every remote event
-// (category, number, value) with the packet's ghost flag.
+// (category, number, value) with the packet's ghost flag. `--ghosts` lists every
+// network id the ghost stream named, low to high: how many records of each kind,
+// the class the walk gave it (by its create event or its full mask — which the
+// tool, having no events' world, only has from the mask and the fixed score
+// manager id), the shortest and longest content, and the first content's mask —
+// the way to tell a family of static networkables (the ids below 642,
+// `NetworkManager::regressNetworkableIds`) apart.
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -43,13 +50,56 @@ std::vector<std::vector<std::byte>> loadCapture(const char* path) {
 
 int main(int argc, char** argv) {
   if (argc < 2) {
-    std::fprintf(stderr, "usage: capture_scan <capture.bin> [--all | --remote]\n");
+    std::fprintf(stderr, "usage: capture_scan <capture.bin> [--all | --remote | --ghosts]\n");
     return 1;
   }
   const bool all = argc > 2 && std::strcmp(argv[2], "--all") == 0;
   const bool remote = argc > 2 && std::strcmp(argv[2], "--remote") == 0;
+  const bool ghosts = argc > 2 && std::strcmp(argv[2], "--ghosts") == 0;
   const auto packets = loadCapture(argv[1]);
   std::printf("%zu packets\n", packets.size());
+
+  if (ghosts) {
+    struct Seen {
+      int kinds[4] = {};
+      std::uint32_t shortest = UINT32_MAX, longest = 0;
+      std::uint32_t firstMask = 0;
+      bool haveMask = false;
+      obf2::net::bf2::GhostClass netClass = obf2::net::bf2::GhostClass::Unknown;
+    };
+    std::map<std::uint16_t, Seen> seen;
+    for (const auto& packet : packets) {
+      for (const auto& record : obf2::net::bf2::readGhostRecords(packet)) {
+        Seen& s = seen[record.networkId];
+        if (record.kind < 4) ++s.kinds[record.kind];
+        if (record.kind != 1) continue;
+        if (record.netClass != obf2::net::bf2::GhostClass::Unknown) s.netClass = record.netClass;
+        if (record.payloadBits < s.shortest) s.shortest = record.payloadBits;
+        if (record.payloadBits > s.longest) s.longest = record.payloadBits;
+        if (!s.haveMask) {
+          // The content's first 32 bits as they lie, whatever the class.
+          obf2::net::BitReader peek(packet);
+          if (peek.skipBits(record.payloadStart)) {
+            const unsigned width = record.payloadBits < 32 ? record.payloadBits : 32;
+            if (const auto bits = peek.readBits(width)) {
+              s.firstMask = *bits;
+              s.haveMask = true;
+            }
+          }
+        }
+      }
+    }
+    static const char* const kClass[] = {"?", "object", "soldier", "player", "spawn group",
+                                         "score", "control point"};
+    for (const auto& [id, s] : seen) {
+      std::printf("id %5u%s: kind0 %d kind1 %d kind3 %d, class %s, content %u..%u bits, first "
+                  "bits 0x%08x\n",
+                  id, id < 642 ? " (static)" : "", s.kinds[0], s.kinds[1], s.kinds[3],
+                  kClass[static_cast<int>(s.netClass)], s.shortest == UINT32_MAX ? 0 : s.shortest,
+                  s.longest, s.firstMask);
+    }
+    return 0;
+  }
 
   // `--remote`: every `PostRemoteEvent` (type 11) in order, with its category and
   // the packet's ghost flag. The join and the round's resets are told by these:

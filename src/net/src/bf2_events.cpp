@@ -107,12 +107,18 @@ bool skipDataBlock(BitReader& reader) {
   return reader.skipBits(*length * 8);
 }
 
-// `StringManagerEvent`: in the packets after registration it arrives empty.
+// `StringManagerEvent` (type 0), `deSerialize` Linux 0x431cb0: a flag (1), a
+// 6-bit length and that many bytes of text, a bit saying a value follows and the
+// value (8; -1 without it), then two flags (1, 1). We had read the first flag
+// alone — on an empty one that left 9 bits behind and threw the packet off.
 bool skipStringManager(BitReader& reader) {
-  const auto flag = reader.readBits(1);
-  if (!flag) return false;
-  if (*flag == 0) return true;
-  return reader.skipBits(6);
+  if (!reader.skipBits(1)) return false;
+  const auto length = reader.readBits(6);
+  if (!length || !reader.skipBits(*length * 8)) return false;
+  const auto hasValue = reader.readBits(1);
+  if (!hasValue) return false;
+  if (*hasValue == 1 && !reader.skipBits(8)) return false;
+  return reader.skipBits(2);
 }
 
 // `PostRemoteEvent`: the category, the number, the delay and how many data bytes.
@@ -307,6 +313,72 @@ std::optional<Event> readEvent(BitReader& reader) {
     event.beginRound = Event::BeginRound{*state, *tick};
     return event;
   }
+  if (*type == 15) {
+    Event::StringBlock block;
+    const auto isNew = reader.readBits(1);
+    if (!isNew) return std::nullopt;
+    block.isNew = *isNew == 1;
+    const auto size = reader.readBits(8);
+    if (!size) return std::nullopt;
+    if (block.isNew) {
+      block.size = *size;
+    } else {
+      // At most 63 bytes are kept (`MAX_CHUNK_SIZE`); a longer chunk's rest is
+      // read past, as the original does.
+      for (std::uint32_t i = 0; i < *size; ++i) {
+        const auto byte = reader.readBits(8);
+        if (!byte) return std::nullopt;
+        if (i < 63) block.chunk.push_back(static_cast<std::uint8_t>(*byte));
+      }
+    }
+    event.stringBlock = std::move(block);
+    return event;
+  }
+  if (*type == 21) {
+    Event::KilledBy kill;
+    const auto killer = reader.readBits(8);
+    const auto victim = reader.readBits(8);
+    const auto alive = reader.readBits(1);
+    const auto field04 = reader.readBits(16);
+    const auto weapon = reader.readBits(32);
+    const auto vehicle = reader.readBits(32);
+    const auto bone = reader.readBits(8);
+    if (!killer || !victim || !alive || !field04 || !vehicle || !weapon || !bone) return std::nullopt;
+    const auto direction = reader.readCompressedVector(Vec3f{}, 0.001f);
+    if (!direction) return std::nullopt;
+    kill.killer = *killer;
+    kill.victim = *victim;
+    kill.killerAlive = *alive == 1;
+    kill.material = *field04;
+    kill.vehicleTemplate = *vehicle;
+    kill.weaponTemplate = *weapon;
+    kill.lastHitBone = *bone;
+    kill.lastHitDirection = *direction;
+    event.killedBy = kill;
+    return event;
+  }
+  if (*type == 48) {
+    const auto rounds = reader.readBits(32);
+    const auto winner = reader.readBits(32);
+    const auto victory = reader.readBits(32);
+    if (!rounds || !winner || !victory) return std::nullopt;
+    event.endOfRound = Event::EndOfRound{static_cast<std::int32_t>(*rounds),
+                                         static_cast<std::int32_t>(*winner),
+                                         static_cast<std::int32_t>(*victory)};
+    return event;
+  }
+  if (*type == 7) {
+    const auto id = reader.readBits(16);
+    if (!id) return std::nullopt;
+    event.destroyObject = static_cast<std::uint16_t>(*id);
+    return event;
+  }
+  if (*type == 8) {
+    const auto id = reader.readBits(8);
+    if (!id) return std::nullopt;
+    event.destroyPlayer = static_cast<std::uint8_t>(*id);
+    return event;
+  }
   if (*type == 58) {
     // `RemoveSpawnGroupEvent`: the group's number, then its network id.
     const auto id = reader.readBits(8);
@@ -463,35 +535,36 @@ std::optional<std::pair<std::uint32_t, std::vector<std::byte>>> DataBlockAssembl
   return done;
 }
 
-std::optional<MapInfo> parseMapInfo(std::span<const std::byte> block) {
-  // The layout is taken from a live block: a u32, then three strings each
-  // preceded by a u16 length — the level's name, the game mode and the size.
-  BitReader reader(block);
-  const auto first = reader.readBits(32);
-  if (!first) return std::nullopt;
-
-  const auto text = [&reader]() -> std::optional<std::string> {
-    const auto length = reader.readBits(16);
-    if (!length || *length > 256) return std::nullopt;
-    std::string out;
-    for (std::uint32_t i = 0; i < *length; ++i) {
-      const auto byte = reader.readByte();
-      if (!byte) return std::nullopt;
-      out.push_back(static_cast<char>(*byte));
-    }
+std::optional<MapList> parseMapList(std::span<const std::byte> block) {
+  // OpenBF2 MapList.cpp `updateFromDataBlock`: host-order (little-endian) u16s and
+  // u16-length strings.
+  std::size_t at = 0;
+  const auto u16 = [&]() -> std::optional<int> {
+    if (at + 2 > block.size()) return std::nullopt;
+    const int value = std::to_integer<int>(block[at]) | (std::to_integer<int>(block[at + 1]) << 8);
+    at += 2;
+    return value;
+  };
+  const auto text = [&]() -> std::optional<std::string> {
+    const auto length = u16();
+    if (!length || at + static_cast<std::size_t>(*length) > block.size()) return std::nullopt;
+    std::string out(reinterpret_cast<const char*>(block.data() + at), static_cast<std::size_t>(*length));
+    at += static_cast<std::size_t>(*length);
     return out;
   };
-
-  MapInfo info;
-  const auto level = text();
-  const auto mode = text();
-  const auto size = reader.readBits(16);
-  if (!level || !mode || !size) return std::nullopt;
-  info.levelName = *level;
-  info.gameMode = *mode;
-  info.size = static_cast<int>(*size);
-  info.first = *first;
-  return info;
+  const auto count = u16();
+  const auto current = u16();
+  if (!count || !current) return std::nullopt;
+  MapList list;
+  list.current = *current;
+  for (int i = 0; i < *count; ++i) {
+    const auto name = text();
+    const auto mode = text();
+    const auto size = u16();
+    if (!name || !mode || !size) return std::nullopt;
+    list.entries.push_back(MapListEntry{*name, *mode, *size});
+  }
+  return list;
 }
 
 std::optional<SpawnGroupState> readSpawnGroupState(BitReader& reader) {
@@ -738,7 +811,8 @@ std::optional<GhostHeader> enterGhosts(BitReader& reader) {
 std::vector<GhostRecord> readGhostRecords(
     std::span<const std::byte> packet, const Vec3f& reference,
     const std::function<GhostClass(std::uint16_t)>& classOf,
-    const std::function<int(std::uint16_t)>& inventoryOf) {
+    const std::function<int(std::uint16_t)>& inventoryOf,
+    const std::function<std::optional<std::optional<ProjectileArmor>>(std::uint16_t)>& armorOf) {
   std::vector<GhostRecord> out;
   BitReader reader(packet);
   const auto header = enterGhosts(reader);
@@ -775,6 +849,8 @@ std::vector<GhostRecord> readGhostRecords(
       // know it yet, a full record names it by its mask.
       const std::size_t payloadEnd = payloadStart + *length;
       record.netClass = classOf ? classOf(record.networkId) : GhostClass::Unknown;
+      // The score manager's id is fixed on both sides (score_state.h).
+      if (record.networkId == kScoreManagerNetworkId) record.netClass = GhostClass::ScoreManager;
       if (record.netClass == GhostClass::Unknown) {
         BitReader peek(packet);
         if (peek.skipBits(payloadStart)) {
@@ -805,6 +881,35 @@ std::vector<GhostRecord> readGhostRecords(
           record.stateMask = state->mask;
           record.readBits = static_cast<std::uint32_t>(payload.bitPosition() - payloadStart);
           if (payload.bitPosition() <= payloadEnd) record.spawnGroup = *state;
+        }
+      } else if (record.netClass == GhostClass::ControlPoint && payload.skipBits(payloadStart)) {
+        if (auto state = readControlPointState(payload)) {
+          record.stateMask = state->mask;
+          record.readBits = static_cast<std::uint32_t>(payload.bitPosition() - payloadStart);
+          if (state->complete && payload.bitPosition() <= payloadEnd) record.controlPoint = *state;
+        }
+      } else if (record.netClass == GhostClass::Projectile && payload.skipBits(payloadStart)) {
+        const auto armor = armorOf ? armorOf(record.networkId)
+                                   : std::optional<std::optional<ProjectileArmor>>{};
+        if (auto state = readProjectileState(payload, reference, armor.value_or(std::nullopt),
+                                             armor.has_value())) {
+          record.stateMask = state->mask;
+          record.readBits = static_cast<std::uint32_t>(payload.bitPosition() - payloadStart);
+          if (payload.bitPosition() <= payloadEnd) {
+            record.position = state->position;
+            if (state->rotation) {
+              const Quatf& q = *state->rotation;
+              record.rotation = std::array<float, 4>{q.x, q.y, q.z, q.w};
+              record.rotationLength = 1.0f;
+            }
+            record.projectile = std::move(*state);
+          }
+        }
+      } else if (record.netClass == GhostClass::ScoreManager && payload.skipBits(payloadStart)) {
+        if (auto state = readScoreState(payload)) {
+          record.stateMask = state->mask;
+          record.readBits = static_cast<std::uint32_t>(payload.bitPosition() - payloadStart);
+          if (state->complete && payload.bitPosition() <= payloadEnd) record.score = *state;
         }
       } else if (record.netClass == GhostClass::Player && payload.skipBits(payloadStart)) {
         if (auto state = readPlayerState(payload)) {
@@ -998,8 +1103,14 @@ std::vector<Event> readEvents(std::span<const std::byte> packet, EventWalk* walk
   if (!hasEvents || *hasEvents != 1) return events;
   const auto count = reader.readBits(8);
   if (!count) return events;
-  reader.skipBits(5 + 1);
-  if (walk != nullptr) walk->declared = *count;
+  const auto block = reader.readBits(5);
+  const auto resend = reader.readBits(1);
+  if (walk != nullptr) {
+    walk->declared = *count;
+    walk->hasBlock = true;
+    walk->block = block.value_or(0);
+    walk->resend = resend.value_or(0) == 1;
+  }
 
   for (std::uint32_t i = 0; i < *count; ++i) {
     BitReader peek = reader;

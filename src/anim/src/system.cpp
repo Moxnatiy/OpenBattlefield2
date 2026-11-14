@@ -230,7 +230,42 @@ std::optional<System> System::load(FileSystem& files, const std::string& scriptP
     if (error) *error = "the script has no triggers at all";
     return std::nullopt;
   }
+  // `AnimationSystemTemplate::loadScript` numbers the triggers once the script
+  // has run (OpenBF2 AnimationSystem.cpp: `setPriosForTriggers`).
+  system.assignPriorities();
   return system;
+}
+
+void System::assignPriorities() {
+  std::map<std::string, int> priorityOf;
+  int counter = 0;
+  // The engine's recursion is unbounded; a depth limit keeps a looped tree from
+  // hanging ours.
+  std::function<void(const std::string&, int)> walk = [&](const std::string& name, int depth) {
+    const auto found = triggers_.find(key(name));
+    if (found == triggers_.end() || depth > 64) return;
+    priorityOf[found->first] = ++counter;
+    for (const std::string& bundle : found->second.bundles) {
+      if (const auto owned = bundles_.find(key(bundle)); owned != bundles_.end()) {
+        owned->second.priority = counter;
+      }
+    }
+    for (const std::string& child : found->second.children) walk(child, depth + 1);
+  };
+  // The roots in the map's own order — our keys are lower-cased, which is the
+  // engine's `NoCaseStringCompare` order (`roots()` sorts by the spelling).
+  std::set<std::string> children;
+  for (const auto& [name, trigger] : triggers_) {
+    for (const std::string& child : trigger.children) children.insert(key(child));
+  }
+  for (const auto& [name, trigger] : triggers_) {
+    if (children.count(name) == 0) walk(name, 0);
+  }
+}
+
+float System::lengthOf(std::string_view path) const {
+  const auto found = animations_.find(key(path));
+  return found == animations_.end() ? 0.0f : found->second.length;
 }
 
 const ValueHolder* System::holderForBundle(std::string_view bundle) const {

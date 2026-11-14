@@ -122,3 +122,28 @@ The spawn screen is the HUD's state 1, which stands while there is no soldier.
 On `--connect` "there is a soldier" is the session's `playerSpawned`, raised by
 the server's spawn and dropped by its death event; "DONE was pressed" stood in
 for it and never fell again, so after a death the screen did not come back.
+
+## Control points on the wire
+
+`ControlPointNetworkable::setNetUpdate` (OpenBF2 Game/Objects/Networkables/
+ControlPointNetworkable.cpp): a 7-bit mask — 0x01 the team (sign + 3 bits),
+0x02 "neutral" (1 bit), 0x04 the take-over counter and its change per second
+(16 bits each, a unit over -1.25..1.25 with a dead zone), 0x08 / 0x10 capture
+allowed for team 1 / 2 (sign 0 + 3 bits), 0x20 the flag's team, 0x40 the
+capturing state (sign + 3 bits). A full record is 60 bits, the take-over alone
+39 — both seen on the live server (`capture_scan --ghosts`).
+
+The points are **not** static networkables: they come with a `CreateObjectEvent`
+like any object (on Karkand co-op ids 2143..2146, templates 5720..5723) — the
+earlier note that "static ghosts have no create event" was wrong. The engine
+knows the class from the template; our template numbering does not reach the
+level's own templates, so `RemoteWorld::markIfControlPoint` names a created
+object a control point when it stands within 5 cm of one in the level's
+`GamePlayObjects.con` for the server's mode and size [CHOSEN, not recovered].
+Live: 4 of 4 named, 272 records, every one read to exactly its length; the
+owners moved hotel and square from the level file's team 1 to the server's 2,
+and the map's flags match.
+
+The HUD had taken its points from `gpm_cq/16` whatever the server played; on a
+co-op server that is another set of templates. It takes the server's mode and
+size now (`hud::Manager::Setup::gameMode`, `size`).

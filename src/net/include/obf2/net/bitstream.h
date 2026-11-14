@@ -72,6 +72,11 @@ inline constexpr std::uint32_t kCompressionVectorBitTable[4] = {32, 20, 16, 12};
 inline constexpr std::uint32_t kHighCompressionVectorBitTable[4] = {32, 12, 10, 8};
 inline constexpr std::uint32_t kCompressionVectorBitTable2[8] = {28, 24, 20, 16, 12, 10, 8, 0};
 
+// A rotation as the stream carries it.
+struct Quatf {
+  float x = 0.0f, y = 0.0f, z = 0.0f, w = 1.0f;
+};
+
 // How many bits go to the compression level.
 inline constexpr unsigned kCompressionLevelBits = 2;
 
@@ -97,6 +102,28 @@ class BitReader {
   // 7 is the base itself; 1..6 are three values of `0x4f9c10(bits)` — a sign
   // bit, then bits - 1 of magnitude — times the precision, plus the base.
   std::optional<Vec3f> readWideVector(const Vec3f& base, float precision);
+
+  // The rest of the engine's `BitStream` (OpenBF2 IO/BitStream.cpp), whole:
+  //   * `readHighCompressedVector`: `readCompressedVector` over the table
+  //     {32, 12, 10, 8};
+  //   * `readNormalAngle`: `bits` of (angle / pi + 1) / 2 over 2^bits - 1, or a
+  //     raw float of angle / pi at 32; a value within one step of zero is zero;
+  //   * `readNormalVector`: azimuth then elevation, both normal angles; the
+  //     vector is (cos az sin el, sin az sin el, cos el);
+  //   * `readUnitQuaternion3Comp`: w's sign bit, then x, y, z as components
+  //     (the normal angle's quantiser without the pi, the same dead zone); w is
+  //     the rest of the unit length, never below 0 under the root;
+  //   * `readUnitQuaternion`: w, x, y, z, no dead zone, then normalized (a zero
+  //     one is the identity).
+  // The writers multiply by the step's reciprocal where the readers divide by
+  // it, and truncate — as the engine's do.
+  std::optional<Vec3f> readHighCompressedVector(const Vec3f& reference, float precision) {
+    return readCompressedVector(reference, precision, kHighCompressionVectorBitTable);
+  }
+  std::optional<float> readNormalAngle(unsigned bits);
+  std::optional<Vec3f> readNormalVector(unsigned bits);
+  std::optional<Quatf> readUnitQuaternion3Comp(unsigned bits);
+  std::optional<Quatf> readUnitQuaternion(unsigned bits);
 
   std::optional<BasicHeader> readBasicHeader();
   std::optional<ExtendedHeader> readExtendedHeader();
@@ -126,6 +153,16 @@ class BitWriter {
 
   bool writeCompressedVector(const Vec3f& value, const Vec3f& reference, float precision,
                              const std::uint32_t (&table)[4] = kCompressionVectorBitTable);
+  bool writeHighCompressedVector(const Vec3f& value, const Vec3f& reference, float precision) {
+    return writeCompressedVector(value, reference, precision, kHighCompressionVectorBitTable);
+  }
+  // `writeCompressedVector2`: the 3-bit level; 7 for a difference under
+  // FLT_EPSILON, nothing after it.
+  bool writeWideVector(const Vec3f& value, const Vec3f& base, float precision);
+  bool writeNormalAngle(float angle, unsigned bits);
+  bool writeNormalVector(const Vec3f& normal, unsigned bits);
+  bool writeUnitQuaternion3Comp(const Quatf& rotation, unsigned bits);
+  bool writeUnitQuaternion(const Quatf& rotation, unsigned bits);
 
   bool writeBasicHeader(const BasicHeader& header);
   bool writeExtendedHeader(const ExtendedHeader& header);

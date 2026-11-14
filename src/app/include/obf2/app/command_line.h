@@ -75,7 +75,11 @@ struct Args {
   bool watchSoldier = false;
   int watchPose = -1;  // --watch-pose <n>: watch a soldier in this pose (world_view.h)
   int watchWeapon = -1;  // --watch-weapon <item>: ... with this `itemIndex` out (0x1000)
-  bool watchRagdoll = false;  // --watch-ragdoll: ... lying dead as a ragdoll (0x8000)
+  bool watchRagdoll = false;
+  bool watchSeated = false;  // --watch-seated: ... sitting in a vehicle's open seat  // --watch-ragdoll: ... lying dead as a ragdoll (0x8000)
+  // --watch-projectile <file>: the camera beside a projectile in flight that has a
+  // mesh, and a screenshot into <file> on the sixth frame it is watched.
+  std::string watchProjectileShot;
   // --mouse-scale: how many axis units one mouse pixel gives. The link
   // "pixels -> axis" lives in the client's `ControlMap` and is **not reversed
   // yet**, so this number is NOT measured — it plays the role of sensitivity and
@@ -171,6 +175,9 @@ struct Args {
   std::vector<ScheduledFire> fires;
   // --reload-at <frame> — the reload key pressed for that one frame.
   std::vector<int> reloads;
+  // --suicide-at <frame> — the spawn screen's suicide asked for on that frame
+  // (`RemoteWorld::commitSuicide`): a death to watch what follows it.
+  std::vector<int> suicides;
   // --select-at <frame>:<key> — the number key pressed for that one frame.
   struct ScheduledSelect {
     int frame;

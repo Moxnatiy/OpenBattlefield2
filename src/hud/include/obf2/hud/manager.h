@@ -21,6 +21,8 @@
 #include "obf2/game/controls.h"
 #include "obf2/game/object_template.h"
 #include "obf2/hud/animation.h"
+#include "obf2/hud/blinker.h"
+#include "obf2/hud/chat.h"
 #include "obf2/hud/bottom_left.h"
 #include "obf2/hud/hud.h"
 #include "obf2/hud/map_node.h"
@@ -63,6 +65,11 @@ class Manager {
     int kit = 0;
     int team = 1;
     std::string levelName;
+    // The game mode and the map size whose `GamePlayObjects.con` the maps' flags
+    // and spawn points come from: on a server, the ones its `MapInfo` and rotation
+    // name; in our own game the one it hosts.
+    std::string gameMode = "gpm_cq";
+    int size = 16;
   };
 
   // A screen visible only while a key is held: the scoreboard, the radio, the map
@@ -211,6 +218,60 @@ class Manager {
 
   // --- what the session fills in ---
   VariableMap& variables() { return variables_; }
+  // `HudInformationLayer::updateTickets` (PE 0x4646b0) for one frame: our team's
+  // and the other's tickets into `FriendlyTicketsString` / `EnemyTicketsString`,
+  // their bleed into the two float blinkers that drive `FriendlyTicketBleed` /
+  // `EnemyTicketBleed`, and our ticket state's tens digit for the low-ticket
+  // warning (a sound: 1 starts `lowOnTickets`, 0 stops it — we have no sound, so
+  // the change is logged).
+  struct TeamTickets {
+    int tickets = 0;
+    bool bleed = false;
+    int state = 0;
+  };
+  void updateTickets(const TeamTickets& friendly, const TeamTickets& enemy, float dt);
+
+  // The in-game chat (`HudChat`, list data 3 — chat.h).
+  Chat& chat() { return chat_; }
+  // A kill, as `BF2HudManager::handleGameLogicEvent` case 3 turns the
+  // `KilledByEvent` into lines (OpenBF2 BF2HudManagerGameLogicEvents.cpp). The
+  // caller resolves the players and the weapon's HUD name; the manager makes the
+  // text and puts it where the original does.
+  struct Kill {
+    int killer = 0;            // the event's byte 0 (0xFD/0xFE: artillery)
+    int victim = 0;            // byte 1
+    bool killerAlive = false;  // byte 2: there is a killer player
+    bool killerKnown = false, victimKnown = false;
+    std::string killerName, victimName;
+    int killerTeam = 0, victimTeam = 0;
+    Chat::Speaker killerSpeaker;
+    // The weapon's or vehicle's `hudName` (a localisation key), and whether a
+    // soldier's weapon had no weapon HUD at all.
+    std::string weaponKey;
+    bool missingWeapon = false;
+  };
+  struct Local {
+    int id = -1;
+    int team = 0;
+    bool commander = false;
+  };
+  void killedBy(const Kill& kill, const Local& local);
+  // A chat string the server sent, as `Game::outputChatString` (OpenBF2
+  // Game/Main/Game.cpp) routes it: channels 12 and 13 always, the others only
+  // with a local player; type 0 and 1 are game lines, 2 a player's chat, 3 a
+  // squad radio line "Name: text".
+  struct ChatLine {
+    int channel = 0;
+    int type = 0;
+    std::string text;
+    bool senderKnown = false;
+    std::string senderName;
+    int senderTeam = 0;
+    bool senderCommander = false;
+    Chat::Speaker speaker;
+  };
+  void chatString(const ChatLine& line, bool hasLocalPlayer);
+
   std::map<std::string, std::string>& strings() { return strings_; }
   std::map<std::string, float>& values() { return values_; }
   SpawnInterface& spawnScreen() { return spawnScreen_; }
@@ -220,6 +281,11 @@ class Manager {
   const Screen& screen() const { return screen_; }
   MapNode& map() { return map_; }
   const std::vector<level::ControlPoint>& controlPoints() const { return controlPoints_; }
+  // The points' owners as the server keeps them (`ControlPointNetworkable`,
+  // `setTeam`), by the level's `controlPointId`. The flags on both maps follow;
+  // the spawn screen's state is rebuilt when one changed. A point the server has
+  // not named keeps the level file's owner.
+  void controlPointTeams(const std::map<int, int>& teamById);
   float mapWorldSize() const { return context_.mapWorldSize; }
   // The red hatch over everything outside the combat area — a picture we make,
   // handed to the texture resolver under `#combatarea`.
@@ -265,6 +331,13 @@ class Manager {
   VariableMap variables_;
   std::map<std::string, std::string> strings_;
   std::map<std::string, float> values_;
+  // `HudInformationLayer`'s two ticket blinkers (PE 0x46B500 registration):
+  // gate value true, period 1, smooth.
+  FloatBlinker friendlyBleed_{true, 1.0f, true};
+  FloatBlinker enemyBleed_{true, 1.0f, true};
+  int listRevision(const Node& node) const;
+  bool lowOnTickets_ = false;  // +0x98
+  Chat chat_;
   std::map<std::string, float> alpha_;
   float backgroundAlpha_ = 0.0f;
 

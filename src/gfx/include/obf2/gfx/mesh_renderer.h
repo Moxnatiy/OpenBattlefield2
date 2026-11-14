@@ -38,6 +38,10 @@ struct GpuMesh {
     // alpha is above 0 (`AlphaRef = 0`, `AlphaFunc = GREATER`, in each of its
     // techniques); the static-mesh shader's reference is 127 of 255.
     bool bundledAlpha = false;
+    // Blended by the base map's alpha rather than cut: a bundled mesh's `Alpha`
+    // material (`obf2::mesh::materialAlphaBlend`; `BundledMesh.fx`, technique
+    // alpha). Drawn after the opaque geometry, through the blend pipelines.
+    bool alphaBlend = false;
     // Drawn as leaves: its own shader in the original, and its own two colours
     // (`obf2::mesh::markVegetationLeaves`).
     bool leaf = false;
@@ -355,6 +359,9 @@ class MeshRenderer {
   // The same pass as `pipeline_`, with the vertex stage moving every vertex by
   // its two bones first.
   SDL_GPUGraphicsPipeline* skinnedPipeline_ = nullptr;
+  // `BundledMesh.fx`'s technique alpha: blended, no depth write, no culling.
+  SDL_GPUGraphicsPipeline* blendPipeline_ = nullptr;
+  SDL_GPUGraphicsPipeline* skinnedBlendPipeline_ = nullptr;
   SDL_GPUGraphicsPipeline* overlayPipeline_ = nullptr;
   // The open upload batch: the command buffer every `upload` writes into, the
   // transfer buffers to free once it has been submitted, and how deep the nesting

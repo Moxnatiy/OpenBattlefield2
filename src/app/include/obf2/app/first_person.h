@@ -140,6 +140,9 @@ class FirstPersonView {
   int fireClipFrames() const { return fireClipFrames_; }
   // Frames each of the weapon's bundles carried the most weight, by name.
   const std::map<std::string, int>& bundleFrames() const { return bundleFrames_; }
+  // The two systems' players, for the frame trace (`--trace-frames`).
+  const anim::Player& bodyPlayer() const { return body_; }
+  const anim::Player& weaponPlayer() const { return weapon_; }
 
   // One frame of the two animation systems and of the camera spring. The spring
   // is the soldier's system's, with the weapon's merged over it (0x552c1e..
@@ -170,6 +173,9 @@ class FirstPersonView {
   };
 
   const mesh::BoneAnimation* clipAt(const std::string& path);
+  // The length a clip plays over when the current model's systems set one
+  // (`animationManager.length`), else 0.
+  float playLength(const std::string& path) const;
 
   FileSystem* files_ = nullptr;
   const game::Registry* registry_ = nullptr;

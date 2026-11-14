@@ -22,6 +22,7 @@ GhostClass WorldView::classOf(std::uint16_t id) const {
   // with the soldier's layout is rubbish. The class comes from the object's first
   // full record (bf2_events.h).
   if (playerOf_.count(id) != 0) return GhostClass::Player;
+  if (controlPoints_.count(id) != 0) return GhostClass::ControlPoint;
   for (const CreateSpawnGroup& group : spawnGroups_) {
     if (group.networkId == id) return GhostClass::SpawnGroup;
   }
@@ -44,8 +45,13 @@ bool WorldView::looksSane(const Vec3f& at, bool soldier) const {
 }
 
 void WorldView::feed(std::span<const std::byte> packet) {
+  feedEvents(readEvents(packet));
+  feedGhosts(packet);
+}
+
+void WorldView::feedEvents(const std::vector<Event>& events) {
   // 1. The events: who is playing, which objects exist, who controls what.
-  for (const Event& event : readEvents(packet)) {
+  for (const Event& event : events) {
     if (event.player) {
       RemotePlayer& player = players_[event.player->id];
       player.name = event.player->name;
@@ -72,6 +78,14 @@ void WorldView::feed(std::span<const std::byte> packet) {
       object.createdAt = *event.object->position;
       object.createdRotation = event.object->rotation;
       object.templateId = event.object->templateId;
+      // A projectile is told by its template's class: its 5-bit mask names
+      // nothing on its own (projectile_state.h).
+      if (templateNet_) {
+        if (const auto net = templateNet_(object.templateId); net && net->projectile) {
+          object.netClass = GhostClass::Projectile;
+          ++projectilesCreated_;
+        }
+      }
     }
     if (event.enter) {
       owners_[event.enter->object] = event.enter->player;
@@ -95,6 +109,21 @@ void WorldView::feed(std::span<const std::byte> packet) {
         spawnGroups_.push_back(*event.spawnGroup);
       }
       ++spawnGroupRevision_;
+    }
+    if (event.destroyObject) {
+      // The object is gone for good; our own soldier too (a new life is a new
+      // object), unlike a ghost stopped by kind 3.
+      objects_.erase(*event.destroyObject);
+      if (*event.destroyObject == ownObject_) ownObject_ = 0;
+      ++destroyedObjects_;
+    }
+    if (event.destroyPlayer) {
+      const std::uint32_t gone = *event.destroyPlayer;
+      players_.erase(gone);
+      for (auto it = playerOf_.begin(); it != playerOf_.end();) {
+        it = it->second == gone ? playerOf_.erase(it) : std::next(it);
+      }
+      ++destroyedPlayers_;
     }
     if (event.squadName && event.squadName->team < 3 && event.squadName->squad < 10) {
       squadNames_[event.squadName->team][event.squadName->squad] = event.squadName->name;
@@ -133,7 +162,9 @@ void WorldView::feed(std::span<const std::byte> packet) {
       }
     }
   }
+}
 
+void WorldView::feedGhosts(std::span<const std::byte> packet) {
   // 2. The controlled-object state: the compression reference point for the whole
   //    packet (`BF2.exe` / the Linux server, GhostManager::readControlObjectState,
   //    0x445c30 — the three numbers before the network id).
@@ -161,8 +192,15 @@ void WorldView::feed(std::span<const std::byte> packet) {
                ? -1
                : inventorySize_(found->second.templateId);
   };
+  const auto armorOf = [this](std::uint16_t id) -> std::optional<std::optional<ProjectileArmor>> {
+    const auto found = objects_.find(id);
+    if (!templateNet_ || found == objects_.end()) return std::nullopt;
+    const auto net = templateNet_(found->second.templateId);
+    if (!net) return std::nullopt;
+    return net->armor;
+  };
   for (const GhostRecord& record :
-       readGhostRecords(packet, compressionReference_, known, inventoryOf)) {
+       readGhostRecords(packet, compressionReference_, known, inventoryOf, armorOf)) {
     // Kind 3 — the object is gone (GhostManager::readData, 0x445820: the branch
     // calls disableObject and removeActiveDescriptor).
     if (record.kind == 3) {
@@ -181,6 +219,36 @@ void WorldView::feed(std::span<const std::byte> packet) {
         continue;
       }
       objects_.erase(record.networkId);
+      continue;
+    }
+    // A control point's ghost: its owner, its flag and the take-over.
+    if (record.netClass == GhostClass::ControlPoint) {
+      if (record.kind != 1) continue;
+      const auto found = controlPoints_.find(record.networkId);
+      if (found == controlPoints_.end()) continue;
+      LiveControlPoint& point = found->second;
+      ++point.records;
+      if (record.controlPoint && record.readBits == record.payloadBits) ++point.recordsExact;
+      if (!record.controlPoint) continue;
+      const ControlPointState& state = *record.controlPoint;
+      point.stateKnown = true;
+      if (state.team) point.team = *state.team;
+      if (state.neutral) point.neutral = *state.neutral;
+      if (state.takeOverCounter) point.takeOverCounter = *state.takeOverCounter;
+      if (state.takeOverPerSecond) point.takeOverPerSecond = *state.takeOverPerSecond;
+      if (state.captureByTeam1) point.captureByTeam1 = *state.captureByTeam1;
+      if (state.captureByTeam2) point.captureByTeam2 = *state.captureByTeam2;
+      if (state.flagTeam) point.flagTeam = *state.flagTeam;
+      if (state.capturingState) point.capturingState = *state.capturingState;
+      ++controlPointRevision_;
+      continue;
+    }
+    // The score manager's ghost: the tickets and the rest of the round's score.
+    if (record.netClass == GhostClass::ScoreManager) {
+      if (record.kind != 1) continue;
+      ++scoreRecords_;
+      if (record.score && record.readBits == record.payloadBits) ++scoreRecordsExact_;
+      if (record.score) score_.apply(*record.score);
       continue;
     }
     // A spawn group's ghost: the group's later changes (bf2_events.h).
@@ -233,6 +301,31 @@ void WorldView::feed(std::span<const std::byte> packet) {
       if (state.manDown) player.manDown = state.manDown;
       if (state.team && *state.team > 0) player.team = *state.team;
       continue;
+    }
+    // A projectile's record: counted, its detonation kept; its position and
+    // rotation go on as any object's below.
+    if (record.netClass == GhostClass::Projectile && record.kind == 1) {
+      ++projectileRecords_;
+      if (record.projectile && record.projectile->complete &&
+          record.readBits == record.payloadBits) {
+        ++projectileRecordsExact_;
+      }
+      if (record.projectile && record.projectile->detonated.value_or(false)) {
+        const ProjectileState& state = *record.projectile;
+        const auto found = objects_.find(record.networkId);
+        Detonation detonation;
+        detonation.object = record.networkId;
+        detonation.templateId = found != objects_.end() ? found->second.templateId : 0;
+        detonation.position = state.position.value_or(
+            found != objects_.end() ? found->second.position : Vec3f{});
+        detonation.number = state.detonationNumber.value_or(0);
+        detonation.vector = state.detonationVector.value_or(Vec3f{});
+        detonation.target = state.target;
+        // Nobody taking them (a tool) must not grow the list without end.
+        if (detonations_.size() >= 256) detonations_.erase(detonations_.begin());
+        detonations_.push_back(detonation);
+        ++detonationCount_;
+      }
     }
     if (record.kind == 1 && record.netClass != GhostClass::Unknown) {
       objects_[record.networkId].netClass = record.netClass;
@@ -354,6 +447,29 @@ const std::string& WorldView::squadName(int team, int squad) const {
 bool WorldView::squadPrivate(int team, int squad) const {
   if (team < 0 || team > 2 || squad < 0 || squad > 9) return false;
   return squadPrivate_[team][squad];
+}
+
+void WorldView::leaveLevel() {
+  objects_.clear();
+  detonations_.clear();
+  owners_.clear();
+  kits_.clear();
+  kitOf_.clear();
+  ownObject_ = 0;
+  playerSpawned_ = false;
+  ownGhostStopReported_ = false;
+  spawnGroups_.clear();
+  ++spawnGroupRevision_;
+  score_ = Score{};  // the next map's score manager starts its own
+  controlPoints_.clear();
+  ++controlPointRevision_;
+}
+
+void WorldView::markControlPoint(std::uint16_t id, int levelId, std::string templateName) {
+  LiveControlPoint& point = controlPoints_[id];
+  point.levelId = levelId;
+  point.templateName = std::move(templateName);
+  ++controlPointRevision_;
 }
 
 }  // namespace obf2::net::bf2

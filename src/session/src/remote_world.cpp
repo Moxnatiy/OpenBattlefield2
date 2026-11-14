@@ -1,5 +1,8 @@
 #include "obf2/session/remote_world.h"
 
+#include <cctype>
+#include <set>
+
 #include "obf2/core/parallel.h"
 #include "obf2/core/path.h"
 #include "obf2/level/gameplay.h"
@@ -22,14 +25,28 @@ const KnownObject* nearestKnown(const std::vector<KnownObject>& known, const Vec
 
 obf2::game::Registry buildRegistry(obf2::FileSystem& files) {
   obf2::game::Registry registry;
-  std::vector<std::string> configs;
+  const auto key = [](std::string_view path) {
+    std::string out = obf2::normalizeAssetPath(path);
+    for (char& c : out) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return out;
+  };
+  std::vector<std::string> cons, tweaks;
   for (auto& path : files.list()) {
     const std::string_view extension = obf2::assetExtension(path);
-    if (extension == "con" || extension == "tweak") configs.push_back(std::move(path));
+    if (extension == "con") cons.push_back(std::move(path));
+    else if (extension == "tweak") tweaks.push_back(std::move(path));
   }
-  std::sort(configs.begin(), configs.end());
-  configs.erase(std::unique(configs.begin(), configs.end()), configs.end());
+  for (auto* list : {&cons, &tweaks}) {
+    std::sort(list->begin(), list->end());
+    list->erase(std::unique(list->begin(), list->end()), list->end());
+  }
 
+  // The `.con` files first: each `include`s its own `.tweak` (a vehicle's
+  // `usjep_hmmwv.con` ends with `include usjep_hmmwv.tweak`), which is how the
+  // engine loads it. A `.tweak` is then run on its own only when no `.con`
+  // reached it. Running every `.tweak` a second time used to repeat each of its
+  // `addTemplate`s, so a vehicle had its tweak-added seats twice.
+  //
   // Reading the files is the expensive half — unpacking each out of its archive
   // and taking it apart — and every file is read on its own, so that half is
   // done on every core. Feeding the registry is not: a `.tweak` changes the
@@ -38,21 +55,32 @@ obf2::game::Registry buildRegistry(obf2::FileSystem& files) {
   //
   // A chunk at a time rather than all at once: the whole corpus is millions of
   // commands and holding them would cost more memory than the level.
-  constexpr std::size_t kChunk = 512;
-  std::vector<std::vector<obf2::con::Command>> parsed(kChunk);
-  for (std::size_t start = 0; start < configs.size(); start += kChunk) {
-    const std::size_t count = std::min(kChunk, configs.size() - start);
-    obf2::parallelFor(count, [&](std::size_t i) {
-      std::vector<obf2::con::Command>& into = parsed[i];
-      into.clear();
-      obf2::con::Interpreter interpreter(
-          files, [&into](const obf2::con::Command& command) { into.push_back(command); });
-      interpreter.runFile(configs[start + i]);
-    });
-    for (std::size_t i = 0; i < count; ++i) {
-      for (const obf2::con::Command& command : parsed[i]) registry.feed(command);
+  std::set<std::string> reached;
+  const auto run = [&](const std::vector<std::string>& configs, bool skipReached) {
+    constexpr std::size_t kChunk = 512;
+    std::vector<std::vector<obf2::con::Command>> parsed(kChunk);
+    std::vector<std::vector<std::string>> loaded(kChunk);
+    for (std::size_t start = 0; start < configs.size(); start += kChunk) {
+      const std::size_t count = std::min(kChunk, configs.size() - start);
+      obf2::parallelFor(count, [&](std::size_t i) {
+        std::vector<obf2::con::Command>& into = parsed[i];
+        into.clear();
+        loaded[i].clear();
+        if (skipReached && reached.count(key(configs[start + i])) != 0) return;
+        obf2::con::RecordingProvider recording(files);
+        obf2::con::Interpreter interpreter(
+            recording, [&into](const obf2::con::Command& command) { into.push_back(command); });
+        interpreter.runFile(configs[start + i]);
+        loaded[i] = recording.loaded();
+      });
+      for (std::size_t i = 0; i < count; ++i) {
+        for (const obf2::con::Command& command : parsed[i]) registry.feed(command);
+        for (const std::string& path : loaded[i]) reached.insert(key(path));
+      }
     }
-  }
+  };
+  run(cons, false);
+  run(tweaks, true);
   return registry;
 }
 

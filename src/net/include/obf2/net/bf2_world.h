@@ -126,6 +126,11 @@ class WorldView {
   // (from them we learn which object is a soldier), then the controlled-object
   // state (the reference point), and only then the ghost records.
   void feed(std::span<const std::byte> packet);
+  // The two halves of `feed`, for a caller that orders the events itself (the
+  // live session: the server's blocks in their order, `Link::receiveBlock`).
+  // Events before ghosts, as `feed` does.
+  void feedEvents(const std::vector<Event>& events);
+  void feedGhosts(std::span<const std::byte> packet);
 
   // The name we recognise ourselves by. The server assembles it as "clan tag,
   // space, name", so we compare by the tail.
@@ -187,6 +192,9 @@ class WorldView {
   const std::string& squadName(int team, int squad) const;
   bool squadPrivate(int team, int squad) const;
   int squadRevision() const { return squadRevision_; }
+  // How many objects and players the server's destroy events took away.
+  int destroyedObjects() const { return destroyedObjects_; }
+  int destroyedPlayers() const { return destroyedPlayers_; }
   const std::vector<CreateSpawnGroup>& spawnGroups() const { return spawnGroups_; }
   int spawnGroupRevision() const { return spawnGroupRevision_; }
 
@@ -240,6 +248,68 @@ class WorldView {
     inventorySize_ = std::move(size);
   }
 
+  // What a template is on the network, by its number: whether its objects are
+  // projectiles (`GenericProjectile` — their ghosts are projectile_state.h's) and,
+  // for one, its armor (nothing when it has none). Unknown templates: nothing.
+  struct TemplateNet {
+    bool projectile = false;
+    std::optional<ProjectileArmor> armor;
+  };
+  void setTemplateNet(std::function<std::optional<TemplateNet>(std::uint32_t templateId)> net) {
+    templateNet_ = std::move(net);
+  }
+
+  // A projectile's detonation as its record said it (projectile_state.h), in the
+  // order they came; whoever draws takes them and clears the list.
+  struct Detonation {
+    std::uint16_t object = 0;
+    std::uint32_t templateId = 0;
+    Vec3f position;
+    int number = 0;     // the projectile's +0x1c4 (purpose not established)
+    Vec3f vector;       // its +0x1cc (purpose not established)
+    std::optional<std::uint16_t> target;
+  };
+  std::vector<Detonation>& detonations() { return detonations_; }
+  int projectileRecords() const { return projectileRecords_; }
+  int projectileRecordsExact() const { return projectileRecordsExact_; }
+  int projectilesCreated() const { return projectilesCreated_; }
+  int detonationCount() const { return detonationCount_; }
+
+  // The server moved to another map (a new `MapInfo`, block 2): the client
+  // unloads its level before loading the next (`GameClient::handleDataBlock`
+  // case 2 → `load`), and every object of the old one goes with it — the
+  // objects, their owners and kits, the spawn groups, our own soldier. The
+  // players and their squads are the connection's and stay.
+  void leaveLevel();
+
+  // The round's score from the score manager's ghost (score_state.h): tickets,
+  // their bleed, rounds won. `known` is false until its first record.
+  const Score& score() const { return score_; }
+
+  // A control point as the client keeps it: the level's point the object is, and
+  // the fields of its ghost (control_point_state.h) as they last came.
+  struct LiveControlPoint {
+    int levelId = 0;           // the level's `controlPointId`
+    std::string templateName;  // the level's template
+    bool stateKnown = false;   // a record has come
+    int team = 0;
+    bool neutral = false;
+    float takeOverCounter = 0.0f;
+    float takeOverPerSecond = 0.0f;
+    bool captureByTeam1 = false;
+    bool captureByTeam2 = false;
+    int flagTeam = 0;
+    int capturingState = 0;
+    int records = 0, recordsExact = 0;
+  };
+  // Name an object as one of the level's control points; its ghost records are
+  // then read as `ControlPointNetworkable`'s.
+  void markControlPoint(std::uint16_t id, int levelId, std::string templateName);
+  const std::map<std::uint16_t, LiveControlPoint>& controlPoints() const { return controlPoints_; }
+  int controlPointRevision() const { return controlPointRevision_; }
+  int scoreRecords() const { return scoreRecords_; }
+  int scoreRecordsExact() const { return scoreRecordsExact_; }
+
  private:
   GhostClass classOf(std::uint16_t id) const;
   bool looksSane(const Vec3f& at, bool soldier) const;
@@ -260,6 +330,12 @@ class WorldView {
   std::uint16_t traceObject_ = 0;
   std::function<float(const Vec3f&)> ground_;
   std::function<int(std::uint32_t)> inventorySize_;
+  std::function<std::optional<TemplateNet>(std::uint32_t)> templateNet_;
+  std::vector<Detonation> detonations_;
+  int projectileRecords_ = 0;
+  int projectileRecordsExact_ = 0;
+  int projectilesCreated_ = 0;
+  int detonationCount_ = 0;
   int positionUpdates_ = 0;
   bool ownGhostStopReported_ = false;
   int rotations_ = 0;
@@ -269,8 +345,15 @@ class WorldView {
   std::map<std::uint16_t, std::uint32_t> playerOf_;  // a player's network id -> his index
   std::array<std::array<std::string, 10>, 3> squadNames_{};
   std::array<std::array<bool, 10>, 3> squadPrivate_{};
+  int destroyedObjects_ = 0;
+  int destroyedPlayers_ = 0;
   int squadRevision_ = 0;
   std::vector<CreateSpawnGroup> spawnGroups_;
+  Score score_;
+  std::map<std::uint16_t, LiveControlPoint> controlPoints_;
+  int controlPointRevision_ = 0;
+  int scoreRecords_ = 0;
+  int scoreRecordsExact_ = 0;
   int spawnGroupRevision_ = 0;
   int spawnGroupRecords_ = 0;
   int spawnGroupRecordsExact_ = 0;

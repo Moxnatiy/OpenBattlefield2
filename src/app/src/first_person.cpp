@@ -80,6 +80,16 @@ const mesh::BoneAnimation* FirstPersonView::clipAt(const std::string& path) {
   return found->second ? &*found->second : nullptr;
 }
 
+float FirstPersonView::playLength(const std::string& path) const {
+  if (model_ == nullptr) return 0.0f;
+  for (const auto* system : {&model_->weapon, &model_->body}) {
+    if (*system) {
+      if (const float set = (*system)->lengthOf(path); set > 0.0f) return set;
+    }
+  }
+  return 0.0f;
+}
+
 bool FirstPersonView::setWeapon(const std::string& soldier, const std::string& kit, int item) {
   if (files_ == nullptr || item < 0 || soldier.empty()) {
     model_ = nullptr;
@@ -127,6 +137,7 @@ bool FirstPersonView::setWeapon(const std::string& soldier, const std::string& k
     }
   }
   const auto length = [this](const std::string& path) {
+    if (const float set = playLength(path); set > 0.0f) return set;
     const mesh::BoneAnimation* clip = clipAt(path);
     return clip != nullptr ? clip->duration() : 0.0f;
   };
@@ -345,8 +356,13 @@ void FirstPersonView::update(const anim::State& state, float step,
       if (playing.weight <= 0.001f) continue;
       const mesh::BoneAnimation* clip = clipAt(playing.path);
       if (clip == nullptr || clip->frameCount == 0) continue;
-      stages.push_back(
-          mesh::PoseStage{clip, playing.time * mesh::kAnimationFramesPerSecond, playing.weight});
+      // A clip given its own length plays all its frames over it
+      // (`anim::System::lengthOf`); otherwise at the file's 24 a second.
+      const float set = playLength(playing.path);
+      const float frameAt = set > 0.0f
+                                ? playing.time / set * static_cast<float>(clip->frameCount)
+                                : playing.time * mesh::kAnimationFramesPerSecond;
+      stages.push_back(mesh::PoseStage{clip, frameAt, playing.weight});
     }
   }
   pose_ = stages.empty() ? mesh::poseSkeleton(model_->skeleton, nullptr, 0)

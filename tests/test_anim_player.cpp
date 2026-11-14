@@ -214,7 +214,46 @@ static void testOneShotPlaysToItsEnd() {
   CHECK(plays(player, "still"));
 }
 
+// `playBundle` (0x7f7a20) keeps its players by priority, and the priorities are
+// the tree's depth-first numbers (`setPriosForTriggers`): in the M4's `normal`
+// tree `reload` comes after `move`, so a run begun in the middle of a reload goes
+// **before** it in the list and the reload is laid on the arms last.
+static void testPriorityOrdersPlayers() {
+  anim::System system = build({
+      "animationSystem.createBundle reload",
+      "animationBundle.isLooping 0",
+      "animationBundle.addAnimation reload.baf",
+      "animationSystem.createBundle run",
+      "animationBundle.addAnimation run.baf",
+      "animationSystem.createTrigger MessageTrigger move",
+      "animationTrigger.addBundle run",
+      "animationTrigger.message 16",
+      "animationSystem.createTrigger MessageTrigger reload",
+      "animationTrigger.addBundle reload",
+      "animationTrigger.message 2",
+      "animationSystem.createTrigger Trigger normal",
+      "animationTrigger.addChild move",
+      "animationTrigger.addChild reload",
+  });
+  system.assignPriorities();
+  CHECK(system.bundles().at("run").priority < system.bundles().at("reload").priority);
+
+  anim::Player player;
+  player.setLengthOf([](const std::string&) { return 2.0f; });
+  anim::State reloading;
+  reloading.messages = 2;
+  player.update(system, reloading, 0.1f);
+  anim::State moving = reloading;
+  moving.messages = 2 | 16;
+  player.update(system, moving, 0.1f);
+  const auto& playing = player.playing();
+  CHECK(playing.size() == 2);
+  CHECK(playing.front().bundle == "run");
+  CHECK(playing.back().bundle == "reload");
+}
+
 TEST_MAIN({
+  testPriorityOrdersPlayers();
   testOneShotPlaysToItsEnd();
   testRunningForward();
   testStrafingLeft();

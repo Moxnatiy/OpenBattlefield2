@@ -122,7 +122,14 @@ void Player::update(const System& system, const State& state, float step,
       // its own end.
       if (!bundle->looping && speed < 0.0f) fresh.time = fresh.length;
       fresh.touched = true;
-      active_.push_back(fresh);
+      // `playBundle` (0x7f7a20): inserted before the first player of a higher
+      // priority, so the list runs from the lowest to the highest and the last
+      // one laid on the skeleton wins. Appended, a run begun mid-reload covered
+      // the reload's arms.
+      const auto before = std::find_if(active_.begin(), active_.end(), [&](const Active& a) {
+        return a.bundle->priority > bundle->priority;
+      });
+      active_.insert(before, fresh);
       continue;
     }
     if (found->touched && bundle->abruptPlayback) found->time = 0.0f;

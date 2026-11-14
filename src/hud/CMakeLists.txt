@@ -14,6 +14,8 @@ add_library(obf2_hud
   src/list_data.cpp
   src/scoreboard.cpp
   src/squad_list.cpp
+  src/blinker.cpp
+  src/chat.cpp
   src/manager.cpp
 )
 add_library(obf2::hud ALIAS obf2_hud)

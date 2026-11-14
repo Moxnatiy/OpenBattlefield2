@@ -49,7 +49,41 @@ record at 0x4646b0:
   `FriendlyTicketBleed` 0x8c — **whether it is the same one is not
   established**).
 
-## What we are missing
+## Read whole, and on screen (`--connect`)
+
+The blocker below ("the walk over ghost records goes astray") is gone, and the
+record is now read whole (`obf2/net/score_state.h`, `readScoreState`), from
+OpenBF2's `ScoreManager::setNetUpdate`:
+
+* **the id is fixed**: `Game::registerStaticNetworkables` registers the score
+  manager as networkable **0x0201** on both sides, so its records are told by id —
+  no create event, no guessing by mask;
+* **the numbers are a sign and a magnitude** — 18 bits for the score fields, 3 for
+  the round's winner and victory type (`readSignedMagnitude`), not plain 18-bit
+  numbers as the first note above had it;
+* **the order is the writer's, not the bits'**: per team `0x1, 0x2, 0x1000000`
+  (two fields), `0x4000000, 0x10000000, 0x4, 0x8, 0x10` (two fields), `0x20 …
+  0x200`, `0x400` (tickets, bleed bit, ticket state), `0x800` (rounds won); team 2
+  the same on its own bits; then `0x40000000` the winner and `0x80000000` the
+  victory type with both teams' `+0x38`. The table is in the header.
+
+The fields `TeamScore +0x04..+0x40` are read and kept, their purpose **not
+established** (OpenBF2: `m_block[16]` "[UNRESOLVED]").
+
+**`+0x90` → HUD `0x88` is settled**: it is the gate of a `HudFloatBlinker` whose
+output is `FriendlyTicketBleed` (+0x8c), period 1, smooth — and `0x90` / `0x94`
+the same for the enemy (`HudInformationLayer` registration, OpenBF2). While the
+team bleeds the variable runs a 0→1→0 triangle each second; when it stops, the
+stroke finishes at 1 (`obf2/hud/blinker.h`). `updateTickets` (PE 0x4646b0) is
+`hud::Manager::updateTickets`; the `lowOnTickets` sound is logged, there is no
+sound.
+
+Live, `strike_at_karkand` co-op: 7 score records, **7 read to exactly their
+length**; tickets 1947 / 2073 with team 2 bleeding, rounds won 2 / 2; the frame
+shows 2074 (ours, team 2) and 1947 above the minimap. Not compared against the
+original on the same server (it still does not connect there).
+
+## What was missing (history)
 
 We fill `FriendlyTicketsString`/`EnemyTicketsString` **only from our own
 hosted server**. On a real server nobody fills them, so there are two empty

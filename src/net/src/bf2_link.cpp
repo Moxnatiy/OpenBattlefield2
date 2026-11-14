@@ -31,6 +31,26 @@ void Link::acceptPing(const ExtendedHeader& header, bool haveSent) {
   confirm(header.ack & 0x3F, header.ackBits);
 }
 
+std::vector<std::vector<Event>> Link::receiveBlock(unsigned index, std::vector<Event> events) {
+  std::vector<std::vector<Event>> ready;
+  index &= 31;
+  const unsigned ahead = (index - (nextReceive_ & 31)) & 31;
+  if (ahead >= 16 || pending_.count(index) != 0) {
+    ++blocksRepeated_;
+    return ready;
+  }
+  if (ahead > 0) ++blocksOutOfOrder_;
+  pending_[index] = std::move(events);
+  for (;;) {
+    const auto found = pending_.find(nextReceive_ & 31);
+    if (found == pending_.end()) break;
+    ready.push_back(std::move(found->second));
+    pending_.erase(found);
+    ++nextReceive_;
+  }
+  return ready;
+}
+
 ExtendedHeader Link::nextDataHeader() {
   ExtendedHeader header;
   header.sequence = static_cast<std::uint8_t>(nextSequence_ & 0x3F);

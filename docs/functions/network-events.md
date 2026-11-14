@@ -2006,8 +2006,7 @@ While looking, `ServerGameLogic::uPlayingSpawning` (Linux 0x4ab5a0) turned out t
 hold a third check the notes above missed: when the group is missing or
 `group->vtable+0x58(isAI)` refuses, the server clears the player's group
 (`setSpawnGroup(0)`, 0x4ab66a) and sends that player `PostRemoteEvent(6, 6)` —
-`NESelectSpawnGroup` without data, "choose again" (0x4ab696). We do nothing with
-it yet; it did not occur in these runs.
+`NESelectSpawnGroup` without data, "choose again" (0x4ab696). It did not occur in these runs; it is handled now (below).
 
 ## A flag's group is never a run-time one
 
@@ -2029,10 +2028,55 @@ the first is `group->vtable+0x58(false)`, the same "can a human spawn here" the
 spawn loop asks; the second `+0x9a` and the third `+0xa0`, purposes not
 established — and the packed position.
 
-Still not handled: when that check refuses later, the server clears the player's
-group and sends `NESelectSpawnGroup` without data (0x4ab66a / 0x4ab696); our join
-chain does not start again on it.
+When that check refuses later, the server clears the player's group and sends
+`NESelectSpawnGroup` without data (0x4ab66a / 0x4ab696). The client's answer
+(`GameClient::handleEvent` case 6, OpenBF2) is only `postEvent(ECGame, 7)` for the
+local player; no HUD listener of `ECGame 7` is reconstructed there
+(`BF2HudManager::handleGameEvent` takes 6, 8 and 11), so what the screen shows is
+not established. Ours reopens the join the way a round reset does
+(`JoinSequence::reopen`): our DONE had left it at `Done`, where a second DONE sent
+nothing — the player could not spawn at all.
 
+
+## The end of a round and the next map
+
+From OpenBF2 (`ServerGameLogic::endGame`, `GameServer::loadPath`,
+`GameServer::waitForClients`, `GameClient::handleDataBlock`,
+`EndOfRoundEvent.cpp`, `MapList.cpp`), checked against the live co-op server.
+
+1. **The round ends.** `EndOfRoundEvent` (48): three 32-bit numbers — the rounds
+   still to play on this map (`roundsPerMap - roundsPlayed - 1`), the winning team
+   and the victory type (`deSerialize`, Linux 0x8070a00). The client resets its free
+   camera, gives the winner and the type to the score manager and the rounds left
+   to the end-of-round movie. The game status goes to 2 (end of game) and block 8
+   (`EndOfRoundInfo`, compressed) follows: the movie's data and its delay. Live:
+   637 and 786 bytes.
+2. **About thirty seconds later the server loads the next map** (the same map
+   again when the rotation has one). `loadPath` sends every client its `MapInfo`
+   (block 2, `clientLoadLevel(-1)`), then `NEEndOfRoundGuard` (6, 20), and waits
+   up to ten seconds for each client to have it. **The client sends nothing for
+   the guard**: `PostRemoteEvent::eventReceivedByRemote` counts it on the server
+   as soon as the packet carrying it is acknowledged.
+3. **The client unloads and loads.** Live, two `MapInfo` come: the first with an
+   empty name — `handleDataBlock` case 2 takes that as the unload (`m_isRunning =
+   false`, `gameLogic->unload()`) — then the named one, with a new challenge
+   number. The client loads the level and answers `NELoadComplete` and its content
+   check, exactly as on joining; the server pushes the database again and the
+   round resets (`NEReset`) once more.
+
+Block 5 is the server's rotation (`MapList`): a u16 count, a u16 index of the map
+being played, then per entry a u16-length name, a u16-length mode and a u16 size,
+little-endian. It is sent once, at authentication (`GameServer::authOk`), with the
+server info. We had read its first entry as "the level", which only held because
+our server's rotation has one map; the level is block 2's.
+
+Ours: `RemoteWorld::leaveLevel` on a second `MapInfo` (the old level's objects,
+groups and soldier go — `WorldView::leaveLevel`; the players and squads are the
+connection's and stay), `loadServerLevel` on the named one, and the application
+ends the level's session and opens the next in the same window
+(`JoinSequence::restartForLevel`). Live: an `admin.runNextLevel` during our load
+and the server's own change after a round — both rejoined, both spawned. The
+end-of-round screen itself is not drawn.
 
 ## Leaving the server
 
