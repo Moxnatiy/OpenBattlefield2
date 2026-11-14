@@ -98,6 +98,14 @@ class FirstPersonView {
   // out, or a template the registry does not know.
   bool setWeapon(const std::string& soldier, const std::string& kit, int item);
 
+  // Builds and keeps the model of a soldier, kit and item without taking it out.
+  // The original loads a level's templates while the level loads, so its soldier
+  // appears the moment it spawns; ours built the model — meshes, skeleton, both
+  // animation systems with their clips, the textures — inside the frame the spawn
+  // came in, and the screen stood for seconds. Called ahead, on the spawn screen.
+  // False when there was nothing to build (already kept, or nothing to build from).
+  bool prepare(const std::string& soldier, const std::string& kit, int item);
+
   // One action played (`tick` its number, `fireHeld` its fire button): the
   // weapon's trigger (`game::WeaponFire`). A round fired is message 1 to the
   // weapon's animation (`DefaultAnimationComp::postFire`, Linux 0x60a7d0) —
@@ -169,6 +177,8 @@ class FirstPersonView {
   TextureResolver resolve_;
 
   std::map<std::string, Model> models_;
+  Model& buildModel(const std::string& key, const std::string& soldier, const std::string& kit,
+                    int item);
   std::map<std::string, std::optional<mesh::BoneAnimation>> clips_;
   Model* model_ = nullptr;
   std::string key_;

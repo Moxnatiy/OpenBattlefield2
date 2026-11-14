@@ -154,8 +154,13 @@ class Animator {
     float inTime = 0.0f;
     float outTime = 0.0f;
   };
-  std::unordered_map<std::string, Entry> entries_;
-  std::unordered_map<std::string, ShowState> inherited_;
+  // Keyed by the node itself, not its name, as the engine keeps the state on the
+  // node: the game's data has names that repeat — `SelectKit1InactiveLabel` is
+  // declared three times in HudElementsSpawn.con, once under `Kit1Selected` — and
+  // keyed by name the hidden one held the visible one's alpha at 0, so the
+  // sniper's kit had no caption.
+  std::unordered_map<const Node*, Entry> entries_;
+  std::unordered_map<const Node*, ShowState> inherited_;
   bool animating_ = false;
 };
 

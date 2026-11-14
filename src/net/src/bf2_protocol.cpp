@@ -117,6 +117,16 @@ std::vector<std::byte> writeShortPacket(PacketKind kind, std::uint8_t connection
   return buffer;
 }
 
+std::vector<std::byte> writeDisconnect(std::uint8_t connectionId, std::uint32_t reason) {
+  std::vector<std::byte> buffer(8);
+  BitWriter writer(buffer);
+  writer.writeBits(static_cast<std::uint32_t>(PacketKind::Disconnect), 4);
+  writer.writeBits(connectionId, 8);
+  writer.writeBits(reason, 32);
+  buffer.resize(writer.byteSize());
+  return buffer;
+}
+
 std::vector<std::byte> writePingResponse(std::uint8_t connectionId, const ExtendedHeader& header,
                                          std::uint32_t time) {
   std::vector<std::byte> buffer(32);
@@ -248,6 +258,68 @@ std::vector<std::byte> writeConnectionTypeEvent(std::uint8_t connectionId,
   writeEventFraming(writer, batch, 1);
   writer.writeBits(kConnectionTypeEvent, kEventTypeBits);
   writer.writeBits(connectionType & 0x7u, 3);
+  return finishDataPacket(buffer, writer);
+}
+
+std::vector<std::byte> writeJoinSquadEvent(std::uint8_t connectionId, const ExtendedHeader& header,
+                                           std::uint8_t batch, int team, int player, int squad) {
+  std::vector<std::byte> buffer(24);
+  BitWriter writer(buffer);
+  writeDataHeader(writer, connectionId, header);
+  writeEventFraming(writer, batch, 1);
+  writer.writeBits(16, kEventTypeBits);
+  writer.writeBits(static_cast<std::uint32_t>(team) & 0xFF, 8);
+  writer.writeBits(static_cast<std::uint32_t>(player) & 0xFF, 8);
+  writer.writeBits(static_cast<std::uint32_t>(squad) & 0xFF, 8);
+  return finishDataPacket(buffer, writer);
+}
+
+std::vector<std::byte> writeLeaveSquadEvent(std::uint8_t connectionId, const ExtendedHeader& header,
+                                            std::uint8_t batch, int team, int player, int squad,
+                                            bool clearInvite) {
+  std::vector<std::byte> buffer(24);
+  BitWriter writer(buffer);
+  writeDataHeader(writer, connectionId, header);
+  writeEventFraming(writer, batch, 1);
+  writer.writeBits(17, kEventTypeBits);
+  writer.writeBits(static_cast<std::uint32_t>(team) & 0xFF, 8);
+  writer.writeBits(static_cast<std::uint32_t>(player) & 0xFF, 8);
+  writer.writeBits(static_cast<std::uint32_t>(squad) & 0xFF, 8);
+  writer.writeBits(clearInvite ? 1 : 0, 1);
+  return finishDataPacket(buffer, writer);
+}
+
+std::vector<std::byte> writeChangeSquadNameEvent(std::uint8_t connectionId,
+                                                 const ExtendedHeader& header, std::uint8_t batch,
+                                                 int team, int squad, int player,
+                                                 std::string_view name) {
+  std::vector<std::byte> buffer(48 + name.size());
+  BitWriter writer(buffer);
+  writeDataHeader(writer, connectionId, header);
+  writeEventFraming(writer, batch, 1);
+  writer.writeBits(22, kEventTypeBits);
+  writer.writeBits(static_cast<std::uint32_t>(squad) & 0xFF, 8);
+  writer.writeBits(static_cast<std::uint32_t>(team) & 0xFF, 8);
+  writer.writeBits(static_cast<std::uint32_t>(player) & 0xFF, 8);
+  const std::size_t length = name.size() > 255 ? 255 : name.size();
+  writer.writeBits(static_cast<std::uint32_t>(length), 8);
+  for (std::size_t i = 0; i < length; ++i) {
+    writer.writeBits(static_cast<std::uint8_t>(name[i]), 8);
+  }
+  return finishDataPacket(buffer, writer);
+}
+
+std::vector<std::byte> writeSetPrivateSquadEvent(std::uint8_t connectionId,
+                                                 const ExtendedHeader& header, std::uint8_t batch,
+                                                 int team, int squad, bool isPrivate) {
+  std::vector<std::byte> buffer(24);
+  BitWriter writer(buffer);
+  writeDataHeader(writer, connectionId, header);
+  writeEventFraming(writer, batch, 1);
+  writer.writeBits(23, kEventTypeBits);
+  writer.writeBits(static_cast<std::uint32_t>(squad) & 0xFF, 8);
+  writer.writeBits(static_cast<std::uint32_t>(team) & 0xFF, 8);
+  writer.writeBits(isPrivate ? 1 : 0, 1);
   return finishDataPacket(buffer, writer);
 }
 
@@ -394,8 +466,10 @@ std::optional<Incoming> readPacket(std::span<const std::byte> data) {
     incoming.extended = header;
 
     if (incoming.kind == PacketKind::PingRequest) {
-      // After the header come a flag and the server's time.
-      reader.readBits(1);
+      // After the header come a flag and the server's time. The flag says the
+      // ping's number counts as a packet sent (`pingConfirmation`, OpenBF2
+      // NetClient.cpp `handlePingRequest`).
+      if (const auto haveSent = reader.readBits(1)) incoming.pingHaveSent = *haveSent == 1;
       if (const auto time = reader.readBits(32)) incoming.pingTime = *time;
     } else if (incoming.kind == PacketKind::Data) {
       // 16 bits of length, then the player action stream — we do not parse it.

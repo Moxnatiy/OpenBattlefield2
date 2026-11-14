@@ -53,7 +53,7 @@ std::optional<PlayerState> readPlayerState(BitReader& reader) {
     out.score = score;
   }
   if (has(0x200000)) out.flagHolder = flag();
-  if (has(0x10)) out.flag10 = flag();
+  if (has(0x10)) out.callForMedic = flag();
   // 0x80000 and 0x100000 read nothing: the client stamps the tick.
   if (has(0x2000000)) out.counter2000000 = bits(2);
 
@@ -89,10 +89,10 @@ std::optional<PlayerState> readPlayerState(BitReader& reader) {
   }
   if (has(0x200)) out.team = static_cast<int>(bits(widthFor(4))) - 1;
   if (has(0x400)) {
-    out.camera400 = bits(widthFor(9));
+    out.cameraViewMode = bits(widthFor(9));
     out.flag400 = flag();
   }
-  if (has(0x800)) out.value800 = bits(widthFor(0x100));
+  if (has(0x800)) out.timeOutsideWorld = bits(widthFor(0x100));
   if (has(0x1000)) {
     const std::uint32_t packed = bits(widthFor(0x100));
     out.kit = static_cast<int>(packed & 0xf);
@@ -107,9 +107,9 @@ std::optional<PlayerState> readPlayerState(BitReader& reader) {
   }
   if (has(0x8000)) out.freeCamera = flag();
   if (has(0x400000)) out.overheadCamera = flag();
-  if (has(0x800000)) out.value800000 = bits(8);
-  if (has(0x1000000)) out.value1000000 = static_cast<int>(bits(widthFor(0x10001))) - 1;
-  out.alwaysA = flag();
+  if (has(0x800000)) out.squadInviteMask = bits(8);
+  if (has(0x1000000)) out.tracePlayerId = static_cast<int>(bits(widthFor(0x10001))) - 1;
+  out.squadLeader = flag();
   if (has(0x4000000)) {
     out.commander = flag();
     if (*out.commander) {
@@ -120,7 +120,7 @@ std::optional<PlayerState> readPlayerState(BitReader& reader) {
       }
     }
   }
-  out.alwaysB = flag();
+  out.connected = flag();
   if (has(0x8000000)) out.maskSetting = bits(widthFor(4));
   out.complete = ok;
   return out;

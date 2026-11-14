@@ -1,8 +1,18 @@
 #include "obf2/loc/lexicon.h"
 
+#include <cctype>
 #include <cstring>
 
 namespace obf2::loc {
+
+namespace {
+std::string upperKey(std::string_view key) {
+  std::string out(key);
+  for (char& c : out) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+  return out;
+}
+}  // namespace
+
 namespace {
 
 constexpr char kSeparator = '\x1B';
@@ -101,8 +111,13 @@ bool Lexicon::addUtxt(std::span<const std::byte> bytes, std::string* error) {
     value = trimRight(trimLeft(value));
 
     ++added;
-    if (keepExisting_ && entries_.count(std::string(key)) != 0) continue;
-    entries_[std::string(key)] = std::string(value);
+    // Keys are kept in upper case and looked up the same way: the game's lexicon
+    // ignores case (OpenBF2 IO/Localization/ExcelLexicon.cpp, `getString` and the
+    // loader both go through `getUpperCase`). The server names the level
+    // `strike_at_karkand` while the dictionary has `HUD_LEVELNAME_Strike_at_Karkand`.
+    const std::string upper = upperKey(key);
+    if (keepExisting_ && entries_.count(upper) != 0) continue;
+    entries_[upper] = std::string(value);
   }
 
   if (added == 0) {
@@ -120,7 +135,7 @@ bool Lexicon::addUtxtMissing(std::span<const std::byte> bytes, std::string* erro
 }
 
 std::optional<std::string_view> Lexicon::find(std::string_view key) const {
-  const auto found = entries_.find(std::string(key));
+  const auto found = entries_.find(upperKey(key));
   if (found == entries_.end()) return std::nullopt;
   return std::string_view{found->second};
 }

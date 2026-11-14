@@ -115,6 +115,9 @@ struct RemotePlayer {
   std::optional<std::uint32_t> spawnGroup;   // 0x2, `getSpawnGroup`
   std::optional<std::uint32_t> spawnAtTick;  // 0x20
   std::optional<bool> manDown;               // 0x20
+  // Unmasked: every record carries them (OpenBF2 Player.cpp, `setNetUpdate`).
+  std::optional<bool> squadLeader;
+  std::optional<std::uint32_t> squadInviteMask;  // 0x800000
 };
 
 class WorldView {
@@ -177,6 +180,13 @@ class WorldView {
   // the group's own ghost (`SpawnGroupState`: a captured flag's new team, a
   // squad's group, a moving vehicle's position). `spawnGroupRevision` moves on
   // every change, for whoever mirrors the list.
+  // The squads' names and locks, by team (1, 2) and squad (1..9): what
+  // `ChangeSquadNameEvent` and `SetPrivateSquadEvent` said; empty is the default
+  // name (Alpha..India, OpenBF2 SquadManager.cpp `kSquadNames`). Who is in a squad
+  // is each player's own state (0x2000 and the leader bit), not kept here.
+  const std::string& squadName(int team, int squad) const;
+  bool squadPrivate(int team, int squad) const;
+  int squadRevision() const { return squadRevision_; }
   const std::vector<CreateSpawnGroup>& spawnGroups() const { return spawnGroups_; }
   int spawnGroupRevision() const { return spawnGroupRevision_; }
 
@@ -257,6 +267,9 @@ class WorldView {
   std::set<std::uint16_t> tailTrace_;
   int rejected_ = 0;
   std::map<std::uint16_t, std::uint32_t> playerOf_;  // a player's network id -> his index
+  std::array<std::array<std::string, 10>, 3> squadNames_{};
+  std::array<std::array<bool, 10>, 3> squadPrivate_{};
+  int squadRevision_ = 0;
   std::vector<CreateSpawnGroup> spawnGroups_;
   int spawnGroupRevision_ = 0;
   int spawnGroupRecords_ = 0;

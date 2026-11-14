@@ -105,6 +105,9 @@ struct Args {
   bool skipContent = false;
   bool skipDatabase = false;
   bool startSimulation = false;
+  // `--scoreboard-mouse`: the scoreboard's mouse mode on whenever the scoreboard
+  // is up, as a right click turns it on — for screenshots of its tabs.
+  bool scoreboardMouse = false;
   bool blockReady = false;
   std::string connectPassword;
   std::string playerName = "OpenBF2";  // --name: the name we join under

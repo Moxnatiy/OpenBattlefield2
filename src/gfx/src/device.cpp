@@ -197,6 +197,8 @@ Device::InputState Device::readInput() {
   // press would fire every frame.
   state.clicked = state.fire && !mouseWasDown_;
   mouseWasDown_ = state.fire;
+  state.rightClicked = state.altFire && !rightWasDown_;
+  rightWasDown_ = state.altFire;
 
   // The movement accumulated over the frame is handed out once and cleared.
   state.mouseDeltaX = mouseDeltaX_;

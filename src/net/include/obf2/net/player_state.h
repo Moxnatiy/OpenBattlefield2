@@ -46,7 +46,7 @@ struct PlayerState {
   std::optional<Score> score;
 
   std::optional<bool> flagHolder;       // 0x200000
-  std::optional<bool> flag10;           // 0x10 — purpose not established
+  std::optional<bool> callForMedic;  // 0x10, `setCallForMedic` (OpenBF2 Player.cpp)
   std::optional<std::uint32_t> counter2000000;  // 0x2000000, 2 bits — purpose not established
   std::array<std::optional<PlayerFiring>, 3> firing;  // 0x40, 0x80, 0x20000
   std::optional<bool> sprint;           // 0x40000, `setSprintState`
@@ -59,9 +59,9 @@ struct PlayerState {
   std::optional<std::uint32_t> spawnAtTick;
   std::optional<bool> manDown;
   std::optional<int> team;               // 0x200, `setTeam`
-  std::optional<std::uint32_t> camera400;  // 0x400, 4 bits — a camera setting, purpose not established
+  std::optional<std::uint32_t> cameraViewMode;  // 0x400, 4 bits: the camera's `setViewMode` (OpenBF2 Player.cpp)
   std::optional<bool> flag400;             // 0x400 — purpose not established
-  std::optional<std::uint32_t> value800;   // 0x800, 0..255 — purpose not established
+  std::optional<std::uint32_t> timeOutsideWorld;  // 0x800, 0..255 seconds outside the combat area (OpenBF2 Player.cpp)
   std::optional<int> kit;                  // 0x1000, the low four bits: `setKit`
   std::optional<int> unlockLevel;          // 0x1000, the high four bits
   std::optional<std::uint32_t> squad;      // 0x2000, `setSquadId`
@@ -71,13 +71,14 @@ struct PlayerState {
   std::optional<std::array<std::uint32_t, 3>> places;
   std::optional<bool> freeCamera;       // 0x8000
   std::optional<bool> overheadCamera;   // 0x400000
-  std::optional<std::uint32_t> value800000;   // 0x800000, 8 bits — purpose not established
-  std::optional<int> value1000000;            // 0x1000000, 17 bits minus one — purpose not established
-  bool alwaysA = false;                  // always, 1 bit — purpose not established
+  std::optional<std::uint32_t> squadInviteMask;  // 0x800000, 8 bits: the squads that invited him (OpenBF2 Player.cpp)
+  std::optional<int> tracePlayerId;  // 0x1000000, 17 bits minus one (OpenBF2 Player.cpp)
+  bool squadLeader = false;  // always, 1 bit: `m_isSquadLeader` (OpenBF2 Player.cpp)
   std::optional<bool> commander;         // 0x4000000, `setIsCommander`
-  std::array<bool, 5> commanderFlags{};  // when commander — purpose not established
-  std::array<float, 3> commanderFractions{};  // when commander — purpose not established
-  bool alwaysB = false;                  // always, 1 bit — purpose not established
+  // When commander: UAV ready, satellite ready, then three not named (OpenBF2 Player.cpp).
+  std::array<bool, 5> commanderFlags{};
+  std::array<float, 3> commanderFractions{};  // when commander: three 8-bit meters (OpenBF2 Player.cpp)
+  bool connected = false;  // always, 1 bit: `m_isConnected` (OpenBF2 Player.cpp)
   std::optional<std::uint32_t> maskSetting;  // 0x8000000, `setMaskSetting`
 };
 

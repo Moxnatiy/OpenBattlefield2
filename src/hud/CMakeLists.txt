@@ -13,6 +13,7 @@ add_library(obf2_hud
   src/states.cpp
   src/list_data.cpp
   src/scoreboard.cpp
+  src/squad_list.cpp
   src/manager.cpp
 )
 add_library(obf2::hud ALIAS obf2_hud)

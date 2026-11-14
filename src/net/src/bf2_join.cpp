@@ -28,9 +28,13 @@ std::optional<JoinStep> JoinSequence::next(Clock::time_point now) {
   // The content check goes together with "the level is loaded", without a pause:
   // in the dump it is one packet. A pause before it made the impossible happen —
   // the check arrived after the player had spawned.
-  const auto delay = step_ == JoinStep::Content ? kContentDelay
-                     : afterChoice              ? kChoiceDelay
-                                                : kStepDelay;
+  // Our `NEDatabaseComplete` is the answer to the server's: it waits for it, and
+  // then goes at once.
+  if (step_ == JoinStep::Database && !skipDatabase_ && !serverDatabase_) return std::nullopt;
+  const auto delay = step_ == JoinStep::Content    ? kContentDelay
+                     : step_ == JoinStep::Database ? std::chrono::milliseconds{0}
+                     : afterChoice                 ? kChoiceDelay
+                                                   : kStepDelay;
   const auto wait = std::chrono::duration_cast<Clock::duration>(delay);
   if (started_ && now - last_ < wait) return std::nullopt;
 

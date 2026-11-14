@@ -16,6 +16,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace obf2::net::bf2 {
@@ -141,6 +142,7 @@ struct Incoming {
   std::optional<ExtendedHeader> extended;
   // The server's time from a ping request: it has to be returned unchanged.
   std::optional<std::uint32_t> pingTime;
+  bool pingHaveSent = false;
 
   // For data packets: how many events are inside and the first one parsed.
   int eventCount = 0;
@@ -178,10 +180,109 @@ std::vector<std::byte> writeDataBlockChunk(std::uint8_t connectionId, const Exte
 // the server sends neither world objects nor a ghost stream.
 inline constexpr std::uint32_t kPostRemoteEvent = 11;
 inline constexpr std::uint32_t kNetworkCategory = 6;
+// Category 0 is the game logic's (`ClientGameLogic::handleEvent`): number 1
+// carries the game status as 32 bits (`clientSendDatabaseComplete` sends it after
+// `NEStartSimulation`), number 6 is the round reset — `ServerGameLogic::reset`
+// (Linux 0x4a7b81..0x4a7ba9) posts it to every playing client before `NEReset`.
+inline constexpr std::uint32_t kGameLogicCategory = 0;
+inline constexpr std::uint32_t kGameLogicStatus = 1;
+inline constexpr std::uint32_t kGameLogicReset = 6;
+// The statuses `kGameLogicStatus` carries (`GameStatus`, `python/bf2/__init__.py`):
+// 1 playing, 2 end of game, 3 pre-game,
+// 4 paused, 5 restart, 6 not connected.
+inline constexpr std::int32_t kGameStatusPlaying = 1;
+inline constexpr std::int32_t kGameStatusEndGame = 2;
+inline constexpr std::int32_t kGameStatusPreGame = 3;
+
+// Category 2 is the HUD's. The names are the ones `BF2HudManager::registerHudEvents`
+// registers (the engine's own strings, retail spelling kept; seen in OpenBF2
+// Menu/BF2HudManager.cpp). nullptr for a number it does not register.
+inline constexpr std::uint32_t kHudCategory = 2;
+inline const char* hudEventName(std::uint32_t number) {
+  switch (number) {
+    case 1: return "ECHudHECloseToControlPoint";
+    case 2: return "ECHudHEHudStateChanged";
+    case 3: return "ECHudHEHudDisable";
+    case 4: return "ECHudHEHudEnable";
+    case 5: return "ECHudHEInitLoadingScreen";
+    case 6: return "ECHudHEUpdateLoadingScreen";
+    case 7: return "ECHudHESetLoadingScreenDebug";
+    case 8: return "ECHudHERemoveLoadingScreen";
+    case 9: return "ECHudHEMapZoomChanged";
+    case 10: return "ECHudHEMapStaticChanged";
+    case 11: return "ECHudHESquadIsFull";
+    case 12: return "ECHudHESquadIsPrivate";
+    case 13: return "ECHudHESquadCreationFailed";
+    case 14: return "ECHudHESquadCreationSuccess";
+    case 15: return "ECHudHESquadInvalidName";
+    case 16: return "ECHudHESquadInvitation";
+    case 17: return "ECHudHESquadJoinRequest";
+    case 18: return "ECHudHESquadJoinRequestDenied";
+    case 19: return "ECHudHESquadJoinRequestAccepted";
+    case 20: return "ECHudHEKickedFromSquad";
+    case 21: return "ECHudHELeftSquad";
+    case 22: return "ECHudHEJoinedSquad";
+    case 23: return "ECHudHESquadOrdersReceived";
+    case 24: return "ECHudHENewSquadLeader";
+    case 25: return "ECHudHESquadLeaderRequest";
+    case 26: return "ECHudHECommanderOrdersReceived";
+    case 27: return "ECHudHECommanderOrdersSent";
+    case 28: return "ECHudHESquadOrdersSent";
+    case 29: return "ECHudHERequestRecieved";
+    case 30: return "ECHudHERequestSent";
+    case 31: return "ECHudHEUpdateHud";
+    case 32: return "ECHudHEWeaponChanged";
+    case 33: return "ECHudHECommanderAccept";
+    case 34: return "ECHudHECommanderDecline";
+    case 35: return "ECHudHECommanderInvitation";
+    case 36: return "ECHudHESquadLeaderInvitation";
+    case 37: return "ECHudHECommanderResign";
+    case 38: return "ECHudHERankChange";
+    case 39: return "ECHudHEMedalReward";
+    case 40: return "ECHudHEUAV";
+    case 41: return "ECHudHESatellite";
+    case 42: return "ECHudHEArtillery";
+    case 43: return "ECHudHEUnitSpotted";
+    case 44: return "ECHudHEMissileLock";
+    case 45: return "ECHudHENewUnlock";
+    case 46: return "ECHudHECallForMedic";
+    case 47: return "ECHudHECallForAmmo";
+    case 48: return "ECHudHECallForRepair";
+    case 49: return "ECHudHECallForRevive";
+    case 50: return "ECHudHEAutoCallForRevive";
+    case 51: return "ECHudHERadioCall";
+    case 52: return "ECHudHEWasHit";
+    case 57: return "ECHudHEIsCloseToMine";
+    case 58: return "ECHudHENotCloseToMine";
+    case 59: return "ECHudHEMutedByRemote";
+    case 61: return "ECHudHETKOption";
+    case 62: return "ECHudHETKResponse";
+    case 64: return "ECHudHEControlPointTaken";
+    case 65: return "ECHudHEControlPointLost";
+    case 66: return "ECHudHEEnableHelpMessage";
+    case 67: return "ECHudHEEnableHelp";
+    case 68: return "ECHudHEKickBan";
+    case 70: return "ECHudHETicketBleed";
+    case 71: return "ECHudHETicketStateChanged";
+    case 72: return "ECHudHEBeginRound";
+    case 76: return "ECHudHEMapChangeComplete";
+    case 77: return "ECHudHEMapZoomComplete";
+    case 82: return "ECHudHEUAVVehicleDestroyed";
+    default: return nullptr;
+  }
+}
 inline constexpr std::uint32_t kNetDataBlockReady = 1;
 inline constexpr std::uint32_t kNetLoadComplete = 2;
 inline constexpr std::uint32_t kNetStartSimulation = 3;
 inline constexpr std::uint32_t kNetDatabaseComplete = 4;
+// `NEReset`: the server's round reset (`ServerGameLogic::reset`, Linux 0x4a7a90,
+// sends it with the highest network id in use, then `resetConnections` 0x455890
+// clears every connection's +0x1c and resets its ghost manager). Until a client
+// answers with the same event (`GameServer::confirmReset` 0x45e450 sets +0x1c
+// again) the server ghosts nothing to it and plays none of its actions — the gate
+// is `state == 4 && +0x1c`. `BF2.exe` answers at 0x4d62ff: it rewinds its own
+// network ids, compares the highest with the server's, and posts event 5 back.
+inline constexpr std::uint32_t kNetReset = 5;
 inline constexpr std::uint32_t kNetSelectSpawnGroup = 6;
 inline constexpr std::uint32_t kNetSelectTeam = 7;
 inline constexpr std::uint32_t kNetSelectKit = 8;
@@ -394,6 +495,27 @@ std::vector<std::byte> writeContentCheckEvent(std::uint8_t connectionId,
 // `GeneralSettings.setConnectionType 5`, gets them far more often. That the +4
 // column is the update rate is read from that measurement, not from the code.
 inline constexpr std::uint32_t kConnectionTypeEvent = 3;
+
+// The squad requests a client makes, each one game event in a data packet
+// (OpenBF2 `ClientSquadManager`, the events' `serialize`):
+//   JoinSquadEvent (16):        team 8, player 8, squad 8 — squad 0 asks for a new one;
+//   LeaveSquadEvent (17):       team 8, player 8, squad 8, clear the invite 1;
+//   ChangeSquadNameEvent (22):  squad 8, team 8, player 8, length 8, the name —
+//                               `BF2HudManager::createSquad` creates a squad by naming
+//                               an empty one;
+//   SetPrivateSquadEvent (23):  squad 8, team 8, private 1.
+std::vector<std::byte> writeJoinSquadEvent(std::uint8_t connectionId, const ExtendedHeader& header,
+                                           std::uint8_t batch, int team, int player, int squad);
+std::vector<std::byte> writeLeaveSquadEvent(std::uint8_t connectionId, const ExtendedHeader& header,
+                                            std::uint8_t batch, int team, int player, int squad,
+                                            bool clearInvite);
+std::vector<std::byte> writeChangeSquadNameEvent(std::uint8_t connectionId,
+                                                 const ExtendedHeader& header, std::uint8_t batch,
+                                                 int team, int squad, int player,
+                                                 std::string_view name);
+std::vector<std::byte> writeSetPrivateSquadEvent(std::uint8_t connectionId,
+                                                 const ExtendedHeader& header, std::uint8_t batch,
+                                                 int team, int squad, bool isPrivate);
 std::vector<std::byte> writeConnectionTypeEvent(std::uint8_t connectionId,
                                                 const ExtendedHeader& header, std::uint8_t batch,
                                                 std::uint32_t connectionType);
@@ -414,6 +536,13 @@ std::vector<std::byte> writePingResponse(std::uint8_t connectionId, const Extend
                                          std::uint32_t time);
 
 // A short packet of nothing but the header: acknowledgement, disconnect, ping.
+// The client's goodbye (OpenBF2 IO/Network/ProtocolLayer/NetClient.cpp,
+// `sendDisconnect`): the basic header of type 5, then a 32-bit reason.
+// `GameClient::disconnect` closes with reason 13 and `closeConnection` sends it
+// three times. Without the reason the server took nothing for a goodbye, and every
+// run of ours left a player behind on it until the time-out.
+std::vector<std::byte> writeDisconnect(std::uint8_t connectionId, std::uint32_t reason = 13);
+
 std::vector<std::byte> writeShortPacket(PacketKind kind, std::uint8_t connectionId);
 
 // Parses what arrived from the server. nullopt means the packet is shorter than the header.

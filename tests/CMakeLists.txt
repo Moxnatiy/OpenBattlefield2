@@ -39,6 +39,7 @@ target_compile_definitions(test_meme PRIVATE
 obf2_add_test(test_hud obf2_hud)
 obf2_add_test(test_hud_states obf2_hud)
 obf2_add_test(test_hud_scoreboard obf2_hud)
+obf2_add_test(test_hud_squad_list obf2_hud)
 obf2_add_test(test_hud_spawn obf2_hud)
 obf2_add_test(test_hud_spawn_interface obf2_hud)
 obf2_add_test(test_hud_items obf2_hud)
@@ -62,6 +63,7 @@ obf2_add_test(test_bf2_actions obf2_net)
 target_compile_definitions(test_bf2_actions PRIVATE
   OBF2_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
 obf2_add_test(test_bf2_events obf2_net)
+obf2_add_test(test_bf2_link obf2_net)
 # The test reads packets captured from a live server, from tests/data.
 target_compile_definitions(test_bf2_events PRIVATE
   OBF2_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")

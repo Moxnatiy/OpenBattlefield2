@@ -29,7 +29,7 @@ a separate trial, and 11, 13, 17, 18, 19, 20 from what those branches call.
 | 2 | `NELoadComplete` | the client has loaded the level |
 | 3 | `NEStartSimulation` | start counting |
 | 4 | `NEDatabaseComplete` | the client has received the player base |
-| 5 | `NEReset` | reset |
+| 5 | `NEReset` | the round was reset; the client must answer it (below) |
 | 6 | `NESelectSpawnGroup` | the player picked a spawn point |
 | 7 | `NESelectTeam` | the player picked a team |
 | 8 | `NESelectKit` | the player picked a kit |
@@ -58,6 +58,62 @@ rax = node->[0x30]      // pointer to the data
 r12d = *(int*)rax       // the value itself
 gameLogic->[0xe8](gameLogic, player, r12d)
 ```
+
+## The round's resets and the client's answers
+
+Taken from OpenBF2 (`GameClient::handleEvent`, `ServerGameLogic::uPlaying`,
+`ServerGameLogic::reset`, `GameServer::confirmReset`); the client's answers were
+also seen in `BF2.exe` (handler 0x4d61c0, jump table 0x4d6734) and the reset in
+the Linux server (0x4a7a90, 0x455890, 0x45e450).
+
+What the server sends, and what the original client does with it:
+
+| server sends | category, number | client (`BF2.exe`) | ours |
+|---|---|---|---|
+| the database is pushed | 6, 4 | answers 6, 4 (0x4d6278) — **only then** | the join's `Database` step waits for it |
+| database acknowledged | 6, 3 `NEStartSimulation` | marks itself running, sets the connection type (0x4d621d); no answer | `simulationStarted` |
+| status | 0, 1 = status | `ClientGameLogic` stores it | `gameStatus`, logged |
+| round reset | 0, 6 | `ClientGameLogic::reset` | `resetRound()` |
+| round reset | 6, 5 `NEReset` = highest network id | rewinds its ids, compares, answers 6, 5 (0x4d62ff) | answers 6, 5; `resetRound()` |
+| begin round | `BeginRoundEvent` (type 56): state 32, next tick 32 | `executeClient` | `beginRoundState`, logged |
+
+**Why the answer to `NEReset` matters.** `ServerGameLogic::reset` sends it and then
+calls `resetConnections`, which clears every connection's reset flag (+0x1c on
+Linux) and resets its ghost manager. The server's frame ghosts a connection and
+plays its actions only when `state == 4 && +0x1c`; `confirmReset` — the server's
+handler for the client's 6, 5 — sets the flag again. A client that does not answer
+gets events and nothing else, forever: no ghosts, no controlled-object state, its
+actions unanswered. That is the "spawned and cannot move" stall.
+
+**When it happens.** `ServerGameLogic::uPlaying` walks the begin-round states:
+0 → (coop: `reset`) → 1 "waiting for players" → once the alive humans reach
+`sv.numPlayersNeededToStart` (coop: at most `maxPlayers`), or there are bots and
+the mode is not coop: `reset` again, then 2 the countdown (`sv.startDelay`, 0 with
+bots) → 3 the round is on. So on a coop server with bots and nobody alive since
+the map started, **our own spawn is what resets the round**: the soldier we just
+got is swept away, `Player::reset` clears our spawn group (+0xD4), and the spawn
+screen has to be answered again.
+
+**Our sending of 6, 4 on a timer was a race.** The server's `clientSendDatabase`
+puts the connection to state 3; our 6, 4 puts it to 4. Sent before the server had
+pushed the database, ours was overwritten back to 3 — and a connection below 4 is
+never ghosted. The original sends it only as the answer.
+
+What the log says: `game status: …`, `round: … (state N)`, `ROUND RESET by the
+server … answered`, `round reset: the soldier is gone …`; `NO GHOST STREAM for
+5 s` with the round's state when the stream stops; `NOT HANDLED: …` for every
+remote event nothing acts on (the HUD's once per kind, by the engine's name).
+`capture_scan <capture> --remote` lists them in a recording.
+
+**And why we did not see `NEReset` at all at first.** The reset packet on a live
+coop server carries a `CommanderEvent` (19) right after the bots' deaths, and the
+next ones the squads' orders (24). Neither had a skip of its own, so the walk
+broke on them and `NEReset`, `NEStartSimulation` and the status behind them were
+lost. Every "branchy" event now has its skip, by its `deSerialize` in OpenBF2
+(`Game/GameEvents/<Name>.cpp`): 15, 19, 20, 22, 24, 26, 30, 32, 34, 49, 50
+(`skipEvent`, src/net/src/bf2_events.cpp; the packet itself is
+tests/data/bf2-round-reset.bin). A walk that still breaks says so once per type:
+`EVENT WALK BROKE on type N <name>`, and `capture_scan --all` marks the packet.
 
 ## The player spawning
 
@@ -1976,3 +2032,64 @@ established — and the packed position.
 Still not handled: when that check refuses later, the server clears the player's
 group and sends `NESelectSpawnGroup` without data (0x4ab66a / 0x4ab696); our join
 chain does not start again on it.
+
+
+## Leaving the server
+
+`NetClient::sendDisconnect` (OpenBF2): the basic header of type 5, then a 32-bit
+reason; `GameClient::disconnect` closes with 13, and `closeConnection` sends it
+three times. Ours sent the header alone, which the server did not take for a
+goodbye: every run left its player on the server until the time-out (seen as
+`OpenBF2_1`, `OpenBF2_2` … on later joins). `writeDisconnect` sends the reason now;
+the player is gone from `admin.listPlayers` right after the run.
+
+## The wait before a respawn
+
+After a death the server lets the player spawn no sooner than `sv.spawnTime`
+later (15 s on our rig): our player's state carries the tick (0x20,
+`spawnAtTick`), the spawn screen counts it down ("TIME TO SPAWN"), and the log
+says `server: we may spawn at tick N (… s away)`. Measured: suicide at 25.1 s, DONE
+straight after, spawned at 40.2 s — the server's 15 s, not ours. The first spawn
+after joining takes 0.3 s from DONE.
+
+
+## Delivery: how our packets and events reach the server (`net::bf2::Link`)
+
+Taken from OpenBF2's `SWConnection`, `NetClient`, `ClientConnection` and
+`GameEventManager`; the spawn loop checked against the Linux server
+(`ServerGameLogic::uPlayingSpawning` 0x4ab5a0: spawn when the player's
+`getSpawnAtTick` (vtable +0x1d8) is not ahead of `WorldPref::getTickCount`, every
+third tick).
+
+* **Numbers.** Every data packet takes the next 6-bit number, from 1. A ping
+  response carries the last one sent, not a new one. Each packet names the last
+  number received from the server and a 32-bit mask of the ones before it; the
+  mask shifts by the gap and takes a 1 per data packet received, a 0 per ping
+  with its flag set. A data packet repeating the last number, or more than 31
+  behind, is dropped whole.
+* **Answers.** The server's acknowledgement turns into one delivered-or-lost per
+  data packet we sent, oldest first.
+* **Events.** They wait in a queue; a data packet carries one block: every event
+  queued (up to 255), or the oldest lost block whole, under its own 5-bit number,
+  with the resend bit. At most 15 blocks stand unconfirmed. The receiver executes
+  blocks strictly in order.
+* **Pace.** The original sends a data packet 20 times a second (`ClientConnection`
+  +0x14) — the actions carry the acknowledgement. With no soldier we send an empty
+  one at that pace for the same reason.
+
+What we did before, and what it cost: every event in a packet of its own, sent
+once, our mask always "everything received", and no data packets at all between
+events before a spawn. The server's window of 15 unconfirmed blocks to us then
+filled with the bots' deaths and spawns, and our `NEPlayerSpawned` and soldier
+waited for the next acknowledgement — the ~3 s between DONE and appearing.
+Measured on the live server, DONE to `NEPlayerSpawned`: 3.04, 3.05, 3.00 s before;
+0.10, 0.05, 0.08 s after.
+
+The choice itself is the original's too: DONE sends `NESelectSpawnGroup` alone
+(`BF2HudManager::setDone`); the kit goes the moment it is clicked and only when it
+differs from the player's (`HudKitSelection::selectKit`); the team only on a change
+(`selectTeam`). What is still ours: a kit not yet sent by DONE (the screen opens on
+kit 0, the server's player may hold another) goes at DONE in the same packet.
+
+The log: `event block N (k events, packet S) confirmed|LOST after T ms`, and the
+end-of-run `delivery:` line.

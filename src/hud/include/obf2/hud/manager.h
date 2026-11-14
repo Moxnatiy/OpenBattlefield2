@@ -7,6 +7,7 @@
 // `Bf2HudBuilder.cpp`: the manager owns the tree and the values, and the renderer
 // draws what it produces. So there is no graphics here either — every method
 // gives back `DrawPiece`s, and putting them on the card is the caller's business.
+#include <array>
 #include <chrono>
 #include <functional>
 #include <map>
@@ -25,6 +26,7 @@
 #include "obf2/hud/map_node.h"
 #include "obf2/hud/render.h"
 #include "obf2/hud/scoreboard.h"
+#include "obf2/hud/squad_list.h"
 #include "obf2/hud/spawn_interface.h"
 #include "obf2/hud/states.h"
 #include "obf2/level/gameplay.h"
@@ -44,6 +46,11 @@ class Manager {
     // the spawn screen has to stay where it is, or the picture freezes.
     std::function<bool(int team, int kit, int group)> requestSpawn;
     std::function<void()> commitSuicide;
+    // The player clicked a kit on the spawn screen (`HudKitSelection::selectKit`).
+    std::function<void(int kit)> selectKit;
+    // A squad request from the squad tab (`SquadList::Action`): join, leave,
+    // create, lock. Whoever holds the connection sends it.
+    std::function<void(const SquadList::Action& action)> squadAction;
     // `openbf2.spawnAt <group>` — a spawn straight by the server's group number.
     std::function<void(int team, int kit, int group)> spawnAtGroup;
     // `--hud-rects`: every rectangle drawn, in the original frame dump's format.
@@ -121,7 +128,7 @@ class Manager {
   // The local player's squad (`getSquadId`), 0 for none: a squad's group is its
   // squad's alone. Whether he leads it (`getIsSquadLeader`, which also hides the
   // group) is not carried by his state, and is taken as not.
-  void localSquad(int squad);
+  void localSquad(int squad, bool leader = false);
   // The spawn bar's text while the player is dead (`spawnInfoText`, 0x4668d0).
   // `serverGroup` and `timeToSpawn` are the player's own state; the chosen circle
   // and whether the screen is up the manager knows itself.
@@ -137,6 +144,44 @@ class Manager {
   // `Scoreboard::update` (0x7a4c80) runs only while the scoreboard is shown, and
   // so does this.
   void scoreboardPlayers(const std::vector<ScoreboardPlayer>& players, int localIndex);
+  // The squads as the server has them, for the spawn screen's squad tab.
+  void squadWorld(const SquadWorld& world);
+  // The scoreboard's mouse (OpenBF2 `BF2HudManager::handleGameInput`'s filter):
+  // with the scoreboard held, the right button switches the HUD to its mouse mode
+  // (12) — "Right click to activate mouse" — and letting go of the key ends both.
+  void scoreboardRightClick();
+
+  // The map's live icons (OpenBF2 `Bf2MenuMapNode`): our team's living players
+  // (`collectIconFamily783440`, `populatePlayerMapIcon`, `colorMapIcon`) and the
+  // server's vehicles and strategic objects at their present places. Once the
+  // server's objects are known they replace the level's spawner icons.
+  struct LivePlayer {
+    float x = 0.0f, z = 0.0f;
+    float yaw = 0.0f;  // degrees
+    int team = 0;
+    int squad = 0;
+    bool leader = false;
+    bool commander = false;
+    bool local = false;
+  };
+  struct LiveObject {
+    std::string templateName;
+    float x = 0.0f, z = 0.0f;
+    float yaw = 0.0f;
+  };
+  // Whether a world point lies outside the level's combat area (its bounds).
+  bool outsideCombatArea(float x, float z) const;
+  void liveMap(const std::vector<LivePlayer>& players, const std::vector<LiveObject>& objects,
+               int localTeam, int localSquad);
+  // The server's name, address and port for the scoreboard's server info
+  // (`HudInformationLayer::setServerInfo`, OpenBF2 — the menu calls it on a join)
+  // and the level's name (`ActiveLevel`, "HUD_LEVELNAME_<map>").
+  void serverInfo(const std::string& name, const std::string& address, int port,
+                  const std::string& level, bool votingEnabled = false);
+  bool scoreboardPointer() const { return scoreboardPointer_; }
+  // A left click while the scoreboard has the mouse: its buttons (the tabs, the
+  // server info, the map vote) and its lists.
+  void clickScoreboard(float x, float y, engine::Console& console);
   const Scoreboard& scoreboard() const { return scoreboard_; }
 
   // --- what moves by itself ---
@@ -231,8 +276,17 @@ class Manager {
   std::vector<ServerSpawnGroup> serverGroups_;
   bool serverGroupsOnly_ = false;  // useServerGroupsOnly
   int localSquad_ = 0;
+  bool localSquadLeader_ = false;
   std::vector<level::ControlPoint> controlPoints_;
   std::vector<Context::MapMarker> assetMarkers_;
+  std::vector<Context::MapMarker> liveMarkers_;
+  std::size_t spawnerMarkers_ = 0;
+  std::optional<std::array<float, 4>> combatBounds_;  // min x, max x, min z, max z       // the first of `assetMarkers_` are spawners'
+  std::size_t contextFlagMarkers_ = 0;   // the combat map's flags, before the assets
+  void appendAssets(std::vector<Context::MapMarker>& out) const;
+  bool liveObjectsKnown_ = false;
+  std::chrono::steady_clock::time_point liveMapAt_{};
+  std::function<std::string(const std::string&, const char*, const char*)> iconOf_;
   std::optional<texture::Texture> combatArea_;
 
   BottomLeftPanel bottomLeft_;
@@ -253,6 +307,14 @@ class Manager {
 
   Animator animator_;
   Scoreboard scoreboard_;
+  SquadList squadList_;
+  // The list cell the last click hit, for the list's own commands
+  // (`SquadMenu.singleClickNew` reads the list's current row and column).
+  ListHit lastListHit_;
+  std::string squadFingerprint_;
+  bool scoreboardPointer_ = false;
+  bool votingEnabled_ = false;
+  void squadVariables();
   std::vector<KeyScreen> keyScreens_;
   std::vector<DynamicNode> dynamic_;
 
@@ -264,6 +326,9 @@ class Manager {
   bool scoreboardDown_ = false;
   bool dirty_ = false;
   bool spawnDirty_ = false;
+  // How many times the spawn screen was rebuilt, and what the last one held.
+  std::size_t spawnRebuilds_ = 0;
+  std::array<std::size_t, 3> lastSpawnShape_{};
   bool ingameReported_ = false;
 };
 

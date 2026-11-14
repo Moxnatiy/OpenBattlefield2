@@ -133,10 +133,22 @@ bool FirstPersonView::setWeapon(const std::string& soldier, const std::string& k
   body_.setLengthOf(length);
   weapon_.setLengthOf(length);
 
-  if (const auto found = models_.find(key); found != models_.end()) {
-    model_ = &found->second;
-    return model_->ready;
-  }
+  model_ = &buildModel(key, soldier, kit, item);
+  return model_->ready;
+}
+
+bool FirstPersonView::prepare(const std::string& soldier, const std::string& kit, int item) {
+  if (files_ == nullptr || item < 0 || soldier.empty()) return false;
+  const std::string key = modelKey(soldier, kit, item);
+  if (models_.count(key) != 0) return false;
+  buildModel(key, soldier, kit, item);
+  return true;
+}
+
+FirstPersonView::Model& FirstPersonView::buildModel(const std::string& key,
+                                                    const std::string& soldier,
+                                                    const std::string& kit, int item) {
+  if (const auto found = models_.find(key); found != models_.end()) return found->second;
 
   Model model;
   const auto soldierModel = game::soldierModel(*registry_, soldier, kit, item);
@@ -200,8 +212,7 @@ bool FirstPersonView::setWeapon(const std::string& soldier, const std::string& k
     std::printf("  first person %s: not assembled (model %d, mesh %d, skeleton %d)\n", key.c_str(),
                 soldierModel ? 1 : 0, bind ? 1 : 0, skeleton ? 1 : 0);
   }
-  model_ = &models_.emplace(key, std::move(model)).first->second;
-  return model_->ready;
+  return models_.emplace(key, std::move(model)).first->second;
 }
 
 bool FirstPersonView::onAction(std::uint32_t tick, bool fireHeld, bool reloadPressed,

@@ -6,8 +6,10 @@
 // Only the default view is here — `ToggleScore`, the players by score. The squad
 // view (`ToggleSquads`) and the manage view (`ToggleManage`) are debt, and say so
 // in the notes.
+#include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "obf2/hud/list_data.h"
@@ -60,8 +62,26 @@ class Scoreboard {
   // Whether the lists changed at the last update: the node is rebuilt only then.
   int revision() const { return revision_; }
 
+  // `scoreboard.setToggleShow` → `HudScoreboard::setPage` (OpenBF2
+  // Menu/HudScoreboard.cpp): 0 the score, 1 our team grouped by squads, 2 manage
+  // (each player's id, voice and kick-vote columns).
+  void setPage(int page) { page_ = page; }
+  int page() const { return page_; }
+  // The squads' names for the grouped page's headings; an empty answer is the
+  // default name.
+  void setSquadNames(std::function<std::string(int team, int squad)> names) {
+    squadNames_ = std::move(names);
+  }
+  // The dictionary, for the grouped page's headings.
+  void setText(std::function<std::string(std::string_view key)> text) { text_ = std::move(text); }
+  // The row and column a click hit in a list, and the player id in that row's
+  // hidden column 10 (`getSelectedPlayer`); -1 when none.
+  int playerAt(int data, int row) const;
+
  private:
   void fillTeam(ListData& list, const std::vector<ScoreboardPlayer>& players, int team);
+  void headerRow(ListData& list, const std::vector<ScoreboardPlayer>& players, int team,
+                 int squad, bool commander);
   void playerRow(ListData& list, const ScoreboardPlayer& player, int team);
   void totalRow(ListData& list, const std::vector<ScoreboardPlayer>& players, int team,
                 const std::string& totalLabel);
@@ -84,6 +104,9 @@ class Scoreboard {
 
   int revision_ = 0;
   std::string lastKey_;
+  int page_ = 0;
+  std::function<std::string(int team, int squad)> squadNames_;
+  std::function<std::string(std::string_view key)> text_;
 };
 
 // The columns' x (the constructor, 0x7a4921): +0x300..+0x320.

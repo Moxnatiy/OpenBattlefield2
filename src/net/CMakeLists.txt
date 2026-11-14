@@ -9,6 +9,7 @@ add_library(obf2_net
   src/ghost_track.cpp
   src/bf2_world.cpp
   src/bf2_join.cpp
+  src/bf2_link.cpp
   src/md5.cpp
   src/udp.cpp
 )

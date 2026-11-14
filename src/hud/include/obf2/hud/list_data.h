@@ -51,6 +51,9 @@ class ListData {
 
   void addColumn(float x, bool toNext);  // 0x7c5850
   void addHiddenColumn();                // 0x7c59b0
+  // An icon column: no `toNext`, its width given (OpenBF2 BfListBoxData.cpp
+  // `addIconColumn`, the width into +0x20).
+  void addIconColumn(float x, float width);
   void clear();                          // 0x7c89b0: every column's cells
 
   // Text and texture cells, appended to a column (0x7c8120, 0x7c8260).

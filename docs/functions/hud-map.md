@@ -305,3 +305,29 @@ established**.
 Which point is a base is not read out of the binary either: we go by the level's
 own `unableToChangeTeam`, which on Karkand picks out exactly the one point the
 dump shows a base icon for.
+
+## The live icons (players and vehicles)
+
+Taken from OpenBF2 (`Menu/Bf2MenuMapNode.cpp`): `collectIconFamily783440` paints
+every living player of our team where his object is (the other team only near our
+own vehicle — on the spawn screen never), `populatePlayerMapIcon` picks the icon
+(`mini_Soldier`, a squad leader's `mini_Squad_<n>_small` and the commander's mark,
+both with `mini_headingArrow` turned by his yaw) and `colorMapIcon` the colour (our
+squad `squadChatColors[2]`, the rest of the team `mapObjectColors[2]`, the
+commander white). `hud::Manager::liveMap` does the same from the session's world.
+
+The vehicles and strategic objects are the server's own objects at their present
+places, with the icon of their template (`StrategicObject.intactIcon` at 19, else
+`VehicleHud.miniMapIcon` at 16, turned with the vehicle). Until the server's
+objects are known the level's spawner icons stand in; then they are replaced.
+
+Our map is baked geometry, so the icons move four times a second (a rebuild costs a
+frame) — a choice of ours, not the original's rate, which paints every frame.
+Not done: the local player's arrow, the kit icons (`showKitsOnMap`), enemies seen
+from a vehicle, the timed markers (talking, revive, spotted), the control points'
+live owners (`ControlPointNetworkable` not read), destroyed icons.
+
+**What looked like the map "reloading" on the spawn screen's first second** was
+the dynamic spawn groups (192..255, the squads'): `CreateSpawnGroupEvent` carries
+no squad, only the group's ghost does, and until it came such a group was drawn as
+everyone's — a circle at some squad leader's feet that vanished a moment later.

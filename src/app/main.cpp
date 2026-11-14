@@ -519,6 +519,46 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
     hooks.commitSuicide = [&]() {
       if (remote != nullptr) remote->commitSuicide();
     };
+    hooks.selectKit = [&](int kit) {
+      if (remote != nullptr) remote->selectKit(kit);
+    };
+    // The squad tab's requests (`hud::SquadList::Action`) as `ClientSquadManager`
+    // sends them. Creating while in a squad leaves it first, as
+    // `BF2HudManager::createSquad` does (`leaveAndReinvite`).
+    hooks.squadAction = [&](const obf2::hud::SquadList::Action& action) {
+      if (remote == nullptr) {
+        std::printf("  squad tab: no server — %d ignored\n", static_cast<int>(action.kind));
+        return;
+      }
+      using Kind = obf2::hud::SquadList::Action::Kind;
+      using Request = obf2::session::RemoteWorld::SquadRequest;
+      switch (action.kind) {
+        case Kind::Join:
+          remote->requestSquad({Request::Kind::Join, action.squad, {}, false});
+          break;
+        case Kind::Leave:
+          remote->requestSquad({Request::Kind::Leave, action.squad, {}, false});
+          break;
+        case Kind::Create: {
+          const auto self = remote->world.players().find(
+              static_cast<std::uint32_t>(remote->world.ownPlayer()));
+          const int current = self != remote->world.players().end()
+                                  ? static_cast<int>(self->second.squad.value_or(0))
+                                  : 0;
+          if (current > 0 && current != action.squad) {
+            remote->requestSquad({Request::Kind::Leave, current, {}, false});
+          }
+          remote->requestSquad({Request::Kind::Name, action.squad, action.name, false});
+          if (action.flag) remote->requestSquad({Request::Kind::Private, action.squad, {}, true});
+          break;
+        }
+        case Kind::SetPrivate:
+          remote->requestSquad({Request::Kind::Private, action.squad, {}, action.flag});
+          break;
+        default:
+          break;
+      }
+    };
     hooks.spawnAtGroup = [&](int team, int kit, int group) {
       if (remote != nullptr) remote->askSpawnGroup(team, kit, group);
     };
@@ -1331,7 +1371,72 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
           const auto self = remote->world.players().find(
               static_cast<std::uint32_t>(remote->world.ownPlayer()));
           if (self != remote->world.players().end()) {
-            hudManager.localSquad(static_cast<int>(self->second.squad.value_or(0)));
+            hudManager.localSquad(static_cast<int>(self->second.squad.value_or(0)),
+                                  self->second.squadLeader.value_or(false));
+          }
+          // The map's live icons: our team's living players where their object is,
+          // and the server's vehicles and strategic objects where they are.
+          {
+            std::vector<obf2::hud::Manager::LivePlayer> livePlayers;
+            const int ownId = remote->world.ownPlayer();
+            int ownTeam = 0;
+            int ownSquad = 0;
+            for (const auto& [id, player] : remote->world.players()) {
+              if (static_cast<int>(id) == ownId) {
+                ownTeam = player.team;
+                ownSquad = static_cast<int>(player.squad.value_or(0));
+              }
+              if (!player.alive.value_or(false) || player.object == 0) continue;
+              const auto object = remote->world.objects().find(player.object);
+              if (object == remote->world.objects().end()) continue;
+              obf2::hud::Manager::LivePlayer live;
+              live.x = object->second.position.x;
+              live.z = object->second.position.z;
+              live.yaw = object->second.yaw.value_or(0.0f);
+              live.team = player.team;
+              live.squad = static_cast<int>(player.squad.value_or(0));
+              live.leader = player.squadLeader.value_or(false);
+              live.commander = player.commander.value_or(false);
+              live.local = static_cast<int>(id) == ownId;
+              // A teammate the map puts in the sea is a position gone stale: said
+              // once per player, so it can be chased.
+              static std::set<std::uint32_t> reportedOff;
+              if (player.team == ownTeam && hudManager.outsideCombatArea(live.x, live.z) &&
+                  reportedOff.insert(id).second) {
+                std::printf("  map: player %u %s (object %u) drawn outside the combat area at "
+                            "%.0f %.0f\n",
+                            id, player.name.c_str(), player.object, live.x, live.z);
+              }
+              livePlayers.push_back(live);
+            }
+            std::vector<obf2::hud::Manager::LiveObject> liveObjects;
+            for (const auto& object : worldView.mapObjects()) {
+              liveObjects.push_back({object.templateName, object.x, object.z, object.yaw});
+            }
+            hudManager.liveMap(livePlayers, liveObjects, ownTeam, ownSquad);
+          }
+          hudManager.serverInfo(remote->serverName, remote->serverHost, remote->serverPort,
+                                remote->levelName, remote->votingEnabled);
+          // The squad tab: every player's squad, the leader bit and the names and
+          // locks the server set.
+          {
+            obf2::hud::SquadWorld squads;
+            squads.localId = remote->world.ownPlayer();
+            for (const auto& [id, player] : remote->world.players()) {
+              obf2::hud::SquadPlayer row;
+              row.id = static_cast<int>(id);
+              row.name = player.name;
+              row.team = player.team;
+              row.squad = static_cast<int>(player.squad.value_or(0));
+              row.leader = player.squadLeader.value_or(false);
+              row.commander = player.commander.value_or(false);
+              row.alive = player.alive.value_or(false);
+              squads.players.push_back(std::move(row));
+            }
+            const auto& view = remote->world;
+            squads.name = [&view](int team, int squad) { return view.squadName(team, squad); };
+            squads.locked = [&view](int team, int squad) { return view.squadPrivate(team, squad); };
+            hudManager.squadWorld(squads);
           }
 
           // The crosshair. The weapon our soldier has out is what his own ghost's
@@ -1469,7 +1574,13 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
         // The mouse: in combat the window captures it (otherwise the cursor runs
         // into the screen's edge and looking simply stops), while on the spawn
         // screen it is free, because there it presses buttons.
-        const bool wantRelativeMouse = spawned && !spawnVisible;
+        // The scoreboard's mouse mode: a right click with the scoreboard up
+        // (OpenBF2 `BF2HudManager`, HUD mode 12), the cursor free until the key
+        // is let go.
+        if (hudState == 9 && (frameInput.rightClicked || args.scoreboardMouse)) {
+          hudManager.scoreboardRightClick();
+        }
+        const bool wantRelativeMouse = spawned && !spawnVisible && !hudManager.scoreboardPointer();
         if (wantRelativeMouse != relativeMouse) {
           relativeMouse = wantRelativeMouse;
           device->setRelativeMouse(relativeMouse);
@@ -1481,7 +1592,8 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
         // flags, and without the reset we would ask to spawn at another team's,
         // which the server does not do.
         if (remote != nullptr && remote->world.ownTeam() > 0 &&
-            hudManager.spawnScreen().choice().team != remote->world.ownTeam()) {
+            (!hudManager.spawnScreen().teamFromServer() ||
+             hudManager.spawnScreen().choice().team != remote->world.ownTeam())) {
           hudManager.spawnScreen().setTeamFromServer(remote->world.ownTeam());
           hudManager.markSpawnDirty();
           std::printf("  spawn screen: the server gave team %d\n",
@@ -1490,6 +1602,33 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
         // `MapFullSize` is not "we are on the spawn screen" but "the map's size has
         // reached the big one" — that is how 0x77d3f8 derives it.
         hudManager.updateVariables(spawned, hudManager.map().fullSize());
+
+        // The first-person models of our team's kits, built ahead while the spawn
+        // screen is up — one a frame, the chosen kit first — so the spawn itself
+        // finds them made (`FirstPersonView::prepare`).
+        if (remote != nullptr && !spawned && level && hudManager.spawnScreen().teamFromServer()) {
+          const int team = hudManager.spawnScreen().choice().team;
+          const int chosen = hudManager.spawnScreen().choice().kit;
+          if (team > 0 && team < 3) {
+            for (int n = 0; n < obf2::level::Level::kKitsPerTeam; ++n) {
+              const int slot = n == 0 ? chosen : (n <= chosen ? n - 1 : n);
+              if (slot < 0 || slot >= obf2::level::Level::kKitsPerTeam) continue;
+              const std::string& kit = level->kits[team][slot];
+              const std::string& soldier = level->kitSoldiers[team][slot];
+              if (kit.empty() || soldier.empty()) continue;
+              const int item = obf2::app::spawnItemIndex(remote->registry, kit);
+              const auto began = std::chrono::steady_clock::now();
+              if (firstPersonView.prepare(soldier, kit, item)) {
+                std::printf("  first person prepared ahead: %s|%s|%d in %.0f ms\n", soldier.c_str(),
+                            kit.c_str(), item,
+                            std::chrono::duration<double, std::milli>(
+                                std::chrono::steady_clock::now() - began)
+                                .count());
+                break;
+              }
+            }
+          }
+        }
 
         // `--exec` goes the same path as a button click: a button runs a console
         // command, and we run a console command. We wait for the assembled screen,
@@ -1533,6 +1672,18 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
             clickY = scheduled.y;
           }
           if (clicked) hudManager.clickSpawn(clickX, clickY, engine.console());
+        }
+        if (hudManager.scoreboardPointer()) {
+          bool clicked = frameInput.clicked;
+          float clickX = frameInput.mouseX;
+          float clickY = frameInput.mouseY;
+          for (const auto& scheduled : args.clicks) {
+            if (frame != scheduled.frame) continue;
+            clicked = true;
+            clickX = scheduled.x;
+            clickY = scheduled.y;
+          }
+          if (clicked) hudManager.clickScoreboard(clickX, clickY, engine.console());
         }
 
         // While at least one node is travelling or fading, the screen has to be
@@ -1730,6 +1881,9 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
 }
 
 int main(int argc, char** argv) {
+  // Line by line, whatever stdout is: a log piped through a timestamper has to
+  // show when each line was written, not when a 4 KB buffer filled.
+  std::setvbuf(stdout, nullptr, _IOLBF, 0);
   Args args = parseArgs(argc, argv);
 
   obf2::FileSystem files;

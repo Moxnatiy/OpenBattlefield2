@@ -37,6 +37,8 @@ class SpawnInterface {
   // eats the command without doing anything.
   void bind(engine::Console& console, std::function<bool(int, int, int)> requestSpawn,
             std::function<void()> commitSuicide = {});
+  // Told of every kit the player clicks (`spawnManager.setPlayerKit`).
+  void setKitListener(std::function<void(int kit)> listener) { kitListener_ = std::move(listener); }
 
   const SpawnChoice& choice() const { return choice_; }
   // While the spawn screen is still half in `main.cpp`, it needs direct access.
@@ -51,6 +53,10 @@ class SpawnInterface {
   // The team is set by the server; on a change the point choice is reset, because
   // the circles belong to your own team's flags.
   void setTeamFromServer(int team);
+  // Whether a server has named our team yet. On `--connect` the circles wait for
+  // it: the original knows the player's team from `CreatePlayerEvent` before its
+  // spawn screen ever shows, while ours opened on team 1's flags and drew them.
+  bool teamFromServer() const { return teamFromServer_; }
   void setMarkerPoints(std::vector<int> points) { markerPoints_ = std::move(points); }
   const std::vector<int>& markerPoints() const { return markerPoints_; }
 
@@ -64,7 +70,9 @@ class SpawnInterface {
   SpawnChoice choice_;
   std::vector<int> markerPoints_;
   std::function<bool(int, int, int)> requestSpawn_;
+  std::function<void(int)> kitListener_;
   bool requested_ = false;
+  bool teamFromServer_ = false;
   bool dirty_ = false;
 };
 

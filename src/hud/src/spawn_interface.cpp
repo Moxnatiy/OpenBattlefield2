@@ -5,7 +5,10 @@
 namespace obf2::hud {
 
 void SpawnInterface::setTeamFromServer(int team) {
-  if (team <= 0 || team == choice_.team) return;
+  if (team <= 0) return;
+  if (!teamFromServer_) dirty_ = true;
+  teamFromServer_ = true;
+  if (team == choice_.team) return;
   choice_.team = team;
   // The circles belong to your own team's flags, so a choice made before the team
   // changed no longer makes sense.
@@ -27,6 +30,9 @@ void SpawnInterface::bind(engine::Console& console, std::function<bool(int, int,
   console.bind("spawnManager.setPlayerKit", [this](const con::Command& command) {
     choice_.kit = command.argInt(0).value_or(choice_.kit);
     dirty_ = true;
+    // `HudKitSelection::selectKit` (OpenBF2) asks the server for the kit here,
+    // at the click, not at DONE.
+    if (kitListener_) kitListener_(choice_.kit);
   });
   console.bind("spawnManager.setPlayerTeam", [this](const con::Command& command) {
     choice_.team = command.argInt(0).value_or(choice_.team);

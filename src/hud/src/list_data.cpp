@@ -14,6 +14,14 @@ void ListData::addColumn(float x, bool toNext) {
   columns_.push_back(std::move(column));
 }
 
+void ListData::addIconColumn(float x, float width) {
+  ListColumn column;
+  column.x = x;
+  column.toNext = false;
+  column.width = width;
+  columns_.push_back(std::move(column));
+}
+
 void ListData::addHiddenColumn() {
   // 0x7c59b0: x 0, not visible, `toNext` 1.
   ListColumn column;

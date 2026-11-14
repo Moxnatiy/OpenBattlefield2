@@ -66,17 +66,50 @@ static void testContentGoesWithLoadComplete() {
   if (second) CHECK(*second == JoinStep::Content);
   join.commit(at);
 
-  // The player base, on the other hand, waits its 1.1 s.
+  // The player base, on the other hand, waits for the server's own
+  // `NEDatabaseComplete` however long it takes — ours is the answer to it
+  // (`GameClient::handleEvent`, `BF2.exe` 0x4d6278) — and then goes at once.
   CHECK(!join.next(at).has_value());
-  CHECK(!join.next(at + std::chrono::milliseconds(900)).has_value());
-  const auto third = join.next(after(at));
+  CHECK(!join.next(at + std::chrono::minutes(1)).has_value());
+  join.setServerDatabaseSent();
+  const auto third = join.next(at);
   CHECK(third.has_value());
   if (third) CHECK(*third == JoinStep::Database);
+}
+
+// A round reset (`NEReset`) clears the player's spawn group, so after it the
+// sequence stands at the spawn screen again and sends the choice anew.
+static void testReopenAfterRoundReset() {
+  JoinSequence join;
+  join.setServerDatabaseSent();
+  join.ask(JoinChoice{2, 1, 3});
+  join.setLevelReady();
+  join.setClientLoaded();
+
+  Clock::time_point at{};
+  CHECK(take(join, at, JoinStep::Level));
+  CHECK(take(join, at, JoinStep::Content));
+  CHECK(take(join, at, JoinStep::Database));
+  CHECK(take(join, at, JoinStep::Team));
+  CHECK(take(join, at, JoinStep::Kit));
+  CHECK(take(join, at, JoinStep::Group));
+  CHECK(join.done());
+
+  join.reopen();
+  CHECK(!join.asked());
+  CHECK(join.step() == JoinStep::Ready);
+  CHECK(!join.next(at + std::chrono::minutes(1)).has_value());
+  join.ask(JoinChoice{2, 1, 4});
+  CHECK(take(join, at, JoinStep::Team));
+  CHECK(take(join, at, JoinStep::Kit));
+  CHECK(take(join, at, JoinStep::Group));
+  CHECK(join.done());
 }
 
 // Without DONE the sequence stops at the spawn screen and goes no further.
 static void testStopsAtSpawnScreen() {
   JoinSequence join;
+  join.setServerDatabaseSent();
   join.setLevelReady();
   join.setClientLoaded();
 
@@ -106,6 +139,7 @@ static void testStopsAtSpawnScreen() {
 // stopping.
 static void testChoiceMadeEarlyDoesNotStop() {
   JoinSequence join;
+  join.setServerDatabaseSent();
   join.ask(JoinChoice{1, 0, 515});
   join.setLevelReady();
   join.setClientLoaded();
@@ -145,4 +179,5 @@ TEST_MAIN({
   testStopsAtSpawnScreen();
   testChoiceMadeEarlyDoesNotStop();
   testSkippedStepsCostNoDelay();
+  testReopenAfterRoundReset();
 })

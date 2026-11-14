@@ -128,6 +128,23 @@ struct ServerMapInfo {
 
 std::optional<ServerMapInfo> parseMapInfoNetBuffer(std::span<const std::byte> block);
 
+// Block 0, the server's `ServerInfo` (OpenBF2 GameServer/ServerInfo.cpp,
+// `updateFromDataBlock`): its head — the game's name and the welcome lines, each
+// a 16-bit length and the bytes — then fixed fields we do not read yet.
+inline constexpr std::uint32_t kServerInfoBlock = 0;
+struct ServerInfoHead {
+  std::string gameName;
+  std::vector<std::string> welcome;
+  // The fields after them, in the block's order: seven flags, the voice server's
+  // address and two ports, the voice quality (sign 1 + 31), the GameSpy port,
+  // three radio spam numbers (signed), then these two (`ServerInfoBlock` +0x32,
+  // +0x33). Read as far as `votingEnabled`; the rest is not taken yet.
+  std::optional<bool> voipEnabled;
+  std::optional<bool> contentChecking;
+  std::optional<bool> votingEnabled;
+};
+std::optional<ServerInfoHead> parseServerInfo(std::span<const std::byte> block);
+
 // A spawn group from `CreateSpawnGroupEvent` (type 57). It is its number that
 // the `NESelectSpawnGroup` event expects when the player presses DONE.
 //
@@ -312,6 +329,30 @@ struct Event {
   // network id, 16). `executeClient` (Linux 0x42e1b0) has the client's spawn
   // manager drop the group (`removeClientSpawnGroup`, vtable 0x98).
   std::optional<std::uint8_t> removeSpawnGroup;
+  // `BeginRoundEvent` (type 56): the round's begin state and the tick it changes
+  // next (`BeginRoundEvent::serialize`, Linux 0x41f3d0: 32 bits from +0x10, 32 bits
+  // from +0x14). The states are `ServerGameLogic::uPlaying`'s: 0 not begun, 1
+  // waiting for players, 2 the start countdown, 3 the round is on.
+  struct BeginRound {
+    std::uint32_t state = 0;
+    std::uint32_t nextChangeTick = 0;
+  };
+  std::optional<BeginRound> beginRound;
+  // The squads (OpenBF2 Game/GameEvents/<Name>.cpp, `deSerialize`):
+  // `ChangeSquadNameEvent` (22) squad 8, team 8, player 8, an 8-bit length and
+  // the name; `SetPrivateSquadEvent` (23) squad 8, team 8, private 1. The server
+  // sends both for every squad whose name or lock is not the default
+  // (`SquadManager::sendSquadManagerState`) and again on each change.
+  struct SquadName {
+    std::uint32_t squad = 0, team = 0, player = 0;
+    std::string name;
+  };
+  std::optional<SquadName> squadName;
+  struct SquadPrivate {
+    std::uint32_t squad = 0, team = 0;
+    bool isPrivate = false;
+  };
+  std::optional<SquadPrivate> squadPrivate;
 };
 
 // Assembles blocks from the chunks that arrive as events.
@@ -555,8 +596,17 @@ std::vector<GhostRecord> readGhostRecords(
     const std::function<GhostClass(std::uint16_t)>& classOf = {},
     const std::function<int(std::uint16_t)>& inventoryOf = {});
 
+// How a packet's event list was walked: how many the packet declares, how many
+// were read, and — when the walk broke off — the type it broke on. A broken walk
+// loses every event after it, and the ghost stream with them.
+struct EventWalk {
+  std::uint32_t declared = 0;
+  std::uint32_t read = 0;
+  std::optional<std::uint32_t> brokeOn;
+};
+
 // Walks a data packet and returns every event in it.
 // Empty means this is not a data packet or it broke off on the very first event.
-std::vector<Event> readEvents(std::span<const std::byte> packet);
+std::vector<Event> readEvents(std::span<const std::byte> packet, EventWalk* walk = nullptr);
 
 }  // namespace obf2::net::bf2

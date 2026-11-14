@@ -155,7 +155,19 @@ static void testChallengeResponseLayout() {
   CHECK_EQ(reader.readBits(32).value_or(0), kGameVersion);
 }
 
+// The goodbye: type 5, the connection, then the 32-bit reason (13, as
+// `GameClient::disconnect` closes) — 44 bits, six bytes.
+static void testDisconnectCarriesItsReason() {
+  const auto packet = obf2::net::bf2::writeDisconnect(7);
+  CHECK_EQ(packet.size(), std::size_t(6));
+  obf2::net::BitReader reader(packet);
+  CHECK(reader.readBits(4) == 5u);
+  CHECK(reader.readBits(8) == 7u);
+  CHECK(reader.readBits(32) == 13u);
+}
+
 TEST_MAIN({
+  testDisconnectCarriesItsReason();
   testChallengeResponseLayout();
   testChallengeEventIsDecoded();
   testHeaderIsTwelveBits();

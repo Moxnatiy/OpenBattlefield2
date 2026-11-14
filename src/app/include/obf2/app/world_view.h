@@ -57,6 +57,16 @@ class WorldView {
     bool watchRagdoll = false;
   };
 
+  // The server's vehicles and strategic objects as the map shows them: what each
+  // is (the template it was resolved to, by its creation spot or its number) and
+  // where it is now. Only objects already met by the drawing are known.
+  struct MapObject {
+    std::string templateName;
+    float x = 0.0f, z = 0.0f;
+    float yaw = 0.0f;  // degrees
+  };
+  std::vector<MapObject> mapObjects() const;
+
   // The placeholders and the level's gameplay placement. False when the boxes did
   // not reach the card — then nothing of the ghost stream is drawn.
   bool init(FileSystem& files, const game::Registry& registry, gfx::MeshRenderer& renderer,

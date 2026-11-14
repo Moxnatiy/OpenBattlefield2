@@ -5,7 +5,7 @@
 namespace obf2::hud {
 
 void Animator::setVisible(const Node& node, bool visible) {
-  auto [it, inserted] = entries_.try_emplace(node.name);
+  auto [it, inserted] = entries_.try_emplace(&node);
   Entry& entry = it->second;
   if (inserted) {
     // A freshly created `CullNode` has progress -4 (`MemeDll.dll`, 0x10004a57
@@ -48,7 +48,7 @@ void Animator::advance(float dt) {
 
 ShowState Animator::ownState(const Node& node) const {
   ShowState out;
-  const auto it = entries_.find(node.name);
+  const auto it = entries_.find(&node);
   // We have not heard of the node — let the ordinary show condition decide.
   if (it == entries_.end()) return out;
   out.known = true;
@@ -116,11 +116,11 @@ ShowState Animator::compose(const ShowState& ancestors, const ShowState& own) {
 }
 
 void Animator::setInherited(const Node& node, const ShowState& fromAncestors) {
-  inherited_[node.name] = fromAncestors;
+  inherited_[&node] = fromAncestors;
 }
 
 ShowState Animator::state(const Node& node) const {
-  const auto found = inherited_.find(node.name);
+  const auto found = inherited_.find(&node);
   if (found != inherited_.end()) return found->second;
   return ownState(node);
 }

@@ -1,6 +1,8 @@
 #include "obf2/hud/scoreboard.h"
 
 #include <algorithm>
+#include <cstdlib>
+#include <cctype>
 #include <cstdio>
 
 namespace obf2::hud {
@@ -130,6 +132,14 @@ void Scoreboard::update(const std::vector<ScoreboardPlayer>& players, int localI
   }
 }
 
+int Scoreboard::playerAt(int data, int row) const {
+  const ListData* found = list(data);
+  if (found == nullptr || row < 0 || found->columns().size() < 11) return -1;
+  const auto& cells = found->columns()[10].cells;
+  if (static_cast<std::size_t>(row) >= cells.size()) return -1;
+  return std::atoi(cells[static_cast<std::size_t>(row)].text.c_str());
+}
+
 void Scoreboard::fillTeam(ListData& list, const std::vector<ScoreboardPlayer>& players,
                           int team) {
   // 0x7a4b30 → 0x7a4820: clear, reset the row count and the team's sums, then a
@@ -142,7 +152,87 @@ void Scoreboard::fillTeam(ListData& list, const std::vector<ScoreboardPlayer>& p
     if (player.team == team) ofTeam.push_back(player);
   }
   std::stable_sort(ofTeam.begin(), ofTeam.end(), better);
-  for (const ScoreboardPlayer& player : ofTeam) playerRow(list, player, team);
+  // `fillSideList` (OpenBF2 HudScoreboard.cpp): the squads page groups our own
+  // team only — the commander, squads 1..9, then the unassigned (squad 0) — each
+  // group behind its heading row.
+  if (page_ != 1 || team != localTeam_) {
+    for (const ScoreboardPlayer& player : ofTeam) playerRow(list, player, team);
+    return;
+  }
+  for (const ScoreboardPlayer& player : ofTeam) {
+    if (!player.commander) continue;
+    headerRow(list, ofTeam, team, 0, true);
+    playerRow(list, player, team);
+    break;
+  }
+  for (int squad : {1, 2, 3, 4, 5, 6, 7, 8, 9, 0}) {
+    std::vector<const ScoreboardPlayer*> in;
+    for (const ScoreboardPlayer& player : ofTeam) {
+      if (player.squad == squad && !player.commander) in.push_back(&player);
+    }
+    if (in.empty()) continue;
+    headerRow(list, ofTeam, team, squad, false);
+    for (const ScoreboardPlayer* player : in) playerRow(list, *player, team);
+  }
+}
+
+void Scoreboard::headerRow(ListData& list, const std::vector<ScoreboardPlayer>& players, int team,
+                           int squad, bool commander) {
+  // `paintCommanderHeader` / `paintSquadHeader` with `paintTotalRow(squad)`: the
+  // squad's own sums. The original sums them while painting the rows *under* the
+  // heading, so its heading shows the previous refresh's numbers; refreshed every
+  // frame, the two agree.
+  Color color{0.7490196f, 0.7490196f, 0.5607843f, 1.0f};
+  const bool ours = commander ? localCommander_ : (squad == localSquad_ && squad > 0);
+  if (ours) color = Color{0.4470588f, 0.8901961f, 0.3450980f, 1.0f};  // squadChatColors[2]
+  if (commander) {
+    list.addTexture(0, "Ingame/Respawn/iconframe.tga", 15, 15, kScoreboardColumnX[0], kIconY, color);
+    list.addTexture(1, "Ingame/Kits/Icons/kit_Commander.tga", 15, 15, 0, kIconY, color);
+    list.addText(3, text_ ? text_("HUD_HUD_MENU_COMMANDER_HEADING") : std::string(), -21, kTextY,
+                 color, 0);
+  } else if (squad <= 0) {
+    list.addEmpty(0);
+    list.addEmpty(1);
+    list.addText(3, text_ ? text_("HUD_TEXT_MENU_SPAWN_SQUAD_UNASSIGNED") : std::string(), -40,
+                 kTextY, color, 0);
+  } else {
+    list.addTexture(0, "Ingame/Respawn/iconframe.tga", 15, 15, kScoreboardColumnX[0], kIconY, color);
+    list.addText(1, std::to_string(squad), 5, kTextY, color, 0);
+    std::string name = squadNames_ ? squadNames_(team, squad) : std::string();
+    if (name.empty()) {
+      static const char* const kDefault[10] = {"Unassigned", "Alpha", "Bravo", "Charlie", "Delta",
+                                               "Echo", "Foxtrot", "Gamma", "Hotel", "India"};
+      name = kDefault[squad];
+    }
+    for (char& ch : name) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    list.addText(3, nameText(name), -21, kTextY, color, 0);
+  }
+  list.addEmpty(2);
+  if (commander) {
+    for (int column = 4; column <= 9; ++column) list.addEmpty(column);
+  } else {
+    Sums sums;
+    int count = 0;
+    for (const ScoreboardPlayer& player : players) {
+      if (player.squad != squad || player.commander || !player.score) continue;
+      ++count;
+      sums.ping += player.ping;
+      sums.score += player.score->score;
+      sums.teamwork += player.score->teamwork;
+      sums.kills += player.score->kills;
+      sums.deaths += player.score->deaths;
+    }
+    list.addText(4, numberText(sums.score), 0, kTextY, color, 1);
+    list.addText(5, numberText(sums.teamwork), 0, kTextY, color, 1);
+    list.addText(6, numberText(sums.kills), 0, kTextY, color, 1);
+    list.addText(7, numberText(sums.deaths), 0, kTextY, color, 1);
+    list.addEmpty(8);
+    list.addText(9, numberText(count > 0 ? sums.ping / count : 0), 0, kTextY, color, 1);
+  }
+  list.addText(10, "-1", 0, 0, color, 0);
+  list.setRowBackground(row_, Color{0.4862745f, 0.4784314f, 0.3882353f, 0.9f}, 0.0f,
+                        kRowBackgroundY, kRowBackgroundHeight);
+  ++row_;
 }
 
 void Scoreboard::playerRow(ListData& list, const ScoreboardPlayer& player, int team) {
@@ -158,6 +248,37 @@ void Scoreboard::playerRow(ListData& list, const ScoreboardPlayer& player, int t
     color = kSquad;
   }
 
+  const int rank = player.score ? player.score->rank : 0;
+  char rankPath[64];
+  std::snprintf(rankPath, sizeof rankPath, "Ingame/GeneralIcons/Ranks/rank_%02i.tga",
+                rank >= 0 && rank < 0x16 ? rank : 0);
+  if (page_ == 2) {
+    // The manage page (OpenBF2 `paintRow`, `m_toggleManage`): the rank, the name
+    // with the player's id, the voice box. The kick-vote column needs the vote
+    // manager, which we do not have: it stays empty, as it does in the original
+    // while voting is off.
+    list.addEmpty(1);
+    list.addTexture(0, rankPath, 16.0f, 16.0f, kScoreboardColumnX[0], kIconY - 1.0f, kWhite);
+    list.addEmpty(2);
+    list.addText(3, "\xa7" "1" + player.name + " - " + std::to_string(player.index) + "\xa7" "0",
+                 -20.0f, kTextY, color, 0);
+    list.addEmpty(5);
+    list.addTexture(4, "Ingame/Scoreboard/Icons/checkbox_empty.tga", 15.0f, 15.0f, 0.0f, kIconY,
+                    kWhite);
+    list.addEmpty(6);
+    list.addEmpty(9);
+    list.addEmpty(7);
+    list.addEmpty(8);
+    list.addText(10, std::to_string(player.index), 0.0f, 0.0f, color, 0);
+    if (player.index == localIndex_) {
+      list.setRowBackground(row_, kLocalRow, 0.0f, kRowBackgroundY, kRowBackgroundHeight);
+    } else if (row_ % 2 > 0) {
+      list.setRowBackground(row_, kOddRow, 0.0f, kRowBackgroundY, kRowBackgroundHeight);
+    }
+    ++row_;
+    return;
+  }
+
   // Column 0: the frame (+0x324) at x +5 (+0x300).
   list.addTexture(0, "Ingame/Respawn/iconframe.tga", 15.0f, 15.0f, kScoreboardColumnX[0], kIconY,
                   kFrame);
@@ -171,15 +292,16 @@ void Scoreboard::playerRow(ListData& list, const ScoreboardPlayer& player, int t
     kit = player.kitIcon;
   }
   list.addTexture(1, kit, 15.0f, 15.0f, 0.0f, kIconY, kKitIcon);
-  // Column 2 and 3: `ToggleScore` is on (+0x365, 1 from the constructor): the
-  // rank (0x74f8d0) at y +1 and the name at x 0. The rank of a player whose score
-  // we do not have is taken as a fresh score's 0.
-  const int rank = player.score ? player.score->rank : 0;
-  char rankPath[64];
-  std::snprintf(rankPath, sizeof rankPath, "Ingame/GeneralIcons/Ranks/rank_%02i.tga",
-                rank >= 0 && rank < 0x16 ? rank : 0);
-  list.addTexture(2, rankPath, 16.0f, 16.0f, 0.0f, kIconY - 1.0f, kWhite);
-  list.addText(3, nameText(player.name), 0.0f, kTextY, color, 0);
+  // Column 2 and 3: on the score page (`ToggleScore`, +0x365) the rank (0x74f8d0)
+  // at y +1 and the name at x 0; on the squads page no rank, the name at -20.
+  // The rank of a player whose score we do not have is taken as a fresh score's 0.
+  if (page_ == 0) {
+    list.addTexture(2, rankPath, 16.0f, 16.0f, 0.0f, kIconY - 1.0f, kWhite);
+    list.addText(3, nameText(player.name), 0.0f, kTextY, color, 0);
+  } else {
+    list.addEmpty(2);
+    list.addText(3, nameText(player.name), -20.0f, kTextY, color, 0);
+  }
 
   if (player.score) {
     const PlayerScore& s = *player.score;

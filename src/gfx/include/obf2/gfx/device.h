@@ -79,7 +79,8 @@ class Device {
     // mouse is not captured.
     float mouseX = 0.0f;
     float mouseY = 0.0f;
-    bool clicked = false;  // the left button was just pressed
+    bool clicked = false;       // the left button was just pressed
+    bool rightClicked = false;  // the right button was just pressed
   };
   InputState readInput();
 
@@ -122,6 +123,7 @@ class Device {
   bool escape_ = false;
   bool escapeQuits_ = true;
   bool mouseWasDown_ = false;
+  bool rightWasDown_ = false;
   float mouseDeltaX_ = 0.0f;
   float mouseDeltaY_ = 0.0f;
 

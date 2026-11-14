@@ -280,6 +280,23 @@ Vec3f WorldView::carry(std::uint16_t id, const net::bf2::RemoteObject& object,
   return Vec3f{blended.x, blended.y + pivot, blended.z};
 }
 
+std::vector<WorldView::MapObject> WorldView::mapObjects() const {
+  std::vector<MapObject> out;
+  if (remote_ == nullptr) return out;
+  for (const auto& [id, resolved] : resolved_) {
+    if (resolved.placed.kind != level::PlacedAt::Kind::Spawned) continue;
+    const auto found = remote_->world.objects().find(id);
+    if (found == remote_->world.objects().end()) continue;
+    MapObject object;
+    object.templateName = resolved.placed.templateName;
+    object.x = found->second.position.x;
+    object.z = found->second.position.z;
+    object.yaw = found->second.yaw.value_or(0.0f);
+    out.push_back(std::move(object));
+  }
+  return out;
+}
+
 const gfx::GpuMesh* WorldView::vehicleMesh(std::uint16_t id,
                                            const net::bf2::RemoteObject& object) {
   // What it is, by the spot it was **created** on — a jeep that drove off stays a

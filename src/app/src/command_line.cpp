@@ -114,6 +114,7 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--no-content") args.skipContent = true;
     else if (flag == "--no-database") args.skipDatabase = true;
     else if (flag == "--start-sim") args.startSimulation = true;
+    else if (flag == "--scoreboard-mouse") args.scoreboardMouse = true;
     else if (flag == "--block-ready") args.blockReady = true;
     else if (flag == "--width" && i + 1 < argc) args.width = std::atoi(argv[++i]);
     else if (flag == "--height" && i + 1 < argc) args.height = std::atoi(argv[++i]);

@@ -491,8 +491,9 @@ std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& fon
         if (!marker.texture.empty()) {
           const float side = marker.size > 0.0f ? marker.size * scaleY : icon;
           const ScreenRect box{cx - side * 0.5f, cy - side * 0.5f, side, side};
-          pieces.push_back(DrawPiece{quad(box, screen, marker.texture), marker.texture, &node,
-                                     Color{}});
+          pieces.push_back(DrawPiece{
+              quad(box, screen, marker.texture, 0.0f, 1.0f, 0.0f, 1.0f, marker.rotation),
+              marker.texture, &node, marker.color});
         }
         if (marker.label.empty() || !context.localize) continue;
         const std::string text(context.localize(marker.label));
@@ -964,6 +965,47 @@ const Node* buttonAt(const Builder& builder, std::string_view group, const Scree
         }
         // Later nodes are drawn on top, so the last hit wins.
         if (rect.contains(mouseX, mouseY)) found = node;
+      }
+      self(self, node->name, depth + 1);
+    }
+  };
+  walk(walk, group, 0);
+  return found;
+}
+
+std::optional<ListHit> listAt(const Builder& builder, std::string_view group, const Screen& screen,
+                              float mouseX, float mouseY, const Context& context) {
+  std::optional<ListHit> found;
+  VisitedGroups visited;
+  const float scale = static_cast<float>(screen.height) / kReferenceHeight;
+  const auto walk = [&](auto&& self, std::string_view where, int depth) -> void {
+    if (depth > 24) return;
+    if (!visited.enter(where)) return;
+    for (const Node* node : builder.group(where)) {
+      if (!nodeVisible(*node, context)) continue;
+      if (node->type == NodeType::List && node->listData >= 0 && context.listData) {
+        const ListData* data = context.listData(node->listData);
+        const ScreenRect rect = nodeRect(*node, screen, &context);
+        if (data != nullptr && rect.contains(mouseX, mouseY)) {
+          const float top = node->listBordered ? node->listBorderTop : 0.0f;
+          const float left = node->listBordered ? node->listBorderLeft : 0.0f;
+          const float localX = (mouseX - rect.x) / scale - left;
+          const float localY = (mouseY - rect.y) / scale - top;
+          const float pitch = node->listRowSpacing + node->listRowHeight;
+          ListHit hit;
+          hit.node = node;
+          if (localY >= 0.0f && pitch > 0.0f) {
+            const int row = static_cast<int>(localY / pitch);
+            if (row < std::min(data->visibleRows, data->rows())) hit.row = row;
+          }
+          if (hit.row >= 0) {
+            const auto& columns = data->columns();
+            for (std::size_t c = 0; c < columns.size(); ++c) {
+              if (columns[c].visible && columns[c].x <= localX) hit.column = static_cast<int>(c);
+            }
+          }
+          found = hit;
+        }
       }
       self(self, node->name, depth + 1);
     }

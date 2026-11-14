@@ -165,6 +165,77 @@ bool skipEvent(BitReader& reader, std::uint32_t type) {
       // compressed vectors at 1/1000, 1.
       return reader.skipBits(16 + 8) && reader.readCompressedVector(Vec3f{}, 0.001f).has_value() &&
              reader.readCompressedVector(Vec3f{}, 0.001f).has_value() && reader.skipBits(1);
+    // The rest by their `deSerialize` as OpenBF2 reconstructs them
+    // (Code/BF2/Game/GameEvents/<Name>.cpp). `bitsToHold(n)` there is the
+    // fewest bits whose all-ones reaches n: 2 -> 2, 4 -> 3, 9 -> 4, 32 -> 6.
+    case 1: {
+      // `ChallengeEvent`: the challenge, 80 bits, then the mod directory with an
+      // 8-bit length (the same layout `readPacket` takes it by, bf2_protocol.cpp).
+      if (!reader.skipBits(80)) return false;
+      const auto length = reader.readBits(8);
+      return length && reader.skipBits(*length * 8);
+    }
+    case 15: {
+      // `StringBlockEvent`: a flag; a chunk (8-bit length, the bytes) or a size.
+      const auto isNew = reader.readBits(1);
+      if (!isNew) return false;
+      if (*isNew == 1) return reader.skipBits(8);
+      const auto size = reader.readBits(8);
+      return size && reader.skipBits(*size * 8);
+    }
+    case 19:
+      // `CommanderEvent`: the id in bitsToHold(9), team 8, sign 1, magnitude 15.
+      return reader.skipBits(4 + 8 + 1 + 15);
+    case 20:
+      // `RadioMessageEvent`: message 8, sender 8, team 2, 8, channel 5, type 3.
+      return reader.skipBits(8 + 8 + 2 + 8 + 5 + 3);
+    case 22: {
+      // `ChangeSquadNameEvent`: squad 8, team 8, player 8, then an 8-bit length.
+      if (!reader.skipBits(24)) return false;
+      const auto length = reader.readBits(8);
+      return length && reader.skipBits(*length * 8);
+    }
+    case 24: {
+      // `IssueSquadOrderEvent`: squad 8, team 8, order 8; a target flag — a
+      // 16-bit network id, or nine 32-bit floats; then the type 8 and a flag 1.
+      if (!reader.skipBits(24)) return false;
+      const auto hasTarget = reader.readBits(1);
+      if (!hasTarget) return false;
+      return reader.skipBits(*hasTarget == 1 ? 16 : 9 * 32) && reader.skipBits(8 + 1);
+    }
+    case 26:
+      // `RankEvent`: type bitsToHold(2), rank bitsToHold(32), 32, player 8.
+      return reader.skipBits(2 + 6 + 32 + 8);
+    case 30: {
+      // `ArtilleryEvent`: type 2, team 32; a fire request (1) adds a 2-D target,
+      // 2 × 32; a shot (2) a 16-bit weapon and a 32-bit tick.
+      const auto kind = reader.readBits(2);
+      if (!kind || !reader.skipBits(32)) return false;
+      if (*kind == 1) return reader.skipBits(64);
+      if (*kind == 2) return reader.skipBits(16 + 32);
+      return true;
+    }
+    case 32: {
+      // `StickyProjectileEvent`: projectile 16, target 16 (when non-zero: a
+      // count 8 and a child 8), player 8, then four rows of three 32-bit floats.
+      if (!reader.skipBits(16)) return false;
+      const auto target = reader.readBits(16);
+      if (!target) return false;
+      if (*target != 0 && !reader.skipBits(16)) return false;
+      return reader.skipBits(8 + 12 * 32);
+    }
+    case 34:
+      // `AmbientEffectAreaEvent`: area 16, team 8, object 16, a position 3 × 32.
+      return reader.skipBits(16 + 8 + 16 + 3 * 32);
+    case 49: {
+      // `PythonCommandEvent`: command 32, player 8, a 4-bit count of 32-bit args.
+      if (!reader.skipBits(32 + 8)) return false;
+      const auto count = reader.readBits(4);
+      return count && reader.skipBits(*count * 32);
+    }
+    case 50:
+      // `RequestEvent`: squad 8, team 8, the request bitsToHold(4).
+      return reader.skipBits(8 + 8 + 3);
     default: return false;  // this one is not parsed yet
   }
 }
@@ -200,6 +271,40 @@ std::optional<Event> readEvent(BitReader& reader) {
       if (!reader.readBytes(piece.chunk)) return std::nullopt;
     }
     event.block = std::move(piece);
+    return event;
+  }
+  if (*type == 22) {
+    Event::SquadName name;
+    const auto squad = reader.readBits(8);
+    const auto team = reader.readBits(8);
+    const auto player = reader.readBits(8);
+    const auto length = reader.readBits(8);
+    if (!squad || !team || !player || !length) return std::nullopt;
+    for (std::uint32_t i = 0; i < *length; ++i) {
+      const auto byte = reader.readBits(8);
+      if (!byte) return std::nullopt;
+      name.name.push_back(static_cast<char>(*byte));
+    }
+    name.squad = *squad;
+    name.team = *team;
+    name.player = *player;
+    event.squadName = std::move(name);
+    return event;
+  }
+  if (*type == 23) {
+    const auto squad = reader.readBits(8);
+    const auto team = reader.readBits(8);
+    const auto flag = reader.readBits(1);
+    if (!squad || !team || !flag) return std::nullopt;
+    event.squadPrivate = Event::SquadPrivate{*squad, *team, *flag == 1};
+    return event;
+  }
+  if (*type == 56) {
+    // `BeginRoundEvent` (Linux 0x41f3d0): the state, then the next change's tick.
+    const auto state = reader.readBits(32);
+    const auto tick = reader.readBits(32);
+    if (!state || !tick) return std::nullopt;
+    event.beginRound = Event::BeginRound{*state, *tick};
     return event;
   }
   if (*type == 58) {
@@ -457,6 +562,47 @@ std::uint8_t nearestSpawnGroup(const std::vector<CreateSpawnGroup>& groups, floa
   }
   if (distance != nullptr) *distance = found ? std::sqrt(bestSquared) : 0.0f;
   return best;
+}
+
+std::optional<ServerInfoHead> parseServerInfo(std::span<const std::byte> block) {
+  BitReader reader(block);
+  const auto text = [&reader]() -> std::optional<std::string> {
+    const auto length = reader.readBits(16);
+    if (!length || *length > 1024) return std::nullopt;
+    std::string out;
+    for (std::uint32_t i = 0; i < *length; ++i) {
+      const auto byte = reader.readByte();
+      if (!byte) return std::nullopt;
+      out.push_back(static_cast<char>(*byte));
+    }
+    return out;
+  };
+  ServerInfoHead head;
+  const auto name = text();
+  if (!name) return std::nullopt;
+  head.gameName = *name;
+  const auto count = reader.readBits(16);
+  if (!count || *count > 64) return head;
+  for (std::uint32_t i = 0; i < *count; ++i) {
+    const auto line = text();
+    if (!line) return head;
+    head.welcome.push_back(*line);
+  }
+  const auto bit = [&reader]() { return reader.readBits(1); };
+  const auto requestResponse = bit();
+  const auto voip = bit();
+  if (!requestResponse || !voip) return head;
+  head.voipEnabled = *voip == 1;
+  // allowNoseCam, hitIndicator, tkPunishDefault, allowFreeCam, allowExternalViews;
+  // the voice server's address (32) and ports (16, 16); the quality (32); the
+  // GameSpy port (16); three signed radio numbers (3 × 32).
+  if (!reader.skipBits(5 + 32 + 16 + 16 + 32 + 16 + 3 * 32)) return head;
+  const auto content = bit();
+  const auto voting = bit();
+  if (!content || !voting) return head;
+  head.contentChecking = *content == 1;
+  head.votingEnabled = *voting == 1;
+  return head;
 }
 
 std::optional<ServerMapInfo> parseMapInfoNetBuffer(std::span<const std::byte> block) {
@@ -837,7 +983,7 @@ std::optional<GhostHeader> readGhostHeader(std::span<const std::byte> packet) {
   return enterGhosts(reader);
 }
 
-std::vector<Event> readEvents(std::span<const std::byte> packet) {
+std::vector<Event> readEvents(std::span<const std::byte> packet, EventWalk* walk) {
   std::vector<Event> events;
   BitReader reader(packet);
 
@@ -853,12 +999,18 @@ std::vector<Event> readEvents(std::span<const std::byte> packet) {
   const auto count = reader.readBits(8);
   if (!count) return events;
   reader.skipBits(5 + 1);
+  if (walk != nullptr) walk->declared = *count;
 
   for (std::uint32_t i = 0; i < *count; ++i) {
+    BitReader peek = reader;
     auto event = readEvent(reader);
-    if (!event) break;
+    if (!event) {
+      if (walk != nullptr) walk->brokeOn = peek.readBits(kEventTypeBits).value_or(0xFFFFFFFFu);
+      break;
+    }
     events.push_back(*event);
   }
+  if (walk != nullptr) walk->read = static_cast<std::uint32_t>(events.size());
   return events;
 }
 

@@ -86,6 +86,23 @@ class JoinSequence {
   // Experiments: skip the content check or the message about the base.
   void setSkipContent(bool skip) { skipContent_ = skip; }
   void setSkipDatabase(bool skip) { skipDatabase_ = skip; }
+  // The server sent its own `NEDatabaseComplete`: it has pushed the player base.
+  // The original client sends ours **only as the answer** to it (`GameClient::
+  // handleEvent`, OpenBF2 GameClient.cpp, `BF2.exe` 0x4d6278). Sent earlier, it
+  // reaches the server before `clientSendDatabase`, which then puts the
+  // connection back from 4 to 3 — and a connection below 4 is ghosted nothing.
+  void setServerDatabaseSent() { serverDatabase_ = true; }
+  // A round reset (`NEReset`): `Player::reset` cleared our spawn group, so the
+  // choice is made on the spawn screen again (OpenBF2 Player.cpp, +0xD4).
+  // A reset before the choice went out clears nothing of ours: the choice made
+  // in advance (a headless run) still stands.
+  void reopen() {
+    if (step_ == JoinStep::Done || step_ == JoinStep::Team || step_ == JoinStep::Kit ||
+        step_ == JoinStep::Group) {
+      step_ = JoinStep::Ready;
+      asked_ = false;
+    }
+  }
   // `NEStartSimulation` — "start counting". Whether it is needed for spawning we
   // are still working out, so the step is switched by a flag.
   void setSkipSimulation(bool skip) { skipSimulation_ = skip; }
@@ -124,6 +141,7 @@ class JoinSequence {
   bool skipContent_ = false;
   bool skipDatabase_ = false;
   bool skipSimulation_ = true;
+  bool serverDatabase_ = false;
   bool asked_ = false;
   JoinChoice choice_;
 };

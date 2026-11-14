@@ -96,6 +96,15 @@ void WorldView::feed(std::span<const std::byte> packet) {
       }
       ++spawnGroupRevision_;
     }
+    if (event.squadName && event.squadName->team < 3 && event.squadName->squad < 10) {
+      squadNames_[event.squadName->team][event.squadName->squad] = event.squadName->name;
+      ++squadRevision_;
+    }
+    if (event.squadPrivate && event.squadPrivate->team < 3 && event.squadPrivate->squad < 10) {
+      squadPrivate_[event.squadPrivate->team][event.squadPrivate->squad] =
+          event.squadPrivate->isPrivate;
+      ++squadRevision_;
+    }
     if (event.removeSpawnGroup) {
       const auto gone = std::remove_if(spawnGroups_.begin(), spawnGroups_.end(), [&](const auto& g) {
         return g.id == *event.removeSpawnGroup;
@@ -210,6 +219,8 @@ void WorldView::feed(std::span<const std::byte> packet) {
       if (state.ping) player.ping = state.ping;
       if (state.rank) player.rank = state.rank;
       if (state.squad) player.squad = state.squad;
+      player.squadLeader = state.squadLeader;
+      if (state.squadInviteMask) player.squadInviteMask = state.squadInviteMask;
       if (state.kit) player.kit = state.kit;
       if (state.commander) player.commander = state.commander;
       if (state.sprint) player.sprint = state.sprint;
@@ -332,6 +343,17 @@ void WorldView::feed(std::span<const std::byte> packet) {
     }
     ++positionUpdates_;
   }
+}
+
+const std::string& WorldView::squadName(int team, int squad) const {
+  static const std::string empty;
+  if (team < 0 || team > 2 || squad < 0 || squad > 9) return empty;
+  return squadNames_[team][squad];
+}
+
+bool WorldView::squadPrivate(int team, int squad) const {
+  if (team < 0 || team > 2 || squad < 0 || squad > 9) return false;
+  return squadPrivate_[team][squad];
 }
 
 }  // namespace obf2::net::bf2

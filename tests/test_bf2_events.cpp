@@ -290,6 +290,83 @@ static void testKilledByEventIsWalked() {
   }
 }
 
+// A round reset on a live coop server (tests/data/bf2-round-reset.bin, two packets
+// of one session). The first carries the reset — category 0 event 6, the status,
+// then `NEReset` with the highest network id — behind a `CommanderEvent` (19); the
+// second the squad orders (24). Both used to break the walk, and `NEReset` was
+// lost with the rest: the client never answered it, and the server ghosted it
+// nothing more.
+static void testRoundResetIsWalked() {
+  const auto packets = loadCapture(std::string(OBF2_TEST_DATA) + "/bf2-round-reset.bin");
+  CHECK_EQ(packets.size(), std::size_t(2));
+  if (packets.size() != 2) return;
+  for (const auto& packet : packets) {
+    obf2::net::bf2::EventWalk walk;
+    obf2::net::bf2::readEvents(packet, &walk);
+    CHECK(!walk.brokeOn.has_value());
+    CHECK_EQ(walk.read, walk.declared);
+  }
+  bool reset = false;
+  for (const auto& event : obf2::net::bf2::readEvents(packets[0])) {
+    if (event.remote && event.remote->category == obf2::net::bf2::kNetworkCategory &&
+        event.remote->number == obf2::net::bf2::kNetReset) {
+      reset = true;
+      CHECK(event.remote->value.has_value() && *event.remote->value == 2146);
+    }
+  }
+  CHECK(reset);
+}
+
+// The squad events as OpenBF2's `deSerialize` reads them: the name (22), the
+// lock (23) and the leader (28, `JoinSquadEvent`'s codec), then the server info
+// block's head (block 0) up to `votingEnabled`.
+static void testSquadEventsAndServerInfo() {
+  std::vector<std::byte> buffer(64);
+  obf2::net::BitWriter writer(buffer);
+  writer.writeBits(22, obf2::net::bf2::kEventTypeBits);
+  writer.writeBits(3, 8);   // squad
+  writer.writeBits(2, 8);   // team
+  writer.writeBits(1, 8);   // player
+  writer.writeBits(7, 8);   // length
+  for (char c : std::string("Charlie")) writer.writeBits(static_cast<std::uint8_t>(c), 8);
+  writer.writeBits(23, obf2::net::bf2::kEventTypeBits);
+  writer.writeBits(3, 8);
+  writer.writeBits(2, 8);
+  writer.writeBits(1, 1);
+  writer.writeBits(28, obf2::net::bf2::kEventTypeBits);
+  writer.writeBits(2, 8);
+  writer.writeBits(1, 8);
+  writer.writeBits(3, 8);
+  writer.writeBits(11, obf2::net::bf2::kEventTypeBits);  // something after, to prove the walk
+  CHECK(writer.ok());
+  obf2::net::BitReader reader(std::span<const std::byte>(buffer.data(), writer.byteSize()));
+  const auto name = obf2::net::bf2::readEvent(reader);
+  CHECK(name && name->squadName && name->squadName->name == "Charlie" &&
+        name->squadName->squad == 3 && name->squadName->team == 2 && name->squadName->player == 1);
+  const auto lock = obf2::net::bf2::readEvent(reader);
+  CHECK(lock && lock->squadPrivate && lock->squadPrivate->isPrivate);
+  const auto leader = obf2::net::bf2::readEvent(reader);
+  CHECK(leader && leader->type == 28u);
+
+  std::vector<std::byte> block(64);
+  obf2::net::BitWriter info(block);
+  const std::string game = "OpenBF2 reference";
+  info.writeBits(static_cast<std::uint32_t>(game.size()), 16);
+  for (char c : game) info.writeBits(static_cast<std::uint8_t>(c), 8);
+  info.writeBits(0, 16);  // no welcome lines
+  info.writeBits(0, 1);   // requestResponse
+  info.writeBits(1, 1);   // voip
+  for (const unsigned width : {5u, 32u, 16u, 16u, 32u, 16u}) info.writeBits(0, width);
+  for (int i = 0; i < 3; ++i) info.writeBits(0, 32);
+  info.writeBits(1, 1);  // content checking
+  info.writeBits(1, 1);  // voting
+  CHECK(info.ok());
+  const auto head =
+      obf2::net::bf2::parseServerInfo(std::span<const std::byte>(block.data(), info.byteSize()));
+  CHECK(head && head->gameName == game && head->voipEnabled == true &&
+        head->votingEnabled == true);
+}
+
 // A simple object's head (`readSimpleObjectState`): the rotation behind an
 // angular velocity that a physical object sends and another does not. The same
 // quaternion — 90° about Y — has to come out of both, 1 long.
@@ -321,6 +398,8 @@ static void testSimpleObjectRotation() {
 TEST_MAIN({
   testSimpleObjectRotation();
   testKilledByEventIsWalked();
+  testRoundResetIsWalked();
+  testSquadEventsAndServerInfo();
   testKitAndPickupAreRead();
   testWorldCaptureIsFullyDecoded();
   testHeightsAreOnTheTerrain();

@@ -131,6 +131,10 @@ struct Context {
     // screen: a vehicle spawner's icon is 16x16 and a strategic object's is
     // 19x19 (docs/functions/hud-map.md).
     float size = 0.0f;
+    // A live icon's colour and turn (the map's player and vehicle icons); the
+    // level's markers keep white and upright.
+    Color color;
+    float rotation = 0.0f;  // radians, counter-clockwise on screen
   };
   std::vector<MapMarker> mapMarkers;
   // The spawn point selection circles. The game has separate textures for them —
@@ -235,6 +239,18 @@ void updateAnimator(const Builder& builder, std::string_view rootGroup, Animator
 std::optional<std::size_t> spawnMarkerAt(const Builder& builder, std::string_view rootGroup,
                                          const Screen& screen, const Context& context,
                                          float mouseX, float mouseY, int maxDepth = 8);
+
+// The list node under the cursor and the row and column hit in it, the way the
+// list node picks them (OpenBF2 Menu/BfNewListBoxNode.cpp, the press: the row by
+// whole row pitches down from the top border, the column the last visible one
+// whose x is not right of the cursor). The row counts from the first row drawn.
+struct ListHit {
+  const Node* node = nullptr;
+  int row = -1;
+  int column = -1;
+};
+std::optional<ListHit> listAt(const Builder& builder, std::string_view group, const Screen& screen,
+                              float mouseX, float mouseY, const Context& context);
 
 // The button under the cursor, or nullptr. We search from the end: later nodes
 // are drawn on top, so they catch the mouse first.

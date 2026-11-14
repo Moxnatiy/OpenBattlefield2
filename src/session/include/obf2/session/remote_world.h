@@ -30,6 +30,7 @@
 #include "obf2/level/level.h"
 #include "obf2/net/bf2_events.h"
 #include "obf2/net/bf2_join.h"
+#include "obf2/net/bf2_link.h"
 #include "obf2/net/bf2_protocol.h"
 #include "obf2/net/bf2_world.h"
 #include "obf2/net/md5.h"
@@ -182,7 +183,6 @@ struct RemoteWorld {
   // The level's GLSWorldSizeX, which the server packs group positions with; set
   // once the level is known (2048 is the engine's default).
   float spawnWorldSize = 2048.0f;
-  std::uint8_t lastServerSequence = 0;
   int ghostPackets = 0, ghostRecords = 0;
   int ghostFlagSet = 0, ghostFlagClear = 0, ghostUnparsed = 0;
   // When `NEDatabaseComplete` went out, for the stall report in the packet loop.
@@ -193,8 +193,12 @@ struct RemoteWorld {
   std::set<std::uint16_t> ghostObjects;
   std::set<std::uint32_t> seenBlocks;
   std::size_t dataBytes = 0;
-  std::uint8_t sequence = 0;
-  std::uint8_t batch = 0;
+  // The delivery of our packets and the events they carry, as the engine's
+  // `SWConnection` and `GameEventManager` keep it (obf2/net/bf2_link.h).
+  obf2::net::bf2::Link link;
+  // Data packets the server sent twice, dropped as the engine drops them.
+  int droppedDuplicates = 0;
+  std::chrono::steady_clock::time_point lastDataSentAt{};
   bool answered = false;
 
 
@@ -228,16 +232,102 @@ struct RemoteWorld {
   }
 
   int directGroup = 0;
+  // Ticks counted for the `actions:` report only.
+  std::uint64_t actionReportTicks = 0;
+
+  // The round as the server tells it. `gameStatus` is the game logic's status
+  // (category 0, event 1: 1 playing, 3 pre-game, 2 end of game — `GameStatus`,
+  // python/bf2/__init__.py); -1 until it comes. `beginRoundState` is the last
+  // `BeginRoundEvent`'s (0 not begun, 1 waiting for players, 2 countdown, 3 on).
+  int gameStatus = -1;
+  int beginRoundState = -1;
+  std::uint32_t beginRoundNextTick = 0;
+  // How many round resets the server made while we were connected (`NEReset`).
+  int roundResets = 0;
+  // HUD events the server sent that nothing acts on: the kinds seen, and how many.
+  std::set<std::uint32_t> unhandledHud;
+  int unhandledHudCount = 0;
+  // Packets whose event walk broke off, and the types it broke on.
+  std::set<std::uint32_t> brokenEventTypes;
+  int brokenWalks = 0;
+  // When the last packet with the ghost flag set came.
+  std::optional<std::chrono::steady_clock::time_point> lastGhostAt;
 
   // The game mode and the size the server plays — which `GamePlayObjects.con`
   // its spawners come from (`gamemodes/<mode>/<size>`).
   std::string serverGameMode;
+  // The server's game name (block 0, `ServerInfo`): what the scoreboard's server
+  // info names it.
+  std::string serverName;
+  bool votingEnabled = false;
+  std::string serverHost;
+  int serverPort = 0;
   int serverSize = 0;
 
   // The spawn screen's SUICIDE button (`spawnManager.commitSuicide`). Sent on the
   // next turn of the conversation.
   bool suicideRequested = false;
   void commitSuicide() { suicideRequested = true; }
+
+  // Seconds since the session began, for the log lines whose timing matters
+  // (the join's steps, the spawn): the frame count says nothing while loading.
+  std::chrono::steady_clock::time_point startedAt = std::chrono::steady_clock::now();
+  double elapsed() const {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - startedAt).count();
+  }
+
+  // The squad requests the spawn screen's squad list makes (OpenBF2
+  // `ClientSquadManager`): each one game event, sent on the next turn. The server
+  // answers with the players' own state (their squad and the leader bit) and with
+  // the name and lock events, so nothing here changes until it does.
+  struct SquadRequest {
+    enum class Kind { Join, Leave, Name, Private } kind = Kind::Join;
+    int squad = 0;
+    std::string name;
+    bool flag = false;
+  };
+  std::vector<SquadRequest> squadRequests;
+  int reportedSquad = 0;
+  std::uint32_t reportedSpawnAt = 0;
+  bool reportedLeader = false;
+  void requestSquad(SquadRequest request) { squadRequests.push_back(std::move(request)); }
+
+  // `HudKitSelection::selectKit` (OpenBF2): a kit other than the one the server
+  // has for our player is asked for at once, packed with its unlock level
+  // (`ClientGameLogic::selectKitAndUnlockLevel`: unlock << 4 | kit & 0xF; the
+  // unlocks are not ours, so 0).
+  int kitAsked = -1;
+  void selectKit(int kit) {
+    if (kit < 0) return;
+    int current = -1;
+    if (const auto self = world.players().find(static_cast<std::uint32_t>(world.ownPlayer()));
+        self != world.players().end() && self->second.kit) {
+      current = *self->second.kit;
+    }
+    if (kit == current || kit == kitAsked) return;
+    kitAsked = kit;
+    link.queue(obf2::net::bf2::postRemoteEvent(obf2::net::bf2::kNetworkCategory,
+                                               obf2::net::bf2::kNetSelectKit,
+                                               static_cast<std::int32_t>(kit & 0xF)));
+    std::printf("  [%6.2f s] kit %d asked for (the server had %d)\n", elapsed(), kit, current);
+  }
+
+  // `NEStartSimulation` came: the server counts us as running.
+  bool simulationStarted = false;
+
+  // The round was reset under us (`ServerGameLogic::reset`, OpenBF2
+  // ServerGameLogic.cpp): `Player::reset` cleared our spawn group and our soldier
+  // is gone, so the spawn screen is answered again — and nothing of the old life
+  // is replayed into the next one.
+  void resetRound() {
+    std::printf("  round reset: the soldier is gone, the spawn screen is open again\n");
+    playerSpawned = false;
+    bodyReady = false;
+    bodyTicks = 0;
+    ourSoldier = 0;
+    sent.clear();
+    join.reopen();
+  }
 
   bool havePoint = false;
   float chosenX = 0.0f, chosenZ = 0.0f, chosenWorld = 2048.0f;
@@ -537,10 +627,11 @@ struct RemoteWorld {
       // The measure of the action queue: how many of ours the server has not
       // answered, every ten seconds of ticks. A number that keeps growing is a
       // queue on the server that never drains.
-      // Every ten seconds of ticks. Without a soldier `actionTick` stands at zero,
-      // and `0 % 300` is zero on every one of them — which turned this report into
-      // thirty lines a second in the frame loop.
-      if (ourSoldier != 0 ? actionTick % 300 == 0 : world.gameTick() % 300 == 0) {
+      // Every ten seconds of ticks, counted here: `actionTick` stands at zero
+      // without a soldier, and the game tick stands at zero without a ghost stream
+      // (a round reset nobody answered), and `0 % 300` is zero on every tick —
+      // which turned this report into thirty lines a second.
+      if (actionReportTicks++ % 300 == 0) {
         // How long the server takes to answer an action, and how far our clock
         // therefore runs ahead of the newest packet. The ghosts of other players
         // are drawn at our clock minus `GSInterpolationTime` (100 ms), so a round
@@ -894,16 +985,15 @@ struct RemoteWorld {
   void sendAction() {
     if (socket == nullptr || ourSoldier == 0 || sent.empty()) return;
 
-    obf2::net::bf2::ExtendedHeader header;
-    header.sequence = sequence++ & 0x3F;
-    header.ack = lastServerSequence;
-    header.ackBits = 0xFFFFFFFFu;
+    if (!link.canSend()) return;
     obf2::net::bf2::PlayerActions stream;
     const std::size_t count = std::min<std::size_t>(3, sent.size());
     const auto first = sent.end() - static_cast<std::ptrdiff_t>(count);
     stream.tick = static_cast<std::int32_t>(first->first);
     for (auto it = first; it != sent.end(); ++it) stream.actions.push_back(it->second);
-    socket->send(obf2::net::bf2::writePlayerActions(id, header, stream));
+    // The actions and whatever events wait, in one packet (`transmitMsgs`).
+    socket->send(obf2::net::bf2::writeDataPacket(id, link, &stream));
+    lastDataSentAt = std::chrono::steady_clock::now();
   }
 
   // Our own player number and team — from `CreatePlayerEvent` by name.
@@ -981,6 +1071,13 @@ struct RemoteWorld {
       host = host.substr(0, colon);
     }
 
+    serverHost = host;
+    serverPort = port;
+    link.onBlockSettled = [this](int block, unsigned sequence, bool delivered, double ms,
+                                 std::size_t events) {
+      std::printf("  [%6.2f s] event block %d (%zu events, packet %u) %s after %.0f ms\n",
+                  elapsed(), block, events, sequence, delivered ? "confirmed" : "LOST", ms);
+    };
     std::string error;
     socket = obf2::net::UdpSocket::connect(host, port, &error);
     if (!socket) {
@@ -1059,13 +1156,9 @@ struct RemoteWorld {
       if (!more) break;
       const auto parsed = obf2::net::bf2::readPacket(*more);
       if (!parsed) continue;
-      if (parsed->extended) lastServerSequence = parsed->extended->sequence;
       if (parsed->kind != obf2::net::bf2::PacketKind::PingRequest) continue;
-      obf2::net::bf2::ExtendedHeader header;
-      header.sequence = sequence++ & 0x3F;
-      header.ack = lastServerSequence;
-      header.ackBits = 0xFFFFFFFFu;
-      socket->send(obf2::net::bf2::writePingResponse(id, header,
+      if (parsed->extended) link.acceptPing(*parsed->extended, parsed->pingHaveSent);
+      socket->send(obf2::net::bf2::writePingResponse(id, link.pingHeader(),
                                                      parsed->pingTime.value_or(0)));
       ++pings;
     }
@@ -1083,19 +1176,19 @@ struct RemoteWorld {
       // pauses and waiting is there, together with its test. Assembling the packet
       // and reporting that we sent it is what is left here.
       const auto now = std::chrono::steady_clock::now();
-      if (const auto todo = join.next(now)) {
-        obf2::net::bf2::ExtendedHeader next;
-        next.sequence = sequence++ & 0x3F;
-        next.ack = lastServerSequence;
-        next.ackBits = 0xFFFFFFFFu;
-
+      // The steps due go out together: the choice after DONE is one packet, not
+      // one per step (`transmitMsgs` sends whatever events wait as one block).
+      for (int due = 0; due < 8; ++due) {
+        const auto todo = join.next(now);
+        if (!todo) break;
+        // Queued, not sent: the next data packet carries every event that waits
+        // as one block (`GameEventManager::transmit`), resent until confirmed.
         const auto event = [&](std::uint32_t number) {
-          socket->send(obf2::net::bf2::writePostRemoteEvent(
-              id, next, batch++, obf2::net::bf2::kNetworkCategory, number));
+          link.queue(obf2::net::bf2::postRemoteEvent(obf2::net::bf2::kNetworkCategory, number));
         };
         const auto eventWith = [&](std::uint32_t number, std::uint32_t value) {
-          socket->send(obf2::net::bf2::writePostRemoteEvent(
-              id, next, batch++, obf2::net::bf2::kNetworkCategory, number, value));
+          link.queue(obf2::net::bf2::postRemoteEvent(obf2::net::bf2::kNetworkCategory, number,
+                                                     static_cast<std::int32_t>(value)));
         };
         const auto& choice = join.choice();
         bool sent = true;
@@ -1103,7 +1196,7 @@ struct RemoteWorld {
         switch (*todo) {
           case obf2::net::bf2::JoinStep::Level:
             event(obf2::net::bf2::kNetLoadComplete);
-            std::printf("  step: the level is loaded\n");
+            std::printf("  [%6.2f s] step: the level is loaded\n", elapsed());
             break;
           case obf2::net::bf2::JoinStep::Content: {
             const int ordinal = args.ordinal < 0 ? blockOrdinal : args.ordinal;
@@ -1112,8 +1205,8 @@ struct RemoteWorld {
               std::printf("  the content check was skipped: no fingerprints\n");
               break;
             }
-            socket->send(obf2::net::bf2::writeContentCheckEvent(
-                id, next, batch++, hashes->misc, hashes->archives, hashes->level));
+            link.queue(obf2::net::bf2::contentCheckEvent(hashes->misc, hashes->archives,
+                                                         hashes->level));
             const auto show = [](const std::array<std::byte, 16>& hash) {
               std::string out;
               for (const auto byte : hash) {
@@ -1123,34 +1216,49 @@ struct RemoteWorld {
               }
               return out;
             };
-            std::printf("  step: the content check, challenge number %d\n    %s\n    %s\n    %s\n",
+            std::printf("  [%6.2f s] step: the content check, challenge number %d\n    %s\n    %s\n    %s\n", elapsed(),
                         ordinal, show(hashes->misc).c_str(), show(hashes->archives).c_str(),
                         show(hashes->level).c_str());
             break;
           }
           case obf2::net::bf2::JoinStep::Database:
             event(obf2::net::bf2::kNetDatabaseComplete);
-            std::printf("  step: the player base was received\n");
+            std::printf("  [%6.2f s] step: the player base was received\n", elapsed());
             databaseSentAt = now;
             break;
           case obf2::net::bf2::JoinStep::Simulation:
             event(obf2::net::bf2::kNetStartSimulation);
-            std::printf("  step: start counting\n");
+            std::printf("  [%6.2f s] step: start counting\n", elapsed());
             break;
           case obf2::net::bf2::JoinStep::Team:
-            eventWith(obf2::net::bf2::kNetSelectTeam, static_cast<std::uint32_t>(choice.team));
-            std::printf("  step: team %d\n", choice.team);
+            // `HudKitSelection::selectTeam` (OpenBF2): only a change of team is
+            // sent; the team the server gave us is ours already.
+            if (choice.team != world.ownTeam()) {
+              eventWith(obf2::net::bf2::kNetSelectTeam, static_cast<std::uint32_t>(choice.team));
+              std::printf("  [%6.2f s] step: team %d\n", elapsed(), choice.team);
+            }
             break;
           case obf2::net::bf2::JoinStep::Kit:
-            eventWith(obf2::net::bf2::kNetSelectKit, static_cast<std::uint32_t>(choice.kit));
-            std::printf("  step: kit %d\n", choice.kit);
+            // `HudKitSelection::selectKit`: only a kit other than the player's is
+            // sent — normally the moment it is clicked (`selectKit` below), so
+            // by DONE there is nothing left to say.
+            selectKit(choice.kit);
             break;
           case obf2::net::bf2::JoinStep::Group: {
             float away = 0.0f;
             const std::uint16_t wire = chosenGroupId(&away);
             eventWith(obf2::net::bf2::kNetSelectSpawnGroup, wire);
-            std::printf("  step: spawn point %u (at %.0f m, groups in the list %zu, our team %d)\n",
+            std::printf("  [%6.2f s] step: spawn point %u (at %.0f m, groups in the list %zu, our team %d)\n", elapsed(),
                         wire, away, world.spawnGroups().size(), world.ownTeam());
+            // What decides the moment the server spawns us (`uPlayingSpawning`):
+            // our spawn tick against its clock, and whether it counts us alive.
+            if (const auto self = world.players().find(static_cast<std::uint32_t>(world.ownPlayer()));
+                self != world.players().end()) {
+              std::printf("    our spawn tick %d, the server's newest tick %u, alive %d, man down %d\n",
+                          self->second.spawnAtTick ? static_cast<int>(*self->second.spawnAtTick) : -1,
+                          world.newestPacketTick(), self->second.alive.value_or(false) ? 1 : 0,
+                          self->second.manDown.value_or(false) ? 1 : 0);
+            }
             break;
           }
           case obf2::net::bf2::JoinStep::Ready:
@@ -1159,6 +1267,7 @@ struct RemoteWorld {
             break;
         }
         if (sent) join.commit(now);
+        if (!sent || *todo == obf2::net::bf2::JoinStep::Group) break;
       }
 
       // A request the player makes outside the join chain. `NESuicide` travels
@@ -1166,13 +1275,79 @@ struct RemoteWorld {
       // network category — and the server answers it with `NEPlayerDead`.
       if (suicideRequested) {
         suicideRequested = false;
-        obf2::net::bf2::ExtendedHeader header;
-        header.sequence = sequence++ & 0x3F;
-        header.ack = lastServerSequence;
-        header.ackBits = 0xFFFFFFFFu;
-        socket->send(obf2::net::bf2::writePostRemoteEvent(
-            id, header, batch++, obf2::net::bf2::kNetworkCategory, obf2::net::bf2::kNetSuicide));
-        std::printf("  step: suicide\n");
+        link.queue(obf2::net::bf2::postRemoteEvent(obf2::net::bf2::kNetworkCategory,
+                                                   obf2::net::bf2::kNetSuicide));
+        std::printf("  [%6.2f s] step: suicide\n", elapsed());
+      }
+
+      // Our own squad, as our player's state says, whenever it changes.
+      if (const auto self = world.players().find(static_cast<std::uint32_t>(world.ownPlayer()));
+          self != world.players().end()) {
+        const int squad = static_cast<int>(self->second.squad.value_or(0));
+        const bool leader = self->second.squadLeader.value_or(false);
+        // When the server lets us spawn (`spawnAtTick`, 0x20; the original's
+        // spawn screen counts it down): the wait after DONE is this, not ours.
+        if (self->second.spawnAtTick && *self->second.spawnAtTick != reportedSpawnAt) {
+          reportedSpawnAt = *self->second.spawnAtTick;
+          const std::uint32_t now = world.newestPacketTick();
+          std::printf("  [%6.2f s] server: we may spawn at tick %u (newest packet tick %u, %.1f s "
+                      "away)\n",
+                      elapsed(), reportedSpawnAt, now,
+                      reportedSpawnAt > now ? (reportedSpawnAt - now) / 30.0 : 0.0);
+        }
+        if (squad != reportedSquad || leader != reportedLeader) {
+          std::printf("  our squad: %d%s\n", squad, leader ? " (leader)" : "");
+          reportedSquad = squad;
+          reportedLeader = leader;
+        }
+      }
+      for (const SquadRequest& request : squadRequests) {
+        const int team = world.ownTeam();
+        const int player = ourPlayer;
+        if (team <= 0 || player < 0) {
+          std::printf("  squad request dropped: our team or player is not known yet\n");
+          continue;
+        }
+        switch (request.kind) {
+          case SquadRequest::Kind::Join:
+            link.queue(obf2::net::bf2::joinSquadEvent(team, player, request.squad));
+            std::printf("  squad: join %d\n", request.squad);
+            break;
+          case SquadRequest::Kind::Leave:
+            link.queue(obf2::net::bf2::leaveSquadEvent(team, player, request.squad, request.flag));
+            std::printf("  squad: leave %d\n", request.squad);
+            break;
+          case SquadRequest::Kind::Name:
+            link.queue(
+                obf2::net::bf2::changeSquadNameEvent(team, request.squad, player, request.name));
+            std::printf("  squad: name %d '%s'\n", request.squad, request.name.c_str());
+            break;
+          case SquadRequest::Kind::Private:
+            link.queue(obf2::net::bf2::setPrivateSquadEvent(team, request.squad, request.flag));
+            std::printf("  squad: %d %s\n", request.squad, request.flag ? "locked" : "open");
+            break;
+        }
+      }
+      squadRequests.clear();
+
+      // Whatever events wait go now, in one data packet with no actions; an
+      // action packet carries any that are queued after this (`sendAction`).
+      //
+      // And with no soldier to send actions for, a data packet still goes at the
+      // connection's own pace — 20 a second (`ClientConnection` +0x14, 20 from
+      // its constructor; OpenBF2) — because our acknowledgement of the server's
+      // packets rides only on ours. Without them the server heard from us at the
+      // pings alone, its window of unconfirmed event blocks (15) filled with the
+      // bots' deaths and spawns, and the spawn it sent us waited seconds behind
+      // them.
+      {
+        const auto nowSent = std::chrono::steady_clock::now();
+        const bool due = nowSent - lastDataSentAt >= std::chrono::milliseconds(50);
+        const bool acting = ourSoldier != 0 && playerSpawned;
+        if (link.canSend() && (link.hasEventsToSend() || (due && !acting && levelReady))) {
+          socket->send(obf2::net::bf2::writeDataPacket(id, link, nullptr));
+          lastDataSentAt = nowSent;
+        }
       }
 
       const auto more = socket->receive(timeoutMs);
@@ -1184,20 +1359,22 @@ struct RemoteWorld {
       }
       const auto parsed = obf2::net::bf2::readPacket(*more);
       if (!parsed) return true;
-      if (parsed->extended) lastServerSequence = parsed->extended->sequence;
 
       switch (parsed->kind) {
         case obf2::net::bf2::PacketKind::PingRequest: {
           ++pings;
-          obf2::net::bf2::ExtendedHeader header;
-          header.sequence = sequence++ & 0x3F;
-          if (parsed->extended) header.ack = parsed->extended->sequence;
-          header.ackBits = 0xFFFFFFFFu;
-          socket->send(obf2::net::bf2::writePingResponse(id, header,
+          if (parsed->extended) link.acceptPing(*parsed->extended, parsed->pingHaveSent);
+          socket->send(obf2::net::bf2::writePingResponse(id, link.pingHeader(),
                                                          parsed->pingTime.value_or(0)));
           break;
         }
         case obf2::net::bf2::PacketKind::Data: {
+          // The engine's own gate: a repeated or stale number is dropped whole
+          // (`handleDataPacket`), and the acknowledgement it carries counts.
+          if (parsed->extended && !link.acceptData(*parsed->extended)) {
+            ++droppedDuplicates;
+            break;
+          }
           ++dataPackets;
           dataBytes += more->size();
           lastPacketMs = std::chrono::duration<float, std::milli>(
@@ -1219,16 +1396,33 @@ struct RemoteWorld {
           } else {
             ++ghostUnparsed;
           }
-          // A stall seen once in a live session: the server took the player base,
-          // spawned us, kept sending events — and never set the ghost flag, so no
-          // world, no controlled-object state and no clock; the soldier hangs where
-          // he spawned. The cause is not found; this says so the moment it happens.
-          if (databaseSentAt && ghostFlagSet == 0 && !ghostStallReported &&
-              std::chrono::steady_clock::now() - *databaseSentAt > std::chrono::seconds(5)) {
-            ghostStallReported = true;
-            std::printf("  NO GHOST STREAM 5 s after the player base: %d packets with the flag "
-                        "cleared, %d events so far\n",
-                        ghostFlagClear, eventCount);
+          // The ghost stream stopping. Seen live: the server spawned us, kept
+          // sending events, and set the ghost flag no more — no world, no clock, our
+          // actions unanswered. One cause is known: a round reset we did not answer
+          // (`NEReset`, above). The line carries what the round said, so another
+          // cause shows itself too. It fires for any silence over 5 s once the
+          // player base is sent, and again after the stream comes back.
+          {
+            const auto at = std::chrono::steady_clock::now();
+            if (const auto flag = obf2::net::bf2::ghostFlag(*more); flag && *flag) {
+              lastGhostAt = at;
+              if (ghostStallReported) {
+                std::printf("  ghost stream is back\n");
+                ghostStallReported = false;
+              }
+            }
+            const auto since = lastGhostAt ? *lastGhostAt : databaseSentAt.value_or(at);
+            if (databaseSentAt && !ghostStallReported && at - since > std::chrono::seconds(5)) {
+              ghostStallReported = true;
+              std::printf("  NO GHOST STREAM for 5 s (%s): flag set %d, cleared %d, events %d; "
+                          "game status %d, round state %d, start simulation %s, resets %d, "
+                          "join step '%s', spawned %s, unanswered %zu\n",
+                          lastGhostAt ? "it stopped" : "it never began", ghostFlagSet,
+                          ghostFlagClear, eventCount, gameStatus, beginRoundState,
+                          simulationStarted ? "yes" : "no", roundResets,
+                          obf2::net::bf2::joinStepName(join.step()), playerSpawned ? "yes" : "no",
+                          sent.size());
+            }
           }
           // The controlled-object state. From it we take **only** the object's
           // number for now: the triple of numbers in it is the compression
@@ -1377,7 +1571,20 @@ struct RemoteWorld {
           // We parse every event in the packet: by the size table each can be
           // skipped by exactly its length, so unfamiliar types do not throw off the
           // parsing of the ones after them.
-          for (const auto& event : obf2::net::bf2::readEvents(*more)) {
+          obf2::net::bf2::EventWalk walk;
+          const auto packetEvents = obf2::net::bf2::readEvents(*more, &walk);
+          // A walk that breaks loses every event after the one it broke on, and the
+          // ghost stream behind them — a lost `NEReset` stalls the whole session.
+          // Each type that breaks it is said once, by name.
+          if (walk.brokeOn && brokenEventTypes.insert(*walk.brokeOn).second) {
+            const auto name = obf2::net::bf2::eventName(*walk.brokeOn);
+            std::printf("  EVENT WALK BROKE on type %u %.*s: %u of %u events read, the rest of "
+                        "the packet lost (its length is not known to us)\n",
+                        *walk.brokeOn, static_cast<int>(name.size()), name.data(), walk.read,
+                        walk.declared);
+          }
+          if (walk.brokeOn) ++brokenWalks;
+          for (const auto& event : packetEvents) {
             ++eventCount;
             if (event.block) {
               const auto done = blocks.feed(*event.block);
@@ -1396,19 +1603,23 @@ struct RemoteWorld {
               // event. The real client apparently does this — the server keeps its own
               // record of what the client has already received.
               if (done && args.blockReady) {
-                obf2::net::bf2::ExtendedHeader ack;
-                ack.sequence = sequence++ & 0x3F;
-                ack.ack = lastServerSequence;
-                ack.ackBits = 0xFFFFFFFFu;
-                socket->send(obf2::net::bf2::writePostRemoteEvent(
-                    id, ack, batch++, obf2::net::bf2::kNetworkCategory,
-                    obf2::net::bf2::kNetDataBlockReady,
+                link.queue(obf2::net::bf2::postRemoteEvent(
+                    obf2::net::bf2::kNetworkCategory, obf2::net::bf2::kNetDataBlockReady,
                     static_cast<std::int32_t>(done->first)));
                 std::printf("  block %u assembled, acknowledged\n", done->first);
               }
               // Block 2 is the real MapInfo. From it we take the challenge number:
               // the server picks it when it loads the level, and it is against that
               // line of the fingerprints that it checks our content check.
+              if (done && done->first == obf2::net::bf2::kServerInfoBlock) {
+                if (const auto head = obf2::net::bf2::parseServerInfo(done->second)) {
+                  serverName = head->gameName;
+                  votingEnabled = head->votingEnabled.value_or(false);
+                  std::printf("  server: name '%s', welcome lines %zu, voting %s\n",
+                              serverName.c_str(), head->welcome.size(),
+                              head->votingEnabled ? (*head->votingEnabled ? "on" : "off") : "?");
+                }
+              }
               if (done && done->first == obf2::net::bf2::kMapInfoNetBuffer) {
                 if (const auto net = obf2::net::bf2::parseMapInfoNetBuffer(done->second)) {
                   std::printf("  server: slots %d, commander %s, challenge number %d\n",
@@ -1467,8 +1678,69 @@ struct RemoteWorld {
               }
               continue;
             }
+            if (event.squadName) {
+              std::printf("  squad named: team %u squad %u '%s' by player %u\n", event.squadName->team,
+                          event.squadName->squad, event.squadName->name.c_str(),
+                          event.squadName->player);
+            }
+            if (event.squadPrivate) {
+              std::printf("  squad lock: team %u squad %u %s\n", event.squadPrivate->team,
+                          event.squadPrivate->squad, event.squadPrivate->isPrivate ? "locked" : "open");
+            }
+            if (event.beginRound) {
+              beginRoundState = static_cast<int>(event.beginRound->state);
+              beginRoundNextTick = event.beginRound->nextChangeTick;
+              static const char* const kNames[] = {"not begun", "waiting for players",
+                                                   "start countdown", "on"};
+              std::printf("  round: %s (state %u), next change at tick %u\n",
+                          event.beginRound->state < 4 ? kNames[event.beginRound->state] : "?",
+                          event.beginRound->state, event.beginRound->nextChangeTick);
+              continue;
+            }
             if (event.remote) {
               const auto& remote = *event.remote;
+              if (remote.category == obf2::net::bf2::kGameLogicCategory) {
+                // `ClientGameLogic::handleEvent` (OpenBF2 ClientGameLogic.cpp): 1 is
+                // the status, 6 the round reset. Everything else is logged, since
+                // whatever we do not handle is a gap to find.
+                if (remote.number == obf2::net::bf2::kGameLogicStatus && remote.value) {
+                  gameStatus = *remote.value;
+                  static const char* const kNames[] = {"?", "playing", "end of game", "pre-game",
+                                                       "paused", "restart", "not connected"};
+                  std::printf("  game status: %s (%d)\n",
+                              gameStatus >= 0 && gameStatus <= 6 ? kNames[gameStatus] : "?",
+                              gameStatus);
+                } else if (remote.number == obf2::net::bf2::kGameLogicReset) {
+                  // The client's half of `ServerGameLogic::reset`: every player is
+                  // reset (`GameLogic::resetAllPlayers`, `Player::reset` clears the
+                  // spawn group), every dynamic object goes. Our side: the soldier
+                  // is gone and the spawn screen has to be answered again.
+                  resetRound();
+                } else {
+                  std::printf("  NOT HANDLED: game logic event %u%s\n", remote.number,
+                              remote.value ? (" = " + std::to_string(*remote.value)).c_str() : "");
+                }
+                continue;
+              }
+              if (remote.category == obf2::net::bf2::kHudCategory) {
+                // The HUD's events: none is acted on yet. Each kind is logged once
+                // per session, by name, so the list of what the HUD misses builds
+                // itself from live runs.
+                if (unhandledHud.insert(remote.number).second) {
+                  const char* name = obf2::net::bf2::hudEventName(remote.number);
+                  std::printf("  NOT HANDLED: HUD event %u %s%s (first of its kind)\n",
+                              remote.number, name != nullptr ? name : "(unregistered)",
+                              remote.value ? (" = " + std::to_string(*remote.value)).c_str() : "");
+                }
+                ++unhandledHudCount;
+                continue;
+              }
+              if (remote.category != obf2::net::bf2::kNetworkCategory) {
+                std::printf("  NOT HANDLED: remote event category %u, number %u%s\n",
+                            remote.category, remote.number,
+                            remote.value ? (" = " + std::to_string(*remote.value)).c_str() : "");
+                continue;
+              }
               if (remote.category == obf2::net::bf2::kNetworkCategory) {
                 std::printf("  server: event %u%s\n", remote.number,
                             remote.value ? (" = " + std::to_string(*remote.value)).c_str() : "");
@@ -1480,9 +1752,39 @@ struct RemoteWorld {
                                  remote.number == obf2::net::bf2::kNetPlayerDead)) {
                   continue;
                 }
+                // `GameClient::handleEvent` (OpenBF2 GameClient.cpp; `BF2.exe` 0x4d61c0,
+                // jump table 0x4d6734). 3: start running, no answer. 4: the server
+                // pushed the database — answer 4 (0x4d6278); the join sends it.
+                // 5: a round reset — answer 5 at once (0x4d62ff), or the server
+                // ghosts nothing to us and plays none of our actions again.
+                if (remote.number == obf2::net::bf2::kNetDatabaseComplete) {
+                  join.setServerDatabaseSent();
+                }
+                if (remote.number == obf2::net::bf2::kNetStartSimulation) {
+                  simulationStarted = true;
+                }
+                if (remote.number == obf2::net::bf2::kNetReset) {
+                  link.queue(obf2::net::bf2::postRemoteEvent(obf2::net::bf2::kNetworkCategory,
+                                                             obf2::net::bf2::kNetReset));
+                  ++roundResets;
+                  // The id comparison the original makes (its own highest network id
+                  // against the server's) is not ours: we keep no id allocator.
+                  std::printf("  ROUND RESET by the server (highest network id %d): answered\n",
+                              remote.value.value_or(-1));
+                  // The game-logic reset (category 0, 6) comes first; if it was
+                  // missed, this is the same reset.
+                  if (playerSpawned || join.done()) resetRound();
+                  continue;
+                }
+                if (remote.number != obf2::net::bf2::kNetDatabaseComplete &&
+                    remote.number != obf2::net::bf2::kNetStartSimulation &&
+                    remote.number != obf2::net::bf2::kNetPlayerSpawned &&
+                    remote.number != obf2::net::bf2::kNetPlayerDead) {
+                  std::printf("  NOT HANDLED: network event %u\n", remote.number);
+                }
                 if (remote.number == obf2::net::bf2::kNetPlayerSpawned) {
                   playerSpawned = true;
-                  std::printf("  THE PLAYER SPAWNED\n");
+                  std::printf("  [%6.2f s] THE PLAYER SPAWNED\n", elapsed());
                 }
                 // A life is over. Everything the prediction held belonged to that
                 // soldier: its position, its velocity, whether it was standing.
@@ -1603,13 +1905,7 @@ struct RemoteWorld {
               std::printf("  challenge event: %s, mod %s\n", parsed->challenge->challenge.c_str(),
                           parsed->challenge->modDirectory.c_str());
 
-              obf2::net::bf2::ExtendedHeader header;
-              header.sequence = sequence++ & 0x3F;
-              if (parsed->extended) header.ack = parsed->extended->sequence;
-              // Ones in the mask mean "everything previous arrived". Without that the
-              // server considers the event unacknowledged and sends it again and again.
-              header.ackBits = 0xFFFFFFFFu;
-              socket->send(obf2::net::bf2::writeChallengeResponse(id, header, batch++));
+              link.queue(obf2::net::bf2::challengeResponseEvent());
               std::printf("  challenge reply sent\n");
               answered = true;
 
@@ -1621,28 +1917,18 @@ struct RemoteWorld {
               info.nameHash = obf2::net::bf2::clientInfoNameHash(info.name);
               const auto blob = obf2::net::bf2::buildClientInfo(info);
 
-              const auto nextHeader = [&]() {
-                obf2::net::bf2::ExtendedHeader next;
-                next.sequence = sequence++ & 0x3F;
-                if (parsed->extended) next.ack = parsed->extended->sequence;
-                next.ackBits = 0xFFFFFFFFu;
-                return next;
-              };
-
-              socket->send(obf2::net::bf2::writeDataBlockHeader(
-                  id, nextHeader(), batch++, obf2::net::bf2::kClientInfoBlock,
-                  static_cast<std::uint32_t>(blob.size())));
+              link.queue(obf2::net::bf2::dataBlockHeaderEvent(obf2::net::bf2::kClientInfoBlock,
+                                                              static_cast<std::uint32_t>(blob.size())));
               for (std::size_t at = 0; at < blob.size(); at += 200) {
                 const auto count = std::min<std::size_t>(200, blob.size() - at);
-                socket->send(obf2::net::bf2::writeDataBlockChunk(
-                    id, nextHeader(), batch++,
+                link.queue(obf2::net::bf2::dataBlockChunkEvent(
                     std::span<const std::byte>(blob.data() + at, count)));
               }
               std::printf("  ClientInfo sent: name %s, %zu bytes\n",
                           info.name.c_str(), blob.size());
               if (connectionType) {
-                socket->send(obf2::net::bf2::writeConnectionTypeEvent(
-                    id, nextHeader(), batch++, static_cast<std::uint32_t>(*connectionType)));
+                link.queue(obf2::net::bf2::connectionTypeEvent(
+                    static_cast<std::uint32_t>(*connectionType)));
                 std::printf("  ConnectionTypeEvent sent: %d\n", *connectionType);
               }
 
@@ -1679,7 +1965,17 @@ struct RemoteWorld {
   }
 
   void report() {
-
+    // The delivery: blocks of events sent and resent, our packets the server
+    // never acknowledged, its packets dropped as repeats.
+    std::printf("  delivery: event blocks sent %d, resent %d; our packets lost %d; duplicates "
+                "dropped %d; events still queued %zu, blocks unconfirmed %d\n",
+                link.blocksSent(), link.blocksResent(), link.packetsLost(), droppedDuplicates,
+                link.queuedEvents(), link.unconfirmedBlocks());
+    // The round as the server left it, and what of its talk we did not act on.
+    std::printf("  round: game status %d, begin-round state %d, resets %d; HUD events not "
+                "handled %d of %zu kinds; packets with a broken event walk %d (%zu types)\n",
+                gameStatus, beginRoundState, roundResets, unhandledHudCount, unhandledHud.size(),
+                brokenWalks, brokenEventTypes.size());
     const float listenedMs = lastPacketMs - firstPacketMs;
     const float listened = listenedMs > 0.0f ? listenedMs / 1000.0f : 0.0f;
     std::printf("  over %.1f seconds: pings %d (all answered), data packets %d (%zu bytes), "
@@ -1813,8 +2109,7 @@ struct RemoteWorld {
 
   void disconnect() {
     if (!socket) return;
-    socket->send(obf2::net::bf2::writeShortPacket(
-        obf2::net::bf2::PacketKind::Disconnect, id));
+    for (int i = 0; i < 3; ++i) socket->send(obf2::net::bf2::writeDisconnect(id));
   }
 };
 
