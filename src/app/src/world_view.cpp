@@ -1204,8 +1204,9 @@ const gfx::GpuMesh* WorldView::cockpitMesh(const std::string& name, int geometry
 }
 
 void WorldView::collect(std::vector<gfx::MeshRenderer::DrawItem>& out, int frame,
-                        float frameStep, const Vec3f& eye) {
+                        float frameStep, const Vec3f& eye, const Mat4& view) {
   if (!boxesReady_ || remote_ == nullptr) return;
+  showDetonations(eye, view, frameStep);
   const bool tracing = frame >= options_.traceFrom && frame < options_.traceFrom + options_.traceFrames;
   if (cameraRound_ != remote_->roundResets) vehicleMotion_.clear();
   std::erase_if(vehicleMotion_, [frame](const auto& entry) { return entry.second.frame < frame - 1; });
@@ -1483,6 +1484,8 @@ void WorldView::collect(std::vector<gfx::MeshRenderer::DrawItem>& out, int frame
               drawn.fireClock -= interval;
               animState.messages |= 1u;
               ++firedAnimations_;
+              // The round heard where he stands (gunSound).
+              gunSound(id, weaponOut(*registry_, kitText, weaponItem), object.position, eye, view);
             }
           } else {
             drawn.fireClock = 0.0f;
@@ -1575,6 +1578,10 @@ void WorldView::collect(std::vector<gfx::MeshRenderer::DrawItem>& out, int frame
     }
     out.push_back(gfx::MeshRenderer::DrawItem{&boxes_[which], place});
   }
+  grenadeBlast_.draw(out, view);
+  for (auto& [name, effect] : cellEffects_) effect.draw(out, view);
+  for (auto& [name, effect] : gunSounds_) effect.draw(out, view);
+  scorches_.draw(out);
 }
 
 std::uint16_t WorldView::watchSoldier(const Vec3f& from) {
@@ -1666,6 +1673,8 @@ void WorldView::report() const {
                 stat.highestAboveGround, object ? object->lastPose : 0u,
                 object ? object->ragdollParticles.size() : 0);
   }
+  std::printf("  combat: grenade detonations shown %d, scorches %d, other soldiers' rounds heard %d\n",
+              detonationsShown_, scorches_.count(), gunSoundsStarted_);
   if (bodyFrames_ > 0) {
     std::printf("  other soldiers' round messages sent to their weapons: %d\n", firedAnimations_);
     std::printf("  ragdoll bodies: %d frames drawn, %d with a particle through a face\n",
@@ -1689,6 +1698,96 @@ void WorldView::release(gfx::MeshRenderer& renderer) {
   vehicleByName_.clear();
   localTurretSettings_.clear();
   seatsByVehicle_.clear();
+  grenadeBlast_.release(renderer);
+  for (auto& [name, effect] : cellEffects_) effect.release(renderer);
+  for (auto& [name, effect] : gunSounds_) effect.release(renderer);
+  scorches_.release(renderer);
+}
+
+void WorldView::showDetonations(const Vec3f& eye, const Mat4& view, float frameStep) {
+  // Tinnitus ducks every other sound (BF2Audio.dll 0x100134d0, tinnitusDuck).
+  tinnitus_.setVoices(&voices_);
+  tinnitus_.advance(frameStep);
+  const float duck = tinnitus_.duck();
+  const auto prepare = [&](SmokeFlare& effect) {
+    effect.setVoices(&voices_);
+    effect.listen(eye, view);
+    effect.setDuck(duck);
+    effect.setCollision(remote_->projectileCollision);
+    effect.advance(frameStep, remote_->roundResets);
+  };
+  prepare(grenadeBlast_);
+  for (auto& [name, effect] : cellEffects_) prepare(effect);
+  for (auto& [name, effect] : gunSounds_) prepare(effect);
+  scorches_.advance(frameStep, remote_->roundResets);
+
+  for (const auto& detonation : remote_->world.detonations()) {
+    const auto* name = remote_->templateNumbers.nameOf(detonation.templateId);
+    // The hand grenade only: the other projectiles' detonations are not shown yet.
+    if (!name || normalizeAssetPath(*name) != "ushgr_m67_projectile") continue;
+    ++detonationsShown_;
+    // Its `endEffectTemplate` (e_exp_grenade, ushgr_m67.tweak).
+    grenadeBlast_.observe(detonation.object, detonation.position, eye, view, *files_, *registry_,
+                          *renderer_, true);
+    const auto* projectile = registry_->find(*name);
+    const auto* detonationComp = projectile ? projectile->component("detonation") : nullptr;
+    const auto value = [&](const char* key) -> std::optional<float> {
+      if (!detonationComp) return std::nullopt;
+      const auto found = detonationComp->properties.find(key);
+      if (found == detonationComp->properties.end() || found->second.empty()) return std::nullopt;
+      return found->second.back().asFloat(0);
+    };
+    // BF2.exe 0x5cd940: a soldier of ours on foot within explosionRadius ×
+    // sound-tinnitus-range of the blast starts tinnitus (sound-template.md).
+    if (const auto radius = value("explosionradius")) {
+      const auto feet = remote_->soldierPosition();
+      if (remote_->playerSpawned && feet && length(*feet - detonation.position) < *radius * kTinnitusRange)
+        tinnitus_.trigger(*files_);
+    }
+    // The record's number is the surface material and its vector the surface
+    // normal (Linux `DefaultDetonationComp::detonate` 0x61e0a0,
+    // docs/functions/projectiles.md): `GameLogic::doImpact` looks up the cell of
+    // the projectile's `explosionMaterial` and that surface. With
+    // `useMMOnEndEffect` the cell's effect and sound play beside the end effect.
+    const auto explosionMaterial = value("explosionmaterial");
+    if (!explosionMaterial || value("usemmonendeffect").value_or(0) == 0 || detonation.number < 0) continue;
+    const auto surface = static_cast<std::uint16_t>(detonation.number);
+    const int row = static_cast<int>(*explosionMaterial);
+    for (const std::string_view cellPart : {scorches_.impactEffect(*files_, row, surface),
+                                            scorches_.impactSound(*files_, row, surface)}) {
+      if (cellPart.empty() || !registry_->find(cellPart)) continue;
+      auto [entry, inserted] = cellEffects_.try_emplace(std::string(cellPart), cellPart);
+      if (inserted) prepare(entry->second);
+      entry->second.observe(detonation.object, detonation.position, eye, view, *files_, *registry_,
+                            *renderer_, true);
+    }
+    // The cell's scorch (`setDecalTemplate`).
+    scorches_.add(*files_, *registry_, *renderer_, row, surface, detonation.position,
+                  normalize(detonation.vector));
+  }
+  remote_->world.detonations().clear();
+}
+
+void WorldView::gunSound(std::uint16_t id, const game::ObjectTemplate* weapon, const Vec3f& at,
+                         const Vec3f& eye, const Mat4& view) {
+  if (!weapon || weapon->className != "GenericFireArm") return;
+  // The weapon's third-person fire sound: its `Sound` child named `…fire3p…`
+  // (the data's naming, combat_feedback.h), played where he stands with the
+  // template's own distances (smoke_flare.h, sound-template.md).
+  for (const auto& child : weapon->children) {
+    if (normalizeAssetPath(child.name).find("fire3p") == std::string::npos) continue;
+    const auto* sound = registry_->find(child.name);
+    if (!sound || sound->className != "Sound") continue;
+    auto [entry, inserted] = gunSounds_.try_emplace(sound->name, sound->name);
+    if (inserted) {
+      entry->second.setVoices(&voices_);
+      entry->second.listen(eye, view);
+      entry->second.advance(0.0f, remote_->roundResets);
+    }
+    entry->second.observe(id, at, eye, view, *files_, *registry_, *renderer_, true);
+    ++gunSoundsStarted_;
+    return;
+  }
 }
 
 }  // namespace obf2::app

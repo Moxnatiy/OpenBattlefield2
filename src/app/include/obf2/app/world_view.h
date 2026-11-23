@@ -24,8 +24,12 @@
 #include "obf2/anim/player.h"
 #include "obf2/anim/ragdoll.h"
 #include "obf2/anim/system.h"
+#include "obf2/app/bullet_decals.h"
 #include "obf2/app/camera.h"
+#include "obf2/app/crosshair.h"
 #include "obf2/app/engine_sound.h"
+#include "obf2/app/smoke_flare.h"
+#include "obf2/app/tinnitus_sound.h"
 #include "obf2/app/render_context.h"
 #include "obf2/app/sound_envelope.h"
 #include "obf2/app/sound_voices.h"
@@ -88,9 +92,10 @@ class WorldView {
             const Options& options);
 
   // Everything the server created, added to this frame's draw list. `eye` is
-  // where the frame is seen from: the engines' sounds are heard there.
+  // where the frame is seen from: the engines' sounds are heard there. `view`
+  // turns the effects' sprites to the camera (smoke_flare.h).
   void collect(std::vector<gfx::MeshRenderer::DrawItem>& out, int frame, float frameStep,
-               const Vec3f& eye);
+               const Vec3f& eye, const Mat4& view);
 
   // The camera of the seat we sit in (docs/functions/vehicle-camera-modes.md):
   // its eye, its yaw and pitch in degrees and its field of view. `lookX/Y` is the
@@ -400,6 +405,21 @@ class WorldView {
   std::unordered_map<std::uint16_t, Resolved> resolved_;
   std::set<std::uint16_t> boxReported_;
   int firedAnimations_ = 0;  // round messages sent to other soldiers' weapons
+
+  // The combat the server reports (docs/functions/world-combat.md): grenade
+  // detonations, their material cell's effect, sound and scorch, the tinnitus
+  // they start, and the other soldiers' rounds heard. Declared after voices_,
+  // which they claim from.
+  void showDetonations(const Vec3f& eye, const Mat4& view, float frameStep);
+  void gunSound(std::uint16_t id, const game::ObjectTemplate* weapon, const Vec3f& at, const Vec3f& eye,
+                const Mat4& view);
+  SmokeFlare grenadeBlast_{"e_exp_grenade"};
+  std::map<std::string, SmokeFlare, std::less<>> cellEffects_;  // by template name
+  std::map<std::string, SmokeFlare, std::less<>> gunSounds_;    // by Sound template name
+  BulletDecals scorches_;
+  TinnitusSound tinnitus_;
+  int detonationsShown_ = 0;
+  int gunSoundsStarted_ = 0;
   std::set<std::uint16_t> rotationReported_;  // the record's yaw against the spawner's, once
   std::unordered_map<std::uint16_t, Carried> carried_;
   std::unordered_map<std::string, Look> looks_;

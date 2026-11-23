@@ -1192,7 +1192,7 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
 
       if (remote != nullptr && !remote->world.objects().empty()) {
         if (withOthers.empty()) withOthers = items;
-        worldView.collect(withOthers, frame, frameStep, eye);
+        worldView.collect(withOthers, frame, frameStep, eye, view);
         toDraw = &withOthers;
       }
       if (level) {
