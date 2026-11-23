@@ -85,6 +85,10 @@ struct VertexOut {
     // A road's edge fade, carried per vertex; 1 on everything else.
     float vertexAlpha;
     float viewDepth;
+    // A sprite particle's share of its self-shadow colour: 1 on the bottom
+    // corners, 0 on the top (RendDX9.dll 0x10170070). Linear in y, so the
+    // triangulation does not change it.
+    float particleShade;
     // The frame's parameters travel to the fragment shader through varyings
     // rather than in a uniform buffer of their own: in the fragment stage they
     // never reach the shader (other data is read instead), while the vertex
@@ -110,6 +114,11 @@ struct VertexOut {
     float4 treeAmbientColor;
     float4 cameraPosition;
     float4 staticSpecular;
+    float4 particleColor;
+    float4 particleFrame;
+    float4 particleShadow;
+    // The effect point lights summed at this vertex (rgb).
+    float4 effectLight;
     float3 worldPosition;
     // The tangent frame, in world coordinates. The binormal is built here and
     // not in the fragment stage because it is the same for the whole triangle.
@@ -198,6 +207,22 @@ struct Uniforms {
     // w: `StaticGloss`, the engine's own 0.2 (`psc c2` on 678 draws of the same
     // frame), which a material may override and we do not read that yet.
     float4 staticSpecular;
+    // A sprite particle's colour, `2 * input.color.rgb` of `Particles.fx`
+    // psParticle (`Shaders_client.zip:Particles.fx:56,127`). Read only on the
+    // particle branch (material.y < 0); w: the cos of its texcoord rotation.
+    float4 particleColor;
+    // A sprite's second animation frame (ParticleHigh, `Particles.fx:163-167`):
+    // xy the UV offset from this frame's cell to the next one's, z the blend
+    // (0 samples one frame, the Low technique); w: the sin of its rotation.
+    float4 particleFrame;
+    // A sprite's bottom-corner colour, min(selfShadow, intensity) in place of
+    // the intensity (RendDX9.dll 0x10170070); w 1 turns it on.
+    float4 particleShadow;
+    // Effect point lights (MeshRenderer::setEffectLights): xyz position, w
+    // attSqrInv; rgb colour. x of the count is how many are live.
+    float4 effectLightPos[4];
+    float4 effectLightColor[4];
+    float4 effectLightCount;
 };
 
 // The order of the fields above is the order of `VertexUniforms` below, and the
@@ -239,11 +264,28 @@ static VertexOut placeVertex(float3 position, float3 normal, float3 tangent,
     out.position = uniforms.modelViewProjection * float4(position, w);
     out.normal = (uniforms.model * float4(normal, 0.0)).xyz;
     out.uv = uv;
+    // A sprite particle turns its texcoords, not its quad (Particles.fx:78):
+    // with sin in particleFrame.w and cos in particleColor.w, uv2 the corner's
+    // offset from the cell centre, the corner (±1, ±1) is rotated and scaled
+    // back into the cell; v runs down (Particles.fx:83). Identity at sin 0.
+    if (uniforms.material.y < 0.0 && uniforms.particleFrame.w != 0.0) {
+        float s = uniforms.particleFrame.w;
+        float c = uniforms.particleColor.w;
+        float2 extent = abs(uv2);
+        float tx = sign(uv2.x);
+        float ty = -sign(uv2.y);
+        float rx = tx * c - ty * s;
+        float ry = tx * s + ty * c;
+        out.uv = (uv - uv2) + float2(rx * extent.x, -ry * extent.y);
+    }
     out.uv2 = uv2;
     out.uvLightmap = uvLightmap;
     out.uvDirt = uvDirt;
     out.uvCrack = uvCrack;
     out.vertexAlpha = alpha;
+    // Sprite quads keep the corner's offset from the cell centre in uv2, v
+    // down: the bottom corners have uv2.y > 0.
+    out.particleShade = uniforms.particleShadow.w > 0.5 && uv2.y > 0.0 ? 1.0 : 0.0;
     // For a perspective projection w in clip space equals the distance along the
     // view — exactly what the fog needs.
     out.viewDepth = out.position.w;
@@ -264,7 +306,29 @@ static VertexOut placeVertex(float3 position, float3 normal, float3 tangent,
     out.treeAmbientColor = uniforms.treeAmbientColor;
     out.cameraPosition = uniforms.cameraPosition;
     out.staticSpecular = uniforms.staticSpecular;
+    out.particleColor = uniforms.particleColor;
+    out.particleFrame = uniforms.particleFrame;
+    out.particleShadow = uniforms.particleShadow;
     out.worldPosition = (uniforms.model * float4(position, 1.0)).xyz;
+    // Effect point lights, per vertex as `calcPVPoint`/`calcPVPointTerrain`
+    // compute them (`Shaders_client.zip:commonVertexLight.fx:27,37`):
+    //   radialAtt = saturate(1 - dot(lvec, lvec) * attSqrInv)
+    //   light     = dot(normalize(lvec), normal) * radialAtt * colour
+    // A negative dot cannot survive the light buffer or the additive pass the
+    // original writes it into, hence the saturate.
+    {
+        float3 effect = float3(0.0);
+        const float3 effectNormal = normalize(out.normal);
+        const int lights = int(uniforms.effectLightCount.x);
+        for (int i = 0; i < 4; ++i) {
+            if (i >= lights) break;
+            const float3 lvec = uniforms.effectLightPos[i].xyz - out.worldPosition;
+            const float radialAtt = saturate(1.0 - dot(lvec, lvec) * uniforms.effectLightPos[i].w);
+            effect += saturate(dot(normalize(lvec), effectNormal)) * radialAtt *
+                      uniforms.effectLightColor[i].rgb;
+        }
+        out.effectLight = float4(effect, 0.0);
+    }
     // The frame a normal map is read in. The game builds it the same way
     // (`Shaders_client.zip:RaShaderSTM.fx:130`, getTanBasisTranspose):
     //
@@ -354,6 +418,18 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
                               array<sampler, 6> materialSamplers [[sampler(10)]],
                               constant TerrainMaterials& terrainMaterials [[buffer(0)]]) {
     float4 albedo = baseColor.sample(baseSampler, in.uv);
+    // A sprite particle (material.y < 0, its opacity): ParticleHigh /
+    // AdditiveHigh's lerp(tDiffuse, tDiffuse2, animBlend), times its colour
+    // (`Particles.fx`), and nothing lights it.
+    if (in.material.y < 0.0) {
+        if (in.particleFrame.z > 0.0) {
+            albedo = mix(albedo, baseColor.sample(baseSampler, in.uv + in.particleFrame.xy),
+                         in.particleFrame.z);
+        }
+        float3 tint = in.particleShadow.w > 0.5 ?
+            mix(in.particleColor.rgb, in.particleShadow.rgb, in.particleShade) : in.particleColor.rgb;
+        return float4(albedo.rgb * tint, albedo.a * -in.material.y);
+    }
 
     // Leaves, fences, grates: the shape is cut out of the base map's alpha.
     // The technique switches it on per material (`AlphaTestEnable = <AlphaTest>`,
@@ -786,6 +862,16 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
 
     float3 color = albedo.rgb * light;
 
+    // Effect point lights. Terrain gathers them into its light buffer at half
+    // strength and doubles the result (`TerrainShader_Hi.fx:553`, `:79` and the
+    // final 2·), so the ground gains colour × light. A static mesh draws them
+    // in an additive pass, `2 * FinalColor * saturate(diffuse)`
+    // (`RaShaderSTM.fx:411,464`).
+    if (in.material.z < 0.5) {
+        const bool groundLit = in.fogParams.z > 0.5 && in.fogParams.z < 2.5;
+        color += albedo.rgb * (groundLit ? in.effectLight.rgb : 2.0 * saturate(in.effectLight.rgb));
+    }
+
     // The specular highlight, on everything the static-mesh formula lights.
     // `RaShaderSTM.fx:394` with `compNormals = (0,0,1)` — which is the vertex
     // normal, since that constant is the tangent frame's own z and the frame is
@@ -977,6 +1063,12 @@ struct VertexUniforms {
   float treeAmbientColor[4]{};
   float cameraPosition[4]{};
   float staticSpecular[4]{};    // rgb: the colour, w: the gloss
+  float particleColor[4]{1.0f, 1.0f, 1.0f, 1.0f};
+  float particleFrame[4]{};
+  float particleShadow[4]{};
+  float effectLightPos[4][4]{};
+  float effectLightColor[4][4]{};
+  float effectLightCount[4]{};
 };
 
 // The second vertex buffer of a skinned mesh: a mirror of `SkinnedVertexIn`'s
@@ -1986,6 +2078,17 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
   uniforms.staticSpecular[1] = staticSpecular_.g;
   uniforms.staticSpecular[2] = staticSpecular_.b;
   uniforms.staticSpecular[3] = staticGloss_;
+  for (std::size_t i = 0; i < effectLights_.size() && i < kMaxEffectLights; ++i) {
+    const auto& light = effectLights_[i];
+    uniforms.effectLightPos[i][0] = light.position.x;
+    uniforms.effectLightPos[i][1] = light.position.y;
+    uniforms.effectLightPos[i][2] = light.position.z;
+    uniforms.effectLightPos[i][3] = light.attSqrInv;
+    uniforms.effectLightColor[i][0] = light.color.x;
+    uniforms.effectLightColor[i][1] = light.color.y;
+    uniforms.effectLightColor[i][2] = light.color.z;
+  }
+  uniforms.effectLightCount[0] = static_cast<float>(std::min(effectLights_.size(), kMaxEffectLights));
   uniforms.treeAmbientColor[0] = treeAmbient_.r;
   uniforms.treeAmbientColor[1] = treeAmbient_.g;
   uniforms.treeAmbientColor[2] = treeAmbient_.b;
@@ -2047,7 +2150,8 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
 
       // The sky is always around the camera, so culling it can only ever get
       // it wrong.
-      if (!item.sky && item.mesh->boundsRadius > 0.0f) {
+      // The sky is never culled, nor is a particle (its quad faces the eye).
+      if (!item.sky && item.particleOpacity == 0.0f && item.mesh->boundsRadius > 0.0f) {
         const Vec3f center = transformPoint(transform, item.mesh->boundsCenter);
         if (!frustum.intersectsSphere(center, item.mesh->boundsRadius)) {
           if (!blendedPass) ++culled_;
@@ -2065,7 +2169,10 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
       const Mat4 modelViewProjection = viewProjection * transform;
       std::memcpy(uniforms.modelViewProjection, modelViewProjection.m, sizeof(Mat4));
       std::memcpy(uniforms.model, transform.m, sizeof(Mat4));
-      uniforms.material[1] = item.road ? 1.0f : 0.0f;
+      uniforms.material[1] = item.road ? 1.0f : -item.particleOpacity;
+      std::memcpy(uniforms.particleColor, item.particleColor, sizeof(uniforms.particleColor));
+      std::memcpy(uniforms.particleFrame, item.particleFrame, sizeof(uniforms.particleFrame));
+      std::memcpy(uniforms.particleShadow, item.particleShadow, sizeof(uniforms.particleShadow));
       uniforms.roadParams[0] = item.roadBlendFactor;
       const bool bakedItem = item.lightmap != nullptr && item.mesh->hasLightmapUv;
       if (bakedItem) {

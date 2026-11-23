@@ -29,6 +29,7 @@
 #include "obf2/app/render_context.h"
 #include "obf2/app/scene_build.h"
 #include "obf2/app/scoreboard_players.h"
+#include "obf2/app/ambient_effects.h"
 #include "obf2/app/live_hud.h"
 #include "obf2/app/squad_roster.h"
 #include "obf2/app/spawn_circles.h"
@@ -591,6 +592,13 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
   obf2::gfx::GpuMesh& skyMesh = uploaded.sky;
   const bool skyReady = uploaded.skyReady;
 
+  // The level's own effects: the `ObjectTemplate.create Effect…` objects its
+  // placement names, emitting where they stand (ambient_effects.h).
+  obf2::app::AmbientEffects ambientEffects;
+  if (level) {
+    ambientEffects.load(files, registry, *renderer, resolveTexture, level->objects, level->lighting);
+  }
+
   // Other players and the server's own objects on screen (`obf2/app/world_view.h`).
   obf2::app::WorldView worldView;
   // Whether `--group` has already been asked for — it is a one-shot.
@@ -1105,6 +1113,13 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
       if (remote != nullptr && !remote->world.objects().empty()) {
         if (withOthers.empty()) withOthers = items;
         worldView.collect(withOthers, frame, frameStep);
+        toDraw = &withOthers;
+      }
+      if (level) {
+        if (withOthers.empty()) withOthers = items;
+        ambientEffects.advance(frameStep);
+        ambientEffects.listen(eye);
+        ambientEffects.draw(withOthers, view);
         toDraw = &withOthers;
       }
       // The specular is the one thing that depends on where the eye is.
@@ -1749,6 +1764,7 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
 
   for (OwnedPiece& piece : spawnPieces) renderer->release(piece.mesh);
   for (auto& gpuMesh : gpuMeshes) renderer->release(gpuMesh);
+  ambientEffects.release(*renderer);
   worldView.release(*renderer);
   if (remote != nullptr) {
     std::printf("  first person: rounds fired %u, actions with the fire button %d, "

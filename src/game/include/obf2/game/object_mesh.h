@@ -30,9 +30,12 @@ std::string resolveGeometryPath(FileSystem& files, const std::string& templateFi
                                 const std::string& geometryName);
 
 // One mesh file, unpacked into drawable geometry. `geometryOverride` below zero
-// means "choose by `pickGeometry`".
+// means "choose by `pickGeometry`". `clampLod` picks the geometry for lod 0 and
+// takes the asked lod or the mesh's last, whichever comes first — for a mesh
+// with fewer lods than asked for (a mesh particle's one).
 std::optional<mesh::RenderMesh> loadMesh(FileSystem& files, const std::string& path,
-                                         int geometryOverride, int lodIndex, bool verbose);
+                                         int geometryOverride, int lodIndex, bool verbose,
+                                         bool clampLod = false);
 
 // The whole tree of a template as one mesh, with the parts in their places.
 // When the root has no geometry of its own the children's meshes are merged —
@@ -40,7 +43,8 @@ std::optional<mesh::RenderMesh> loadMesh(FileSystem& files, const std::string& p
 // `ObjectTemplate.addTemplate flagpole`.
 std::optional<mesh::RenderMesh> buildObjectMesh(FileSystem& files, const Registry& registry,
                                                 const std::string& templateName,
-                                                int geometryOverride, int lodIndex, bool verbose);
+                                                int geometryOverride, int lodIndex, bool verbose,
+                                                bool clampLod = false);
 
 // At which step an object is lost on its way to the screen. Walks the same path
 // as `buildObjectMesh` but says where exactly it stopped: without that, "the

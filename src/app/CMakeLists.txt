@@ -25,6 +25,10 @@ add_library(obf2_app
   src/kill_feed.cpp
   src/live_hud.cpp
   src/squad_roster.cpp
+  src/sprite_particles.cpp
+  src/smoke_flare.cpp
+  src/hemi_map.cpp
+  src/ambient_effects.cpp
   src/launch.cpp
   src/hit_direction.cpp
   src/death_camera.cpp

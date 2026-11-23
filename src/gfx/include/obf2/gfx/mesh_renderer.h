@@ -1,4 +1,6 @@
 #pragma once
+#include <algorithm>
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -200,6 +202,20 @@ class MeshRenderer {
     // is where the deformation happens — the same division of labour as in the
     // original. Null draws the mesh as it lies in the file.
     const std::vector<mesh::Mat4>* pose = nullptr;
+    // A sprite particle: its opacity (0 draws the item as a mesh, anything
+    // above draws its ranges on the shader's particle branch, `Particles.fx`).
+    float particleOpacity = 0.0f;
+    // Its colour (Particles.fx); multiplies the texture on the particle branch
+    // only. w: the cos of its texcoord rotation.
+    float particleColor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    // Its next animation frame: xy UV offset to its cell, z the blend
+    // (ParticleHigh). z = 0 draws one frame. w: the sin of its texcoord
+    // rotation (Particles.fx:78); 0 leaves the texcoords as they are, any other
+    // value needs uv2 to be the corner's offset from the cell centre.
+    float particleFrame[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    // Its bottom-corner colour (self-shadow, RendDX9.dll 0x10170070); w = 1
+    // uses it, which needs uv2 laid out as for the rotation.
+    float particleShadow[4] = {0.0f, 0.0f, 0.0f, 0.0f};
   };
 
   // The fog comes from the level's data (Sky.con). fogEnd == 0 disables it.
@@ -323,6 +339,23 @@ class MeshRenderer {
     pointColor_ = point;
   }
 
+  // A dynamic point light from an effect (`LightSource`, lightType Point):
+  // `attSqrInv` is 1 / attenuationRange2² (RendDX9.dll 0x100dfff0, light
+  // virtual +0x190), the colour already times intensity and flicker.
+  struct EffectLight {
+    Vec3f position;
+    float attSqrInv = 0.0f;
+    Vec3f color;
+  };
+  // How many the shader takes at once: ours. Retail's count is not measured.
+  static constexpr std::size_t kMaxEffectLights = 4;
+  // The lights for the frames that follow, until replaced. Extra lights past
+  // kMaxEffectLights are dropped.
+  void setEffectLights(const std::vector<EffectLight>& lights) {
+    effectLights_.assign(lights.begin(),
+                         lights.begin() + static_cast<std::ptrdiff_t>(std::min(lights.size(), kMaxEffectLights)));
+  }
+
   // Which pass of a frame `renderScene` draws.
   //
   //   World        clears the colour and the depth, and runs the ground's light
@@ -403,6 +436,7 @@ class MeshRenderer {
   Color staticSky_{0.3f, 0.35f, 0.4f, 1.0f};
   Vec3f sunDirection_{-0.26f, -0.80f, -0.54f};
   Color pointColor_{0.0f, 0.0f, 0.0f, 1.0f};
+  std::vector<EffectLight> effectLights_;
   Vec3f cameraPosition_{0.0f, 0.0f, 0.0f};
   Color staticSpecular_{0.65f, 0.60f, 0.52f, 1.0f};
   float staticGloss_ = 0.2f;
