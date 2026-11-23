@@ -24,6 +24,14 @@ namespace obf2::game {
 // while the outside view has three or four.
 std::size_t pickGeometry(const mesh::Mesh& mesh, std::size_t lodIndex);
 
+// The geometry of a vehicle's mesh drawn from inside, for a seat with no
+// `cockpitSubGeom`: the first whose lod 0 uses a Cockpit technique
+// (BundledMesh.fx's CockpitNoHemiLight, as ahe_havoc.bundledmesh geometry 0 does).
+// Nullopt when no geometry has one. Whether the engine itself picks the interior
+// by the technique is not read: the technique is the data's own mark.
+std::optional<int> authoredCockpitGeometry(FileSystem& files, const Registry& registry,
+                                           const std::string& templateName);
+
 // The file beside the template's `.con`: `<dir>/meshes/<name>.<ext>` with the
 // three mesh extensions tried in turn. Empty when nothing is there.
 std::string resolveGeometryPath(FileSystem& files, const std::string& templateFile,

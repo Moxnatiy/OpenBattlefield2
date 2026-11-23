@@ -177,6 +177,32 @@ std::optional<mesh::RenderMesh> buildObjectMesh(FileSystem& files, const Registr
   return render;
 }
 
+std::optional<int> authoredCockpitGeometry(FileSystem& files, const Registry& registry,
+                                           const std::string& templateName) {
+  const auto* root = registry.find(templateName);
+  const auto instance = flattenObject(registry, templateName);
+  if (!root || !instance || instance->geometryName.empty()) return std::nullopt;
+  const auto path = resolveGeometryPath(files, root->file, instance->geometryName);
+  const auto kind = mesh::kindFromExtension(assetExtension(path));
+  const auto bytes = files.read(path);
+  if (!kind || !bytes) return std::nullopt;
+  const auto parsed = mesh::load(*bytes, *kind);
+  if (!parsed) return std::nullopt;
+  // Objects_client.zip:Vehicles/Air/ahe_havoc/Meshes/ahe_havoc.bundledmesh:
+  // geometry 0 is BundledMesh.fx/CockpitNoHemiLight, the exterior geometry 1.
+  // The technique, not the index: USJEP_HMMWV has a small placeholder at 0.
+  for (std::size_t g = 0; g < parsed->geometries.size(); ++g) {
+    const auto& lods = parsed->geometries[g].lods;
+    if (lods.empty()) continue;
+    if (std::ranges::any_of(lods.front().materials, [](const auto& material) {
+          return normalizeAssetPath(material.technique).find("cockpit") != std::string::npos;
+        })) {
+      return static_cast<int>(g);
+    }
+  }
+  return std::nullopt;
+}
+
 std::string_view drawStageName(DrawStage stage) {
   switch (stage) {
     case DrawStage::Drawn: return "drawn";

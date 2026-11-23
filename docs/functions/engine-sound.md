@@ -1,11 +1,8 @@
 # Engine sound — `EngineSound`, Retail 1.50
 
 Scope: the sound a vehicle's engine makes (`ObjectTemplate.activeSafe Engine
-…`). Code: `src/app/src/engine_sound.cpp` (`EngineSound`).
-
-Status: `EngineSound` and the engine update it reads (`game/engine_update.h`)
-are in. `WorldView::drawVehicle`, which feeds it rpm, gear and load below,
-comes with the world view.
+…`). Code: `src/app/src/engine_sound.cpp` (`EngineSound`), used by
+`WorldView::drawVehicle`.
 
 Binary: Linux server `linuxded-full/bin/amd-64/bf2` (names; the sound code
 is compiled in although `createSoundFromTemplate` returns null there).

@@ -2197,6 +2197,15 @@ struct RemoteWorld {
                 vehicleRootOf(ourSoldier) != 0 &&
                 vehicleRootOf(ourSoldier) == vehicleRootOf(state->networkId)) {
               acknowledgeActions(state->counter);
+              // The game tick, as for our soldier below: the packet's server tick
+              // plus one per action not yet answered (`FUN_004d4b30`, 0x4d4bc9 and
+              // 0x4d4c15 — the controlled object's state, whatever it is). Without
+              // it a seated player's clock ran on our actions alone and drifted
+              // ahead of the server's, dragging every ghost further into
+              // extrapolation.
+              if (const auto header = obf2::net::bf2::readGhostHeader(*more); header && !sent.empty()) {
+                world.setGameTick(header->time + static_cast<std::uint32_t>(sent.size()));
+              }
             }
             // The compression reference point for the whole stream that follows.
             compressionReference = state->compressionReference;

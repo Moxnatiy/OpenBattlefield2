@@ -614,6 +614,7 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
     viewOptions.watchPose = args.watchPose;
     viewOptions.watchWeapon = args.watchWeapon;
     viewOptions.watchRagdoll = args.watchRagdoll;
+    viewOptions.watchSeated = args.watchSeated;
     worldView.init(files, registry, *renderer, resolveTexture, *remote, level ? &*level : nullptr,
                    viewOptions);
   }
@@ -754,6 +755,9 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
       if (scripted.crouch) frameInput.crouch = true;
       if (scripted.prone) frameInput.prone = true;
       frameInput.weaponKeys |= scripted.weaponKeys;
+      if (scripted.use) frameInput.use = true;
+      frameInput.seatKeys |= scripted.seatKeys;
+      if (scripted.camera) frameInput.vehicleCameraKey = SDL_SCANCODE_C;
     }
     // The squad name box takes the keyboard once focused
     // (hud::SquadList::setSquadNameSelect); Return or Escape give it back, and
@@ -878,13 +882,19 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
     // there is no soldier yet. The spawn screen's camera from Init.con works then.
     // The field of view of the soldier's camera, when the frame is seen through it.
     std::optional<float> soldierFov;
+    // The seat's camera's, when the frame is seen from a vehicle.
+    std::optional<float> vehicleFov;
+    std::optional<obf2::Vec3f> vehicleUp;
     const auto remoteSoldier =
         remote != nullptr ? remote->soldierPosition() : std::optional<obf2::Vec3f>{};
-    if ((hostedServer && hostedClient && localSoldierId != 0) || remoteSoldier) {
+    // In a vehicle there is no soldier position: the hull we sit in stands for it.
+    const auto vehiclePose = remote ? remote->occupiedVehiclePose() : std::nullopt;
+    if ((hostedServer && hostedClient && localSoldierId != 0) || remoteSoldier || vehiclePose) {
       // The soldier's position comes from whoever owns him: our server in our own
       // game, that server on a real one.
       obf2::Vec3f soldierEye =
-          remoteSoldier ? *remoteSoldier : hostedClient->interpolatedPosition(localSoldierId);
+          remoteSoldier ? *remoteSoldier : vehiclePose ? vehiclePose->position
+                                                       : hostedClient->interpolatedPosition(localSoldierId);
       // In our own game the eye over the local server's position is **not
       // measured**: that server is not the engine's tick (CLAUDE.md, "Physics").
       // A real server's is the engine's (`soldierEye`, below).
@@ -892,7 +902,7 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
 
       // On a real server the input goes to the same place as in our own game —
       // only in another form: as the player action stream.
-      if (remoteSoldier && remote != nullptr) {
+      if ((remoteSoldier || vehiclePose) && remote != nullptr) {
         const auto& raw = frameInput;
 
         // The engine's chain: **pixels -> axis -> wire -> angle**. The frame only
@@ -905,14 +915,24 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
         //   wire  = trunc(axis * 100)                   (0x5bc890 -> 0x5bc5f0)
         //   angle += wire * 0.01 * look factor          (0x5bc6a0, phy-soldier-look-factor-*)
         obf2::net::bf2::PlayerAction out;
-        // Full forward movement in the dump is 99, so our ±1 is multiplied by it.
+        // The throttle on the wire (bf2_protocol.h, throttleToWire): ±100 in a
+        // vehicle and forward on foot, the legacy 99 for a soldier's reverse.
         out.axes[obf2::net::bf2::kAxisThrottle] =
-            static_cast<std::int16_t>(raw.moveForward * obf2::net::bf2::kAxisFull);
+            obf2::net::bf2::throttleToWire(raw.moveForward, remoteSoldier.has_value());
         // Strafing is the yaw axis: in Controls.con D/A hang on exactly `c_PIYaw`,
-        // and the engine has no separate strafe axis.
-        out.axes[obf2::net::bf2::kAxisYaw] =
-            static_cast<std::int16_t>(raw.moveRight * obf2::net::bf2::kAxisFull);
+        // and the engine has no separate strafe axis. In a vehicle it steers, at
+        // the vehicle's full scale (kVehicleAxisFull).
+        out.axes[obf2::net::bf2::kAxisYaw] = static_cast<std::int16_t>(
+            raw.moveRight * (remoteSoldier ? obf2::net::bf2::kAxisFull : obf2::net::bf2::kVehicleAxisFull));
         if (raw.sprint) out.buttons |= obf2::net::bf2::kButtonSprint;
+        // E enters the vehicle in front of us and leaves the one we sit in; F1..F8
+        // take that seat (`c_PIPositionSelectN`). The server decides both.
+        if (raw.use) out.buttons |= obf2::net::bf2::kButtonUse;
+        for (int seat = 1; seat <= 8; ++seat) {
+          if (raw.seatKeys & (1u << (seat - 1))) {
+            out.buttons |= obf2::net::bf2::kButtonPositionSelect(seat);
+          }
+        }
         if (raw.jump) out.buttons |= obf2::net::bf2::kButtonAction;
         if (raw.fire) out.buttons |= obf2::net::bf2::kButtonFire;
         if (raw.reload) out.buttons |= obf2::net::bf2::kButtonReload;
@@ -963,7 +983,8 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
             ownObject != remote->world.objects().end()
                 ? remote->templateNumbers.nameOf(ownObject->second.templateId)
                 : nullptr;
-        if (ownTemplate != nullptr && !remote->poseCameraKnown) {
+        // Seated, our object is the seat: its template has no pose cameras.
+        if (ownTemplate != nullptr && !remote->poseCameraKnown && !vehiclePose) {
           for (int pose = 0; pose < 3; ++pose) {
             if (const auto at = obf2::game::poseCameraPosition(remote->registry, *ownTemplate, pose)) {
               remote->poseCamera[static_cast<std::size_t>(pose)] = obf2::Vec3f{at->x, at->y, at->z};
@@ -971,11 +992,22 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
           }
           remote->poseCameraKnown = true;
         }
-        const obf2::Vec3f offset = remote->eyeKnown ? remote->eyeOffset : remote->poseCamera[0];
-        soldierEye = obf2::app::soldierEye(*remote->drawnSoldierPosition(),
-                                           remote->physics.pivotHeight, remote->look.bodyYaw,
-                                           offset);
-        if (ownTemplate != nullptr) {
+        // Seated, the seat's camera (WorldView::occupiedCamera) is the frame's.
+        if (const auto vehicle = worldView.occupiedCamera(raw.mouseDeltaX * args.mouseScale,
+                                                          raw.mouseDeltaY * args.mouseScale,
+                                                          raw.vehicleCameraKey)) {
+          cameraInputs.vehicle = vehicle->camera;
+          vehicleFov = vehicle->fieldOfView;
+          vehicleUp = vehicle->camera.up;
+          yaw = vehicle->yaw;
+          pitch = vehicle->pitch;
+          soldierEye = vehicle->camera.eye;
+        } else if (const auto drawn = remote->drawnSoldierPosition()) {
+          const obf2::Vec3f offset = remote->eyeKnown ? remote->eyeOffset : remote->poseCamera[0];
+          soldierEye = obf2::app::soldierEye(*drawn, remote->physics.pivotHeight,
+                                             remote->look.bodyYaw, offset);
+        }
+        if (ownTemplate != nullptr && !vehiclePose) {
           soldierFov = obf2::game::soldierCameraFov(remote->registry, *ownTemplate);
           // Zoomed, the player's field of view is the weapon's level (`Player::setFov`
           // by `DefaultZoomComp::updateComponent`, Linux 0x6298e0); 0 is the
@@ -1014,7 +1046,8 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
         const auto& object = objects.at(watched);
         const auto pose =
             remote->world.poseOf(watched, remote->tick.pending / obf2::server::kTickTime);
-        const obf2::Vec3f at = pose ? pose->position : object.position;
+        const auto seated = worldView.seatedAt(watched);
+        const obf2::Vec3f at = seated ? *seated : pose ? pose->position : object.position;
         lookTarget = at;
         eye = at + obf2::Vec3f{2.8f, 0.6f, 2.8f};
 
@@ -1075,16 +1108,22 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
     // (Linux 0x495e32 → `getActiveFOV` 0x5773c0) — which call sets it on foot is not
     // read — and the renderer's setter fits it to the aspect (`aspectFieldOfView`).
     // Anywhere else — the spawn screen's camera, the debugging cameras, our own
-    // game — 1.05 is **not measured**.
+    // game — 1.05 is **not measured**. From a vehicle it is the seat camera's
+    // (`insideFOV`, or the external camera's `FOV`; vehicle_seats.h), fitted the
+    // same way.
     const bool throughSoldier = soldierFov.has_value() && !args.camera && !args.watchSoldier;
+    const bool throughVehicle = vehicleFov.has_value() && !args.camera && !args.watchSoldier;
     const float fieldOfView =
-        throughSoldier ? obf2::app::aspectFieldOfView(*soldierFov, 1.0f / aspect) : 1.05f;
+        throughVehicle ? obf2::app::aspectFieldOfView(*vehicleFov, 1.0f / aspect)
+        : throughSoldier ? obf2::app::aspectFieldOfView(*soldierFov, 1.0f / aspect) : 1.05f;
     const obf2::Mat4 projection = obf2::perspective(fieldOfView, aspect, nearPlane, farPlane);
     // From above "screen up" has to be Z rather than Y (which would coincide with the
     // view). In a left-handed system right is cross(up, forward), so with up = +Z
     // right ends up as +X — exactly as on the level's own minimap.
+    // Inside a vehicle the seat's camera rolls with the hull.
     const obf2::Vec3f up =
-        args.topDown && !bootMode ? obf2::Vec3f{0.0f, 0.0f, 1.0f} : obf2::Vec3f{0.0f, 1.0f, 0.0f};
+        args.topDown && !bootMode ? obf2::Vec3f{0.0f, 0.0f, 1.0f}
+        : throughVehicle && vehicleUp ? *vehicleUp : obf2::Vec3f{0.0f, 1.0f, 0.0f};
     const obf2::Mat4 view = obf2::lookAt(eye, lookTarget, up);
 
     if (bootMode) {
@@ -1112,7 +1151,7 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
 
       if (remote != nullptr && !remote->world.objects().empty()) {
         if (withOthers.empty()) withOthers = items;
-        worldView.collect(withOthers, frame, frameStep);
+        worldView.collect(withOthers, frame, frameStep, eye);
         toDraw = &withOthers;
       }
       if (level) {

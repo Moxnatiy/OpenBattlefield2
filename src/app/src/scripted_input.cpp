@@ -37,6 +37,15 @@ ScriptedFrame scriptedInput(const Args& args, int frame) {
   for (const auto& fire : args.fires) {
     if (frame >= fire.frame && frame < fire.frame + fire.frames) out.fire = true;
   }
+  for (const auto& use : args.uses) {
+    if (frame >= use.frame && frame < use.frame + use.frames) out.use = true;
+  }
+  for (const auto& seat : args.seats) {
+    if (frame == seat.frame) out.seatKeys |= 1u << (seat.key - 1);
+  }
+  for (const int cameraFrame : args.cameraKeys) {
+    if (frame == cameraFrame) out.camera = true;
+  }
   return out;
 }
 
