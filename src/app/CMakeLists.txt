@@ -42,6 +42,8 @@ add_library(obf2_app
   src/match_voice.cpp
   src/environment_audio.cpp
   src/combat_feedback.cpp
+  src/bullet_decals.cpp
+  src/own_impacts.cpp
 )
 add_library(obf2::app ALIAS obf2_app)
 if(TARGET obf2_video)

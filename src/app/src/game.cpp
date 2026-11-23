@@ -28,6 +28,7 @@
 #include "obf2/app/combat_feedback.h"
 #include "obf2/app/environment_audio.h"
 #include "obf2/app/match_voice.h"
+#include "obf2/app/own_impacts.h"
 #include "obf2/app/menu_music.h"
 #include "obf2/app/model_view.h"
 #include "obf2/app/render_context.h"
@@ -647,7 +648,10 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
   // (environment_audio.h), from the world view's one pool of sources.
   obf2::app::EnvironmentAudio environmentAudio;
   obf2::app::CombatFeedback weaponSounds;
+  // Where our rounds land: their marks and effects (own_impacts.h).
+  obf2::app::OwnImpacts ownImpacts;
   if (remote != nullptr) {
+    ownImpacts.init(files, *renderer, &worldView.voices());
     // The server names the level on `--connect`.
     const std::string& levelName = remote->levelName.empty() ? args.levelName : remote->levelName;
     std::printf("  reverb: %s\n", environmentAudio.load(files, levelName)
@@ -1198,6 +1202,11 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
         ambientEffects.draw(withOthers, view);
         toDraw = &withOthers;
       }
+      if (remote != nullptr) {
+        if (withOthers.empty()) withOthers = items;
+        ownImpacts.draw(*remote, eye, view, frameStep, withOthers);
+        toDraw = &withOthers;
+      }
       // The specular is the one thing that depends on where the eye is.
       renderer->setCameraPosition(eye);
       // The water's clock: our seconds, wrapped at 1000 s (docs/functions/water.md,
@@ -1264,9 +1273,16 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
               firstPersonAction = number;
               // A round out: the weapon's first-person fire sound.
               if (fired) {
-                weaponSounds.shot(files, remote->registry,
-                                  obf2::app::weaponOut(remote->registry, kitText, ownItem.value_or(item)),
-                                  true);
+                const auto* weapon = obf2::app::weaponOut(remote->registry, kitText, ownItem.value_or(item));
+                weaponSounds.shot(files, remote->registry, weapon, true);
+                // Where it lands (own_impacts.h), from this action's eye and view.
+                if (remote->bodyReady) {
+                  const obf2::Vec3f offset = remote->eyeKnown ? remote->eyeOffset : remote->poseCamera[0];
+                  ownImpacts.shot(*remote, weapon,
+                                  obf2::app::soldierEye(remote->body.position, remote->physics.pivotHeight,
+                                                        remote->look.bodyYaw, offset),
+                                  obf2::app::lookDirection(remote->yaw(), remote->pitch()));
+                }
               }
             }
             weaponSounds.releaseFinished();
@@ -1868,8 +1884,10 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
   for (OwnedPiece& piece : spawnPieces) renderer->release(piece.mesh);
   for (auto& gpuMesh : gpuMeshes) renderer->release(gpuMesh);
   ambientEffects.release(*renderer);
+  ownImpacts.release(*renderer);
   worldView.release(*renderer);
   if (remote != nullptr) {
+    std::printf("  our rounds' impacts: %d, marks made %d\n", ownImpacts.impacts(), ownImpacts.marks());
     std::printf("  weapon sounds played: %d (reverb %s)\n", weaponSounds.played(),
                 environmentAudio.ready() ? "on" : "off");
     std::printf("  first person: rounds fired %u, actions with the fire button %d, "
