@@ -426,21 +426,9 @@ struct RemoteWorld {
   }
 
   std::uint32_t reportedSpawnAt = 0;
-
-  // The squad requests the spawn screen's squad list makes (OpenBF2
-  // `ClientSquadManager`): each one game event, sent on the next turn. The server
-  // answers with the players' own state (their squad and the leader bit) and with
-  // the name and lock events, so nothing here changes until it does.
-  struct SquadRequest {
-    enum class Kind { Join, Leave, Name, Private } kind = Kind::Join;
-    int squad = 0;
-    std::string name;
-    bool flag = false;
-  };
-  std::vector<SquadRequest> squadRequests;
+  // Our own squad and leader bit as last logged (our player's state, 0x2000).
   int reportedSquad = 0;
   bool reportedLeader = false;
-  void requestSquad(SquadRequest request) { squadRequests.push_back(std::move(request)); }
 
   int kitAsked = -1;
   int kitAskedTeam = 0;
@@ -2093,35 +2081,6 @@ struct RemoteWorld {
                       reportedSpawnAt > now ? (reportedSpawnAt - now) / 30.0 : 0.0);
         }
       }
-
-      for (const SquadRequest& request : squadRequests) {
-        const int team = world.ownTeam();
-        const int player = ourPlayer;
-        if (team <= 0 || player < 0) {
-          std::printf("  squad request dropped: our team or player is not known yet\n");
-          continue;
-        }
-        switch (request.kind) {
-          case SquadRequest::Kind::Join:
-            link.queue(obf2::net::bf2::joinSquadEvent(team, player, request.squad));
-            std::printf("  squad: join %d\n", request.squad);
-            break;
-          case SquadRequest::Kind::Leave:
-            link.queue(obf2::net::bf2::leaveSquadEvent(team, player, request.squad, request.flag));
-            std::printf("  squad: leave %d\n", request.squad);
-            break;
-          case SquadRequest::Kind::Name:
-            link.queue(
-                obf2::net::bf2::changeSquadNameEvent(team, request.squad, player, request.name));
-            std::printf("  squad: name %d '%s'\n", request.squad, request.name.c_str());
-            break;
-          case SquadRequest::Kind::Private:
-            link.queue(obf2::net::bf2::setPrivateSquadEvent(team, request.squad, request.flag));
-            std::printf("  squad: %d %s\n", request.squad, request.flag ? "locked" : "open");
-            break;
-        }
-      }
-      squadRequests.clear();
 
       // Whatever events wait go now, in one data packet with no actions; an
       // action packet carries any that are queued after this (`sendAction`).

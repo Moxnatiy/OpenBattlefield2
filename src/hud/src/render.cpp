@@ -649,6 +649,40 @@ std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& fon
     }
   }
 
+  // An edit node (draw `BF2.exe` 0x7aaef0, vtable 0x938dd8 slot 0x68): its
+  // string from the left edge of the box, no padding and no alignment, glyph by
+  // glyph in its own font and the node's colour, each glyph's x rounded to a
+  // pixel, stopping at the box's right edge. Not ported: the scroll start
+  // (+0x1c), the outline when +0x3d (0.15 grey at ±1 px), the 2 px cursor while
+  // focused (+0x28) and blinking (+0x24).
+  if (node.type == NodeType::Edit) {
+    const std::string* text = context.editText && node.editString >= 0 ? context.editText(node.editString)
+                                                                       : nullptr;
+    if (text == nullptr || text->empty()) return pieces;
+    const font::Font* face = &font;
+    std::string atlas = fontAtlas;
+    if (!node.editFont.empty() && context.fontFor) {
+      const FontRef chosen = context.fontFor(node.editFont);
+      if (chosen.font != nullptr) {
+        face = chosen.font;
+        atlas = chosen.atlas;
+      }
+    }
+    font::TextLayout layout;
+    layout.screenWidth = screen.width;
+    layout.screenHeight = screen.height;
+    layout.x = rect.x;
+    layout.y = rect.y;
+    layout.scale = scaleY;
+    layout.snapGlyphs = true;
+    layout.clipRight = rect.x + rect.width;
+    auto geometry = font::buildText(*face, *text, layout, atlas);
+    if (!geometry.indices.empty()) {
+      pieces.push_back(DrawPiece{std::move(geometry), atlas, &node, node.color});
+    }
+    return pieces;
+  }
+
   // Text: first a direct value, then a variable, then a localisation key.
   if (node.type == NodeType::Text || node.type == NodeType::Button) {
     std::string text = node.text;

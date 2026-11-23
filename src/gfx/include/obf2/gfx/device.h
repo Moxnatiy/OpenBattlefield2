@@ -84,6 +84,14 @@ class Device {
   };
   InputState readInput();
 
+  // A HUD edit node holding the keyboard (the squad name box): typed text is
+  // appended up to `maxLength` bytes, Backspace deletes, Return or Escape end
+  // it. While it is active Escape does not quit.
+  void beginTextField(std::string text, std::size_t maxLength);
+  void endTextField();
+  bool editingTextField() const { return fieldActive_; }
+  const std::string& textField() const { return fieldText_; }
+
   // Whether a key is down, named the way the game writes it: "IDKey_Tab",
   // "IDKey_Q". The name comes from `ControlMap`, that is from the data, so no
   // layout is baked in here — only the translation of a name into an SDL scancode.
@@ -121,6 +129,9 @@ class Device {
   std::string driver_;
   bool quit_ = false;
   bool escape_ = false;
+  bool fieldActive_ = false;
+  std::string fieldText_;
+  std::size_t fieldMax_ = 0;
   bool escapeQuits_ = true;
   bool mouseWasDown_ = false;
   bool rightWasDown_ = false;

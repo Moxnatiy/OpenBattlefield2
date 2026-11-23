@@ -18,6 +18,13 @@ struct TextLayout {
   float scale = 1.0f;  // a multiplier on the point size
   int screenWidth = 1280;
   int screenHeight = 720;
+  // The HUD edit node's draw (`BF2.exe` 0x7aaef0): each glyph's x is rounded to
+  // the nearest pixel (fmod against 0.5, then floor) while the pen keeps the
+  // unrounded advance, and drawing stops at the first glyph whose x reaches
+  // `clipRight`. Retail rounds in the .dif's own scale (+0x28); we round in
+  // screen pixels, the same at 800x600 — other sizes are not measured.
+  bool snapGlyphs = false;
+  float clipRight = -1.0f;  // screen pixels; negative: no clip
 };
 
 // Geometry in NDC coordinates, ready to draw without a matrix.

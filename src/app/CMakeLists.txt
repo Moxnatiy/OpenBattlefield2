@@ -24,6 +24,7 @@ add_library(obf2_app
   src/game.cpp
   src/kill_feed.cpp
   src/live_hud.cpp
+  src/squad_roster.cpp
   src/launch.cpp
   src/hit_direction.cpp
   src/death_camera.cpp

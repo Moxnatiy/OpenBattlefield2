@@ -270,6 +270,7 @@ class Manager {
   std::map<std::string, std::string>& strings() { return strings_; }
   std::map<std::string, float>& values() { return values_; }
   SpawnInterface& spawnScreen() { return spawnScreen_; }
+  SquadList& squadList() { return squadList_; }
   const game::ControlMap& controls() const { return controls_; }
   const Builder& tree() const { return tree_; }
   Builder& tree() { return tree_; }
@@ -376,10 +377,9 @@ class Manager {
   // The list cell the last click hit, for the list's own commands
   // (`SquadMenu.singleClickNew` reads the list's current row and column).
   ListHit lastListHit_;
-  std::string squadFingerprint_;
   bool scoreboardPointer_ = false;
   bool votingEnabled_ = false;
-  void squadVariables();
+  void pushSquadVariables();
   std::vector<KeyScreen> keyScreens_;
   std::vector<DynamicNode> dynamic_;
 

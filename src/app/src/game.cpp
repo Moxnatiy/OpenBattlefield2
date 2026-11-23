@@ -30,6 +30,7 @@
 #include "obf2/app/scene_build.h"
 #include "obf2/app/scoreboard_players.h"
 #include "obf2/app/live_hud.h"
+#include "obf2/app/squad_roster.h"
 #include "obf2/app/spawn_circles.h"
 #include "obf2/app/ammo_hud.h"
 #include "obf2/app/player_hud.h"
@@ -455,42 +456,16 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
     hooks.selectKit = [&](int kit) {
       if (remote != nullptr) remote->selectKit(kit);
     };
-    // The squad tab's requests (`hud::SquadList::Action`) as `ClientSquadManager`
-    // sends them. Creating while in a squad leaves it first, as
-    // `BF2HudManager::createSquad` does (`leaveAndReinvite`).
+    // The squad tab's requests (`hud::SquadList::Action`), sent as the squad
+    // manager sends them (squad_roster.h).
     hooks.squadAction = [&](const obf2::hud::SquadList::Action& action) {
       if (remote == nullptr) {
         std::printf("  squad tab: no server — %d ignored\n", static_cast<int>(action.kind));
         return;
       }
-      using Kind = obf2::hud::SquadList::Action::Kind;
-      using Request = obf2::session::RemoteWorld::SquadRequest;
-      switch (action.kind) {
-        case Kind::Join:
-          remote->requestSquad({Request::Kind::Join, action.squad, {}, false});
-          break;
-        case Kind::Leave:
-          remote->requestSquad({Request::Kind::Leave, action.squad, {}, false});
-          break;
-        case Kind::Create: {
-          const auto self = remote->world.players().find(
-              static_cast<std::uint32_t>(remote->world.ownPlayer()));
-          const int current = self != remote->world.players().end()
-                                  ? static_cast<int>(self->second.squad.value_or(0))
-                                  : 0;
-          if (current > 0 && current != action.squad) {
-            remote->requestSquad({Request::Kind::Leave, current, {}, false});
-          }
-          remote->requestSquad({Request::Kind::Name, action.squad, action.name, false});
-          if (action.flag) remote->requestSquad({Request::Kind::Private, action.squad, {}, true});
-          break;
-        }
-        case Kind::SetPrivate:
-          remote->requestSquad({Request::Kind::Private, action.squad, {}, action.flag});
-          break;
-        default:
-          break;
-      }
+      const bool sent = obf2::app::sendSquadListAction(*remote, action);
+      std::printf("  squad menu: action %d squad %d %s\n", static_cast<int>(action.kind), action.squad,
+                  sent ? "sent" : "refused");
     };
     hooks.spawnAtGroup = [&](int team, int kit, int group) {
       if (remote != nullptr) remote->askSpawnGroup(team, kit, group);
@@ -733,6 +708,8 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
   // exactly as much as the frames are uneven.
   auto lastFrameStart = std::chrono::steady_clock::now();
   float frameStep = 1.0f / 60.0f;
+  // Whether the squad name box holds the keyboard (the frame loop hands it over).
+  bool squadNameEditing = false;
   while (device->pumpEvents()) {
     {
       const auto nowFrame = std::chrono::steady_clock::now();
@@ -769,6 +746,35 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
       if (scripted.crouch) frameInput.crouch = true;
       if (scripted.prone) frameInput.prone = true;
       frameInput.weaponKeys |= scripted.weaponKeys;
+    }
+    // The squad name box takes the keyboard once focused
+    // (hud::SquadList::setSquadNameSelect); Return or Escape give it back, and
+    // CREATE or closing the panel drop the focus. While it types, no key moves
+    // the soldier.
+    {
+      auto& squads = hudManager.squadList();
+      if (squadNameEditing && !squads.nameFocused()) {
+        device->endTextField();
+        squadNameEditing = false;
+      } else if (!squadNameEditing && squads.nameFocused()) {
+        device->beginTextField(squads.nameBox(), obf2::hud::SquadList::kNameLength);
+        squadNameEditing = device->editingTextField();
+        if (!squadNameEditing) squads.endNameEdit();
+      } else if (squadNameEditing && device->editingTextField()) {
+        if (squads.nameBox() != device->textField()) {
+          squads.setNameBox(device->textField());
+          hudManager.markSpawnDirty();
+        }
+      } else if (squadNameEditing) {
+        squads.endNameEdit();
+        squadNameEditing = false;
+      }
+      if (squadNameEditing) {
+        frameInput.moveForward = frameInput.moveRight = 0.0f;
+        frameInput.sprint = frameInput.jump = frameInput.crouch = frameInput.prone = false;
+        frameInput.reload = false;
+        frameInput.weaponKeys = 0;
+      }
     }
     // The server sends pings and waits for answers: staying silent frame after frame
     // gets us disconnected. So the connection runs together with the picture, and we
@@ -1350,27 +1356,9 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
           }
           hudManager.serverInfo(remote->serverName, remote->serverHost, remote->serverPort,
                                 remote->levelName, remote->votingEnabled);
-          // The squad tab: every player's squad, the leader bit and the names and
-          // locks the server set.
-          {
-            obf2::hud::SquadWorld squads;
-            squads.localId = remote->world.ownPlayer();
-            for (const auto& [id, player] : remote->world.players()) {
-              obf2::hud::SquadPlayer row;
-              row.id = static_cast<int>(id);
-              row.name = player.name;
-              row.team = player.team;
-              row.squad = static_cast<int>(player.squad.value_or(0));
-              row.leader = player.squadLeader;
-              row.commander = player.commander.value_or(false);
-              row.alive = player.alive.value_or(false);
-              squads.players.push_back(std::move(row));
-            }
-            const auto& view = remote->world;
-            squads.name = [&view](int team, int squad) { return view.squadName(team, squad); };
-            squads.locked = [&view](int team, int squad) { return view.squadPrivate(team, squad); };
-            hudManager.squadWorld(squads);
-          }
+          // The squad tab's world (`SquadMenuNew::update`, 0x792100): our player
+          // and our team's squads, the leader first (squad_roster.h).
+          hudManager.squadWorld(obf2::app::squadWorld(*remote, spawned));
 
           // The crosshair. The weapon our soldier has out is what his own ghost's
           // state says (0x1000) against his kit; every action we played since the

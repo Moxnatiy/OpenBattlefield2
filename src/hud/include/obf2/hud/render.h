@@ -84,6 +84,10 @@ struct Context {
   // Such a node's children are built as usual.
   std::function<bool(const Node&)> skipNode;
   std::function<std::string_view(std::string_view variable)> variableText;
+  // An edit node's text: string N (`setEditNodeString N`) of the HUD
+  // manager's string table (`BF2.exe` 0x7b13a0 writes it, 0x7b1410 reads it).
+  // Null, or null for a number, and the box draws empty.
+  std::function<const std::string*(int string)> editText;
   // A bar's fill, 0..1 (`setBarNodeValueVariable`).
   std::function<float(std::string_view variable)> variableValue;
   // A number some code has written, or nullopt when nobody has: what a node's

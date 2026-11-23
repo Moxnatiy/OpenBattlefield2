@@ -201,6 +201,9 @@ bool Manager::load(FileSystem& files, engine::Engine& engine, const level::Level
 
   spawnScreen_.mutableChoice().kit = setup.kit;
   spawnScreen_.mutableChoice().team = setup.team == 2 ? 2 : 1;
+  squadList_.text = [&engine](const std::string& key) {
+    return std::string(engine.lexicon().text(key));
+  };
   bindCommands(engine.console());
 
   // The plates' alpha. This is not our invention and not zero: BF2.exe takes the
@@ -394,92 +397,83 @@ void Manager::bindCommands(engine::Console& console) {
     }
   });
 
-  // The squad tab (HudElementsSquadsNew.con; OpenBF2 Menu/HudConsoleBindings.cpp
-  // binds these `SquadMenu` names to `HudSquad`). A request goes out through
-  // `hooks_.squadAction`; what the original would do and we cannot yet is said.
-  const auto act = [this](const SquadList::Action& action) {
-    if (action.kind == SquadList::Action::Kind::NotDone) {
-      std::printf("  NOT DONE: squad tab — %s\n", action.what.c_str());
-      return;
+  // The squad tab's commands (handlers 0x76d8d5..0x76de3e,
+  // docs/functions/squad-menu.md). A request goes out through
+  // `hooks_.squadAction`.
+  const auto squadAction = [this](std::optional<SquadList::Action> action) {
+    if (action && hooks_.squadAction) hooks_.squadAction(*action);
+    if (const auto state = squadList_.takeRequestedState()) {
+      std::printf("  squad menu: HUD state %d asked (hud->vtbl[0x1dc])\n", *state);
     }
-    if (action.kind != SquadList::Action::Kind::None && hooks_.squadAction) {
-      hooks_.squadAction(action);
-    }
-    squadVariables();
+    pushSquadVariables();
   };
-  console.bind("SquadMenu.singleClickNew", [this, act](const con::Command&) {
-    act(squadList_.click(lastListHit_.row, lastListHit_.column));
+  console.bind("SquadMenu.singleClickNew",
+               [this, squadAction](const con::Command&) { squadAction(squadList_.singleClickNew()); });
+  console.bind("SquadMenu.createSquad",
+               [this, squadAction](const con::Command&) { squadAction(squadList_.createSquad()); });
+  console.bind("SquadMenu.setSquadCreateSelect", [this, squadAction](const con::Command& command) {
+    squadList_.setSquadCreateSelect(command.argInt(0).value_or(0) != 0);
+    squadAction(std::nullopt);
   });
-  console.bind("SquadMenu.doubleClickNew", [](const con::Command&) {
-    // `doubleClickNew` is the image's shared one-byte `ret` (OpenBF2 HudSquad.cpp).
+  console.bind("SquadMenu.squadCreateLockToggle", [this, squadAction](const con::Command&) {
+    squadList_.squadCreateLockToggle();
+    squadAction(std::nullopt);
   });
-  console.bind("SquadMenu.createSquad", [this, act](const con::Command&) {
-    act(squadList_.createSquad());
+  console.bind("SquadMenu.setShowInviteList", [this, squadAction](const con::Command& command) {
+    squadList_.setShowInviteList(command.argInt(0).value_or(0) != 0);
+    squadAction(std::nullopt);
   });
-  console.bind("SquadMenu.setSquadCreateSelect", [this, act](const con::Command& command) {
-    act(squadList_.setCreateMode(command.argInt(0).value_or(0) != 0));
+  // 0x83d270, a bare `ret`: Retail's double clicks do nothing.
+  console.bind("SquadMenu.doubleClickNew", [](const con::Command&) {});
+  console.bind("SquadMenu.doubleClickInvite", [](const con::Command&) {});
+  // The invite list: a checkbox toggles (0x791f50), APPLY sends (0x791fd0).
+  console.bind("SquadMenu.singleClickInvite", [this, squadAction](const con::Command&) {
+    squadList_.singleClickInvite();
+    squadAction(std::nullopt);
   });
-  console.bind("SquadMenu.squadCreateLockToggle", [this](const con::Command&) {
-    squadList_.toggleCreateLock();
-    squadVariables();
+  console.bind("SquadMenu.applyInviteList", [this, squadAction](const con::Command&) {
+    for (const auto& action : squadList_.applyInviteList()) squadAction(action);
+    squadAction(std::nullopt);
   });
-  for (const char* notDone : {"SquadMenu.setSquadNameSelect", "SquadMenu.setShowInviteList",
-                              "SquadMenu.applyInviteList", "SquadMenu.singleClickInvite",
-                              "SquadMenu.doubleClickInvite"}) {
-    console.bind(notDone, [notDone](const con::Command&) {
-      std::printf("  NOT DONE: %s (the squad-name edit box and the invite list are not ours yet)\n",
-                  notDone);
-    });
-  }
+  // The name box's button (HudElementsSquadsNew.con:180): focus it for typing
+  // (0x78f190 → 0x7b11e0); the frame loop hands it the keyboard.
+  console.bind("SquadMenu.setSquadNameSelect", [this](const con::Command&) {
+    if (squadList_.setSquadNameSelect()) std::printf("  squad menu: name box focused\n");
+  });
 }
 
 void Manager::squadWorld(const SquadWorld& world) {
-  scoreboard_.setSquadNames(world.name);
-  squadList_.update(world, [this](std::string_view key) {
-    return std::string(engine_->lexicon().text(key));
+  // `update(visible)` (0x792100) runs while the members tab is up: the spawn
+  // screen's SQUAD tab (`MembersShow`, SpawnManager.toggleMembers 1).
+  const bool visible = variables_["MembersShow"];
+  const int before = squadList_.revision();
+  squadList_.update(world, visible);
+  // The scoreboard's squads page heads each group with its squad's name; we
+  // know our own team's squads' names from the same world.
+  std::array<std::string, 10> names;
+  for (std::size_t i = 0; i < names.size(); ++i) names[i] = world.squads[i].name;
+  const int team = world.team;
+  scoreboard_.setSquadNames([names, team](int askedTeam, int squad) {
+    if (askedTeam != team || squad < 1 || squad > 9) return std::string();
+    return names[static_cast<std::size_t>(squad)];
   });
-  // The list is baked into the spawn screen's geometry, so a changed row (a
-  // player joined, a squad was named) has to rebuild it.
-  std::string fingerprint;
-  if (const ListData* list = squadList_.list(5)) {
-    for (const ListColumn& column : list->columns()) {
-      for (const ListCell& cell : column.cells) {
-        fingerprint += cell.text;
-        fingerprint += cell.texture;
-        fingerprint += std::to_string(cell.color.r + cell.color.g * 3 + cell.color.b * 7);
-        fingerprint += '|';
-      }
-    }
-  }
-  if (fingerprint != squadFingerprint_) {
-    squadFingerprint_ = std::move(fingerprint);
-    spawnDirty_ = true;
-  }
-  squadVariables();
+  if (squadList_.revision() != before) pushSquadVariables();
 }
 
-void Manager::squadVariables() {
-  // `HudSquad::registerData`: what the squad tab's nodes read.
-  const auto setBool = [this](const char* name, bool value) {
-    bool& slot = variables_[name];
-    if (slot != value) spawnDirty_ = true;
-    slot = value;
-  };
-  const auto setString = [this](const char* name, const std::string& value) {
-    std::string& slot = strings_[name];
-    if (slot != value) spawnDirty_ = true;
-    slot = value;
-  };
-  setBool("SquadMemberListShow", variables_["MembersShow"]);
-  setBool("IsInSquad", squadList_.inSquad());
-  setBool("IsSquadLeader", squadList_.squadLeader());
-  setBool("SquadCreateShow", squadList_.createVisible());
-  setBool("SquadCreateLockedShow", squadList_.createLocked());
-  setBool("InviteListShow", false);  // the invite list is not ours yet
-  setString("SquadCreateTagString", squadList_.createTag());
-  setString("NrOfSquads", squadList_.squadCountText());
-  setString("NrOfUnassigned", squadList_.unassignedText());
-  setString("TeamTopLabelString", squadList_.title());
+void Manager::pushSquadVariables() {
+  // The menu's own variables (init 0x78dcb0), written where the tree reads
+  // them. The lists are baked into the spawn screen, so it is rebuilt.
+  for (const char* name : {"SquadMemberListShow", "SquadCreateShow", "SquadRenameShow",
+                           "SquadCreateLockedShow", "InviteListShow", "IsInSquad", "IsSquadLeader"}) {
+    bool value = false;
+    if (squadList_.boolVariable(name, value)) variables_[name] = value;
+  }
+  for (const char* name :
+       {"NrOfSquads", "NrOfUnassigned", "SquadCreateTagString", "NewSquadName", "TeamTopLabelString"}) {
+    std::string value;
+    if (squadList_.stringVariable(name, value)) strings_[name] = value;
+  }
+  spawnDirty_ = true;
 }
 
 FontRef Manager::fontFor(std::string_view style) {
@@ -580,6 +574,9 @@ void Manager::buildContexts(engine::Engine& engine) {
   // A list node's rows (0x7af170): the chat's, the squads' and the
   // scoreboard's four; the others (the commander's, the level list) are not
   // ours yet.
+  // Edit nodes: the squad create panel's name box is string 2
+  // (`HudElementsSquadsNew.con`, `setEditNodeString 2`); 1 and 3 are not ours.
+  context_.editText = [this](int string) -> const std::string* { return squadList_.editString(string); };
   context_.listData = [this](int data) -> const ListData* {
     if (data == 3) return &chat_.list();  // 0x7af170: `[hud+0x144]->getData()`
     if (const ListData* squads = squadList_.list(data)) return squads;
@@ -1787,6 +1784,13 @@ void Manager::clickSpawn(float x, float y, engine::Console& console) {
     const auto list = listAt(tree_, root, screen_, x, y, spawnContext_);
     if (!list || list->node == nullptr) continue;
     lastListHit_ = *list;
+    // The squad menu's lists read their pick back (0x7c40a0 sets the row and
+    // column on the press): the member list (5) and the invite list (8).
+    if (list->node->listData == 5 || list->node->listData == 8) {
+      ListData& picked = list->node->listData == 5 ? squadList_.memberList() : squadList_.inviteList();
+      picked.selectedRow = list->row;
+      picked.selectedColumn = list->column;
+    }
     std::printf("  spawn screen: list %s row %d column %d\n", list->node->name.c_str(), list->row,
                 list->column);
     if (list->row < 0) return;
