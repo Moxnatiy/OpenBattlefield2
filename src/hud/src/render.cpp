@@ -491,9 +491,13 @@ std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& fon
         if (!marker.texture.empty()) {
           const float side = marker.size > 0.0f ? marker.size * scaleY : icon;
           const ScreenRect box{cx - side * 0.5f, cy - side * 0.5f, side, side};
+          Color tint = marker.color;
+          // The strategic, vehicle and soldier layers draw at the node's +0x6fc
+          // (0x77e500, 0x783f90, 0x783440); the flags (0x77e720) do not.
+          if (marker.atIconAlpha) tint.a *= context.mapIconAlpha;
           pieces.push_back(DrawPiece{
               quad(box, screen, marker.texture, 0.0f, 1.0f, 0.0f, 1.0f, marker.rotation),
-              marker.texture, &node, marker.color});
+              marker.texture, &node, tint});
         }
         if (marker.label.empty() || !context.localize) continue;
         const std::string text(context.localize(marker.label));

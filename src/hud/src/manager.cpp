@@ -10,9 +10,106 @@
 #include "obf2/hud/ingame.h"
 #include "obf2/hud/kit_list.h"
 #include "obf2/hud/spawn.h"
+#include "obf2/hud/strategic_objects.h"
+#include "obf2/server/collision_objects.h"
 
 namespace obf2::hud {
 namespace {
+
+int collisionPartOf(const game::ObjectTemplate& object) {
+  // `ObjectTemplate.collisionPart` (SimpleObjectTemplate +0x78, setter Linux
+  // 0x507830); 0 when not set.
+  if (const game::Property* part = object.property("collisionPart")) {
+    if (const auto value = part->asInt(0)) return *value;
+  }
+  return 0;
+}
+
+// `Object::getPhysicBoundingRadius` (Linux 0x687770) of an object made from a
+// template, before anything moves it:
+//
+//   * the collision mesh's radius (`Object+0x80`, vtable +0xf0 →
+//     `CollisionMesh::maxBoundingRadius`), 0 without one. The object's own mesh
+//     is the part its template names (`SimpleObject::SimpleObject`, 0x58a860,
+//     hands template +0x78 to the CollisionManager); a child without a mesh of
+//     its own takes its bundle's mesh at its part when that part is above 0,
+//     until the first child that has a mesh of its own
+//     (`setChildPartCollisionMeshes`, 0x574760; collision_objects.h);
+//   * plus `getBoundingRadiusModifier` (vtable +0x138): 0 for an `Object`
+//     (0x4bd530); for a `PlayerControlObject` (0x536af0) its template's float
+//     +0x3d0, `ObjectTemplate.boundingRadiusModifierWhenOccupied` (console
+//     command at 0x8f1b6e, named at 0x8ca949), 0 in the template's constructor
+//     (0x53ba88). Not ported: `ZiplineRope`'s (0x572460);
+//   * widened by each child whose own radius is above 0 to that radius plus
+//     the length of the child's offset (vtable +0x1e0 children, +0x1c0 offset).
+//
+// The early 0 for an object whose flag word (+0x8) has bit 0 set is not taken:
+// what sets that bit is not established.
+float physicRadiusOf(server::CollisionLibrary& meshes, const game::Registry& registry,
+                     const game::ObjectTemplate& object, const mesh::CollisionMesh* bundle,
+                     bool& bundleStopped, int depth, int rootPart = -1) {
+  constexpr int kMaxDepth = 16;  // the guard collision_objects.cpp uses against a cycle
+  const mesh::CollisionMesh* own = meshes.meshOf(object);
+  const int part = rootPart >= 0 ? rootPart : collisionPartOf(object);
+  float radius = 0.0f;
+  if (own != nullptr) {
+    radius = own->maxBoundingRadius(static_cast<std::size_t>(std::max(part, 0)));
+    bundleStopped = true;
+  } else if (bundle != nullptr && !bundleStopped && part > 0) {
+    radius = bundle->maxBoundingRadius(static_cast<std::size_t>(part));
+  }
+  if (object.className == "PlayerControlObject") {
+    if (const game::Property* modifier = object.property("boundingRadiusModifierWhenOccupied")) {
+      if (const auto value = modifier->asFloat(0)) radius += *value;
+    }
+  }
+  if (depth >= kMaxDepth) return radius;
+  const mesh::CollisionMesh* childBundle = own != nullptr ? own : bundle;
+  bool childStopped = own != nullptr ? false : bundleStopped;
+  for (const game::ChildTemplate& child : object.children) {
+    const game::ObjectTemplate* childObject = registry.find(child.name);
+    if (childObject == nullptr) continue;
+    const float childRadius =
+        physicRadiusOf(meshes, registry, *childObject, childBundle, childStopped, depth + 1);
+    if (childRadius > 0.0f) {
+      const float offset = std::sqrt(child.position.x * child.position.x +
+                                     child.position.y * child.position.y +
+                                     child.position.z * child.position.z);
+      radius = std::max(radius, offset + childRadius);
+    }
+  }
+  if (own == nullptr) bundleStopped = childStopped;
+  return radius;
+}
+
+float physicBoundingRadius(server::CollisionLibrary& meshes, const game::Registry& registry,
+                           const game::ObjectTemplate& object, int rootPart) {
+  bool stopped = false;
+  return physicRadiusOf(meshes, registry, object, nullptr, stopped, 0, rootPart);
+}
+
+// atan2 of the object's forward axis x over z: what 0x77e500 reads from its
+// matrix (vtable +0x80, row 2 at +0x20 and +0x28), here the placed object's
+// own rotation or ready matrix.
+float headingOf(const Mat4& transform) {
+  const Vec3f forward = transformDirection(transform, Vec3f{0.0f, 0.0f, 1.0f});
+  return std::atan2(forward.x, forward.z);
+}
+
+// 0x77e500's child walk (`FUN_0071b670`) with the filter at vtable 0x92ff4c
+// (0x6273a0): a child whose template answers class id 0x9c42 (0x91c394), the
+// Linux server's `CID_RemoteControlledObjectTemplate`.
+bool hasRemoteControlledChild(const game::Registry& registry, const game::ObjectTemplate& object,
+                              int depth) {
+  if (depth >= 16) return false;  // the cycle guard collision_objects.cpp uses
+  for (const game::ChildTemplate& child : object.children) {
+    const game::ObjectTemplate* found = registry.find(child.name);
+    if (found == nullptr) continue;
+    if (found->className == "RemoteControlledObject") return true;
+    if (hasRemoteControlledChild(registry, *found, depth + 1)) return true;
+  }
+  return false;
+}
 
 // The map's window is a square around the combat area, and the margin is a
 // fraction of the picture rather than of the area: 40 texels of the 512-wide map
@@ -586,6 +683,48 @@ void Manager::buildMapWindow(FileSystem& files, const level::Level* level,
     return path;
   };
 
+  // Strategic objects: one icon per holder, not per object, gathered in
+  // creation order: the placed objects as the level lists them, then what the
+  // spawners put down when the round starts.
+  server::CollisionLibrary meshes(files, registry);
+  std::vector<StrategicCandidate> candidates;
+  struct StrategicDraw {
+    std::string icon;
+    float heading = 0.0f;
+    bool remoteControlled = false;
+    bool spawner = false;
+    int team = 0;
+  };
+  std::vector<StrategicDraw> strategicDraws;
+  const auto addStrategic = [&](const game::ObjectTemplate& object, Vec3f position,
+                                const Mat4& transform, int rootPart, bool spawned,
+                                std::string icon, int team) {
+    StrategicCandidate candidate;
+    if (const auto* strategic = object.component("StrategicObject")) {
+      if (const auto at = strategic->properties.find("strategicobjectname");
+          at != strategic->properties.end() && !at->second.empty()) {
+        candidate.name = std::string(at->second.back().value());
+      }
+      if (const auto at = strategic->properties.find("isonepiece");
+          at != strategic->properties.end() && !at->second.empty()) {
+        candidate.onePiece = at->second.back().asBool().value_or(false);
+      }
+    }
+    candidate.position = position;
+    candidate.radius = physicBoundingRadius(meshes, registry, object, rootPart);
+    candidates.push_back(std::move(candidate));
+    strategicDraws.push_back(StrategicDraw{std::move(icon), headingOf(transform),
+                                           hasRemoteControlledChild(registry, object, 0), spawned,
+                                           team});
+  };
+  struct SpawnedStrategic {
+    const game::ObjectTemplate* object;
+    const level::ObjectSpawner* spawner;
+    std::string icon;
+    int team;
+  };
+  std::vector<SpawnedStrategic> spawnedStrategic;
+
   for (const auto& spawner : gameplay->spawners) {
     // Which side's vehicle stands there is the point's business; where the point
     // is neutral or unknown we take whichever template the spawner lists first,
@@ -605,26 +744,76 @@ void Manager::buildMapWindow(FileSystem& files, const level::Level* level,
     // A spawner can put a strategic object on the field rather than a vehicle —
     // the mobile radars, the artillery pieces. Those show the strategic icon at
     // its own size, which is why the original's map has a `Radar` and two `AirDef`
-    // on it and no vehicle icon in their place.
-    std::string icon = iconOf(vehicle, "StrategicObject", "intacticon");
-    float size = 19.0f;
-    if (icon.empty()) {
-      icon = iconOf(vehicle, "VehicleHud", "minimapicon");
-      size = 16.0f;
+    // on it and no vehicle icon in their place. They go through the holders below.
+    if (std::string icon = iconOf(vehicle, "StrategicObject", "intacticon"); !icon.empty()) {
+      if (const auto* object = registry.find(vehicle)) {
+        spawnedStrategic.push_back(
+            SpawnedStrategic{object, &spawner, std::move(icon), point ? point->team : 0});
+      }
+      continue;
     }
+    std::string icon = iconOf(vehicle, "VehicleHud", "minimapicon");
     if (icon.empty()) continue;
-    assetMarkers_.push_back(
-        Context::MapMarker{spawner.position.x, spawner.position.z, std::move(icon), {}, size, Color{}, 0.0f});
+    Context::MapMarker marker{spawner.position.x, spawner.position.z, std::move(icon), {}, 16.0f,
+                              Color{}, 0.0f};
+    marker.atIconAlpha = true;
+    assetMarkers_.push_back(std::move(marker));
   }
-  spawnerMarkers_ = assetMarkers_.size();
   if (level != nullptr) {
     for (const auto& object : level->objects) {
       std::string icon = iconOf(object.templateName, "StrategicObject", "intacticon");
       if (icon.empty()) continue;
-      assetMarkers_.push_back(
-          Context::MapMarker{object.position.x, object.position.z, std::move(icon), {}, 19.0f, Color{}, 0.0f});
+      const auto* found = registry.find(object.templateName);
+      if (found == nullptr) continue;
+      Mat4 transform = object.transform;
+      if (!object.hasTransform) {
+        transform = object.hasRotation ? rotationYawPitchRoll(object.rotation.x, object.rotation.y,
+                                                              object.rotation.z)
+                                       : Mat4::identity();
+      }
+      // A placed object's team is not in StaticObjects.con: 0.
+      addStrategic(*found, object.position, transform, -1, false, std::move(icon), 0);
     }
   }
+  for (auto& spawned : spawnedStrategic) {
+    // `ObjectSpawner::getCollisionMesh` asks for part 0 of what it spawns
+    // (Linux 0x52f8e7, collision_objects.h); the object stands at the spawner
+    // with its rotation.
+    const auto& at = *spawned.spawner;
+    addStrategic(*spawned.object, at.position,
+                 rotationYawPitchRoll(at.rotation.x, at.rotation.y, at.rotation.z), 0, true,
+                 std::move(spawned.icon), spawned.team);
+  }
+  // One icon per holder (`GameLogic::addStrategicObject`, client 0x4f1750,
+  // strategic_objects.h): a bridge's segments are one bridge.
+  const auto holders = groupStrategicObjects(candidates);
+  std::vector<Context::MapMarker> placedHolders;
+  for (const StrategicHolder& holder : holders) {
+    const StrategicDraw& first = strategicDraws[holder.members.front()];
+    Context::MapMarker marker{holder.position.x, holder.position.z, first.icon, {}, 19.0f,
+                              Color{}, 0.0f};
+    marker.atIconAlpha = true;
+    // 0x77e500: with no `RemoteControlledObject` child under the first object the
+    // icon turns by `map(+0x76c) − atan2(m[+0x20], m[+0x28]) + π/2`
+    // (0x77e689..0x77e69d, π/2 at 0x92fe8c). This map does not turn (+0x76c is
+    // 0), so the turn is fixed. With such a child the icon stays upright, and is
+    // skipped when the child's team is not the local player's; no template in
+    // the data adds such a child, and that team test is not ported.
+    if (!first.remoteControlled) {
+      constexpr float kHalfPi = 1.5707964f;  // 0x92fe8c
+      marker.rotation = kHalfPi - first.heading;
+    }
+    // A holder a spawner put down counts with the spawners' icons: those give
+    // way to the server's own objects once they are known (appendAssets).
+    if (first.spawner) {
+      assetMarkers_.push_back(std::move(marker));
+    } else {
+      placedHolders.push_back(std::move(marker));
+    }
+  }
+  spawnerMarkers_ = assetMarkers_.size();
+  assetMarkers_.insert(assetMarkers_.end(), placedHolders.begin(), placedHolders.end());
+  std::printf("  map: strategic objects %zu in %zu holders\n", candidates.size(), holders.size());
   appendAssets(context_.mapMarkers);
   std::printf("  map: vehicles and assets %zu\n", assetMarkers_.size());
   iconOf_ = [this](const std::string& templateName, const char* component,
@@ -647,6 +836,8 @@ void Manager::buildMapWindow(FileSystem& files, const level::Level* level,
   Context spawn = context_;
   spawn.isVisible = spawnContext_.isVisible;
   spawn.showState = spawnContext_.showState;
+  // The spawn state's icon alpha target, +0x704 = 0.5 (0x777fe8).
+  spawn.mapIconAlpha = 0.5f;
   spawnContext_ = std::move(spawn);
   dynamicContext_ = context_;
 }
@@ -731,6 +922,7 @@ void Manager::liveMap(const std::vector<LivePlayer>& players, const std::vector<
     icon.worldX = player.x;
     icon.worldZ = player.z;
     icon.size = 16.0f;
+    icon.atIconAlpha = true;  // the soldier layer reads +0x6fc (0x783440)
     icon.texture = "Ingame/Player/Icons/Minimap/mini_Soldier.tga";
     bool heading = false;
     // `populatePlayerMapIcon` with the role icons on: a squad leader's squad
@@ -775,6 +967,7 @@ void Manager::liveMap(const std::vector<LivePlayer>& players, const std::vector<
     icon.texture = std::move(texture);
     icon.size = size;
     icon.rotation = rotation;
+    icon.atIconAlpha = true;  // the vehicle layer reads +0x6fc (0x783f90)
     markers.push_back(std::move(icon));
   }
   if (!objects.empty()) liveObjectsKnown_ = true;
