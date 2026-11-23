@@ -241,9 +241,10 @@ bool Manager::load(FileSystem& files, engine::Engine& engine, const level::Level
     // The map: its window follows the player and the zoom, so it must not be baked
     // in advance either.
     const bool mapNodeItself = node.type == NodeType::Map || node.type == NodeType::MiniMap;
-    // The scoreboard's lists: their rows follow the players, so they are rebuilt on
-    // their own whenever the scoreboard's contents change.
-    const bool scoreList = node.type == NodeType::List && scoreboard_.list(node.listData) != nullptr;
+    // The scoreboard's lists and the chat: their rows follow the game, so they are
+    // rebuilt on their own whenever their contents change.
+    const bool scoreList = node.type == NodeType::List &&
+                           (scoreboard_.list(node.listData) != nullptr || node.listData == 3);
     if (!ticketText && !cpBar && !centreMessage && !rotating && !mapNodeItself && !scoreList) {
       continue;
     }
@@ -515,6 +516,19 @@ FontRef Manager::fontFor(std::string_view style) {
 void Manager::buildContexts(engine::Engine& engine) {
   context_.localize = [&engine](std::string_view key) { return engine.lexicon().text(key); };
   context_.fontFor = [this](std::string_view style) { return fontFor(style); };
+  chat_.setLocalize([this](std::string_view key) { return std::string(engine_->lexicon().text(key)); });
+  // The chat wraps on the `ChatList` node's fonts (`setListNodeFont … 0` / `1`),
+  // the way `BfListBoxData::measureText` asks the node's.
+  for (const Node& node : tree_.nodes()) {
+    if (node.type != NodeType::List || node.listData != 3) continue;
+    const std::vector<std::string> fonts = node.listFonts;
+    chat_.setMeasure([this, fonts](int number, std::string_view text) -> float {
+      if (number < 0 || static_cast<std::size_t>(number) >= fonts.size()) return 0.0f;
+      const FontRef face = fontFor(fonts[static_cast<std::size_t>(number)]);
+      return face.font != nullptr ? font::textWidth(*face.font, text, 1.0f) : 0.0f;
+    });
+    break;
+  }
   context_.isVisible = [this](std::string_view variable) {
     if (variable == "1") return true;
     const auto found = variables_.find(std::string(variable));
@@ -548,8 +562,13 @@ void Manager::buildContexts(engine::Engine& engine) {
     // computes it is **a source not found**.
     if (variable == "BottomRightAlpha") return bottomRightAlpha_;
     const auto found = alpha_.find(std::string(variable));
-    if (found == alpha_.end()) return std::nullopt;
-    return found->second;
+    if (found != alpha_.end()) return found->second;
+    // The ticket bleed's blinkers (`FriendlyTicketBleed`, `EnemyTicketBleed`,
+    // HUD/HudSetup/SpawnInterface/HudElementsMap.con:212, 218) are float
+    // variables the information layer holds beside the others (updateTickets).
+    const auto value = values_.find(std::string(variable));
+    if (value == values_.end()) return std::nullopt;
+    return value->second;
   };
   context_.variableText = [this](std::string_view variable) -> std::string_view {
     const auto found = strings_.find(std::string(variable));
@@ -558,9 +577,11 @@ void Manager::buildContexts(engine::Engine& engine) {
   // The show effects are seen by the geometry builder itself: alpha multiplies the
   // alpha, move shifts the rectangle.
   context_.showState = [this](const Node& node) { return animator_.state(node); };
-  // A list node's rows (0x7af170): the scoreboard's four; the other eight
-  // sources (chat, squads, the commander's, the level list) are not ours yet.
+  // A list node's rows (0x7af170): the chat's, the squads' and the
+  // scoreboard's four; the others (the commander's, the level list) are not
+  // ours yet.
   context_.listData = [this](int data) -> const ListData* {
+    if (data == 3) return &chat_.list();  // 0x7af170: `[hud+0x144]->getData()`
     if (const ListData* squads = squadList_.list(data)) return squads;
     return scoreboard_.list(data);
   };
@@ -1135,6 +1156,129 @@ void Manager::updateVariables(bool hasPlayer, bool mapFullSize) {
   variables_["SpawnInfoShow"] = !hasPlayer;
 }
 
+void Manager::updateTickets(const TeamTickets& friendly, const TeamTickets& enemy, float dt) {
+  strings_["FriendlyTicketsString"] = std::to_string(friendly.tickets);
+  strings_["EnemyTicketsString"] = std::to_string(enemy.tickets);
+  // The blinkers run every frame (`m_blinkers->update(dt)`, before the tickets).
+  // Until a first update the blinkers rest where a released gate leaves them: 1.
+  const float friendlyWas = values_.try_emplace("FriendlyTicketBleed", 1.0f).first->second;
+  const float enemyWas = values_.try_emplace("EnemyTicketBleed", 1.0f).first->second;
+  friendlyBleed_.update(dt, friendly.bleed, values_["FriendlyTicketBleed"]);
+  enemyBleed_.update(dt, enemy.bleed, values_["EnemyTicketBleed"]);
+  // They are the alpha of two of the spawn screen's map nodes
+  // (HudElementsMap.con:212, 218), which is baked: a change means a rebuild.
+  if (values_["FriendlyTicketBleed"] != friendlyWas || values_["EnemyTicketBleed"] != enemyWas) {
+    spawnDirty_ = true;
+  }
+  // The tens digit of our ticket state, floored for negatives the way the
+  // original's `state % 10` correction does.
+  int remainder = friendly.state % 10;
+  if (friendly.state < 0) remainder += 10;
+  const int level = (friendly.state - remainder) / 10;
+  if (level == 1 && !lowOnTickets_) {
+    lowOnTickets_ = true;
+    std::printf("  HUD: low on tickets — NOT DONE: the `lowOnTickets` sound (no sound)\n");
+  } else if (level == 0 && lowOnTickets_) {
+    lowOnTickets_ = false;
+    std::printf("  HUD: tickets no longer low — the `lowOnTickets` sound would stop\n");
+  }
+}
+
+void Manager::chatString(const ChatLine& line, bool hasLocalPlayer) {
+  const int team = line.senderKnown ? line.senderTeam : 0;
+  const bool always = line.channel == 12 || line.channel == 13;
+  const bool withPlayer = (line.channel >= 0 && line.channel <= 11) ||
+                          (line.channel >= 14 && line.channel <= 18);
+  if (!always && !(withPlayer && hasLocalPlayer)) return;
+  const int shownTeam = always ? 0 : team;
+  std::printf("  HUD chat: channel %d, type %d, %s: %s\n", line.channel, line.type,
+              line.senderKnown ? line.senderName.c_str() : "-", line.text.c_str());
+  switch (line.type) {
+    case 0:
+    case 1:
+      chat_.addGameMessage(line.text, nullptr, 0);  // `addTeamChat(text, 0, 0)`
+      return;
+    case 2:
+      // `addGlobalChat` → `addPlayerMessage`; the original dereferences the
+      // player unchecked, so an unknown sender is not shown here.
+      if (line.senderKnown) {
+        chat_.addPlayerMessage(line.text,
+                               Chat::Talker{line.senderName, line.senderTeam, line.senderCommander});
+      }
+      return;
+    case 3: {
+      // The squad radio line; `ECHud 60` with the sender's soldier (his marker on
+      // the map) is not ours.
+      // The line carries a lexicon key (PLAYER_SPOTTED_TM_enemyforcesspotted);
+      // an unknown key stays as sent. Which of a key's `_alt` lines the original
+      // picks is not traced: the base line is shown.
+      const std::string message(engine_->lexicon().text(line.text));
+      const std::string code(1, static_cast<char>(0xa7));
+      const std::string text =
+          line.senderKnown ? code + "0" + line.senderName + ": " + code + "1" + message : message;
+      if (!line.text.empty()) chat_.addKillMessage(text, &line.speaker, shownTeam);
+      return;
+    }
+    default:
+      std::printf("  HUD chat: unknown message type %d\n", line.type);
+      return;
+  }
+}
+
+void Manager::killedBy(const Kill& kill, const Local& local) {
+  // `BF2HudManager::handleGameLogicEvent` case 3 (OpenBF2
+  // BF2HudManagerGameLogicEvents.cpp; BF2.exe 0x753de0).
+  const auto localized = [this](std::string_view key) {
+    return std::string(engine_->lexicon().text(key));
+  };
+  const auto replace = [](std::string text, std::string_view token, const std::string& with) {
+    const std::size_t at = text.find(token);
+    if (at != std::string::npos) text.replace(at, token.size(), with);
+    return text;
+  };
+  chat_.setLocalTeam(local.team);
+  // Our kill of an enemy: a notice.
+  if (local.id >= 0 && kill.victimKnown && !local.commander && local.id == kill.killer &&
+      kill.killerAlive && kill.victimTeam != local.team) {
+    chat_.addNotice(replace(localized("HUD_CHAT_YOUGOTAKILLSCORE"), "#PLAYERNAME#", kill.victimName));
+  }
+  if (kill.killerAlive && kill.killerKnown) {
+    if (kill.victimKnown && kill.victim == kill.killer) {
+      chat_.addGameMessage(replace(localized("HUD_HUD_KILLEDBY_MYSELF"), "#PLAYERNAME#",
+                                   kill.victimName),
+                           nullptr, kill.victimTeam);
+      return;
+    }
+    if (local.id >= 0 && local.id == kill.victim) {
+      // `setDeathMessage(HUD_TEXT_MENU_YOU_WERE_KILLED)` on the information layer
+      // is not ours yet; the chat's half is.
+      chat_.addNotice(replace(localized("HUD_CHAT_YOUWEREKILLEDBY"), "#PLAYERNAME#", kill.killerName));
+    }
+    if (!kill.victimKnown) return;
+    const char* key = kill.victimTeam != kill.killerTeam
+                          ? (!kill.weaponKey.empty() && !kill.missingWeapon ? "HUD_HUD_KILLEDBY_KILLS"
+                                                                             : "HUD_HUD_KILLEDBY_KILLED")
+                          : "HUD_HUD_KILLEDBY_TEAMKILLS";
+    std::string text = localized(key);
+    text = replace(std::move(text), "#PLAYERNAME1#", kill.killerName);
+    text = replace(std::move(text), "#WEAPON#",
+                   kill.weaponKey.empty() ? std::string{} : localized(kill.weaponKey));
+    text = replace(std::move(text), "#PLAYERNAME2#", kill.victimName);
+    std::printf("  HUD kill feed: %s\n", text.c_str());
+    chat_.addGameMessage(text, &kill.killerSpeaker, kill.killerTeam);
+    return;
+  }
+  // No killer player: the commander's artillery (0xFD the enemy's, 0xFE the
+  // victim's own team's).
+  if (!kill.victimKnown || (kill.killer != 0xFD && kill.killer != 0xFE)) return;
+  const int team = kill.killer == 0xFD ? (kill.victimTeam == 1 ? 2 : 1) : kill.victimTeam;
+  std::string text = localized(kill.killer == 0xFD ? "HUD_HUD_KILLEDBY_KILLS" : "HUD_HUD_KILLEDBY_TEAMKILLS");
+  text = replace(std::move(text), "#PLAYERNAME1#", " ");
+  text = replace(std::move(text), "#WEAPON#", localized("HUD_TEXT_COMMANDER_ARTILLERY"));
+  text = replace(std::move(text), "#PLAYERNAME2#", kill.victimName);
+  chat_.addGameMessage(text, nullptr, team);
+}
+
 void Manager::applySpawnState() {
   const int selectedTeam = spawnScreen_.choice().team;
   const int selectedKit = spawnScreen_.choice().kit;
@@ -1399,6 +1543,10 @@ void Manager::bakeKeyScreens() {
   }
 }
 
+int Manager::listRevision(const Node& node) const {
+  return node.listData == 3 ? chat_.revision() : scoreboard_.revision();
+}
+
 bool Manager::dynamicChanged(const DynamicNode& live) const {
   const Node& node = *live.node;
   const bool isMap = node.type == NodeType::Map || node.type == NodeType::MiniMap;
@@ -1408,7 +1556,7 @@ bool Manager::dynamicChanged(const DynamicNode& live) const {
   if (node.type == NodeType::List) {
     // The rows, and the fade the node is built with: the scoreboard fades in over
     // 0.1 s (`setNodeInTime 0.1`), and a list built at its start would stay clear.
-    return scoreboard_.revision() != live.shownRevision ||
+    return listRevision(node) != live.shownRevision ||
            std::abs(animator_.state(node).alpha - live.shownValue) > 0.001f;
   }
   // A rotation step below which nothing is visible on screen any more: the compass
@@ -1440,7 +1588,7 @@ std::vector<DrawPiece> Manager::buildDynamic(DynamicNode& live) {
   const bool isBar = node.type == NodeType::Bar;
   if (node.type == NodeType::List) {
     live.built = true;
-    live.shownRevision = scoreboard_.revision();
+    live.shownRevision = listRevision(node);
     live.shownValue = animator_.state(node).alpha;
     return buildNode(node, font_.font, font_.atlasPath, screen_, dynamicContext_);
   }
@@ -1511,6 +1659,8 @@ void Manager::zoomKey(bool down) {
 }
 
 void Manager::animate(float seconds, float yaw, const Vec3f& eye) {
+  // `HudChat::update` every frame: the bands' timers.
+  chat_.update(seconds);
   const float slice = seconds > 0.25f ? 0.25f : seconds;
   animator_.advance(slice);
   if (animator_.animating()) {

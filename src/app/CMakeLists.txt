@@ -22,6 +22,8 @@ add_library(obf2_app
   src/menu_movie.cpp
   src/loading_screen.cpp
   src/game.cpp
+  src/kill_feed.cpp
+  src/live_hud.cpp
   src/launch.cpp
   src/hit_direction.cpp
   src/death_camera.cpp

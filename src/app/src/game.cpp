@@ -29,6 +29,7 @@
 #include "obf2/app/render_context.h"
 #include "obf2/app/scene_build.h"
 #include "obf2/app/scoreboard_players.h"
+#include "obf2/app/live_hud.h"
 #include "obf2/app/spawn_circles.h"
 #include "obf2/app/ammo_hud.h"
 #include "obf2/app/player_hud.h"
@@ -1624,6 +1625,8 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
           const auto now = std::chrono::steady_clock::now();
           const float dt = std::chrono::duration<float>(now - lastAnimationTick).count();
           lastAnimationTick = now;
+          // A live server's tickets, kills and chat (live_hud.h).
+          if (remote != nullptr) obf2::app::updateLiveHud(*remote, hudManager, dt);
           hudManager.animate(dt, yaw, eye);
         }
 
