@@ -65,6 +65,11 @@ inline constexpr float kMapZoomBase = 2.3f;
 // (The commander's third number is rewritten from his camera's height by
 // 0x773870's neighbour, `updateCommanderZoom`, which we do not port.)
 inline constexpr int kMapZoomLevels = 3;
+
+// The spot blink: +0xa24 = 0.5 (0x781d88), +0xa28 = 1.0 (0x781d92, `edi` =
+// 1.0 from 0x7818aa).
+inline constexpr float kSpotBlinkOn = 0.5f;
+inline constexpr float kSpotBlinkPeriod = 1.0f;
 inline constexpr float kMapZoomExponents[3][kMapZoomLevels] = {
     {0.5f, 1.5f, 2.5f},
     {0.0f, 1.0f, 2.0f},
@@ -146,6 +151,12 @@ class MapNode {
   // The animation step, `dt` in seconds (0x77c330).
   void update(float dt);
 
+  // The blink that gates the position-only spots (layer 0x1e), +0xa18. The
+  // timer +0xa30 adds dt (0x77c330, also 0x7ce340); at or below +0xa24 = 0.5
+  // (0x781d88) it is on, above it off, and past +0xa28 = 1.0 (constructor,
+  // 0x7818aa) the timer goes back to 0 (0x77c43c..0x77c471).
+  bool spotsVisible() const { return spotsVisible_; }
+
   // Snap to the target at once — field +0x7f8. Used when the map has just been
   // created: otherwise it would drive in from zero.
   void snap();
@@ -223,6 +234,10 @@ class MapNode {
   bool expanded_ = false;
   bool commanderMode_ = false;
   bool snapNext_ = true;
+  // +0xa30 is set from `ebx` at 0x781d82 and +0xa18 at 0x781da2, both in the
+  // constructor, where `ebx` is 0 (0x780189).
+  float spotBlinkTimer_ = 0.0f;
+  bool spotsVisible_ = false;
   bool fullSize_ = false;
   bool minSize_ = true;
   bool settled_ = true;

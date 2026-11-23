@@ -100,6 +100,7 @@ target_compile_definitions(test_bf2_events PRIVATE
 
 obf2_add_test(test_session obf2_session)
 obf2_add_test(test_map_marks obf2_session)
+obf2_add_test(test_map_contacts obf2_app)
 obf2_add_test(test_bf2_world obf2_net)
 target_compile_definitions(test_bf2_world PRIVATE
   OBF2_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")

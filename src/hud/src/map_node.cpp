@@ -191,6 +191,15 @@ void MapNode::update(float dt) {
   const bool snapNow = snapNext_;
   snapNext_ = false;
 
+  // The spot blink (0x77c43c..0x77c471): on up to 0.5 s, off after, wrap past 1 s.
+  spotBlinkTimer_ += dt;
+  if (spotBlinkTimer_ <= kSpotBlinkOn) {
+    spotsVisible_ = true;
+  } else {
+    spotsVisible_ = false;
+    if (spotBlinkTimer_ > kSpotBlinkPeriod) spotBlinkTimer_ = 0.0f;
+  }
+
   // The order and the half-screen offset come from 0x77d13c..0x77d2b0: (400, 300)
   // is added to the target the state set, because the map's coordinates in the
   // data are counted from the screen's centre.

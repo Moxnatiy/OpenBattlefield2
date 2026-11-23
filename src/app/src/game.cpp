@@ -27,6 +27,8 @@
 #include "obf2/app/main_menu.h"
 #include "obf2/app/combat_feedback.h"
 #include "obf2/app/environment_audio.h"
+#include "obf2/app/map_contacts.h"
+#include "obf2/app/map_hit_sound.h"
 #include "obf2/app/match_voice.h"
 #include "obf2/app/own_impacts.h"
 #include "obf2/app/menu_music.h"
@@ -314,6 +316,7 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
   obf2::app::MatchVoice matchVoice;
   // The radio messages' voice, one at a time (menu_music.h plays WAV and Ogg).
   obf2::app::MenuMusic radioAudio;
+  obf2::app::MenuMusic mapHitAudio;
   obf2::app::TextureCache textureCache(files);
   const auto cacheTexture = [&](const std::string& path) { return textureCache.cache(path); };
 
@@ -1430,46 +1433,26 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
             hudManager.localSquad(static_cast<int>(self->second.squad.value_or(0)),
                                   self->second.squadLeader);
           }
-          // The map's live icons: our team's living players where their object is,
-          // and the server's vehicles and strategic objects where they are.
+          // The map's live icons (map_contacts.h): our team's players, the
+          // server's vehicles, marked and spotted enemies, our orders and the
+          // commander's assets. A teammate the map puts in the sea is a position
+          // gone stale: said once per player, so it can be chased.
           {
-            std::vector<obf2::hud::Manager::LivePlayer> livePlayers;
-            const int ownId = remote->world.ownPlayer();
-            int ownTeam = 0;
-            int ownSquad = 0;
-            for (const auto& [id, player] : remote->world.players()) {
-              if (static_cast<int>(id) == ownId) {
-                ownTeam = player.team;
-                ownSquad = static_cast<int>(player.squad.value_or(0));
+            static std::set<std::uint32_t> reportedOff;
+            obf2::app::visitMapContacts(*remote, [&](std::string_view name,
+                                                     const obf2::hud::MapContact& contact) {
+              if (contact.kind != obf2::hud::MapContact::Kind::Team &&
+                  contact.kind != obf2::hud::MapContact::Kind::Squad)
+                return;
+              if (contact.object == 0 || !hudManager.outsideCombatArea(contact.worldX, contact.worldZ))
+                return;
+              if (reportedOff.insert(contact.object).second) {
+                std::printf("  map: %.*s (object %u) drawn outside the combat area at %.0f %.0f\n",
+                            static_cast<int>(name.size()), name.data(), contact.object,
+                            contact.worldX, contact.worldZ);
               }
-              if (!player.alive.value_or(false) || player.object == 0) continue;
-              const auto object = remote->world.objects().find(player.object);
-              if (object == remote->world.objects().end()) continue;
-              obf2::hud::Manager::LivePlayer live;
-              live.x = object->second.position.x;
-              live.z = object->second.position.z;
-              live.yaw = object->second.yaw.value_or(0.0f);
-              live.team = player.team;
-              live.squad = static_cast<int>(player.squad.value_or(0));
-              live.leader = player.squadLeader;
-              live.commander = player.commander.value_or(false);
-              live.local = static_cast<int>(id) == ownId;
-              // A teammate the map puts in the sea is a position gone stale: said
-              // once per player, so it can be chased.
-              static std::set<std::uint32_t> reportedOff;
-              if (player.team == ownTeam && hudManager.outsideCombatArea(live.x, live.z) &&
-                  reportedOff.insert(id).second) {
-                std::printf("  map: player %u %s (object %u) drawn outside the combat area at "
-                            "%.0f %.0f\n",
-                            id, player.name.c_str(), player.object, live.x, live.z);
-              }
-              livePlayers.push_back(live);
-            }
-            std::vector<obf2::hud::Manager::LiveObject> liveObjects;
-            for (const auto& object : worldView.mapObjects()) {
-              liveObjects.push_back({object.templateName, object.x, object.z, object.yaw});
-            }
-            hudManager.liveMap(livePlayers, liveObjects, ownTeam, ownSquad);
+            });
+            hudManager.setMinimapContacts(obf2::app::minimapContacts(*remote));
           }
           hudManager.serverInfo(remote->serverName, remote->serverHost, remote->serverPort,
                                 remote->levelName, remote->votingEnabled);
@@ -1748,6 +1731,10 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
                               false);
             }
             remote->radioSamples.clear();
+            // The map's timed marks, one map frame, and the satellite's sound
+            // (map_hit_sound.h).
+            obf2::app::stepMap(*remote, hudManager, mapHitAudio,
+                               engine.settings().audio.effectsVolume, dt);
           }
           hudManager.animate(dt, yaw, eye);
         }

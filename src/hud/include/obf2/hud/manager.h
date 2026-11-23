@@ -162,28 +162,16 @@ class Manager {
   // vote is about (-1 for none).
   void scoreboardVoting(bool enabled, bool teamOnly, int kickTarget);
 
-  // The map's live icons (OpenBF2 `Bf2MenuMapNode`): our team's living players
-  // (`collectIconFamily783440`, `populatePlayerMapIcon`, `colorMapIcon`) and the
-  // server's vehicles and strategic objects at their present places. Once the
-  // server's objects are known they replace the level's spawner icons.
-  struct LivePlayer {
-    float x = 0.0f, z = 0.0f;
-    float yaw = 0.0f;  // degrees
-    int team = 0;
-    int squad = 0;
-    bool leader = false;
-    bool commander = false;
-    bool local = false;
-  };
-  struct LiveObject {
-    std::string templateName;
-    float x = 0.0f, z = 0.0f;
-    float yaw = 0.0f;
-  };
+  // The map's live icons for this frame (obf2/app/map_contacts.h): players,
+  // vehicles, orders, commander assets and spots. Once any vehicle of the
+  // server's is among them, they replace the level's spawner icons.
+  void setMinimapContacts(std::vector<MapContact> contacts);
+  // The satellite line's width +0xb64 for the map shown now, in node units (the
+  // whole world drawn, clamped to the node's width, 0x784bb3..0x784c7d):
+  // RemoteWorld::stepMap takes it. Empty while no map node is laid out.
+  std::optional<float> satelliteDrawnWidth() const;
   // Whether a world point lies outside the level's combat area (its bounds).
   bool outsideCombatArea(float x, float z) const;
-  void liveMap(const std::vector<LivePlayer>& players, const std::vector<LiveObject>& objects,
-               int localTeam, int localSquad);
   // The server's name, address and port for the scoreboard's server info
   // (`HudInformationLayer::setServerInfo`, OpenBF2 — the menu calls it on a join)
   // and the level's name (`ActiveLevel`, "HUD_LEVELNAME_<map>").
@@ -354,14 +342,14 @@ class Manager {
   bool localSquadLeader_ = false;
   std::vector<level::ControlPoint> controlPoints_;
   std::vector<Context::MapMarker> assetMarkers_;
-  std::vector<Context::MapMarker> liveMarkers_;
   std::size_t spawnerMarkers_ = 0;
   std::optional<std::array<float, 4>> combatBounds_;  // min x, max x, min z, max z       // the first of `assetMarkers_` are spawners'
   std::size_t contextFlagMarkers_ = 0;   // the combat map's flags, before the assets
   void appendAssets(std::vector<Context::MapMarker>& out) const;
   bool liveObjectsKnown_ = false;
-  std::chrono::steady_clock::time_point liveMapAt_{};
-  std::function<std::string(const std::string&, const char*, const char*)> iconOf_;
+  // The spawn screen bakes the map, so it takes the contacts at most four times
+  // a second (a rebuild costs a frame): a choice of ours, not the original's rate.
+  std::chrono::steady_clock::time_point spawnContactsAt_{};
   std::optional<texture::Texture> combatArea_;
 
   BottomLeftPanel bottomLeft_;

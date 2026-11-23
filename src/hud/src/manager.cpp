@@ -833,20 +833,7 @@ void Manager::buildMapWindow(FileSystem& files, const level::Level* level,
   std::printf("  map: strategic objects %zu in %zu holders\n", candidates.size(), holders.size());
   appendAssets(context_.mapMarkers);
   std::printf("  map: vehicles and assets %zu\n", assetMarkers_.size());
-  iconOf_ = [this](const std::string& templateName, const char* component,
-                   const char* property) -> std::string {
-    const auto* object = registry_ != nullptr ? registry_->find(templateName) : nullptr;
-    if (object == nullptr) return {};
-    const auto* part = object->component(component);
-    if (part == nullptr) return {};
-    const auto at = part->properties.find(property);
-    if (at == part->properties.end() || at->second.empty()) return {};
-    std::string path(at->second.back().value());
-    for (char& c : path) {
-      if (c == '\\') c = '/';
-    }
-    return path;
-  };
+
 
   // The spawn screen's context is the general one plus its own gate; it is copied
   // after the map's window and markers are known.
@@ -914,94 +901,49 @@ void Manager::appendAssets(std::vector<Context::MapMarker>& out) const {
   const std::size_t from = liveObjectsKnown_ ? spawnerMarkers_ : 0;
   out.insert(out.end(), assetMarkers_.begin() + static_cast<std::ptrdiff_t>(from),
              assetMarkers_.end());
-  out.insert(out.end(), liveMarkers_.begin(), liveMarkers_.end());
 }
 
-void Manager::liveMap(const std::vector<LivePlayer>& players, const std::vector<LiveObject>& objects,
-                      int localTeam, int localSquad) {
-  // The map is baked geometry here (the engine paints it every frame): a rebuild
-  // costs a frame's worth of milliseconds, so the icons move four times a second.
-  // Chosen, not the original's rate.
+void Manager::setMinimapContacts(std::vector<MapContact> contacts) {
+  if (context_.minimapContacts == contacts) return;
+  // Once the server's vehicles are among them the level's spawner icons go
+  // (appendAssets).
+  if (!liveObjectsKnown_ &&
+      std::any_of(contacts.begin(), contacts.end(), [](const MapContact& contact) {
+        return !contact.texture.empty() && contact.kind != MapContact::Kind::Order;
+      })) {
+    liveObjectsKnown_ = true;
+    context_.mapMarkers.resize(contextFlagMarkers_);
+    appendAssets(context_.mapMarkers);
+    dirty_ = true;
+  }
+  context_.minimapContacts = std::move(contacts);
+  // The map nodes are rebuilt on their own; the spawn screen, which bakes the
+  // map, at most four times a second.
+  for (auto& live : dynamic_) {
+    if (live.node->type == NodeType::Map || live.node->type == NodeType::MiniMap) live.built = false;
+  }
   const auto now = std::chrono::steady_clock::now();
-  if (now - liveMapAt_ < std::chrono::milliseconds(250)) return;
-  liveMapAt_ = now;
-  constexpr float kDegrees = 3.14159265f / 180.0f;
-  // `mapObjectColors[2]` and `squadChatColors[2]` (OpenBF2 Menu/HudColors.cpp).
-  constexpr Color kTeam{0.254f, 0.552f, 0.89f, 1.0f};
-  constexpr Color kSquad{0.4470588f, 0.8901961f, 0.3450980f, 1.0f};
-  std::vector<Context::MapMarker> markers;
-  for (const LivePlayer& player : players) {
-    // `collectIconFamily783440`: the living, and of the other team only those
-    // near our own vehicle — which on the spawn screen is none. Ourselves is the
-    // local arrow (`collectLocalPlayerIcon`), not this.
-    if (player.local || player.team != localTeam) continue;
-    Context::MapMarker icon;
-    icon.worldX = player.x;
-    icon.worldZ = player.z;
-    icon.size = 16.0f;
-    icon.atIconAlpha = true;  // the soldier layer reads +0x6fc (0x783440)
-    icon.texture = "Ingame/Player/Icons/Minimap/mini_Soldier.tga";
-    bool heading = false;
-    // `populatePlayerMapIcon` with the role icons on: a squad leader's squad
-    // number, the commander's own mark, both with the heading arrow.
-    if (player.leader && player.squad > 0) {
-      icon.texture =
-          "Ingame/Player/Icons/Minimap/mini_Squad_" + std::to_string(player.squad) + "_small.tga";
-      heading = true;
-    } else if (player.commander) {
-      icon.texture = "Ingame/Player/Icons/Minimap/mini_commander2.tga";
-      icon.size = 32.0f;
-      heading = true;
-    }
-    // `colorMapIcon`: our squad green, the rest of the team blue; the commander white.
-    icon.color = (player.squad > 0 && player.squad == localSquad && !player.commander) ? kSquad
-                 : player.commander                                                   ? Color{}
-                                                                                      : kTeam;
-    if (heading) {
-      Context::MapMarker arrow = icon;
-      arrow.texture = "Ingame/Player/Icons/Minimap/mini_headingArrow.tga";
-      arrow.size = 32.0f;
-      arrow.color = Color{0.0f, 0.0f, 0.0f, 1.0f};
-      arrow.rotation = -player.yaw * kDegrees;
-      markers.push_back(std::move(arrow));
-    }
-    markers.push_back(std::move(icon));
+  if (now - spawnContactsAt_ >= std::chrono::milliseconds(250)) {
+    spawnContactsAt_ = now;
+    spawnDirty_ = true;
   }
-  for (const LiveObject& object : objects) {
-    if (!iconOf_) break;
-    std::string texture = iconOf_(object.templateName, "StrategicObject", "intacticon");
-    float size = 19.0f;
-    float rotation = 0.0f;
-    if (texture.empty()) {
-      texture = iconOf_(object.templateName, "VehicleHud", "minimapicon");
-      size = 16.0f;
-      rotation = -object.yaw * kDegrees;  // a vehicle turns with itself
-    }
-    if (texture.empty()) continue;
-    Context::MapMarker icon;
-    icon.worldX = object.x;
-    icon.worldZ = object.z;
-    icon.texture = std::move(texture);
-    icon.size = size;
-    icon.rotation = rotation;
-    icon.atIconAlpha = true;  // the vehicle layer reads +0x6fc (0x783f90)
-    markers.push_back(std::move(icon));
+}
+
+std::optional<float> Manager::satelliteDrawnWidth() const {
+  // 0x784a80 copies the map's rectangle to +0xb5c and clamps +0xb64 to its
+  // width (0x784c70..0x784c7d); in HUD units, the whole world's drawn width.
+  const MapView view = bigMap_ ? MapView::Maxi : MapView::Mini;
+  const float span = context_.mapU1 - context_.mapU0;
+  const float scale = static_cast<float>(screen_.height) / kReferenceHeight;
+  if (span <= 0.0f || scale <= 0.0f) return std::nullopt;
+  for (const Node& node : tree_.nodes()) {
+    if ((node.type != NodeType::MiniMap && node.type != NodeType::Map) || node.mapView != view)
+      continue;
+    const ScreenRect rect = nodeRect(node, screen_, &context_);
+    if (rect.width <= 0.0f || rect.height <= 0.0f) continue;
+    return std::min(rect.width / span, rect.width) / scale;
   }
-  if (!objects.empty()) liveObjectsKnown_ = true;
-  // Rebuilt only on a change worth a pixel.
-  bool same = markers.size() == liveMarkers_.size();
-  for (std::size_t i = 0; same && i < markers.size(); ++i) {
-    same = markers[i].texture == liveMarkers_[i].texture &&
-           std::abs(markers[i].worldX - liveMarkers_[i].worldX) < 1.0f &&
-           std::abs(markers[i].worldZ - liveMarkers_[i].worldZ) < 1.0f &&
-           std::abs(markers[i].rotation - liveMarkers_[i].rotation) < 0.05f;
-  }
-  if (same) return;
-  liveMarkers_ = std::move(markers);
-  context_.mapMarkers.resize(contextFlagMarkers_);
-  appendAssets(context_.mapMarkers);
-  dirty_ = true;
-  spawnDirty_ = true;
+  return std::nullopt;
 }
 
 void Manager::scoreboardVoting(bool enabled, bool teamOnly, int kickTarget) {
@@ -1301,6 +1243,8 @@ void Manager::applySpawnState() {
   // not allowed.
   spawnContext_.mapMarkers.clear();
   spawnContext_.spawnMarkers.clear();
+  spawnContext_.minimapContacts = context_.minimapContacts;
+  spawnContext_.mapSpotsVisible = context_.mapSpotsVisible;
   std::vector<int> markerPoints;
   const auto addCircle = [&](float x, float z, int id) {
     const bool chosen =
@@ -1624,6 +1568,9 @@ std::vector<DrawPiece> Manager::buildDynamic(DynamicNode& live) {
     single.mapU1 = context_.mapU1;
     single.mapV0 = context_.mapV0;
     single.mapV1 = context_.mapV1;
+    single.mapMarkers = context_.mapMarkers;
+    single.minimapContacts = context_.minimapContacts;
+    single.mapSpotsVisible = context_.mapSpotsVisible;
   } else if (isRotating) {
     single.variableValue = [angle](std::string_view) { return angle; };
   } else if (isBar) {
@@ -1726,6 +1673,20 @@ void Manager::animate(float seconds, float yaw, const Vec3f& eye) {
   const auto wasSize = map_.size();
   const auto wasPosition = map_.position();
   map_.update(slice);
+  // The spot blink (+0xa18) gates the position-only spots and the radio marks'
+  // yellow: the maps are rebuilt when it turns and something blinks.
+  if (map_.spotsVisible() != context_.mapSpotsVisible) {
+    context_.mapSpotsVisible = map_.spotsVisible();
+    const bool blinking =
+        std::any_of(context_.minimapContacts.begin(), context_.minimapContacts.end(),
+                    [](const MapContact& contact) { return contact.blinks || contact.radioBlink; });
+    if (blinking) {
+      for (auto& live : dynamic_) {
+        if (live.node->type == NodeType::Map || live.node->type == NodeType::MiniMap)
+          live.built = false;
+      }
+    }
+  }
   const auto position = map_.position();
   const auto size = map_.size();
   const bool moved = size.x != wasSize.x || size.y != wasSize.y || position.x != wasPosition.x ||

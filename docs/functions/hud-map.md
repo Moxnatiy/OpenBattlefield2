@@ -375,10 +375,9 @@ setting and the ease are not ported. The other layer draws that read +0x6fc:
 0x783f90 walks the game-logic object list (`DAT_0099ef80` vtbl+0x198) and
 draws vehicles by kind (0x778680: 0xf, 0x12, 0x24); 0x783440 and 0x782480
 (layer 0x26, kinds 0x11/0x16) walk the player list (`DAT_00a08f60` vtbl+0x40)
-and draw soldiers. So our vehicle spawners, the live vehicles and the live
-soldiers (with their heading arrows) take the node alpha too
-(`MapMarker::atIconAlpha`). The flags (layer 3, 0x77e720) do not read it and
-stay at full alpha.
+and draw soldiers. So our vehicle spawners (`MapMarker::atIconAlpha`) and the
+live icons (`MapContact`, below) take the node alpha too. The flags (layer 3,
+0x77e720) do not read it and stay at full alpha.
 
 **The original draws strategic icons outside the combat area too.** On Gulf of
 Oman Co-op 16 (a capture of retail 1.50's spawn screen, 22 Nov, zoomed on the
@@ -438,24 +437,94 @@ dump shows a base icon for.
 
 ## The live icons (players and vehicles)
 
-Taken from OpenBF2 (`Menu/Bf2MenuMapNode.cpp`): `collectIconFamily783440` paints
-every living player of our team where his object is (the other team only near our
-own vehicle — on the spawn screen never), `populatePlayerMapIcon` picks the icon
-(`mini_Soldier`, a squad leader's `mini_Squad_<n>_small` and the commander's mark,
-both with `mini_headingArrow` turned by his yaw) and `colorMapIcon` the colour (our
-squad `squadChatColors[2]`, the rest of the team `mapObjectColors[2]`, the
-commander white). `hud::Manager::liveMap` does the same from the session's world.
+`app::visitMapContacts` (map_contacts.h) gathers them from the session's world
+each frame and `hud::Manager::setMinimapContacts` hands them to the map nodes
+(`Context::minimapContacts`, drawn over the markers by `buildNode`).
 
-The vehicles and strategic objects are the server's own objects at their present
-places, with the icon of their template (`StrategicObject.intactIcon` at 19, else
-`VehicleHud.miniMapIcon` at 16, turned with the vehicle). Until the server's
-objects are known the level's spawner icons stand in; then they are replaced.
+* **Our team's players**, from OpenBF2 (`Menu/Bf2MenuMapNode.cpp`):
+  `collectIconFamily783440` paints every living player of our team where his
+  object is; `populatePlayerMapIcon` picks the icon (`mini_Soldier`, a squad
+  leader's `mini_Squad_<n>_small` and the commander's `mini_commander2` at 32,
+  both over `mini_headingArrow`, 32, black, turned by his yaw) and
+  `colorMapIcon` the colour: our squad `squadChatColors[2]`, the rest of the
+  team `mapObjectColors[2]` — the own-team entry of table 0xa1ccc8, which
+  0x7788b0 indexes by `2 − (team differs)` — the commander white. A player in
+  a vehicle is drawn once, as the vehicle. Ourselves is not drawn: the local
+  arrow is not ported. A soldier's 16 px is the size these icons always had
+  here; the original's is not measured.
+* **The server's vehicles**: every live `PlayerControlObject` (not the level's
+  spawners) with its template's icon, `StrategicObject.intactIcon` (or
+  `destroyedIcon`) at 19, else `VehicleHud.miniMapIcon` at 16, turned with the
+  vehicle. Its colour is its occupants': our squad's, our team's, or white when
+  empty. Once one of them is known the level's spawner icons give way.
+* **Enemies** show only under a kind-2 mark (`applySweptMark`, below) or a
+  kind-0 spot. An enemy soldier is taken only while his ghost updated in the
+  last 1.5 s (not measured).
+* **Our orders** (`ownOrders`, not the requests): `orderMove`, `orderAttack`,
+  `orderDefend`, `orderRepair`, `orderDestroy`, with `Commander` for the
+  commander's, by the number the squad leader's rose sends (command-rose.md).
+  That number → texture table in the binary is not read; another number is not
+  drawn. Their tint is not measured: the textures are drawn as authored.
+* **The commander's assets** (`commanderEffects`): `icon_UAV`,
+  `icon_artillery`, `icon_supplies`, `icon_vehicledrop`, untinted (not
+  measured), and the UAV's circle (layer 0x20, below).
+* **Spots** (`visibleSpots`): a position-only spot (`unitSpotted`) blinks with
+  the node (layer 0x1e, below); a spot on an object we hold draws that object's
+  icon in the enemy colour.
 
-Our map is baked geometry, so the icons move four times a second (a rebuild costs a
-frame) — a choice of ours, not the original's rate, which paints every frame.
-Not done: the local player's arrow, the kit icons (`showKitsOnMap`), enemies seen
-from a vehicle, the timed markers (talking, revive, spotted), the control points'
-live owners (`ControlPointNetworkable` not read), destroyed icons.
+**Layer 0x1e (0x7820e0): position-only spots.** The node keeps a list at
++0x9fc (entries of 0x34 bytes: object id +0x4, kind +0x10, timers +0x14/+0x18,
+x/z +0x2c/+0x30). The adder is 0x781ff0, which takes the kind as its 19th
+argument and skips the duplicate check for kind 3. The timers count down in
+0x77a900, and the vehicle and soldier draws look objects up in the list
+(0x77a9a0). The HUD event handler 0x782990, case 0x2b (the spot report, our
+event 43 / `readUnitSpot`), adds a kind-3 entry at the reported x/z when the
+object isn't known locally and the report is for the local team. Layer 0x1e
+draws kind 3 at the node alpha, only while the blink +0xa18 is on. The blink:
++0xa30 adds dt; it is on at or below 0.5 s (+0xa24, 0x781d88), off above, and
+resets past 1 s (+0xa28) (0x77c43c..0x77c471); the constructor sets the timer
+and the flag from `ebx` = 0 (0x781d82, 0x781da2, 0x780189). Ported:
+`MapNode::spotsVisible`, `MapContact::blinks` for a spot whose target is not a
+ghost we hold (`UnitSpot::followsObject`). Test: `test_map_contacts`.
+
+**Layer 0x20 (0x77fc30): the commander's UAV.** 0x77a0d0 (called from the
+event handler and 0x752950) starts it: centre +0xab0, elapsed +0xaac = 0,
+spin +0xabc = 0 at +0xac0 = 4 rad/s, duration +0xae4. The radius +0xad0 is
+`GameLogic::getUAVRadius` (vtbl +0x294; 100 in Linux `GameLogic::GameLogic`,
+0x477813). The texture +0xad4 is `Ingame/Minimap/map_UAV.tga` (0x781928). It
+is drawn 2 × radius wide, at the node alpha times a ramp: up over the first
+10% of the duration, down over the last 10%. The spin wraps at 2π
+(0x77b2b3). Ported as the UAV commander contact (`MapContact::worldSize`,
+`angle`, `alpha`). The UAV event is HUD event 0x28 (40): case 0x28 of 0x782990
+calls 0x77a0d0 with duration `GameLogic` vtbl +0x288, `getUAVActiveTime`.
+
+**The per-object UAV circles (map +0xb38).** 0x5ac9f0 (slot 0x28 of the
+object-event vtable 0x8e7f80, installed at 0x5ab0b9) calls 0x77bfe0 for a
+same-team object whose Object +0x64 is set. 0x77bfe0 adds the object when
+that component's vtbl +0x38 → +4 is above 0. Object +0x64 is the ability
+component: Linux `Object::setComponent` stores `IID_IAbilityGLComp` at
++0xc8 (0x6891c8). The radius is `ObjectTemplate.ability.radarRadius`
+(`AbilityGLCompTemplate::getRadarRadius`, an int, 0 in the constructor
+0x5ae736). That the +4 the client reads is this field is inferred from it
+being the template's only int radius. No stock template sets `radarRadius`,
+so stock data never draws these circles. Ported: the circle is 2 × radius, at
+the object, at the node alpha without a fade, local team only, dropped when
+destroyed. Its spin phase against the original is not measured.
+
+**Spotted known enemy (kind 0).** 0x7788b0 picks colour index
+`2 − (team differs)`. For an ordinary enemy (not selected, which uses table
+0xa1cd48; and not in the commander or squad branches) that is table 0xa1ccc8
+entry 1. The static initialiser copies (0.87, 0.094, 0.094, 1) from 0x97dea0
+into it at 0x86525d. `MapContact::enemy`: the vehicle's
+`VehicleHud.minimapIcon`, or the soldier icon, in that colour.
+
+Our map is baked geometry: the map nodes are rebuilt whenever the contacts
+change, and the spawn screen, which bakes the map with the rest of the
+screen, at most four times a second (a rebuild costs a frame) — a choice of
+ours, not the original's rate, which paints every frame. Not done: the local
+player's arrow, the kit icons (`showKitsOnMap`), enemies seen from a vehicle,
+the control points' live owners (`ControlPointNetworkable` not read), the
+map's turn (+0x76c is 0 here).
 
 **What looked like the map "reloading" on the spawn screen's first second** was
 the dynamic spawn groups (192..255, the squads'): `CreateSpawnGroupEvent` carries
@@ -571,7 +640,30 @@ Kind 1 from radio (`receiveRadio`, HUD event 60) and kind 4 from a teammate's
 call (`receiveSpecialistCall`) are added when their events come, as 0x782990
 does. Test: `test_map_marks`.
 
-**Not yet on screen.** The marks are kept and timed (`RemoteWorld::mapMarks`),
-but nothing draws them yet, and the frame loop does not call `stepMap` yet: the
-map's live contacts are a debt of their own (CLAUDE.md, "the control points'
-owners on `--connect`"), and they are what reads the marks.
+The contacts only read the marks:
+* `applyMapMark`: kind 1 → `radioBlink`, yellow while the blink is on;
+  kind 4 → the mark's texture at 16 px, plus `mini_MedicArrow` (16 px,
+  0x783bc4) turned by the soldier's body yaw for `mini_Medic`, `mini_Repair`
+  and `mini_Ammo`.
+* `applySweptMark`: an enemy is drawn only with a kind-2 mark, red at
+  `mapMarkFade`, with the mark's texture (`mini_SatelliteObject.tga`,
+  `mini_Soldier.tga`) or its own.
+
+**The width +0xb64.** The map draw 0x784a80 copies its rectangle to +0xb5c,
+scales +0xb64 by 0x773900 (pow(2.3, +0x698), 0x930150, times +0xb7c / +0x7b8),
+and clamps it to the rectangle's width (0x784c70..0x784c7d). Ours
+(`hud::Manager::satelliteDrawnWidth`): the whole world's drawn width, clamped
+to the map rectangle, in HUD units. `app::stepMap` (map_hit_sound.h) runs
+`RemoteWorld::stepMap` with it once a frame, after the live HUD, and plays
+`HUD_Satellite_target` once in a frame that had any add, through a
+`MenuMusic` stream at 0.42 × the effects volume.
+
+Not measured:
+* That the original's rectangle is in HUD units, the units of the 150 at
+  +0xaa0.
+* Which soldiers and vehicles the two draws pass to the sweeps beyond
+  enemies with a live position (the icon-type test 0x17 at 0x7839xx is not
+  named).
+* The constructor's moment, which zeroes the spin, against ours.
+* The bearing's axes (atan2(Δx, −Δz), from u along x and v against z).
+* Nothing here is checked against the original on screen.

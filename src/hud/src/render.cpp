@@ -544,6 +544,90 @@ std::vector<DrawPiece> buildNodeGeometry(const Node& node, const font::Font& fon
         const ScreenRect box{cx - size * 0.5f, cy - size * 0.5f, size, size};
         pieces.push_back(DrawPiece{quad(box, screen, texture), texture, &node, Color{}});
       }
+
+      // The live icons (obf2/app/map_contacts.h), at the node's icon alpha
+      // +0x6fc like the vehicle (0x783f90) and soldier (0x783440, 0x782480)
+      // layers.
+      for (const MapContact& contact : context.minimapContacts) {
+        if (contact.kind == MapContact::Kind::Self) continue;
+        // Layer 0x1e draws only while the node's blink +0xa18 is on (0x782119).
+        if (contact.blinks && !context.mapSpotsVisible) continue;
+        const float u = (contact.worldX + half) / context.mapWorldSize;
+        const float v = (half - contact.worldZ) / context.mapWorldSize;
+        if (u < context.mapU0 || u > context.mapU1) continue;
+        if (v < context.mapV0 || v > context.mapV1) continue;
+        const float cx = rect.x + (u - context.mapU0) / uSpan * rect.width;
+        const float cy = rect.y + (v - context.mapV0) / vSpan * rect.height;
+        // A world-sized icon (the UAV circle) spans its metres of map: the
+        // original scales 2 × radius by the node's world-to-pixel factor and
+        // zoom (0x77ff2d); here that is the map rectangle over the visible span.
+        const float side = contact.worldSize > 0.0f
+                               ? contact.worldSize / context.mapWorldSize / uSpan * rect.width
+                               : contact.size * scaleY;
+        const ScreenRect box{cx - side * 0.5f, cy - side * 0.5f, side, side};
+        using Kind = MapContact::Kind;
+        using Asset = MapContact::Asset;
+        const bool spotted = contact.kind == Kind::Spotted;
+        const bool order = contact.kind == Kind::Order || contact.kind == Kind::PendingOrder;
+        const bool asset = contact.kind == Kind::CommanderAsset;
+        // The icons' paths are the game's own (`Menu/HUD/Texture/Ingame/Minimap/Icons`).
+        std::string icon = contact.texture;
+        if (icon.empty() && asset) {
+          icon = std::string("Ingame/Minimap/Icons/") +
+                 (contact.asset == Asset::UAV         ? "icon_UAV.tga"
+                  : contact.asset == Asset::Artillery ? "icon_artillery.tga"
+                  : contact.asset == Asset::Supplies  ? "icon_supplies.tga"
+                                                      : "icon_vehicledrop.dds");
+        } else if (icon.empty() && order) {
+          // The order's number is the one the squad leader's rose sends
+          // (`SquadLeader.sendOrder N`, docs/functions/command-rose.md): 4 move,
+          // 5 attack, 6 defend, 7 repair, 8 destroy; the texture is named after
+          // the rose's label. The binary's own number → texture table is not
+          // read, and an order of another number is not drawn.
+          const char* name = contact.order == 4   ? "Move"
+                             : contact.order == 5 ? "Attack"
+                             : contact.order == 6 ? "Defend"
+                             : contact.order == 7 ? "Repair"
+                             : contact.order == 8 ? "Destroy"
+                                                  : nullptr;
+          if (name == nullptr) continue;
+          icon = std::string("Ingame/Minimap/Icons/order") + name +
+                 (contact.commander ? "Commander.tga" : ".tga");
+        } else if (icon.empty() && spotted && !contact.enemy) {
+          icon = "Ingame/Minimap/Icons/unitSpotted.dds";
+        } else if (icon.empty()) {
+          icon = "Ingame/Player/Icons/Minimap/mini_Soldier.tga";
+        }
+        // `mapObjectColors[2]` and `squadChatColors[2]` (OpenBF2
+        // Menu/HudColors.cpp): table 0xa1ccc8's own-team entry, which 0x7788b0
+        // indexes by `2 − (team differs)`, and our squad's green. The other
+        // team's entry 1 is (0.87, 0.094, 0.094) from 0x97dea0. The orders',
+        // the assets' and a position spot's tint is **not measured**: their
+        // textures are drawn as authored.
+        constexpr Color kTeam{0.254f, 0.552f, 0.89f, 1.0f};
+        constexpr Color kSquad{0.4470588f, 0.8901961f, 0.3450980f, 1.0f};
+        constexpr Color kEnemy{0.87f, 0.094f, 0.094f, 1.0f};
+        Color tint = contact.swept ? Color{1.0f, 0.0f, 0.0f, 1.0f}
+                     : contact.radioBlink && context.mapSpotsVisible ? Color{1.0f, 1.0f, 0.0f, 1.0f}
+                     : contact.enemy                                 ? kEnemy
+                     : contact.tint                                  ? *contact.tint
+                     : contact.kind == Kind::Squad                   ? kSquad
+                     : contact.kind == Kind::Team                    ? kTeam
+                                                                     : Color{};
+        tint.a *= context.mapIconAlpha * contact.alpha;
+        if (tint.a <= 0.0f) continue;
+        pieces.push_back(DrawPiece{quad(box, screen, icon, 0.0f, 1.0f, 0.0f, 1.0f, contact.angle),
+                                   icon, &node, tint});
+        if (!contact.overlayTexture.empty()) {
+          // The second texture's angle is map +0x76c less the object's heading
+          // (0x783de8..0x783e23); our map does not turn, so +0x76c is 0.
+          const float over = 16.0f * scaleY;  // 0x783bc4
+          const ScreenRect overBox{cx - over * 0.5f, cy - over * 0.5f, over, over};
+          pieces.push_back(DrawPiece{quad(overBox, screen, contact.overlayTexture, 0.0f, 1.0f,
+                                          0.0f, 1.0f, -contact.overlayHeading),
+                                     contact.overlayTexture, &node, tint});
+        }
+      }
     }
     return pieces;
   }
