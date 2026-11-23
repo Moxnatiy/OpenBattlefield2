@@ -1735,6 +1735,12 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
     if (menu.quit()) break;
     // A level from the menu: we end the menu's session and pass the choice upwards.
     if (!menu.requestedLevel().empty()) break;
+    // The server moved to another map: this session's level is gone (the remote
+    // world dropped every pointer into it), and the next session opens the new one.
+    if (remote != nullptr && remote->levelChanged) {
+      std::printf("  the server changed the map at frame %d: this level's session ends\n", frame);
+      break;
+    }
 
     ++frame;
     if (args.frames > 0 && frame >= args.frames) break;

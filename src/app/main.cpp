@@ -91,7 +91,22 @@ int main(int argc, char** argv) {
     }
 
     obf2::app::RenderContext shared;
-    const int code = runSession(args, files, nullptr, &remote, shared);
+    int code = runSession(args, files, nullptr, &remote, shared);
+    // A map change ends a session on the old level (`RemoteWorld::leaveLevel`);
+    // the next one opens on the level the server names now.
+    while (code == 0 && remote.levelChanged && remote.socket) {
+      remote.levelChanged = false;
+      for (int i = 0; i < 120 && !remote.levelReady && remote.socket; ++i) remote.pump(500);
+      if (!remote.levelReady) {
+        std::fprintf(stderr, "the server did not say which level it plays next\n");
+        code = 1;
+        break;
+      }
+      std::printf("map change -> %s\n", remote.levelName.c_str());
+      args.levelName = remote.levelName;
+      args.focus.reset();
+      code = runSession(args, files, nullptr, &remote, shared);
+    }
     remote.report();
     remote.disconnect();
     return code;
