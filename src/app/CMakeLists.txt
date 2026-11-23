@@ -24,6 +24,10 @@ add_library(obf2_app
   src/hit_direction.cpp
   src/death_camera.cpp
   src/third_person_look.cpp
+  src/sound_envelope.cpp
+  src/sound_voices.cpp
+  src/engine_sound.cpp
+  src/tinnitus_sound.cpp
 )
 add_library(obf2::app ALIAS obf2_app)
 if(TARGET obf2_video)
