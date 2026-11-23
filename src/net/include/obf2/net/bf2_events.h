@@ -13,6 +13,8 @@
 // Some events cannot be skipped by the table: their fields sit behind conditions
 // and the length depends on the contents. Those are marked separately, and their
 // parsing is written by hand.
+// Every event type the server sends is walked to its length here; which of them
+// are also decoded and acted on is docs/todo/network.md, §4–§7.
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -25,6 +27,9 @@
 #include "obf2/core/math.h"
 #include "obf2/net/bitstream.h"
 #include "obf2/net/player_state.h"
+#include "obf2/net/control_point_state.h"
+#include "obf2/net/projectile_state.h"
+#include "obf2/net/score_state.h"
 #include "obf2/net/soldier_state.h"
 
 namespace obf2::net::bf2 {
@@ -82,21 +87,32 @@ struct DataBlockPiece {
   std::vector<std::byte> chunk;
 };
 
-// The level's details — block type 5, which the server sends right after
-// registration (`GameServer::sendClientMapInfo` hands over the `MapInfo`).
-struct MapInfo {
+// The server's map rotation — block type 5, sent with the server info right
+// after authentication (`GameServer::authOk`; OpenBF2 MapList.cpp,
+// `generateDataBlock` / `updateFromDataBlock`): a u16 count, a u16 index of the
+// map being played, then per entry a u16-length name, a u16-length game mode and
+// a u16 size, all little-endian. It is **not** the level the client loads — that
+// is block 2 (`GameClient::handleDataBlock` case 2). We once took this block's
+// first entry for the level, which is wrong whenever the rotation has more than
+// one map.
+struct MapListEntry {
   std::string levelName;
   std::string gameMode;
   int size = 0;
-  // The block's first number. It looks like the "challenge number" — the same
-  // line in the fingerprint files the server checks the content with. It is
-  // verified against a live server rather than taken on trust.
-  std::uint32_t first = 0;
+};
+struct MapList {
+  int current = 0;
+  std::vector<MapListEntry> entries;
+  // The entry the server is playing, or null when the index is out of range.
+  const MapListEntry* currentEntry() const {
+    return current >= 0 && static_cast<std::size_t>(current) < entries.size() ? &entries[current]
+                                                                               : nullptr;
+  }
 };
 
-inline constexpr std::uint32_t kMapInfoBlock = 5;
+inline constexpr std::uint32_t kMapListBlock = 5;
 
-std::optional<MapInfo> parseMapInfo(std::span<const std::byte> block);
+std::optional<MapList> parseMapList(std::span<const std::byte> block);
 
 // Block type 2 is the **real** `MapInfo`, the one assembled by
 // `MapInfo::updateNetBuffer` (0x4168b0). Block 5 beside it is simpler and carries
@@ -131,7 +147,7 @@ std::optional<ServerMapInfo> parseMapInfoNetBuffer(std::span<const std::byte> bl
 // Block 0, the server's `ServerInfo` (OpenBF2 GameServer/ServerInfo.cpp,
 // `updateFromDataBlock`): its head — the game's name and the welcome lines, each
 // a 16-bit length and the bytes — then fixed fields we do not read yet.
-inline constexpr std::uint32_t kServerInfoBlock = 0;
+// (`readServerMatchOptions` in bf2_protocol.h reads the same block's options.)
 struct ServerInfoHead {
   std::string gameName;
   std::vector<std::string> welcome;
@@ -294,6 +310,15 @@ struct HandlePickup {
   std::uint16_t second = 0;  // +0x14
 };
 
+// BF2.exe 0x53d680 reads these fields. 0x53d5c0 passes the kit/item (first ID),
+// player, and dropper (second ID) to GameLogic, then positions the dropped object.
+struct HandleDrop {
+  std::uint32_t player = 0;
+  std::uint16_t item = 0;
+  std::uint16_t dropper = 0;
+  Vec3f position;
+};
+
 // A network event the server raised on our side (`PostRemoteEvent`, type 11).
 // Those that carry a value carry it in four bytes.
 //
@@ -311,9 +336,97 @@ struct RemoteEvent {
   std::vector<std::uint8_t> data;
 };
 
+std::optional<std::uint16_t> readRevivedSoldier(const RemoteEvent& event);
+
+struct UnitSpot {
+  std::uint16_t target = 0;
+  int team = 0;
+  float x = 0, z = 0;
+  std::uint16_t spotter = 0;
+  // Set by WorldView::visibleSpots when the target is a ghost we hold and the
+  // spot follows it. The map node's handler for event 0x2b (BF2.exe 0x782990)
+  // keys such a spot to the object; one whose object it cannot find becomes a
+  // kind-3 entry at the reported x/z, drawn alone by layer 0x1e (0x7820e0).
+  bool followsObject = false;
+};
+
+// Retail forwards the native SpottedEvent payload as HUD event 43.
+std::optional<UnitSpot> readUnitSpot(const RemoteEvent& event);
+
+enum class ChatChannel : std::uint8_t { All = 0, Team = 1, Squad = 3 };
+
+struct RadioCall {
+  unsigned message = 0, sender = 0, team = 0, extra = 0, channel = 0, type = 3;
+};
+
+enum class OrderRoute : std::uint8_t { Squad, Commander, Request };
+
+struct SquadOrder {
+  unsigned squad = 0, team = 0, id = 0;
+  std::uint16_t target = 0;
+  std::array<Vec3f, 3> points{};
+  OrderRoute route = OrderRoute::Squad;
+  bool accepted = false;
+};
+
+struct OrderResponse {
+  unsigned squad = 0, team = 0;
+  bool accepted = false;
+  OrderRoute route = OrderRoute::Squad;
+  unsigned id = 0;
+};
+
+struct SquadLeaderChange {
+  unsigned team = 0, player = 0, squad = 0;
+};
+
+struct StickyProjectile {
+  std::uint16_t projectile = 0;
+  std::uint16_t target = 0;
+  std::uint8_t player = 0;
+  Mat4 transform;
+};
+
+struct Vote {
+  unsigned item = 0;
+  unsigned option = 0;
+  unsigned forCount = 0;
+  unsigned againstCount = 0;
+  unsigned needed = 0;
+  unsigned caster = 254;
+  unsigned status = 0;
+  unsigned type = 0;
+  std::uint32_t time = 0;
+};
+enum VoteType { VoteMap = 1, VoteKick = 2 };
+enum VoteStatus { VoteIssue = 0, VoteFailed = 1, VoteCancelled = 2, VotePassed = 3,
+                  VoteUpdate = 4, VoteMissingTarget = 5, VoteConflict = 6, VoteTooFew = 7 };
+
 struct Event {
+  struct Rank {
+    unsigned kind, player;
+    int rank;
+  };
+  struct Medal {
+    // `MedalEvent::serialize` (Linux 0x42b270): the award's id (+0x10, 32
+    // bits), the player (+0x18, 8), the level (+0x14, 4) — the server's
+    // `sendMedalEvent(player, id, level)`: 0 for a medal or ribbon, 1..3 for a
+    // badge (stats/medals.py, medal_data.py's '<id>_<level>').
+    unsigned id, player, level;
+  };
+  struct Unlocks {
+    unsigned kind, player;
+    std::array<std::array<unsigned, 7>, 2> levels;
+  };
+  std::optional<Rank> rank;
+  std::optional<Medal> medal;
+  std::optional<Unlocks> unlocks;
+  std::optional<Vote> vote;
+  std::optional<unsigned> voiceSession;
+
   std::uint32_t type = 0;
   std::optional<CreateObject> object;
+  std::optional<StickyProjectile> stickyProjectile;
   std::optional<CreatePlayer> player;
   std::optional<DataBlockPiece> block;
   std::optional<CreateSpawnGroup> spawnGroup;
@@ -323,12 +436,19 @@ struct Event {
   std::optional<EnterVehicle> enter;
   std::optional<CreateKit> kit;
   std::optional<HandlePickup> pickup;
+  std::optional<HandleDrop> drop;
   // `ExitVehicleEvent` (type 10): the number of the player who left.
   std::optional<std::uint32_t> exitPlayer;
   // `RemoveSpawnGroupEvent` (type 58): the group's number (8 bits; then its
   // network id, 16). `executeClient` (Linux 0x42e1b0) has the client's spawn
   // manager drop the group (`removeClientSpawnGroup`, vtable 0x98).
   std::optional<std::uint8_t> removeSpawnGroup;
+  // `DestroyObjectEvent` (7): the network id (16) of an object the server
+  // destroyed — the client destroys it (`GameClient::destroyObject`, OpenBF2,
+  // `BF2.exe` 0x4d1f40). `DestroyPlayerEvent` (8): the id (8) of a player who
+  // left (`GameClient::destroyPlayer`).
+  std::optional<std::uint16_t> destroyObject;
+  std::optional<std::uint8_t> destroyPlayer;
   // `BeginRoundEvent` (type 56): the round's begin state and the tick it changes
   // next (`BeginRoundEvent::serialize`, Linux 0x41f3d0: 32 bits from +0x10, 32 bits
   // from +0x14). The states are `ServerGameLogic::uPlaying`'s: 0 not begun, 1
@@ -338,6 +458,47 @@ struct Event {
     std::uint32_t nextChangeTick = 0;
   };
   std::optional<BeginRound> beginRound;
+  // `EndOfRoundEvent` (type 48; OpenBF2 Game/GameEvents/EndOfRoundEvent.cpp,
+  // `deSerialize` Linux 0x8070a00): three 32-bit numbers in field order. The
+  // first is the rounds still to play on this map (the server sends
+  // `roundsPerMap - roundsPlayed - 1`, `ServerGameLogic::endGame`); the client
+  // hands it to the end-of-round movie, which offers "join game" only while it is
+  // above zero. Then the winning team and the victory type
+  // (`ScoreManager::forceSetWinner`, `setVictoryType`).
+  struct EndOfRound {
+    std::int32_t roundsLeft = 0;
+    std::int32_t winner = 0;
+    std::int32_t victoryType = 0;
+  };
+  std::optional<EndOfRound> endOfRound;
+  // `KilledByEvent` (type 21; OpenBF2 Game/GameEvents/KilledByEvent.cpp,
+  // `deSerialize`, Linux 0x42a920): killer 8, victim 8, "killer alive" 1, the
+  // material 16 (`fillKilledByData` narrows it), the **weapon's** template 32
+  // (`KilledByData +0x0C`), the killer's **vehicle** template 32 (+0x08 — his
+  // soldier on foot), the last hit bone 8, and the last hit direction, a
+  // compressed vector at 1/1000. The order is the wire's, not the struct's: a
+  // live kill from a T-90 came as `Coaxial_mg_mec` then `rutnk_t90`
+  // (tests/data/bf2-killed-by.bin).
+  struct KilledBy {
+    std::uint32_t killer = 0;
+    std::uint32_t victim = 0;
+    bool killerAlive = false;
+    std::uint32_t material = 0;
+    std::uint32_t weaponTemplate = 0;
+    std::uint32_t vehicleTemplate = 0;
+    std::uint32_t lastHitBone = 0;
+    Vec3f lastHitDirection;
+  };
+  std::optional<KilledBy> killedBy;
+  // `StringBlockEvent` (type 15; OpenBF2 StringBlockEvent.cpp `deSerialize`): a
+  // "new string" bit, then the string's size (8), or a chunk — an 8-bit length
+  // and the bytes (chat_string.h assembles them).
+  struct StringBlock {
+    bool isNew = false;
+    std::uint32_t size = 0;
+    std::vector<std::uint8_t> chunk;
+  };
+  std::optional<StringBlock> stringBlock;
   // The squads (OpenBF2 Game/GameEvents/<Name>.cpp, `deSerialize`):
   // `ChangeSquadNameEvent` (22) squad 8, team 8, player 8, an 8-bit length and
   // the name; `SetPrivateSquadEvent` (23) squad 8, team 8, private 1. The server
@@ -353,6 +514,15 @@ struct Event {
     bool isPrivate = false;
   };
   std::optional<SquadPrivate> squadPrivate;
+  struct CommanderAssignment {
+    unsigned team = 0;
+    int player = -1;
+  };
+  std::optional<CommanderAssignment> commanderAssignment;
+  std::optional<SquadLeaderChange> squadLeader;
+  std::optional<SquadOrder> squadOrder;
+  std::optional<OrderResponse> orderResponse;
+  std::optional<RadioCall> radioCall;
 };
 
 // Assembles blocks from the chunks that arrive as events.
@@ -416,6 +586,45 @@ std::optional<bool> ghostFlag(std::span<const std::byte> packet);
 // straight to `NetworkManager::getObject`, and the result to `getSoldier`
 // (0x445dc3 and 0x445e01). That is a direct answer to which soldier is ours:
 // guessing by the distance to a flag is no longer needed.
+struct SoldierWeaponState {
+  int rounds = 0;
+  int magazines = 0;  // includes the loaded magazine, -1 for unlimited
+  int fireRate = 0;
+};
+
+// Hit direction byte → angle (`Player::setStateSync`, `BF2.exe` 0x5018a0, the
+// server's 0x49a84a): s = 2·b/255 − 1 (1/255 at 0x8ac480), 0 when |s| ≤ 1/127.5
+// (0x8ac490), else s·2π (0x8ac48c). The server packs it from
+// `updateHitFromDirection` (Linux 0x496160: fmod(atan2(x, z), 2π)) as
+// clamp((a/2π + 1)·0.5, 0, 1)·255 (`getStateSync`, 0x4a17ad).
+float decodeHitFromDirection(std::uint32_t byte);
+
+struct SoldierPlayerSync {
+  // The first flag (0x5018a0's first read; the server's `getStateSync` leads with
+  // it too) — purpose not established beyond its old name "hit".
+  bool hitFlag = false;
+  // Present when the sync carried a hit direction (its presence bit, 0x5018a0):
+  // the angle `Player::getHitFromDirection` (vtable +0x1e0) then returns.
+  std::optional<float> hitFromDirection;
+  std::optional<SoldierWeaponState> weapon;
+  // The tail (0x5018a0 from 0x501c53): the tick the player may spawn at and the
+  // man-down flag — the same two fields the player state's bit 0x20 writes
+  // (docs/functions/man-down.md) — then the health, then three flags.
+  std::uint32_t spawnAtTick = 0;
+  bool manDown = false;
+  float health = 0.0f;
+  bool flag124 = false;  // player +0x124 — purpose not established
+  bool flag187 = false;  // player +0x187 — purpose not established
+  bool flag188 = false;  // player +0x188 — purpose not established
+  bool givingReplenish = false;
+  bool givingAbility = false;
+  bool repairing = false;
+};
+
+// `Player::setStateSync` (0x5018a0) for a soldier: the 10-bit length, then the
+// sync up to `end`, the bit the controlled-object state ends at.
+std::optional<SoldierPlayerSync> readSoldierPlayerSync(BitReader& reader, std::size_t end);
+
 struct ControlObjectState {
   // The number of bits the state occupies after this field — see
   // `skipControlObjectState` in bf2_events.cpp (`BF2.exe`, 0x5b9230).
@@ -425,13 +634,22 @@ struct ControlObjectState {
   // and the state reached that far; the spawn camera's state reads as something
   // else and is not taken for one.
   std::optional<SoldierState> soldier;
+  std::optional<SoldierPlayerSync> playerSync;
+  std::uint16_t kitId = 0;
   std::int32_t counter = 0;
   // The name is deliberately not "position": a soldier must not be moved by this field.
   Vec3f compressionReference;
   std::uint16_t networkId = 0;
+  bool isSoldier = false;
+  bool delta = false;
+  unsigned baselineSlot = 0;
+  std::size_t stateStart = 0;
+  std::size_t stateEnd = 0;
 };
 
-std::optional<ControlObjectState> readControlObjectState(std::span<const std::byte> packet);
+std::optional<ControlObjectState> readControlObjectState(
+    std::span<const std::byte> packet,
+    const std::function<int(std::uint16_t)>& inventorySize = {});
 
 // The ghost stream's header — what comes after the events in a data packet.
 // The time is counted in ticks of 1/30 of a second.
@@ -452,6 +670,15 @@ enum class GhostClass {
   Player,
   // `SpawnGroup`: known by the network id `CreateSpawnGroupEvent` names.
   SpawnGroup,
+  // `ScoreManager`: the static networkable 0x0201 (score_state.h).
+  ScoreManager,
+  // `ControlPointNetworkable` (control_point_state.h): an object the caller
+  // marked as one of the level's control points.
+  ControlPoint,
+  // `GenericProjectileNetworkable` (projectile_state.h): an object whose
+  // template's class is `GenericProjectile`, told by its create event's template.
+  Projectile,
+  OverheadCamera,
 };
 
 // One ghost stream record (`GhostManager::readData`):
@@ -462,6 +689,7 @@ enum class GhostClass {
 //
 // The length in a record makes it possible to skip it without parsing the
 // contents — which is exactly what the engine does when it does not know the object.
+
 struct GhostRecord {
   std::uint32_t kind = 0;
   std::uint16_t networkId = 0;
@@ -475,11 +703,21 @@ struct GhostRecord {
   std::optional<Vec3f> position;
   // A soldier's state, as far as the ghost layout could be read.
   std::optional<SoldierState> soldier;
+  std::optional<Vec3f> velocity;  // a mobile simple object's linear velocity
   // A player's state (player_state.h), when it was read to its end inside the
   // record's length.
   std::optional<PlayerState> player;
   // A spawn group's state, likewise.
   std::optional<SpawnGroupState> spawnGroup;
+  // The round's score (score_state.h), likewise.
+  std::optional<ScoreState> score;
+  // A control point's state (control_point_state.h), likewise.
+  std::optional<ControlPointState> controlPoint;
+  // A projectile's state (projectile_state.h): kept whenever it fitted into the
+  // content, read whole or not (`complete` says which).
+  std::optional<ProjectileState> projectile;
+  std::optional<int> cameraTeam;
+  std::optional<bool> cameraEnabled;
   // A simple object's rotation (x, y, z, w, normalised) and the length it had as
   // read (readSimpleObjectState).
   std::optional<std::array<float, 4>> rotation;
@@ -532,6 +770,12 @@ inline constexpr float kObjectVelocityPrecision = 0.001f;
 inline constexpr float kObjectAngularPrecision = 0.01f;
 inline constexpr unsigned kObjectQuaternionBits = 14;
 
+struct VehicleArmor {
+  int maximum = 0;
+  int wreck = 0;
+  bool mobile = true;
+};
+
 struct SimpleObjectState {
   std::uint32_t mask = 0;
   std::optional<Vec3f> position;
@@ -543,7 +787,82 @@ struct SimpleObjectState {
   float rotationLength = 0.0f;
 };
 
+struct SeatRotation {
+  std::array<std::optional<float>,3> angles;
+  // BF2.exe 0x6322e0: masks8/10/20 scale these by abs(maxSpeed)*16.
+  std::array<std::optional<float>,3> normalizedRates;
+  std::optional<float> excessInput;  // mask40, signed normalized *41.
+  constexpr std::size_t size() const { return angles.size(); }
+  auto& operator[](std::size_t i) { return angles[i]; }
+  const auto& operator[](std::size_t i) const { return angles[i]; }
+};
+struct SeatWeaponState {
+  int rounds;
+  int magazines;
+  std::optional<float> heat;
+  int magazineSize = 0;
+};
+
+struct TankWeaponState {
+  SeatWeaponState cannon;
+  SeatWeaponState coaxial;
+};
+
+// One member of a vehicle seat's descriptor the client can cut
+// (docs/functions/network-events.md, "Engine and Spring networkables").
+struct DescriptorMember {
+  enum class Kind : std::uint8_t { Rotational, Engine, Spring };
+  Kind kind = Kind::Rotational;
+  unsigned gearBits = 0;         // Engine mask 0x2
+  bool engineField100 = false;   // getEngineType() & 0x20
+  bool engineBlock400 = false;   // getEngineType() & 0x80
+  bool springExtra = false;      // SpringNetworkable +0x74
+};
+
+// One EngineNetworkable update (`EngineNetworkable::setNetUpdate`, Linux
+// 0x5c9bd0; docs/functions/network-events.md, "Engine and Spring
+// networkables"). A field is set only when its mask bit was; the engine
+// keeps its previous value otherwise. Where it lands on the EngineBase:
+struct EngineNetState {
+  unsigned mask = 0;                 // the 11-bit mask
+  std::optional<unsigned> gear;      // 0x2 → +0x2fc (applied at 0x5ca4b8)
+  // 0x4, 0x8, 0x10: 16 bits, 2u/65535 − 1 (|v| ≤ 3.0518044e-05 → 0). The
+  // engine scales them by a template maximum × 1.25 and hands them to
+  // vtbl+0x300 / +0x310; here unscaled. Not used yet.
+  std::optional<float> axis4, axis8, axis10;
+  std::optional<float> rpm;          // 0x20 → +0x2d8: 12 bits, 2u/4095 − 1, |v| ≤ 0.0004884005 → 0, else × 1.25
+  std::optional<float> field2e8;     // 0x40 → +0x2e8, as 0x20; purpose not established
+  std::optional<float> field2dc;     // 0x80 → +0x2dc, as 0x20 but kept when in the dead band; purpose not established
+  std::optional<float> field100;     // 0x100 (type & 0x20) → +0x2ec, unscaled; not used yet
+  std::optional<float> flag200;      // 0x200 → +0x328: 0 or 1 (first bit), negated by the second
+  // 0x400 (type bit 7): a sign bit, 16 bits t (the engine stores ±(a + t·(b
+  // − a)) with a, b at template +0x6a0, +0x6a4; t here; not used yet), 8
+  // bits → +0x2f8, then a sign bit and 2 bits handed to vtbl+0x368 (not named).
+  std::optional<float> field400;
+  bool field400Negative = false;
+  std::optional<float> load;         // +0x2f8: u / 255
+  std::optional<int> value368;
+};
+
+std::optional<std::vector<SeatRotation>> readSeatRotations(
+    std::span<const std::byte> packet, std::size_t begin, std::size_t end,
+    unsigned bundles, bool controlled, std::optional<SeatWeaponState>* weapon = nullptr);
+
+std::optional<std::vector<SeatRotation>> readTankTurretRotations(
+    std::span<const std::byte> packet, const GhostRecord& record, const VehicleArmor& armor,
+    unsigned bundles = 2, std::span<const DescriptorMember> members = {},
+    std::vector<EngineNetState>* engines = nullptr);
+std::optional<std::vector<SeatRotation>> readTankTurretRotations(
+    std::span<const std::byte> packet, const ControlObjectState& control, const VehicleArmor& armor,
+    std::optional<TankWeaponState>* weapons = nullptr, unsigned bundles = 2,
+    std::span<const DescriptorMember> members = {});
+
 std::optional<SimpleObjectState> readSimpleObjectState(BitReader& reader, const Vec3f& reference);
+std::optional<int> readVehicleHealth(std::span<const std::byte> packet,
+                                    const GhostRecord& record, const VehicleArmor& armor);
+std::optional<SimpleObjectState> readControlledVehicleState(
+    std::span<const std::byte> packet, const ControlObjectState& control, bool mobile,
+    const SimpleObjectState* baseline);
 
 // **Which layout a record has is the object's class, not who sits in it.** A
 // record carries the networkables of the object (`GhostManager::readData`,
@@ -594,7 +913,10 @@ std::optional<GhostHeader> readGhostHeader(std::span<const std::byte> packet);
 std::vector<GhostRecord> readGhostRecords(
     std::span<const std::byte> packet, const Vec3f& reference = {},
     const std::function<GhostClass(std::uint16_t)>& classOf = {},
-    const std::function<int(std::uint16_t)>& inventoryOf = {});
+    const std::function<int(std::uint16_t)>& inventoryOf = {},
+    // A projectile's armor (projectile_state.h): nothing for none; the outer
+    // optional empty when it is not known.
+    const std::function<std::optional<std::optional<ProjectileArmor>>(std::uint16_t)>& armorOf = {});
 
 // How a packet's event list was walked: how many the packet declares, how many
 // were read, and — when the walk broke off — the type it broke on. A broken walk
@@ -603,6 +925,11 @@ struct EventWalk {
   std::uint32_t declared = 0;
   std::uint32_t read = 0;
   std::optional<std::uint32_t> brokeOn;
+  // The block's own number (5 bits) and the resend bit (`GameEventManager::
+  // transmit`); `hasBlock` false when the packet carries no events.
+  bool hasBlock = false;
+  std::uint32_t block = 0;
+  bool resend = false;
 };
 
 // Walks a data packet and returns every event in it.

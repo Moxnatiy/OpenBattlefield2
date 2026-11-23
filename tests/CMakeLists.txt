@@ -86,6 +86,10 @@ target_compile_definitions(test_soldier_state PRIVATE
   OBF2_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
 
 obf2_add_test(test_ghost_track obf2_net)
+obf2_add_test(test_score_state obf2_net)
+obf2_add_test(test_control_point_state obf2_net)
+obf2_add_test(test_projectile_state obf2_net)
+obf2_add_test(test_chat_string obf2_net)
 
 obf2_add_test(test_template_numbers obf2_game)
 obf2_add_test(test_soldier_model obf2_game)

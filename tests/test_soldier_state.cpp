@@ -93,7 +93,7 @@ static void testControlledOrder() {
   CHECK(state->flag4000 && *state->flag4000);
   CHECK(state->weaponIndex && *state->weaponIndex == 2);
   CHECK_EQ(*state->value2000, 2u);
-  CHECK(state->value20000 && std::abs(*state->value20000 - 1.0f) < 0.001f);
+  CHECK(state->ability && std::abs(*state->ability - 1.0f) < 0.001f);
   CHECK_EQ(*state->id10000, 7u);
   CHECK(state->fraction10000 && std::abs(*state->fraction10000 - 1.0f) < 0.001f);
   CHECK_EQ(*state->id100000, 0u);
@@ -129,7 +129,7 @@ static void testLiveControlledSoldier() {
   std::unordered_map<std::uint16_t, Vec3f> createdAt;
   std::uint16_t soldier = 0;
   std::optional<Vec3f> created;
-  int soldierStates = 0, onSpot = 0;
+  int soldierStates = 0, onSpot = 0, playerSyncs = 0, equipped = 0;
   for (const auto& packet : packets) {
     for (const auto& event : readEvents(packet)) {
       if (event.object && event.object->position) {
@@ -141,11 +141,20 @@ static void testLiveControlledSoldier() {
         created = it == createdAt.end() ? std::nullopt : std::optional<Vec3f>(it->second);
       }
     }
-    const auto state = readControlObjectState(packet);
+    const auto state = readControlObjectState(packet, [](std::uint16_t) { return 10; });
     if (!state || soldier == 0 || state->networkId != soldier || !state->soldier || !created) {
       continue;
     }
     ++soldierStates;
+    if (state->playerSync) {
+      ++playerSyncs;
+      CHECK(state->playerSync->health >= 0.0f && state->playerSync->health <= 1.0f);
+      if (state->playerSync->weapon) {
+        ++equipped;
+        CHECK(state->playerSync->weapon->rounds > 0);
+        CHECK(state->playerSync->weapon->magazines > 0);
+      }
+    }
     const auto& at = state->soldier->position;
     if (at && std::abs(at->x - created->x) < 0.05f && std::abs(at->z - created->z) < 0.05f) {
       ++onSpot;
@@ -153,6 +162,8 @@ static void testLiveControlledSoldier() {
   }
   std::printf("  our soldier's states: %d, on its creation spot: %d\n", soldierStates, onSpot);
   CHECK(soldierStates > 30);
+  CHECK(playerSyncs > 30);
+  CHECK(equipped > 30);
   CHECK_EQ(onSpot, soldierStates);
 }
 

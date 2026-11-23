@@ -90,6 +90,15 @@ struct ExtendedHeader {
   std::uint32_t ackBits = 0;
 };
 
+// The Windows join trace uses bit 0 for the most recently received data
+// sequence, with earlier sequences in the higher bits of the mask.
+struct DataAcknowledgement {
+  std::uint8_t sequence = 0;
+  std::uint32_t mask = 0;
+
+  void receive(std::uint8_t received);
+};
+
 // The framing of the event stream inside a data packet.
 //
 // `GameEventManager::processReceivedPacket` reads: 1 bit "there are events",
@@ -107,6 +116,20 @@ inline constexpr std::uint32_t kDataBlockEvent = 4;
 
 // The type of the block with the client's details (`GameServer::handleDataBlock`).
 inline constexpr std::uint32_t kClientInfoBlock = 1;
+// The Windows join trace receives this block before it sends ClientInfo.
+inline constexpr std::uint32_t kServerInfoBlock = 0;
+struct ServerMatchOptions {
+  bool freeCamera;
+  bool voting;
+  bool teamVoteOnly;
+  bool voice;
+  std::uint32_t voiceAddress;
+  std::uint16_t voiceServerPort;
+  std::uint16_t voiceClientPort;
+  int voiceQuality = 3;
+};
+std::optional<ServerMatchOptions> readServerMatchOptions(std::span<const std::byte> block);
+std::optional<bool> readServerExternalViews(std::span<const std::byte> block);
 
 // The block the engine reads in `ClientInfo::setFromDataBlock`:
 //   u16 length + name, u32 name hash, 1 sign bit + 31 bits of profile number,
@@ -137,6 +160,7 @@ struct Incoming {
   std::uint8_t connectionId = 0;
   std::optional<ConnectAccept> accept;
   std::optional<ConnectDenied> denied;
+  std::optional<std::uint32_t> disconnectReason;
 
   // Present in pings and data.
   std::optional<ExtendedHeader> extended;
@@ -152,20 +176,25 @@ struct Incoming {
 // Assembles a connection request (type 1).
 std::vector<std::byte> writeConnectRequest(const ConnectRequest& request);
 
-// The challenge reply (event type 2). A server without an authenticator
-// (`sv.internet 0`) checks only the network version — it does not read the rest of the block.
-//
-// The network version is the same as in the connection request: in the engine it
-// is `BuildNrUtil::getNetVersionNumber()`, and it returns exactly kGameVersion.
+// GameSpy CD Key SDK initial authentication. The 72 ASCII characters are
+// followed by a NUL, as in BF2.exe's call at 0x4D1E32.
+using ChallengeResponse = std::array<char, 73>;
+ChallengeResponse makeChallengeResponse(std::string_view cdKey, std::string_view challenge,
+                                        std::uint32_t nonce);
+
 std::vector<std::byte> writeChallengeResponse(std::uint8_t connectionId,
-                                              const ExtendedHeader& header, std::uint8_t batch);
+                                              const ExtendedHeader& header, std::uint8_t batch,
+                                              const ChallengeResponse& response,
+                                              std::optional<std::uint32_t> connectionType = {});
 
 // The data block event: first the header (the block's type and full size), then
 // chunks of no more than 255 bytes. Once the whole block is assembled, the engine
 // hands it to `GameServer::handleDataBlock`.
-std::vector<std::byte> writeDataBlockHeader(std::uint8_t connectionId,
-                                            const ExtendedHeader& header, std::uint8_t batch,
-                                            std::uint32_t blockType, std::uint32_t size);
+// The Windows client sends the header and its first chunk in one event batch.
+std::vector<std::byte> writeDataBlockStart(std::uint8_t connectionId,
+                                          const ExtendedHeader& header, std::uint8_t batch,
+                                          std::uint32_t blockType, std::uint32_t size,
+                                          std::span<const std::byte> firstChunk);
 std::vector<std::byte> writeDataBlockChunk(std::uint8_t connectionId, const ExtendedHeader& header,
                                            std::uint8_t batch, std::span<const std::byte> chunk);
 
@@ -271,6 +300,7 @@ inline const char* hudEventName(std::uint32_t number) {
     default: return nullptr;
   }
 }
+inline constexpr std::uint32_t kGameLogicRevived = 14;  // BF2.exe 0x4e1fd4..0x4e200c
 inline constexpr std::uint32_t kNetDataBlockReady = 1;
 inline constexpr std::uint32_t kNetLoadComplete = 2;
 inline constexpr std::uint32_t kNetStartSimulation = 3;
@@ -349,14 +379,16 @@ inline constexpr int kAxisMouseX = 4;    // c_PIMouseLookX
 inline constexpr int kAxisMouseY = 5;    // c_PIMouseLookY
 // The third axis's old name — kept so the calls need not be rewritten.
 inline constexpr int kAxisForward = kAxisThrottle;
-// Full movement in the dump is exactly 99.
+// Legacy infantry movement value; the old infantry fixtures contain +99.
 inline constexpr std::int16_t kAxisFull = 99;
+// Retail FAAV full throttle/yaw: ±100 in
+// build/retail-captures/pixel7-fushe-drive-20261118-224627/retail-wire-input.csv.
+// PlayerAction::set (BF2.exe 0x5bc890 -> 0x5bc5f0) scales unit input by 100.
+inline constexpr std::int16_t kVehicleAxisFull = 100;
 
 // On the wire an axis travels as an integer, while in the engine it is a float.
 // `PlayerAction::set` stores the axes as int16 (`BF2.exe`, 0x5bc890), and the
 // reverse conversion beside it (0x5bc5f0) does exactly `(float)value * 0.01`.
-//
-// Hence "full movement = 99": the throttle axis reached 0.99.
 inline constexpr float kAxisWireScale = 100.0f;
 
 // An axis onto the wire, as `PlayerAction::set` does it (0x5bc890 → 0x5bc5f0):
@@ -367,6 +399,14 @@ inline std::int16_t axisToWire(float axis) {
   if (value > 32767.0f) value = 32767.0f;
   if (value < -32767.0f) value = -32767.0f;
   return static_cast<std::int16_t>(value);
+}
+
+// Retail 1.50 sends +100 at full forward throttle on foot, and ±100 in the
+// FAAV capture cited above. Infantry reverse remains at its legacy value;
+// its full-scale Retail value is not measured here.
+inline std::int16_t throttleToWire(float forward, bool onFoot) {
+  return !onFoot || forward > 0.0f ? axisToWire(forward)
+                                : static_cast<std::int16_t>(forward * kAxisFull);
 }
 
 // And back, as `PlayerAction::get` does it (0x5bc6a0): `(float)wire * 0.01`. The
@@ -380,10 +420,14 @@ inline float axisFromWire(std::int16_t wire) { return static_cast<float>(wire) *
 inline constexpr std::uint32_t kButtonFire = 1u << 0;    // c_PIFire   (8)
 inline constexpr std::uint32_t kButtonAction = 1u << 1;  // c_PIAction (9) — jump
 inline constexpr std::uint32_t kButtonUse = 1u << 2;     // c_PIUse    (10)
+inline constexpr std::uint32_t kButtonMouseLook = 1u << 3;  // c_PIMouseLook (11)
 inline constexpr std::uint32_t kButtonSprint = 1u << 5;  // c_PISprint (13)
 // `tools/control_constants.py`: c_PIReload is 32. The key is R (Controls.con,
 // `ControlMap.addKeyToTriggerMapping c_PIReload IDFKeyboard IDKey_R`).
 inline constexpr std::uint32_t kButtonReload = 1u << 24;  // c_PIReload (32)
+// BF2.exe 0x690704..0x690718 registers c_PIDrop as 34. Default Infantry.con
+// binds it to G with c_CMNonRepetive. The server resolves the kit interaction.
+inline constexpr std::uint32_t kButtonDrop = 1u << (34 - 8);
 // c_PIAltFire is 31 (tools/control_constants.py); Controls.con puts it on the mouse's
 // second button (`ControlMap.addButtonToTriggerMapping c_PIAltFire IDFMouse IDButton_1`).
 inline constexpr std::uint32_t kButtonAltFire = 1u << 23;  // c_PIAltFire (31) — zoom
@@ -393,7 +437,14 @@ inline constexpr std::uint32_t kButtonAltFire = 1u << 23;  // c_PIAltFire (31) �
 inline constexpr std::uint32_t kButtonLie = 1u << 29;     // c_PILie    (37) — prone
 inline constexpr std::uint32_t kButtonCrouch = 1u << 30;  // c_PICrouch (38)
 // c_PIWeaponSelect1..9 are 14..22 (tools/control_constants.py), so key N is bit N + 5.
+inline constexpr std::uint32_t kWeaponSelectMask = 0x1ffu << 6;
 inline constexpr std::uint32_t kButtonWeaponSelect(int n) { return 1u << (n + 5); }
+
+// BF2.exe 0x6909e9..0x690af2 registers c_PIPositionSelect1..8 as 23..30.
+inline constexpr std::uint32_t kPositionSelectMask = 0xffu << 15;
+inline constexpr std::uint32_t kButtonPositionSelect(int seat) {
+  return seat >= 1 && seat <= 8 ? 1u << (seat + 14) : 0;
+}
 
 // The whole action stream from a packet.
 struct PlayerActions {
@@ -496,26 +547,6 @@ std::vector<std::byte> writeContentCheckEvent(std::uint8_t connectionId,
 // column is the update rate is read from that measurement, not from the code.
 inline constexpr std::uint32_t kConnectionTypeEvent = 3;
 
-// The squad requests a client makes, each one game event in a data packet
-// (OpenBF2 `ClientSquadManager`, the events' `serialize`):
-//   JoinSquadEvent (16):        team 8, player 8, squad 8 — squad 0 asks for a new one;
-//   LeaveSquadEvent (17):       team 8, player 8, squad 8, clear the invite 1;
-//   ChangeSquadNameEvent (22):  squad 8, team 8, player 8, length 8, the name —
-//                               `BF2HudManager::createSquad` creates a squad by naming
-//                               an empty one;
-//   SetPrivateSquadEvent (23):  squad 8, team 8, private 1.
-std::vector<std::byte> writeJoinSquadEvent(std::uint8_t connectionId, const ExtendedHeader& header,
-                                           std::uint8_t batch, int team, int player, int squad);
-std::vector<std::byte> writeLeaveSquadEvent(std::uint8_t connectionId, const ExtendedHeader& header,
-                                            std::uint8_t batch, int team, int player, int squad,
-                                            bool clearInvite);
-std::vector<std::byte> writeChangeSquadNameEvent(std::uint8_t connectionId,
-                                                 const ExtendedHeader& header, std::uint8_t batch,
-                                                 int team, int squad, int player,
-                                                 std::string_view name);
-std::vector<std::byte> writeSetPrivateSquadEvent(std::uint8_t connectionId,
-                                                 const ExtendedHeader& header, std::uint8_t batch,
-                                                 int team, int squad, bool isPrivate);
 std::vector<std::byte> writeConnectionTypeEvent(std::uint8_t connectionId,
                                                 const ExtendedHeader& header, std::uint8_t batch,
                                                 std::uint32_t connectionType);
@@ -530,10 +561,10 @@ std::uint32_t clientInfoNameHash(const std::string& name);
 
 std::vector<std::byte> buildClientInfo(const ClientInfo& info);
 
-// The ping reply. `time` is the same number the server sent: it computes the
+// The ping reply. `serverTime` is the same number the server sent: it computes the
 // latency from the difference.
 std::vector<std::byte> writePingResponse(std::uint8_t connectionId, const ExtendedHeader& header,
-                                         std::uint32_t time);
+                                         std::uint32_t serverTime, std::uint32_t clientTime);
 
 // A short packet of nothing but the header: acknowledgement, disconnect, ping.
 // The client's goodbye (OpenBF2 IO/Network/ProtocolLayer/NetClient.cpp,

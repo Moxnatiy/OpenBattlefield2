@@ -1,8 +1,63 @@
 #include "obf2/net/bf2_protocol.h"
 
+#include <charconv>
+#include <climits>
+
 #include "obf2/net/bitstream.h"
+#include "obf2/net/md5.h"
 
 namespace obf2::net::bf2 {
+
+namespace {
+std::optional<BitReader> serverInfoFlags(std::span<const std::byte> block) {
+  // ServerInfo::updateFromDataBlock (BF2.exe 0x58d570): server name, a
+  // length-prefixed list of strings, then six flags before allowExternalViews.
+  BitReader reader(block);
+  const auto skipString = [&reader] {
+    const auto bytes = reader.readBits(16);
+    return bytes && reader.skipBits(*bytes * 8);
+  };
+  if (!skipString()) return std::nullopt;
+  const auto count = reader.readBits(16);
+  if (!count || *count > reader.bitsRemaining() / 16) return std::nullopt;
+  for (std::uint32_t i = 0; i < *count; ++i) {
+    if (!skipString()) return std::nullopt;
+  }
+  return reader;
+}
+}  // namespace
+
+std::optional<bool> readServerExternalViews(std::span<const std::byte> block) {
+  auto reader = serverInfoFlags(block);
+  if (!reader || !reader->skipBits(6)) return std::nullopt;
+  return reader->readBool();
+}
+
+std::optional<ServerMatchOptions> readServerMatchOptions(std::span<const std::byte> block) {
+  auto reader = serverInfoFlags(block);
+  if (!reader || !reader->skipBits(1)) return std::nullopt;
+  const auto voice = reader->readBool();
+  if (!voice || !reader->skipBits(3)) return std::nullopt;
+  const auto freeCamera = reader->readBool();
+  if (!freeCamera || !reader->skipBits(1)) return std::nullopt;
+  const auto address = reader->readBits(32);
+  const auto serverPort = reader->readBits(16), clientPort = reader->readBits(16);
+  const auto quality = reader->readBits(32);
+  // GameSpy port, radio parameters and content-check flag.
+  if (!address || !serverPort || !clientPort || !quality || !reader->skipBits(16 + 3 * 32 + 1)) {
+    return std::nullopt;
+  }
+  const auto voting = reader->readBool();
+  if (!voting || !reader->skipBits(16 + 1)) return std::nullopt;
+  const auto teamVote = reader->readBool();
+  if (!teamVote) return std::nullopt;
+  return ServerMatchOptions{*freeCamera, *voting, *teamVote, *voice, *address,
+                            static_cast<std::uint16_t>(*serverPort),
+                            static_cast<std::uint16_t>(*clientPort),
+                            *quality & 1 ? -static_cast<int>(*quality >> 1)
+                                         : static_cast<int>(*quality >> 1)};
+}
+
 namespace {
 
 // The strings in the request are exactly 32 bytes padded with zeroes (the engine
@@ -62,6 +117,18 @@ void writeEventFraming(BitWriter& writer, std::uint8_t batch, std::uint8_t count
   writer.writeBits(0, 1);
 }
 
+void writeConnectionType(BitWriter& writer, std::uint32_t connectionType) {
+  writer.writeBits(kConnectionTypeEvent, kEventTypeBits);
+  writer.writeBits(connectionType & 0x7u, 3);
+}
+
+void writeBlockChunk(BitWriter& writer, std::span<const std::byte> chunk) {
+  writer.writeBits(kDataBlockEvent, kEventTypeBits);
+  writer.writeBits(0, 1);
+  writer.writeBits(static_cast<std::uint32_t>(chunk.size()), 8);
+  for (const auto byte : chunk) writer.writeBits(std::to_integer<std::uint32_t>(byte), 8);
+}
+
 // The packet's tail: the ghost stream (we send nothing) and the length in the header.
 std::vector<std::byte> finishDataPacket(std::vector<std::byte>& buffer, BitWriter& writer) {
   writer.writeBits(0, 1);  // no ghosts
@@ -74,6 +141,23 @@ std::vector<std::byte> finishDataPacket(std::vector<std::byte>& buffer, BitWrite
 }
 
 }  // namespace
+
+void DataAcknowledgement::receive(std::uint8_t received) {
+  if (mask == 0) {
+    sequence = received;
+    mask = 1;
+    return;
+  }
+  const unsigned ahead = (received + 64u - sequence) & 63u;
+  if (ahead == 0) return;
+  if (ahead < 32) {
+    sequence = received;
+    mask = (mask << ahead) | 1u;
+    return;
+  }
+  const unsigned behind = 64u - ahead;
+  if (behind < 32) mask |= 1u << behind;
+}
 
 std::string_view denyReasonName(DenyReason reason) {
   switch (reason) {
@@ -128,7 +212,7 @@ std::vector<std::byte> writeDisconnect(std::uint8_t connectionId, std::uint32_t 
 }
 
 std::vector<std::byte> writePingResponse(std::uint8_t connectionId, const ExtendedHeader& header,
-                                         std::uint32_t time) {
+                                         std::uint32_t serverTime, std::uint32_t clientTime) {
   std::vector<std::byte> buffer(32);
   BitWriter writer(buffer);
   writer.writeBits(static_cast<std::uint32_t>(PacketKind::PingResponse), 4);
@@ -136,24 +220,56 @@ std::vector<std::byte> writePingResponse(std::uint8_t connectionId, const Extend
   writer.writeBits(header.sequence & 0x3F, 6);
   writer.writeBits(header.ack & 0x3F, 6);
   writer.writeBits(header.ackBits, 32);
-  // The acknowledgement flag, then the server's time and our own.
-  writer.writeBits(1, 1);
-  writer.writeBits(time, 32);
-  writer.writeBits(time, 32);
+  // The Windows join trace has a clear flag, an echoed time and a local time.
+  writer.writeBits(0, 1);
+  writer.writeBits(serverTime, 32);
+  writer.writeBits(clientTime, 32);
   buffer.resize(writer.byteSize());
   return buffer;
 }
 
+ChallengeResponse makeChallengeResponse(std::string_view cdKey, std::string_view challenge,
+                                        std::uint32_t nonce) {
+  constexpr char kHex[] = "0123456789abcdef";
+  const auto asBytes = [](std::string_view text) {
+    return std::as_bytes(std::span(text.data(), text.size()));
+  };
+  const auto writeDigest = [](char* out, const std::array<std::byte, 16>& digest) {
+    for (const auto byte : digest) {
+      const auto value = std::to_integer<unsigned>(byte);
+      *out++ = kHex[value >> 4];
+      *out++ = kHex[value & 15];
+    }
+  };
+
+  ChallengeResponse response{};
+  writeDigest(response.data(), md5(asBytes(cdKey)));
+  for (unsigned i = 0; i < 8; ++i) response[32 + i] = kHex[(nonce >> (28 - 4 * i)) & 15];
+
+  // GameSpy gcdkeyc.c formats the reduced nonce as decimal in the digest.
+  char reduced[5];
+  const auto decimal = std::to_chars(reduced, reduced + sizeof(reduced), nonce % 65535u);
+  Md5 proof;
+  proof.update(asBytes(cdKey));
+  proof.update(asBytes({reduced, static_cast<std::size_t>(decimal.ptr - reduced)}));
+  proof.update(asBytes(challenge));
+  writeDigest(response.data() + 40, proof.finish());
+  return response;
+}
+
 std::vector<std::byte> writeChallengeResponse(std::uint8_t connectionId,
-                                              const ExtendedHeader& header, std::uint8_t batch) {
+                                              const ExtendedHeader& header, std::uint8_t batch,
+                                              const ChallengeResponse& response,
+                                              std::optional<std::uint32_t> connectionType) {
   std::vector<std::byte> buffer(128);
   BitWriter writer(buffer);
   writeDataHeader(writer, connectionId, header);
-  writeEventFraming(writer, batch, 1);
+  writeEventFraming(writer, batch, connectionType ? 2 : 1);
+  if (connectionType) writeConnectionType(writer, *connectionType);
 
   writer.writeBits(2, kEventTypeBits);  // type 2 — the challenge reply
-  // A 73-byte response block: without an authenticator the server does not read it.
-  for (int i = 0; i < 73; ++i) writer.writeBits(0, 8);
+  for (const char byte : response) writer.writeBits(static_cast<std::uint8_t>(byte), 8);
+  // The BF2 1.50 comparison server accepted zero in the adjacent word.
   writer.writeBits(0, 32);
   writer.writeBits(kGameVersion, 32);
   writer.writeBits(0, 1);       // the sign
@@ -162,18 +278,20 @@ std::vector<std::byte> writeChallengeResponse(std::uint8_t connectionId,
   return finishDataPacket(buffer, writer);
 }
 
-std::vector<std::byte> writeDataBlockHeader(std::uint8_t connectionId,
-                                            const ExtendedHeader& header, std::uint8_t batch,
-                                            std::uint32_t blockType, std::uint32_t size) {
-  std::vector<std::byte> buffer(32);
+std::vector<std::byte> writeDataBlockStart(std::uint8_t connectionId,
+                                          const ExtendedHeader& header, std::uint8_t batch,
+                                          std::uint32_t blockType, std::uint32_t size,
+                                          std::span<const std::byte> firstChunk) {
+  std::vector<std::byte> buffer(firstChunk.size() + 32);
   BitWriter writer(buffer);
   writeDataHeader(writer, connectionId, header);
-  writeEventFraming(writer, batch, 1);
+  writeEventFraming(writer, batch, 2);
 
   writer.writeBits(kDataBlockEvent, kEventTypeBits);
   writer.writeBits(1, 1);  // this is a block header
   writer.writeBits(blockType, 32);
   writer.writeBits(size, 32);
+  writeBlockChunk(writer, firstChunk);
 
   return finishDataPacket(buffer, writer);
 }
@@ -185,10 +303,7 @@ std::vector<std::byte> writeDataBlockChunk(std::uint8_t connectionId, const Exte
   writeDataHeader(writer, connectionId, header);
   writeEventFraming(writer, batch, 1);
 
-  writer.writeBits(kDataBlockEvent, kEventTypeBits);
-  writer.writeBits(0, 1);  // this is a data chunk
-  writer.writeBits(static_cast<std::uint32_t>(chunk.size()), 8);
-  for (const auto byte : chunk) writer.writeBits(std::to_integer<std::uint32_t>(byte), 8);
+  writeBlockChunk(writer, chunk);
 
   return finishDataPacket(buffer, writer);
 }
@@ -256,8 +371,7 @@ std::vector<std::byte> writeConnectionTypeEvent(std::uint8_t connectionId,
   BitWriter writer(buffer);
   writeDataHeader(writer, connectionId, header);
   writeEventFraming(writer, batch, 1);
-  writer.writeBits(kConnectionTypeEvent, kEventTypeBits);
-  writer.writeBits(connectionType & 0x7u, 3);
+  writeConnectionType(writer, connectionType);
   return finishDataPacket(buffer, writer);
 }
 
@@ -364,7 +478,10 @@ std::optional<std::array<std::byte, 16>> readFingerprint(std::string_view text, 
     int value = 0;
     bool digits = !number.empty();
     for (const char c : number) {
-      if (c < '0' || c > '9') { digits = false; break; }
+      if (c < '0' || c > '9' || value > (INT_MAX - (c - '0')) / 10) {
+        digits = false;
+        break;
+      }
       value = value * 10 + (c - '0');
     }
     if (!digits || value != ordinal) continue;
@@ -452,6 +569,8 @@ std::optional<Incoming> readPacket(std::span<const std::byte> data) {
     // The server adds the directory only when the reason is a different mod.
     if (hasMod && *hasMod != 0) denied.modDirectory = readFixedString(reader);
     incoming.denied = denied;
+  } else if (incoming.kind == PacketKind::Disconnect) {
+    incoming.disconnectReason = reader.readBits(32);
   } else if (incoming.kind == PacketKind::PingRequest || incoming.kind == PacketKind::Data ||
              incoming.kind == PacketKind::PingResponse) {
     const auto sequence = reader.readBits(6);

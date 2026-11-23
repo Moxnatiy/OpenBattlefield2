@@ -1159,6 +1159,7 @@ struct RemoteWorld {
       if (parsed->kind != obf2::net::bf2::PacketKind::PingRequest) continue;
       if (parsed->extended) link.acceptPing(*parsed->extended, parsed->pingHaveSent);
       socket->send(obf2::net::bf2::writePingResponse(id, link.pingHeader(),
+                                                     parsed->pingTime.value_or(0),
                                                      parsed->pingTime.value_or(0)));
       ++pings;
     }
@@ -1284,7 +1285,7 @@ struct RemoteWorld {
       if (const auto self = world.players().find(static_cast<std::uint32_t>(world.ownPlayer()));
           self != world.players().end()) {
         const int squad = static_cast<int>(self->second.squad.value_or(0));
-        const bool leader = self->second.squadLeader.value_or(false);
+        const bool leader = self->second.squadLeader;
         // When the server lets us spawn (`spawnAtTick`, 0x20; the original's
         // spawn screen counts it down): the wait after DONE is this, not ours.
         if (self->second.spawnAtTick && *self->second.spawnAtTick != reportedSpawnAt) {
@@ -1365,6 +1366,7 @@ struct RemoteWorld {
           ++pings;
           if (parsed->extended) link.acceptPing(*parsed->extended, parsed->pingHaveSent);
           socket->send(obf2::net::bf2::writePingResponse(id, link.pingHeader(),
+                                                         parsed->pingTime.value_or(0),
                                                          parsed->pingTime.value_or(0)));
           break;
         }
@@ -1628,11 +1630,19 @@ struct RemoteWorld {
                   if (args.ordinal < 0) blockOrdinal = net->challengeOrdinal;
                 }
               }
-              if (done && done->first == obf2::net::bf2::kMapInfoBlock && !levelReady) {
-                if (const auto info = obf2::net::bf2::parseMapInfo(done->second)) {
-                  std::printf("  the server plays %s, mode %s, size %d, first number %u\n",
+              // Block 5 is the server's rotation (`MapList`); the entry it names as
+              // current is the level played (net/bf2_events.h).
+              const auto rotation = done && done->first == obf2::net::bf2::kMapListBlock && !levelReady
+                  ? obf2::net::bf2::parseMapList(done->second) : std::nullopt;
+              if (rotation && !rotation->currentEntry()) {
+                std::printf("  the map rotation names entry %d of %zu\n", rotation->current,
+                            rotation->entries.size());
+              }
+              if (rotation && rotation->currentEntry()) {
+                if (const auto* info = rotation->currentEntry()) {
+                  std::printf("  the server plays %s, mode %s, size %d (rotation entry %d of %zu)\n",
                               info->levelName.c_str(), info->gameMode.c_str(), info->size,
-                              info->first);
+                              rotation->current, rotation->entries.size());
                   serverGameMode = info->gameMode;
                   serverSize = info->size;
                   // The challenge number no longer goes here: it is in block 2, while
@@ -1905,7 +1915,8 @@ struct RemoteWorld {
               std::printf("  challenge event: %s, mod %s\n", parsed->challenge->challenge.c_str(),
                           parsed->challenge->modDirectory.c_str());
 
-              link.queue(obf2::net::bf2::challengeResponseEvent());
+              // No CD-key answer: the 73 bytes stay zero, as this client has always sent.
+              link.queue(obf2::net::bf2::challengeResponseEvent(obf2::net::bf2::ChallengeResponse{}));
               std::printf("  challenge reply sent\n");
               answered = true;
 

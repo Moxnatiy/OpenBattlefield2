@@ -1,5 +1,5 @@
 #pragma once
-// MD5 — needed for exactly one thing, the content check in BF2's protocol.
+// MD5 for BF2's content checks and GameSpy challenge response.
 //
 // The engine computes three hashes with it (`ChecksumContext`), and the server
 // compares them on connection. Our own rather than a library's: the algorithm is

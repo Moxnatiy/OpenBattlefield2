@@ -74,6 +74,7 @@ What the server sends, and what the original client does with it:
 | database acknowledged | 6, 3 `NEStartSimulation` | marks itself running, sets the connection type (0x4d621d); no answer | `simulationStarted` |
 | status | 0, 1 = status | `ClientGameLogic` stores it | `gameStatus`, logged |
 | round reset | 0, 6 | `ClientGameLogic::reset` | `resetRound()` |
+| revive | 0, 14 | `ClientGameLogic::handleEvent` reads the first two bytes as the revived soldier's network ID (0x4e1fed), resolves the object (0x4e1ffa), and calls its component's slot 0x4c if present (0x4e200c) | Clear the ragdoll and resume control for the local soldier. Use the matching controlled state when present. |
 | round reset | 6, 5 `NEReset` = highest network id | rewinds its ids, compares, answers 6, 5 (0x4d62ff) | answers 6, 5; `resetRound()` |
 | begin round | `BeginRoundEvent` (type 56): state 32, next tick 32 | `executeClient` | `beginRoundState`, logged |
 
@@ -643,6 +644,7 @@ The rest of that spawn packet names the kit, for every player's spawn alike:
 |---|---|---|
 | `CreateKitEvent` (31) | `deSerialize` 0x422b30 | template 32 bits (+0x10), network id 16 (+0x14), position 3 raw floats (+0x18), 4 bits (+0x24), 4 bits stored minus one (+0x28) — the last two purpose not established |
 | `HandlePickupEvent` (14) | `deSerialize` 0x428a60 | player 8 bits (+0x10), id 16 (+0x12), id 16 (+0x14) |
+| `HandleDropEvent` (13) | `BF2.exe` 0x53d680 | player 8 bits (+0xc), item or kit network ID 16 (+0xe), dropper network ID 16 (+0x10), position 3 raw floats (+0x14) |
 
 `HandlePickupEvent::executeClient` (0x428860) looks both ids up in the network
 manager and calls `GameLogic::handlePickup(object +0x12, player, object +0x14,
@@ -651,6 +653,66 @@ true)` (vtable 0x1d8). Measured on the live co-op server over 21 pickups: the
 heavy soldiers took AT, Support and Assault kits, light ones Medic, Engineer,
 Specops and Sniper, as the levels' `Init.con` pairs them. A soldier that spawned
 before we joined has no known kit until it spawns again.
+
+The drop handler resolves both object IDs and the player. If all three exist,
+`BF2.exe` 0x53d605..0x53d620 calls the game logic with the item first and the
+dropper third, then sets the item's position. OpenBF2 uses the kit creation,
+drop, and pickup events to track which kit is on the ground and which soldier
+is wearing it. The first-person inventory is rebuilt when the carried kit ID
+changes, including a swap between two instances of the same kit template.
+
+`BF2.exe` 0x690704..0x690718 registers `c_PIDrop` as action 34, which is bit
+26 in the wire button mask. Retail `Settings/Profiles/Default/Controls/Infantry.con`
+binds it to G with `c_CMNonRepetive`. OpenBF2 sends the action for a single tick
+and lets the retail dedicated server resolve the pickup. The ground mesh uses
+`geometry.dropGeom` from the kit's template (for example, `Kits/US/US_Medic.con`
+in `Objects_server.zip`). The controlled-soldier snapshot after pickup supplies
+ammunition for the selected weapon and identifies the kit instance.
+
+The retail protocol carries no per-weapon ammunition for a kit on the ground.
+The `KitNetworkable` vtable in `BF2.exe` is at 0x8c7040. `getNetUpdate` at
+0x635f60 returns success without writing bits. `setNetUpdate` at 0x4d2ab0
+returns without reading any. The kit creation and drop events carry the fields
+listed above. The kit template describes the loadout, while current ammunition
+comes from the controlled soldier's weapon snapshot.
+
+On FuShe Pass, two OpenBF2 clients swapped between MEC Spec Ops kits with the
+same template number (3116). Windows received kit 1025 on its existing
+soldier 1664 at tick 3944. The rifle had the donor's 19 rounds in the pickup
+tick. Selecting the pistol gave the donor's 12 rounds at tick 4556.
+Windows reloaded the rifle, then macOS picked up kit 1025 at tick 6332 and
+received 30 rifle rounds and four magazines, including the one loaded.
+
+In a separate two-client run on the FuShe Pass retail LAN server, the donor
+dropped kit 1025 with 21 rifle rounds. The packet walks for ticks 33107–33432
+accounted for all 12,693 declared ghost records across the two captures.
+They contained zero kit state records, kit events, or controlled snapshots
+for kit 1025. At tick 33433, the receiving client's pickup event and
+controlled snapshot named kit 1025, and the snapshot reported 21 rifle rounds.
+
+On the FuShe Pass retail LAN server, the client sent the pickup action near
+kit 1473. The server's `HandlePickupEvent` assigned it to the local soldier
+1665 and the world removed the kit from the ground. In a separate medic run
+on the same server, the defibrillator revived bot 230 on its existing
+soldier 1593. The ordered event stream contained category 0, event 14 with
+that object ID in a two-byte payload.
+
+In a separate FuShe Pass run, OpenBF2 was the patient. The server sent 65
+controlled ragdoll updates for soldier 1665, then sent category 0, event 14
+with the same ID when an allied bot revived him. The server kept the
+controlled object assigned during man-down, and there was only one local
+`NEPlayerSpawned` in the capture. The revive packet at server tick 1807
+carried pose 2 and requested pose 2 (prone) with the ragdoll flag clear.
+The two-client FuShe Pass run confirmed the same handoff for soldier 1790
+at server tick 4901.
+OpenBF2 starts in that pose when a live controlled state is delayed. An
+observed soldier leaves the ragdoll on the same frame and uses the prone
+branch of `soldiers/Common/Animations/AnimationSystem3p.inc` until fresh
+pose data arrives. After the revive, control updates for
+1665 advanced from action 1760 to 1935, with 102 updates carrying movement
+input and 1.723 m of horizontal movement measured from server positions.
+`test_session` also covers the resume path when the local session has
+already cleared its spawned flag.
 
 ### Our own soldier is moved by the client, not by the server
 
@@ -812,7 +874,12 @@ player was running:
 40.21s  forward 0                 stopped
 ```
 
-So **the third axis is forward movement**, and full movement is exactly 99.
+These older infantry fixtures contain forward 99; this is not a protocol
+full-scale limit. `PlayerAction::set` above maps unit input to 100. The Retail
+1.50 FAAV capture `build/retail-captures/pixel7-fushe-drive-20261118-224627/server.pcap`
+contains throttle/yaw +100/+100 at action 2837 and throttle -100 at 2873.
+The later infantry measurements and FAAV audit are recorded in
+`docs/retail-1.50-gameplay-parity.md`.
 **The fifth and sixth** twitch slightly all the time between −169 and 169 — that
 is the mouse. **The button mask: bit 5 (value 32) is sprint.** The other three
 axes never once departed from zero in the whole dump, so we do not name them.
@@ -1343,7 +1410,30 @@ running dry is **not established**.
 
 ### The replay
 
-The controlled-object state ends with the prediction component: 0x5b9860 calls
+The controlled-object state ends with the prediction component. For a controlled
+soldier, the networkable state is followed by a 10-bit bit count and the
+`Player::getStateSync` payload. This payload starts with four flags (hit,
+giving resupply, giving ability, repairing), the 8-bit squad invite mask, and
+two optional bytes for hit direction and camera shake. Each of the three
+weapon slots starts with a presence bit. An active slot carries camera,
+flags and fire rate (two bits each), rounds plus one (11 bits), and magazine
+count plus one (10 bits). A heat-capable weapon adds a byte. Infantry uses
+slot zero. The final 45 bits carry the spawn timer, man-down flag, signed
+health byte, and three player flags.
+
+The client uses drops in the controlled infantry's health for the local impact
+cue. A lethal health snapshot, a local victim event, or `NEPlayerDead` can
+trigger the death cue. The client plays it once until the soldier is revived
+or respawns. Weapon selection travels with the following release action so a
+retail server repeating the last action during a gap has a release to repeat.
+
+The controlled soldier's `0x20000` field carries the shared ability meter used
+by the medikit, ammo bag and wrench. The client uses the server's health and
+ability values and applies the ammo snapshot to the named kit and weapon after
+pending local weapon actions have been acknowledged. The retail server runs the
+healing, resupply and repair effects.
+
+At 0x5b9860 the engine also calls
 `(*DAT_0099e348→+0xc)→+0x10(stream, control id, counter, …, 1/30)`, which is
 `FUN_004d4b30`:
 
@@ -1857,6 +1947,185 @@ networkables one after another, each reading its own mask (as above).
 particular vehicle; the wheel springs and the engine (`EngineNetworkable` mask
 0x327, `SpringNetworkable`) are unread. The tail passes by the record's length.
 
+### Shared networkables (22 November 2026)
+
+`BF2.exe` 0x6aaa10 (NetworkManager.cpp, "PCO of template … is not
+networkable") builds a control object's descriptor. Walk 0x6a8970 pushes
+`{template vtbl+0x10 (class id), object}` for every object whose vtbl+0xd4
+answers, depth first (children `+0xec`, siblings `+0x2c`, skipping child
+control objects, interface 0xc4c5); 0x6a8700 is a plain `push_back`. Then the
+entries are **grouped**: for each entry (unless it answers interface 0x94c1
+with `+0x28` set, or its networkable info's vtbl+0x3c is true and it is not
+the root and has `+0x28`), when its info's vtbl+0x34 is false it is compared
+with the first entry of each group so far by FUN_006a5e20, joins the first
+group that matches, else opens a new group. Only a group's first object is
+sent; the others take its state.
+
+FUN_006a5e20(a, b) matches when:
+
+| test | where |
+|---|---|
+| same template (`object +0x14`) | 0x6a5e2a |
+| or: same class id, or one 0x947d and the other 0x9472 (the ids at 0x91c200 / 0x91c1dc), and a's template answers IsA 0x947d (vtbl+0x4c), and all of: | 0x6a5e44 |
+| byte `template +0x298` equal | 0x6a5e8e; property **not mapped** |
+| `+0x28c` equal (0x4be0d0) | inputToYaw (Linux getInputToYaw, 0x254) |
+| `+0x290` equal (0x63cb20) | inputToPitch (Linux 0x258) |
+| `+0x294` equal (0x63cb30) | inputToRoll (Linux 0x25c) |
+| Vec3 `+0x238`, `+0x22c`, `+0x250`, `+0x268` equal (0x53c200) | +0x250 is the rate limit read for mask 0x8 (maxSpeed); +0x268 is acceleration (Linux setAcceleration, +0x230). +0x22c / +0x238 are taken as min/maxRotation, **not mapped** to their setters |
+
+**Checked against the game data** (`Objects_server.zip`, the `.tweak` of each):
+every measured missing bundle has the same inputTo*, min/maxRotation,
+maxSpeed and acceleration as an earlier sibling, and the first bundle does
+not: M1A2 `Barrel_Base` = `Hud_Spring` (PIMouseLookY, 0/−25/0..0/5/0, 0/30/0,
+0/400/0), T90 `hud_Spring` = `Barrel_Base` (0/−20/0..), FAAV `nav_LF` =
+`nav_RF` (PIYaw, −30..30, 1/0/0, 100/0/0); the turrets (PIMouseLookX) differ.
+`game::vehicleDescriptorMembers` keeps such a bundle as `sharing` on its
+group's member; the view turns it by that member's angles. The +0x298 byte
+and the 0x94c1 / vtbl+0x34 / vtbl+0x3c conditions are not modelled
+(docs/debt.md).
+
+**M1A2 driver, measured** (`work/wheels/m1a2-6`, bits after Hud_Spring): the
+third member is `USTNK_M1A2_Engine` — mask 0x7FF, a **2-bit** gear (the
+template sets no gear count; `EngineTemplate::EngineTemplate`, Linux
+0x632538, stores 1 at +0x448), three 16-bit 0x7FFF and three 12-bit 0x7FF
+(both zero), the two 0x200 flags: 99 bits. Driver barrel pitch with the
+mouse after the change: `work/wheels/pitch-2/fp-down.png`, `fp-up.png`.
+
+**On screen, 23 November** (`OBF2_TRACE_WHEELS=1`, two Mac clients on
+`bf2-qa2`, `work/wheels/observe-12`): the observer draws the driven FAAV's two
+front wheels (x +0.73 and −0.73) from the same bundle, 1, at the same angle
+throughout: 0 → +29.9 with steering right, −30.0 with steering left, then
+reversing right and left. Two other parked vehicles (objects 1837 and 1840, front wheels at
+x ±0.95; type not checked) also map both front wheels to one bundle. When the driver lets go of the steering, the angle
+drops from ±30 to 0 in one line, while it climbs to ±30 over several (a
+rate). The drop is in the data, not ours: `JEEP_FAAV_nav_RF` sets
+`snapToZeroOnNoInput 1` (and `setAutomaticReset 1`).
+`RotationalBundleTemplate::makeScript` (Linux 0x588720) writes that flag from
+template byte +0x261 (+0x260 is `setAutomaticReset`, +0x262
+`setUseDeAcceleration`). `RotationalBundle::calculateAndClipAngle` (0x585a40)
+then sets the axis angle (+0x240) to 0 when the axis input (+0x258) is under
+0.05 toward the angle's side. The server runs this and sends the 0; the observer
+draws the networked angle. The one thing left open is whether `BF2.exe`
+smooths a remote bundle's networked angle between records (debt row
+"vehicles", interpolation).
+
+On the default `rot-use-old` path (1, Linux 0x5854b0) `setAutomaticReset`
+does not reset: it makes the input a position. The target is input ×
+maxRotation (+0x200) instead of input × maxSpeed (+0x218), and the angle
+itself moves toward it at |acceleration| (+0x230) per second, |deceleration|
+(+0x23c) going down with `setUseDeAcceleration`, without velocity or continuous
+rotation. The clip then takes the maximum when above it, else the minimum
+when below; with both zero only an angle above 180 wraps by −360.
+`rememberExcessInput` (+0x266, 17 aircraft control surfaces such as
+`AIR_F35B_ElevatorR`, all with `setAutomaticReset`): the axis input is added
+to a store at bundle +0x264, held to ±40; this tick's input is the store held
+to ±1 and the rest stays, so a large or released input keeps driving the
+surface over later ticks. An input against the stored sign empties the store
+and is used raw; with the flag off the store is emptied every tick.
+`stepRotationalBundle` (`rotational_bundle.cpp`) does all three flags.
+
+**Wing** (23 November): `WingTemplate` has class id 0x9483
+(`CID_WingTemplate`, Linux .rodata 0xc7d06c; RotationalBundle 0x947d at
+0xc7d07c, Camera 0x9472). A Wing has no networkable of its own. Its vtable
+takes `RotationalBundle::initNetworkableComp`, `handlePlayerInput` and
+`preHandlePlayerInput`, so it is sent as a rotational bundle and stepped by the
+same `calculateAndClipAngle`. In the grouping (FUN_006a5e20 above) two Wings
+compare their rotation settings (same class id; a Wing IsA RotationalBundle),
+but a Wing and a RotationalBundle never do. `object_info --descriptor air_f35b`:
+FlapL, FlapR, engine (RotationalBundle), ElevatorR (+ElevatorL), RudderR
+(+RudderL), JetEngine, then a GenericFireArm stops the cut; 46 bits with every
+mask clear. **Not measured on the wire**: no aircraft record has been traced. The vehicle we
+drive steps each steered joint's bundle on our key input at the 1/30 tick
+(`world_view.cpp`), in place of an eased lerp that had no source. Measured on
+the driver (`observe-13`, "(ours)" trace lines): both FAAV front wheels move
+3.3 per tick to ±30 and drop to 0 on release, the server's numbers above.
+
+
+### Engine and Spring networkables (22 November 2026)
+
+Read from the Linux 1.5 server (named symbols); the client cuts them in
+`readDescriptorMembers` (`src/net/src/bf2_events.cpp`), the member list comes
+from `game::vehicleDescriptorMembers`.
+
+`EngineNetworkable::setNetUpdate` (Linux 0x5c9bd0, REA dossier
+`linux-EngineNetworkable-setNetUpdate.json`): an **11-bit** mask, then
+
+| mask | bits | value |
+|---|---|---|
+| 0x1 | — | nothing read |
+| 0x2 | ranged: smallest n with 2^n − 1 ≥ gears + 1 (template +0x448, the gear count `getGearRatio` 0x630ee0 bounds) | gear |
+| 0x4, 0x8, 0x10 | 16 each | 2u/65535 − 1 (under 3.05e-5 is 0) × max(\|t+0x1fc\|, \|t+0x208\|) or (\|t+0x1f4\|, \|t+0x200\|) × 1.25 |
+| 0x20, 0x40, 0x80 | 12 each | 2u/4095 − 1 (under 4.88e-4 is 0) × 1.25 |
+| 0x100 | 16 | only when `getEngineType()` (vtbl+0x358) & 0x20 |
+| 0x200 | 1 + 1 | two flags |
+| 0x400 | 1, 16, 8, 1, 2 | only when `getEngineType()` bit 7 |
+
+Where each lands on the EngineBase, and how ours keeps it:
+`engine-sound.md`, "Where a ghost's rpm comes from" (0x20 is the rpm
+`EngineSound` reads). `readEngineNetworkable` decodes every field.
+
+Engine types (`operator<<(EngineType)`, Linux 0x630fa0; the template's
+`setEngineType`): Plane 0x1, Car 0x2, Tank 0x6, Ship 0x9, Rocket 0x11, Torpedo
+0x19, Helicopter 0x21, NewCar 0x42, NewTank 0x46, NewCar2 0xc2. The writer
+(`getNetUpdate` 0x5cab90) tests the same type before 0x100 and 0x400. The FAAV
+(NewCar2) sends mask 0x327 with no 0x100 field, as the type says.
+
+`SpringNetworkable::setNetUpdate` (Linux 0x5e0080): **1 bit**; when set, two
+`readHighCompressedVector` at precision 0.002 (0xb6db18), then, when the
+networkable's +0x74 is set, one bit and on 1 a 16-bit value (2u/65535 − 1)
+stored at the spring's +0x26c. +0x74 is set by `reset` (0x5dfa20) when the
+spring's engine (`Spring::getEngine`, vtbl+0x300 → 0x63b740) has type bit 7 and
+the object at +0x90 answers vtbl+0x100 & 8; that second slot is **not named**.
+
+23 November (REA dossiers `linux-SpringNetworkable-reset.json`,
+`linux-SpringNetworkable-updateStateMask.json`,
+`linux-SpringTemplate-setPhysicsNodeComponent.json`):
+
+* The spring object's **+0x88** is its physics node, a `PhysicsSpring`
+  (`SpringTemplate::setPhysicsNodeComponent` 0x63bd80 creates it, 0x278 bytes,
+  and attaches it as component 0xc422). `updateStateMask` (0x5dfe80) records
+  the node's +0x25c/+0x260/+0x264 vector each tick, and the extra field's
+  value is the node's **+0x26c**.
+* The same test (+0x74, then +0x90's vtbl+0x100 & 8) is repeated every tick in
+  `updateStateMask` and in `getNetUpdate`/`setNetUpdate`. A clear test sends 0.
+* **+0x90 is still not named.** It is not a `world::Object` (slot 0x100 there is
+  `setRotationSecondary`), an `ObjectTemplate` (`setPhysicsNodeComponent`) or a
+  `PhysicsSpring` (`setPositionalFriction`): none of them returns flags at
+  0x100. The only other code that makes the call is `PhysicsSpring::updatePhysics`
+  (0x638c60).
+
+Per-vehicle layouts, from `object_info <mod> --descriptor <vehicle>` (bits
+with every mask clear: rotational 7, engine 11, spring 1):
+
+| vehicle | driver descriptor | mask-only bits | measured |
+|---|---|---|---|
+| USJEP_HMMWV | SteeringWheel, Engine (NewCar2, 3-bit gear, 0x400), nav_RF (+nav_LF), Spring ×4 | 29 | **29**: a parked Karkand Humvee, 113 records of 114 (tails above) |
+| jep_vodnik | the same as the Humvee | 29 | not measured |
+| JEEP_FAAV | SteeringWheel, Engine, Spring ×2, nav_RF (+nav_LF), Spring ×2 | 29 | **29** (`observe-5`) |
+| USAPC_LAV25 | Turret, BarrelBase, then `USAPC_LAV25_Barrel` (GenericFireArm) | — | the record continues: tails of 90 bits and up |
+| apc_btr90 | Turret, BarrelBase, then the barrel's GenericFireArm | — | not measured |
+
+The LAV-25 and BTR-90 stop where the cut stops: the turret's firearm
+networkable is not read. The LAV-25's tree after it still has the TOW tube,
+hud_Spring, smoke launcher, Engine with four nav bundles and six springs, four
+passenger gun bases, a Wing (rudder) and a second Engine (water). The Humvee's
+tree ends with `Car_horn` (GenericFireArm, the driver's seat). The measured 29
+bits leave no room for it, so either it has no networkable or the descriptor
+leaves it out. **Not established.**
+
+**Measured on the FAAV** (two Mac clients on `bf2-qa2`,
+`work/wheels/faav-12`, `observe-5`): the root group's ghost record after the
+SimpleObject tail is SteeringWheel (bundle), Engine, Spring, Spring, **one**
+steering bundle, Spring, Spring, and nothing else: a parked FAAV is 29 bits
+(7 + 11 + 4 × 1 + 7), and every parsed record ends on its last bit. So
+`JEEP_FAAV_nav_LF` has no networkable on the wire although its template sets
+`BasicInfo`: it shares nav_RF's (below, "Shared networkables"). The bundle that is sent swings its yaw
+0 → +30 → −30 with the driver's steering, and the steering wheel's roll ±60.
+A ghost cut that does not end on the record's last bit falls back to the
+leading rotational bundles, so other vehicles keep what they had. The
+controlled record continues past the descriptor and keeps the rotational
+prefix only.
+
 **The tails, measured** (`openbf2 --connect … --trace-tails <id>` prints every record's bits
 after the head, `GhostRecord::tail`; Karkand's Humvee 1841, jeep 1824, T90 1830, LAV 1832):
 
@@ -2006,8 +2275,7 @@ While looking, `ServerGameLogic::uPlayingSpawning` (Linux 0x4ab5a0) turned out t
 hold a third check the notes above missed: when the group is missing or
 `group->vtable+0x58(isAI)` refuses, the server clears the player's group
 (`setSpawnGroup(0)`, 0x4ab66a) and sends that player `PostRemoteEvent(6, 6)` —
-`NESelectSpawnGroup` without data, "choose again" (0x4ab696). We do nothing with
-it yet; it did not occur in these runs.
+`NESelectSpawnGroup` without data, "choose again" (0x4ab696). It did not occur in these runs; it is handled now (below).
 
 ## A flag's group is never a run-time one
 
@@ -2029,10 +2297,56 @@ the first is `group->vtable+0x58(false)`, the same "can a human spawn here" the
 spawn loop asks; the second `+0x9a` and the third `+0xa0`, purposes not
 established — and the packed position.
 
-Still not handled: when that check refuses later, the server clears the player's
-group and sends `NESelectSpawnGroup` without data (0x4ab66a / 0x4ab696); our join
-chain does not start again on it.
+When that check refuses later, the server clears the player's group and sends
+`NESelectSpawnGroup` without data (0x4ab66a / 0x4ab696). The client's answer
+(`GameClient::handleEvent` case 6, OpenBF2) is only `postEvent(ECGame, 7)` for the
+local player; no HUD listener of `ECGame 7` is reconstructed there
+(`BF2HudManager::handleGameEvent` takes 6, 8 and 11), so what the screen shows is
+not established. Ours reopens the join the way a round reset does
+(`JoinSequence::reopen`): our DONE had left it at `Done`, where a second DONE sent
+nothing — the player could not spawn at all.
 
+
+## The end of a round and the next map
+
+From OpenBF2 (`ServerGameLogic::endGame`, `GameServer::loadPath`,
+`GameServer::waitForClients`, `GameClient::handleDataBlock`,
+`EndOfRoundEvent.cpp`, `MapList.cpp`), checked against the live co-op server.
+
+1. **The round ends.** `EndOfRoundEvent` (48): three 32-bit numbers — the rounds
+   still to play on this map (`roundsPerMap - roundsPlayed - 1`), the winning team
+   and the victory type (`deSerialize`, Linux 0x8070a00). The client resets its free
+   camera, gives the winner and the type to the score manager and the rounds left
+   to the end-of-round movie. The game status goes to 2 (end of game) and block 8
+   (`EndOfRoundInfo`, compressed) follows: the movie's data and its delay. Live:
+   637 and 786 bytes.
+2. **About thirty seconds later the server loads the next map** (the same map
+   again when the rotation has one). `loadPath` sends every client its `MapInfo`
+   (block 2, `clientLoadLevel(-1)`), then `NEEndOfRoundGuard` (6, 20), and waits
+   up to ten seconds for each client to have it. **The client sends nothing for
+   the guard**: `PostRemoteEvent::eventReceivedByRemote` counts it on the server
+   as soon as the packet carrying it is acknowledged.
+3. **The client unloads and loads.** Live, two `MapInfo` come: the first with an
+   empty name — `handleDataBlock` case 2 takes that as the unload (`m_isRunning =
+   false`, `gameLogic->unload()`) — then the named one, with a new challenge
+   number. The client loads the level and answers `NELoadComplete` and its content
+   check, exactly as on joining; the server pushes the database again and the
+   round resets (`NEReset`) once more.
+
+Block 5 is the server's rotation (`MapList`): a u16 count, a u16 index of the map
+being played, then per entry a u16-length name, a u16-length mode and a u16 size,
+little-endian. It is sent once, at authentication (`GameServer::authOk`), with the
+server info. We had read its first entry as "the level", which only held because
+our server's rotation has one map; the level is block 2's.
+
+Ours: `RemoteWorld::leaveLevel` on a second `MapInfo` (the old level's objects,
+groups and soldier go — `WorldView::leaveLevel`; the players and squads are the
+connection's and stay), `loadServerLevel` on the named one, and the application
+ends the level's session and opens the next in the same window
+(`JoinSequence::restartForLevel`). Live: an `admin.runNextLevel` during our load
+and the server's own change after a round — both rejoined, both spawned. The
+current client presents a shared results screen until the round reset or map unload.
+See [multiplayer round results and match controls](phase-5-multiplayer.md).
 
 ## Leaving the server
 

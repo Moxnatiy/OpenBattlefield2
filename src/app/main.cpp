@@ -1372,7 +1372,7 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
               static_cast<std::uint32_t>(remote->world.ownPlayer()));
           if (self != remote->world.players().end()) {
             hudManager.localSquad(static_cast<int>(self->second.squad.value_or(0)),
-                                  self->second.squadLeader.value_or(false));
+                                  self->second.squadLeader);
           }
           // The map's live icons: our team's living players where their object is,
           // and the server's vehicles and strategic objects where they are.
@@ -1395,7 +1395,7 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
               live.yaw = object->second.yaw.value_or(0.0f);
               live.team = player.team;
               live.squad = static_cast<int>(player.squad.value_or(0));
-              live.leader = player.squadLeader.value_or(false);
+              live.leader = player.squadLeader;
               live.commander = player.commander.value_or(false);
               live.local = static_cast<int>(id) == ownId;
               // A teammate the map puts in the sea is a position gone stale: said
@@ -1428,7 +1428,7 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
               row.name = player.name;
               row.team = player.team;
               row.squad = static_cast<int>(player.squad.value_or(0));
-              row.leader = player.squadLeader.value_or(false);
+              row.leader = player.squadLeader;
               row.commander = player.commander.value_or(false);
               row.alive = player.alive.value_or(false);
               squads.players.push_back(std::move(row));

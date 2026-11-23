@@ -35,9 +35,11 @@
 #include <string_view>
 #include <deque>
 #include <functional>
+#include <map>
 #include <utility>
 #include <vector>
 
+#include "obf2/net/bf2_events.h"
 #include "obf2/net/bf2_protocol.h"
 #include "obf2/net/bitstream.h"
 
@@ -85,6 +87,18 @@ class Link {
   ExtendedHeader pingHeader() const;
   // Whether the send window has room for another data packet.
   bool canSend() const;
+
+  // The server's event blocks, executed in their order (`GameEventManager::
+  // processReceivedPacket`): a block waits until every block before it has come,
+  // then it and the ones waiting behind it are handed back, oldest first. A block
+  // already handed back, or already waiting, is dropped — the original would
+  // take a repeat for an error, but a repeat does happen when the server's answer
+  // about our acknowledgement is lost [CHOSEN, not recovered]: a block up to 16
+  // behind the next expected is taken for such a repeat.
+  std::vector<std::vector<Event>> receiveBlock(unsigned index, std::vector<Event> events);
+  int blocksHeldBack() const { return static_cast<int>(pending_.size()); }
+  int blocksRepeated() const { return blocksRepeated_; }
+  int blocksOutOfOrder() const { return blocksOutOfOrder_; }
 
   // Queue an event for the next data packet.
   void queue(EventBits event) { sendQueue_.push_back(std::move(event)); }
@@ -140,6 +154,12 @@ class Link {
   int lastConfirmedBlock_ = 31;    // +0x84, "just before block zero"
   bool confirmed_[32] = {};        // +0xa4, a delivered block awaiting its turn
 
+  // The receiving side.
+  unsigned nextReceive_ = 0;                                   // +0x80
+  std::map<unsigned, std::vector<Event>> pending_;            // the parked blocks
+  int blocksRepeated_ = 0;
+  int blocksOutOfOrder_ = 0;
+
   int blocksSent_ = 0;
   int blocksResent_ = 0;
   int packetsLost_ = 0;
@@ -149,17 +169,34 @@ class Link {
 // are the ones `bf2_protocol.h` documents beside the old one-event writers).
 EventBits postRemoteEvent(std::uint32_t category, std::uint32_t number,
                           std::optional<std::int32_t> value = std::nullopt);
+EventBits voteEvent(const Vote& vote);
 EventBits connectionTypeEvent(std::uint32_t type);
 EventBits contentCheckEvent(const std::array<std::byte, 16>& misc,
                             const std::array<std::byte, 16>& archives,
                             const std::array<std::byte, 16>& level);
-EventBits challengeResponseEvent();
+EventBits challengeResponseEvent(const ChallengeResponse& response);
 EventBits dataBlockHeaderEvent(std::uint32_t blockType, std::uint32_t size);
 EventBits dataBlockChunkEvent(std::span<const std::byte> chunk);
+
 EventBits joinSquadEvent(int team, int player, int squad);
 EventBits leaveSquadEvent(int team, int player, int squad, bool clearInvite);
 EventBits changeSquadNameEvent(int team, int squad, int player, std::string_view name);
 EventBits setPrivateSquadEvent(int team, int squad, bool isPrivate);
+
+enum class CommanderAction { Accept = 0, Decline = 1, Resign = 2, Apply = 4, SoldierView = 6, OverheadView = 7, TopDown = 8 };
+enum class CommanderTool { Move, Attack, Defend, UAV, Scan, Artillery, Supplies, Vehicle };
+EventBits commanderEvent(CommanderAction action, int team, int player);
+EventBits commanderCameraEvent(Vec3f position);
+EventBits commanderToolEvent(CommanderTool tool, int team, int squad, Vec3f target);
+
+inline constexpr std::size_t kMaxChatBytes = 243;
+std::vector<EventBits> chatEvents(ChatChannel channel, unsigned sender, std::string_view text);
+EventBits radioCallEvent(const RadioCall& call);
+EventBits spotEvent(unsigned spotter, unsigned target, unsigned team, Vec3f point, unsigned hudEvent = 43);
+EventBits inviteSquadEvent(unsigned team, unsigned player, unsigned squad, bool invited);
+EventBits squadOrderEvent(const SquadOrder& order);
+EventBits orderResponseEvent(const OrderResponse& response);
+EventBits commanderOrderReplyEvent(unsigned squad, unsigned team, bool accepted);
 
 // One data packet as `ClientConnection::transmitMsgs` lays it out: the header,
 // the action stream (or its absence bit), the event section from the link, the

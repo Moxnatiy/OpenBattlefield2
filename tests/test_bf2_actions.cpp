@@ -164,8 +164,43 @@ static void testAxisQuantization() {
   CHECK(std::abs(axisFromWire(-169) + 1.69f) < 1e-5f);
 }
 
+static void testForwardThrottleQuantization() {
+  CHECK_EQ(throttleToWire(1.0f, true), std::int16_t(100));
+  CHECK_EQ(throttleToWire(0.5f, true), std::int16_t(50));
+  CHECK_EQ(throttleToWire(0.0f, true), std::int16_t(0));
+  CHECK_EQ(throttleToWire(-1.0f, true), std::int16_t(-99));
+  CHECK_EQ(throttleToWire(1.0f, false), std::int16_t(100));
+  CHECK_EQ(throttleToWire(-1.0f, false), std::int16_t(-100));
+  CHECK_EQ(throttleToWire(0.5f, false), std::int16_t(50));
+  CHECK_EQ(throttleToWire(-0.5f, false), std::int16_t(-50));
+  CHECK_EQ(axisToWire(1.0f), kVehicleAxisFull);
+  CHECK_EQ(axisToWire(-1.0f), -kVehicleAxisFull);
+}
+
+// Retail FAAV capture pixel7-fushe-drive-20261118-224627: action 2837 is
+// throttle/yaw +100/+100; action 2873 is throttle -100, yaw zero.
+static void testVehicleFullAxes() {
+  ExtendedHeader header;
+  PlayerActions stream;
+  stream.tick = 2837;
+  PlayerAction turn;
+  turn.axes[kAxisThrottle] = throttleToWire(1.0f, false);
+  turn.axes[kAxisYaw] = kVehicleAxisFull;
+  PlayerAction brake;
+  brake.axes[kAxisThrottle] = throttleToWire(-1.0f, false);
+  stream.actions = {turn, brake};
+  const auto read = readPlayerActions(writePlayerActions(1, header, stream));
+  CHECK(read && read->actions.size() == 2);
+  if (!read || read->actions.size() != 2) return;
+  CHECK_EQ(read->actions[0].axes[kAxisThrottle], std::int16_t(100));
+  CHECK_EQ(read->actions[0].axes[kAxisYaw], std::int16_t(100));
+  CHECK_EQ(read->actions[1].axes[kAxisThrottle], std::int16_t(-100));
+}
+
 TEST_MAIN({
   testAxisQuantization();
+  testForwardThrottleQuantization();
+  testVehicleFullAxes();
   testRoundTrip();
   testNegativeAxes();
   testPacketWithoutActions();

@@ -45,6 +45,7 @@
 // into `+0x50` / `+0x54` of the game object by 0x6a5f60.
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 
 #include "obf2/core/math.h"
@@ -59,9 +60,14 @@ inline constexpr float kGhostTickMs = 1000.0f / 30.0f;   // 0x5b9ee0: tick * 0.0
 struct GhostSample {
   float timeMs = 0.0f;
   Vec3f position;
-  std::optional<Vec3f> velocity;  // a soldier's own (0x80); a simple object has none
+  std::optional<Vec3f> velocity;
   float bodyYaw = 0.0f;           // a soldier's 0x2 + 0x4 (soldier_state.h)
   float pitch = 0.0f;
+  float aimYaw = 0.0f;            // a soldier's 0x4 alone, for the spine (third_person_look.h)
+  std::optional<std::array<float, 4>> rotation;
+  std::uint32_t stance = 0;
+  bool hasPosition = true;
+  bool hasRotation = true;
 };
 
 enum class GhostPrediction {
@@ -74,16 +80,22 @@ struct GhostPose {
   Vec3f position;
   float bodyYaw = 0.0f;
   float pitch = 0.0f;
+  float aimYaw = 0.0f;
+  std::optional<std::array<float, 4>> rotation;
+  std::uint32_t stance = 0;
   GhostPrediction mode = GhostPrediction::Newest;
 };
 
+std::array<float, 4> interpolateGhostRotation(const std::array<float, 4>& a,
+                                              const std::array<float, 4>& b, float fraction);
+
 class GhostTrack {
  public:
-  static constexpr std::size_t kSlots = 4;
+  static constexpr std::size_t kSlots = 4;  // the ring of four updates (see above)
 
   // A new slot at `timeMs`, starting as a copy of the newest; the caller then
   // writes what the record carried.
-  GhostSample& push(float timeMs);
+  GhostSample& push(float timeMs, bool hasPosition = true, bool hasRotation = true);
 
   std::size_t count() const { return count_; }
   const GhostSample* newest() const;
