@@ -51,6 +51,10 @@ obf2_add_test(test_hud_combat_area obf2_hud obf2_texture)
 obf2_add_test(test_hud_bottom_left obf2_hud)
 obf2_add_test(test_hud_map_node obf2_hud)
 obf2_add_test(test_collision obf2_server obf2_mesh)
+obf2_add_test(test_collision_bsp obf2_mesh obf2_vfs)
+# A real mesh from the user's installation; without one it says so and passes.
+target_compile_definitions(test_collision_bsp PRIVATE
+  OBF2_GAME_FILES="${CMAKE_SOURCE_DIR}/Game Files")
 obf2_add_test(test_gameplay obf2_server)
 obf2_add_test(test_anim_system obf2_anim)
 obf2_add_test(test_camera_spring obf2_anim)
