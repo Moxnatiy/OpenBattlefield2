@@ -34,7 +34,11 @@ class CollisionLibrary {
 
   // The soldier's layers of a template's tree, each placed in the root's space.
   // Empty when the tree has none. The reference stays valid for the library's life.
-  const std::vector<CollisionPiece>& soldierPieces(const std::string& templateName);
+  const std::vector<CollisionPiece>& soldierPieces(const std::string& templateName) {
+    return pieces(templateName, mesh::ColType::Soldier);
+  }
+  // The same walk for another lod (`ColType`).
+  const std::vector<CollisionPiece>& pieces(const std::string& templateName, mesh::ColType type);
 
   // A template's collision mesh by its `collisionMesh` name, searched beside the
   // file the template was created in; nullptr when there is none.
@@ -42,16 +46,19 @@ class CollisionLibrary {
 
  private:
   void walkChildren(const game::ObjectTemplate& parent, const Mat4& parentTransform,
-                    const mesh::CollisionMesh& mesh, std::vector<CollisionPiece>& out, int depth);
+                    const mesh::CollisionMesh& mesh, mesh::ColType type,
+                    std::vector<CollisionPiece>& out, int depth);
 
   FileSystem& files_;
   const game::Registry& registry_;
   std::unordered_map<std::string, std::unique_ptr<mesh::CollisionMesh>> meshes_;
-  std::unordered_map<std::string, std::vector<CollisionPiece>> pieces_;
+  std::unordered_map<std::string, std::vector<CollisionPiece>> pieces_[4];  // by ColType
 };
 
-// The level's placed objects in one grid: every piece of every object's tree.
+// The level's placed objects in one grid: every piece of every object's tree,
+// the soldier's lod unless another is asked for.
 std::unique_ptr<CollisionWorld> buildCollisionWorld(CollisionLibrary& library,
-                                                    const std::vector<level::StaticObject>& objects);
+                                                    const std::vector<level::StaticObject>& objects,
+                                                    mesh::ColType type = mesh::ColType::Soldier);
 
 }  // namespace obf2::server

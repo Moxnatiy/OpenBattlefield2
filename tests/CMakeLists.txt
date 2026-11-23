@@ -64,7 +64,7 @@ obf2_add_test(test_hud_help_messages obf2_hud)
 obf2_add_test(test_hud_chat obf2_hud)
 obf2_add_test(test_hud_strategic_objects obf2_hud obf2_mesh)
 obf2_add_test(test_collision obf2_server obf2_mesh)
-obf2_add_test(test_collision_bsp obf2_mesh obf2_vfs)
+obf2_add_test(test_collision_bsp obf2_server obf2_mesh obf2_vfs)
 # A real mesh from the user's installation; without one it says so and passes.
 target_compile_definitions(test_collision_bsp PRIVATE
   OBF2_GAME_FILES="${CMAKE_SOURCE_DIR}/Game Files")
