@@ -43,6 +43,8 @@ struct ScoreboardPlayer {
   // Which of the kit's icons it is has not been established, so it stays empty.
   std::string kitIcon;
   double timeConnected = 0.0;  // `getTimeConnected`, the sort's last key
+  // We do not play his voice (the manage page's column 4).
+  bool muted = false;
 };
 
 class Scoreboard {
@@ -77,6 +79,15 @@ class Scoreboard {
   // The row and column a click hit in a list, and the player id in that row's
   // hidden column 10 (`getSelectedPlayer`); -1 when none.
   int playerAt(int data, int row) const;
+  // The manage page's kick-vote columns 7 and 8: whether the server takes votes
+  // (`ServerSettings` voting), whether a kick is for our own team only
+  // (`TeamVoteOnly`, +0x367), and the player an open kick vote is about (+0x20,
+  // 0x7a3b26; -1 for none).
+  void setVoting(bool enabled, bool teamOnly, int kickTarget) {
+    votingEnabled_ = enabled;
+    teamVoteOnly_ = teamOnly;
+    kickTarget_ = kickTarget;
+  }
 
  private:
   void fillTeam(ListData& list, const std::vector<ScoreboardPlayer>& players, int team);
@@ -105,6 +116,9 @@ class Scoreboard {
   int revision_ = 0;
   std::string lastKey_;
   int page_ = 0;
+  bool votingEnabled_ = false;
+  bool teamVoteOnly_ = true;  // +0x367's initial 1
+  int kickTarget_ = -1;
   std::function<std::string(int team, int squad)> squadNames_;
   std::function<std::string(std::string_view key)> text_;
 };

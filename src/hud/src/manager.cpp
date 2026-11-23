@@ -355,9 +355,6 @@ void Manager::bindCommands(engine::Console& console) {
     std::printf("  scoreboard: tab %d\n", tab);
   });
   console.bind("sound.playSound", [](const con::Command&) {});
-  // `HudScoreboard::singleClick` (OpenBF2): only the manage page answers — column
-  // 4 mutes a player's voice, 7 and 8 start a kick vote. We have neither voice nor
-  // the vote manager, so both are said rather than done.
   // The map vote (OpenBF2 Menu/HudVoteMap.cpp). `setVoteMapShow 1` opens the
   // list only while the vote manager takes part in voting; with voting off on the
   // server it refuses, as the original's does. With it on, the vote itself (the
@@ -383,17 +380,19 @@ void Manager::bindCommands(engine::Console& console) {
     std::printf("  NOT DONE: %s favourite server (GeneralSettings' favourites are not kept)\n",
                 command.argInt(0).value_or(0) != 0 ? "add" : "remove");
   });
+  // A press on a scoreboard list's row (`setListNodeConCmd 1 "Scoreboard.singleClick
+  // <side>"`, HudElementsScoreboard.con; `HudScoreboard::singleClick`, OpenBF2).
+  // Only the manage page answers: column 4 is the player's voice, 7 and 8 the kick
+  // vote (0x7a3bae..0x7a3e5b). The row's player is in its hidden column 10.
   console.bind("Scoreboard.singleClick", [this](const con::Command& command) {
     const int side = command.argInt(0).value_or(2);
     if (scoreboard_.page() != 2) return;
     const int player = scoreboard_.playerAt(side, lastListHit_.row);
     if (player < 0) return;
-    if (lastListHit_.column == 4) {
-      std::printf("  NOT DONE: scoreboard — mute player %d (VoipPlayerMuteEvent, no voice yet)\n",
-                  player);
-    } else if (lastListHit_.column > 6 && lastListHit_.column <= 8) {
-      std::printf("  NOT DONE: scoreboard — kick vote on player %d (no vote manager yet)\n",
-                  player);
+    if (lastListHit_.column == 4 && hooks_.toggleMute) {
+      hooks_.toggleMute(player);
+    } else if ((lastListHit_.column == 7 || lastListHit_.column == 8) && hooks_.kickVote) {
+      hooks_.kickVote(player, lastListHit_.column);
     }
   });
 
@@ -1003,6 +1002,10 @@ void Manager::liveMap(const std::vector<LivePlayer>& players, const std::vector<
   appendAssets(context_.mapMarkers);
   dirty_ = true;
   spawnDirty_ = true;
+}
+
+void Manager::scoreboardVoting(bool enabled, bool teamOnly, int kickTarget) {
+  scoreboard_.setVoting(enabled, teamOnly, kickTarget);
 }
 
 void Manager::scoreboardRightClick() {

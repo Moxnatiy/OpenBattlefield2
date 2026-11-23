@@ -747,7 +747,160 @@ static void testRoundResetAndDisconnect() {
 #endif
 }
 
+// Votes (`VoteEvent`) and the mute (`VoipPlayerMuteEvent` 38,
+// docs/functions/voip-mute.md): what goes out, and what an answer changes.
+static void testVotesAndMute() {
+  using namespace net::bf2;
+  FileSystem files;
+  session::RemoteWorld match({}, files);
+  match.socket = net::UdpSocket::connect("127.0.0.1", 14567);
+  CHECK(match.socket);
+  if (!match.socket) return;
+  match.databaseSentAt = std::chrono::steady_clock::now();
+  match.world.setOwnConnection(7);
+  Event player, target, bot;
+  player.player = CreatePlayer{2, 0, 7, 177, false, "Local"};
+  target.player = CreatePlayer{2, 0, 8, 178, false, "Designated"};
+  bot.player = CreatePlayer{2, 0, 9, 179, true, "Bot"};
+  match.world.feedEvents({player, target, bot});
+
+  CHECK_EQ(match.communicate("vote kick Designated", {}, {}), "Voting is disabled on this server.");
+  match.serverMatchOptions = ServerMatchOptions{true, true, true, false, 0, 0, 0};
+  CHECK_EQ(match.communicate("vote kick Local", {}, {}), "Choose an eligible player by ID or name.");
+  CHECK_EQ(match.communicate("vote kick Bot", {}, {}), "Choose an eligible player by ID or name.");
+  CHECK_EQ(match.communicate("vote kick Designated", {}, {}), "Vote requested.");
+  auto events = readEvents(writeDataPacket(7, match.link, nullptr));
+  CHECK(events.size() == 1 && events[0].vote && events[0].vote->item == 8 &&
+        events[0].vote->type == VoteKick && events[0].vote->status == VoteIssue &&
+        events[0].vote->caster == 7);
+
+  match.receiveVote(Vote{.item = 0, .caster = 8, .status = VoteIssue, .type = VoteMap});
+  CHECK_EQ(match.communicate("vote map no", {}, {}), "Ballot sent.");
+  events = readEvents(writeDataPacket(7, match.link, nullptr));
+  CHECK(events.size() == 1 && events[0].vote && events[0].vote->type == VoteMap &&
+        events[0].vote->option == 1 && events[0].vote->status == VoteUpdate);
+  match.receiveVote(Vote{.item = 0, .status = VotePassed, .type = VoteMap});
+  CHECK(!match.mapVote);
+
+  // The mute: ours only, kept by id and name, and sent as {flag, us, him}.
+  CHECK(!match.toggleMute(7));
+  CHECK(match.toggleMute(8));
+  CHECK(match.muted(8));
+  events = readEvents(writeDataPacket(7, match.link, nullptr));
+  CHECK(events.size() == 1 && events[0].type == 38);
+  CHECK(!match.toggleMute(8));
+  CHECK(!match.muted(8));
+}
+
+// A commander order to our squad: accepting adopts it as the squad's order and
+// answers the commander; declining answers alone.
+static void testCommanderOrderAcceptAndDecline() {
+  using namespace obf2::net::bf2;
+  FileSystem files;
+  session::RemoteWorld match({}, files);
+  match.socket = net::UdpSocket::connect("127.0.0.1", 14567);
+  CHECK(match.socket);
+  if (!match.socket) return;
+  match.databaseSentAt = std::chrono::steady_clock::now();
+  match.world.setOwnConnection(7);
+  Event player;
+  player.player = CreatePlayer{2, 0, 7, 177, false, "Leader"};
+  match.world.feedEvents({player});
+
+  // The player's ghost: squad 3, its leader.
+  std::array<std::byte, 64> packet{};
+  net::BitWriter writer(packet);
+  writer.writeBits(static_cast<unsigned>(PacketKind::Data), 4);
+  for (unsigned width : {8u, 6u, 6u, 32u, kStreamFramingBits}) writer.writeBits(0, width);
+  writer.writeBits(0, 1);  // actions
+  writer.writeBits(0, 1);  // events
+  writer.writeBits(1, 1);  // ghosts
+  writer.writeBits(10, 32);
+  writer.writeBits(1, 8);  // record count
+  writer.writeBits(0, 1);  // controlled object
+  writer.writeBits(1, 2);  // update
+  writer.writeBits(177, 16);
+  writer.writeBits(0, 1);  // baseline
+  writer.writeBits(kPlayerMaskBits + 7, kGhostLengthBits);
+  writer.writeBits(0x2000, kPlayerMaskBits);
+  writer.writeBits(3, 5);  // squad
+  writer.writeBits(1, 1);  // squad leader
+  writer.writeBits(0, 1);
+  match.world.feedGhosts(std::span(packet).first(writer.byteSize()));
+  CHECK_EQ(match.world.players().at(7).squad.value_or(0), 3u);
+  CHECK(match.world.players().at(7).squadLeader);
+
+  Event event;
+  event.squadOrder = SquadOrder{3, 2, 5, 0, {{{19, 0, -23}, {}, {}}}, OrderRoute::Commander, false};
+  match.world.feedEvents({event});
+  CHECK_EQ(match.world.ownOrders().size(), std::size_t{1});
+  CHECK_EQ(match.communicate("accept", {}, {}), std::string("Order acceptance sent."));
+  const auto accepted = readEvents(writeDataPacket(7, match.link, nullptr));
+  CHECK_EQ(accepted.size(), std::size_t{3});
+  if (accepted.size() == 3) {
+    CHECK(accepted[0].squadOrder && accepted[0].squadOrder->route == OrderRoute::Squad);
+    CHECK(accepted[0].squadOrder && accepted[0].squadOrder->accepted);
+    CHECK_EQ(accepted[1].type, 50u);
+    CHECK(accepted[2].orderResponse && !accepted[2].orderResponse->accepted);
+  }
+
+  match.world.feedEvents({event});
+  CHECK_EQ(match.communicate("decline", {}, {}), std::string("Order declined."));
+  const auto declined = readEvents(writeDataPacket(7, match.link, nullptr));
+  CHECK_EQ(declined.size(), std::size_t{2});
+  if (declined.size() == 2) {
+    CHECK_EQ(declined[0].type, 50u);
+    CHECK(declined[1].orderResponse && !declined[1].orderResponse->accepted);
+  }
+}
+
+// A squad's support request approved by the commander waits for the server's
+// dispatch (HUD event 83, the supply drop) before the squad is answered.
+static void testCommanderSupportWaitsForServerDispatch() {
+  using namespace net::bf2;
+  FileSystem files;
+  session::RemoteWorld match({}, files);
+  match.commanderEnabled = true;
+  match.world.setOwnConnection(7);
+  Event player, assignment, order;
+  player.player = CreatePlayer{2, 0, 7, 177, false, "Commander"};
+  assignment.commanderAssignment = Event::CommanderAssignment{2, 7};
+  order.squadOrder = SquadOrder{3, 2, 3, 0, {{{19, 0, -23}, {}, {}}}, OrderRoute::Request, true};
+  match.world.feedEvents({player, assignment, order});
+  CHECK(match.isCommander());
+  CHECK_EQ(match.world.commanderRequests().size(), std::size_t{1});
+  CHECK_EQ(match.commanderRespond(3, 3, true), "Asset requested. Waiting for the server to confirm dispatch.");
+  CHECK(match.pendingSupport);
+  CHECK(match.commanderEffects.empty());
+  const auto dispatch = readEvents(writeDataPacket(7, match.link, nullptr));
+  CHECK_EQ(dispatch.size(), std::size_t{1});
+  if (!dispatch.empty()) CHECK_EQ(dispatch[0].type, 37u);
+
+  RemoteEvent confirmed;
+  confirmed.category = 2;
+  confirmed.number = 83;
+  for (const float value : {19.0f, 100.0f, -23.0f}) {
+    const auto word = std::bit_cast<std::uint32_t>(value);
+    for (unsigned shift = 0; shift < 32; shift += 8) confirmed.data.push_back(static_cast<std::uint8_t>(word >> shift));
+  }
+  match.receiveCommanderHud(confirmed);
+  CHECK(!match.pendingSupport);
+  CHECK_EQ(match.commanderEffects.size(), std::size_t{1});
+  CHECK(!match.commanderAssetReady(CommanderTool::Supplies));
+  const auto reply = readEvents(writeDataPacket(7, match.link, nullptr));
+  CHECK(std::ranges::any_of(reply, [](const auto& event) {
+    return event.orderResponse && event.orderResponse->route == OrderRoute::Request &&
+           !event.orderResponse->accepted && event.orderResponse->id == 3;
+  }));
+  assignment.commanderAssignment->player = -1;
+  match.world.feedEvents({assignment});
+  CHECK(!match.isCommander());
+}
+
 TEST_MAIN({
+  testVotesAndMute();
+  testCommanderOrderAcceptAndDecline();
+  testCommanderSupportWaitsForServerDispatch();
   testNearestKnownMatchesOnlyWhatIsClose();
   testEveryDrawStageIsNamed();
   testSettingsDefaults();

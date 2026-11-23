@@ -289,7 +289,55 @@ static void testPlacement() {
   CHECK(near(score->y, std::floor(96.0f + 6.0f) - 2.0f));
 }
 
+// The manage page: column 4 is another player's voice box, 7 and 8 the kick vote,
+// and the hidden column 10 gives the row's player back to a click.
+static void testManagePage() {
+  hud::Scoreboard board;
+  board.setPage(2);
+  hud::ScoreboardPlayer me = player(3, "me", 1, 12);
+  hud::ScoreboardPlayer other = player(5, "other", 1, 8);
+  other.muted = true;
+  const auto rowOf = [&](const hud::ListData& list, int index) {
+    for (int row = 0; row < list.rows(); ++row) {
+      if (board.playerAt(2, row) == index) return row;
+    }
+    return -1;
+  };
+  const auto cell = [](const hud::ListData& list, int column, int row) {
+    return list.columns()[static_cast<std::size_t>(column)].cells[static_cast<std::size_t>(row)];
+  };
+
+  // Voting off: no kick column; our own row has no voice box.
+  board.update({me, other}, 3, kLabel);
+  const hud::ListData* list = board.list(2);
+  CHECK(list != nullptr);
+  if (list == nullptr) return;
+  const int mine = rowOf(*list, 3), theirs = rowOf(*list, 5);
+  CHECK(mine >= 0 && theirs >= 0);
+  if (mine < 0 || theirs < 0) return;
+  CHECK(cell(*list, 4, mine).texture.empty());
+  CHECK_EQ(cell(*list, 4, theirs).texture, std::string("Ingame/Scoreboard/Icons/checkbox_voipMute.tga"));
+  CHECK(cell(*list, 7, theirs).texture.empty());
+
+  // Voting on, none open: the frame that starts one, on the other player only.
+  board.setVoting(true, true, -1);
+  other.muted = false;
+  board.update({me, other}, 3, kLabel);
+  list = board.list(2);
+  CHECK_EQ(cell(*list, 4, rowOf(*list, 5)).texture, std::string("Ingame/Scoreboard/Icons/checkbox_empty.tga"));
+  CHECK_EQ(cell(*list, 7, rowOf(*list, 5)).texture, std::string("Ingame/Scoreboard/Icons/kickvote_frame.tga"));
+  CHECK(cell(*list, 7, rowOf(*list, 3)).texture.empty());
+
+  // A kick vote open on him: yes and no.
+  board.setVoting(true, true, 5);
+  board.update({me, other}, 3, kLabel);
+  list = board.list(2);
+  CHECK_EQ(cell(*list, 7, rowOf(*list, 5)).texture, std::string("Ingame/Scoreboard/Icons/kickvote_yes.tga"));
+  CHECK_EQ(cell(*list, 8, rowOf(*list, 5)).texture, std::string("Ingame/Scoreboard/Icons/kickvote_no.tga"));
+}
+
 TEST_MAIN({
+  testManagePage();
   testListNodeCommands();
   testColumns();
   testPlayerRow();

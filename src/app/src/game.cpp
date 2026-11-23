@@ -25,6 +25,8 @@
 #include "obf2/app/hosted_game.h"
 #include "obf2/app/loading_screen.h"
 #include "obf2/app/main_menu.h"
+#include "obf2/app/match_voice.h"
+#include "obf2/app/menu_music.h"
 #include "obf2/app/model_view.h"
 #include "obf2/app/render_context.h"
 #include "obf2/app/scene_build.h"
@@ -304,6 +306,11 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
   // texture resolver: the resolver asks it for the combat-area hatch, and it is
   // called from the frame loop, so neither may outlive the other.
   obf2::hud::Manager hudManager;
+  // The round's voice (match_voice.h). The frame loop updates it, so it lives at
+  // the session's level.
+  obf2::app::MatchVoice matchVoice;
+  // The radio messages' voice, one at a time (menu_music.h plays WAV and Ogg).
+  obf2::app::MenuMusic radioAudio;
   obf2::app::TextureCache textureCache(files);
   const auto cacheTexture = [&](const std::string& path) { return textureCache.cache(path); };
 
@@ -465,6 +472,19 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
     };
     hooks.spawnAtGroup = [&](int team, int kit, int group) {
       if (remote != nullptr) remote->askSpawnGroup(team, kit, group);
+    };
+    // The scoreboard's manage page: column 4 mutes (`VoipPlayerMuteEvent`,
+    // docs/functions/voip-mute.md), 7 and 8 vote a kick (`VoteEvent`).
+    hooks.toggleMute = [&](int player) {
+      if (remote == nullptr) return;
+      const bool now = remote->toggleMute(static_cast<std::uint32_t>(player));
+      std::printf("  scoreboard: player %d %s\n", player, now ? "muted" : "unmuted");
+    };
+    hooks.kickVote = [&](int player, int column) {
+      if (remote == nullptr) return;
+      const std::string answer = remote->scoreboardKick(static_cast<std::uint32_t>(player), column);
+      std::printf("  scoreboard: kick vote on player %d column %d: %s\n", player, column,
+                  answer.c_str());
     };
     if (args.hudRects) {
       // `--hud-rects`: the same format as in the original's frame dump. The bounds
@@ -795,6 +815,11 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
       remote->pump(1);
       while (remote->pump(0)) {
       }
+      // The round's voice: B and V held (match_voice.h), only while the window
+      // has the keyboard and no text is being typed.
+      matchVoice.update(*remote, device->isKeyDown("IDKey_B"), device->isKeyDown("IDKey_V"),
+                        !device->editingTextField() &&
+                            (SDL_GetWindowFlags(device->window()) & SDL_WINDOW_INPUT_FOCUS) != 0);
       // `--group <n>`: spawn without the screen. The spawn screen is a debt of its
       // own (it builds empty on some rounds), and without a soldier the client
       // sends the server nothing at all — which is a different measurement from
@@ -1533,10 +1558,16 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
         }
         // The scoreboard's rows, from whoever keeps the players in this mode.
         if (remote != nullptr) {
-          hudManager.scoreboardPlayers(
-              obf2::app::scoreboardPlayers(remote->world.players(), remote->world.ownPlayer(),
-                                           spawned),
-              remote->world.ownPlayer());
+          auto rows = obf2::app::scoreboardPlayers(remote->world.players(), remote->world.ownPlayer(),
+                                                   spawned);
+          for (auto& row : rows) row.muted = remote->muted(static_cast<std::uint32_t>(row.index));
+          // The kick-vote columns: the server's `voting` and `teamVoteOnly` match
+          // options, and the player an open kick vote is about.
+          const auto& options = remote->serverMatchOptions;
+          hudManager.scoreboardVoting(options && options->voting && !remote->endOfRound,
+                                      !options || options->teamVoteOnly,
+                                      remote->kickVote ? static_cast<int>(remote->kickVote->item) : -1);
+          hudManager.scoreboardPlayers(rows, remote->world.ownPlayer());
         } else if (hostedServer != nullptr && hostedClient != nullptr) {
           hudManager.scoreboardPlayers(obf2::app::scoreboardPlayers(hostedServer->players()),
                                        static_cast<int>(hostedClient->playerId()));
@@ -1666,7 +1697,18 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
           const float dt = std::chrono::duration<float>(now - lastAnimationTick).count();
           lastAnimationTick = now;
           // A live server's tickets, kills and chat (live_hud.h).
-          if (remote != nullptr) obf2::app::updateLiveHud(*remote, hudManager, dt);
+          if (remote != nullptr) {
+            obf2::app::updateLiveHud(*remote, hudManager, dt);
+            // The radio's voice (docs/functions/radio-commander-votes.md): the
+            // newest sample of the frame, unless the profile ignores radio audio
+            // (`chat.ignoreRadioAudio`). Its own volume in the sound's template is
+            // not read: it plays at the effects volume.
+            if (!remote->radioSamples.empty() && !engine.settings().chat.ignoreRadioAudio) {
+              radioAudio.open(files, remote->radioSamples.back(), engine.settings().audio.effectsVolume,
+                              false);
+            }
+            remote->radioSamples.clear();
+          }
           hudManager.animate(dt, yaw, eye);
         }
 
@@ -1847,6 +1889,7 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
   if (remote != nullptr) {
     std::printf("  game tick %u, newest packet tick %u at the end\n", remote->world.gameTick(),
                 remote->world.newestPacketTick());
+    matchVoice.stop(*remote);
   }
   worldView.report();
   menu.release(*renderer);

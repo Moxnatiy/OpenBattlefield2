@@ -68,9 +68,55 @@ is missing or when the player's slot `0x274` answers true (`0x451680`); what slo
 checked). Then `0x45169f` hands the audio, the stamp and the player on
 (`0x58dd90`, not opened).
 
+## The voice client (`app::MatchVoice`)
+
+The round's voice, once a frame from the session.
+
+**When it runs.** The relay is opened when all of these are in place:
+
+* the server's match options turn voice on and name the relay's port;
+* the server has given us a session id (`VoipSessionEvent`, 54);
+* we hold a player.
+
+When the voice starts it sends `VoipOnOffEvent` (35) with the player in 8 bits
+and "on" in 1 (`VoipOnOffEvent::serialize`, Linux 0x435090). It sends "off" when
+the voice stops.
+
+**The relay's address.** An address of 1 in the match options is taken as the
+game server's own host. That is inferred from live servers, not read in the
+binary.
+
+**The keys.** Both come from `mods/bf2/Settings/Controls.con`:
+
+* B, `c_GIVoipPushToTalk` (line 245), talks to the squad;
+* V, `c_GIVoipUseLeaderChannel` (line 239), takes a squad leader to the
+  commander on the first alternate set.
+
+Which set the commander himself talks on is not established. Ours talks on the
+default set.
+
+**Frames.** One per 20 ms, from 160 samples at 8000 Hz. The stamp counts frames
+from the voice's start.
+
+**Playback.**
+
+* Each speaker gets his own decoder and SDL stream.
+* A muted player's frames are dropped and his stream is closed (voip-mute.md).
+* Each frame stamps `RemoteWorld::noteVoice`, the talk mark on the map
+  (hud-map.md, kind 1).
+
+**Not measured** (ours):
+
+* the keep-alive's period, 2 s;
+* the 5 s after which a silent speaker loses his stream;
+* the per-frame budgets of 8 frames captured and 32 datagrams read;
+* the ten frames of queued playback past which a stream is cleared.
+
+Test: `test_match_voice`, two clients on a loopback relay.
+
 ## What is not here
 
-- Who opens the relay and when, the push-to-talk keys, the channel rules (who
-  may talk on which set), the capture device — the session's voice work.
-- The jitter handling on the receiving side (`0x58dd90`).
-- The muting event (`VoipPlayerMuteEvent`) and slot `0x274` above.
+- The channel rules on the server's side (who hears which set).
+- The jitter handling on the receiving side (`0x58dd90`). Ours drops a frame
+  older than the last one played.
+- Slot `0x274` above, and slot 0x510 of the mute (voip-mute.md).

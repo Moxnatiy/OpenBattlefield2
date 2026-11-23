@@ -261,7 +261,44 @@ struct RemoteWorld {
   std::set<std::uint32_t> seenBlocks;
   bool allowExternalViews = false;
   std::optional<net::bf2::ServerMatchOptions> serverMatchOptions;
+  std::optional<unsigned> voiceSession;
+  std::optional<net::bf2::Vote> mapVote, kickVote;
+  // The players whose voice we do not play (the scoreboard's manage page,
+  // column 4), by id with the name he had: kept across rounds, and a player id
+  // the server hands to someone new does not carry the mute over.
+  std::map<std::uint32_t, std::string> mutedPlayers;
+  bool muted(std::uint32_t player) const {
+    const auto found = mutedPlayers.find(player);
+    if (found == mutedPlayers.end()) return false;
+    const auto present = world.players().find(player);
+    return present != world.players().end() && present->second.name == found->second;
+  }
+  // Column 4's click: mute him, or unmute him. Returns whether he is now muted.
+  // We stop playing his voice, and tell the server so: `VoipPlayerMuteEvent`
+  // (38), docs/functions/voip-mute.md.
+  bool toggleMute(std::uint32_t player) {
+    const auto present = world.players().find(player);
+    const int own = world.ownPlayer();
+    if (present == world.players().end() || static_cast<int>(player) == own || player > 255) return false;
+    const bool mute = !muted(player);
+    if (mute) {
+      mutedPlayers[player] = present->second.name;
+    } else {
+      mutedPlayers.erase(player);
+    }
+    if (socket && own >= 0 && own <= 255) {
+      net::bf2::EventBits event;
+      event.put(38, net::bf2::kEventTypeBits).put(mute, 1).put(static_cast<unsigned>(own), 8).put(player, 8);
+      link.queue(std::move(event));
+    }
+    return mute;
+  }
+  std::chrono::steady_clock::time_point lastVoteIssued{};
   std::array<std::array<unsigned, 7>, 2> chosenUnlocks{};
+  void receiveVote(const net::bf2::Vote& vote);
+  std::string manageVote(std::string_view command);
+  // A click on the scoreboard's kick-vote column (7 or 8) of this player's row.
+  std::string scoreboardKick(std::uint32_t player, int column);
   std::size_t dataBytes = 0;
   bool answered = false;
   bool sentConnectionType = false;
@@ -404,6 +441,85 @@ struct RemoteWorld {
   // its spawners come from (`gamemodes/<mode>/<size>`).
   std::string serverGameMode;
   bool commanderEnabled = false;
+  bool commanderOffer = false;
+  std::optional<Vec3f> commanderViewTarget;
+  struct CommanderEffect {
+    net::bf2::CommanderTool tool;
+    Vec3f position;
+    std::uint32_t expires;
+    // The tick the event arrived on: the map's UAV circle counts its time
+    // from here (BF2.exe 0x77a0d0 zeroes +0xaac).
+    std::uint32_t start = 0;
+  };
+  struct PendingSupport {
+    net::bf2::SquadOrder request;
+    Vec3f position;
+    std::uint32_t expires;
+  };
+  std::vector<CommanderEffect> commanderEffects;
+  // The map node's timed marks on objects: the +0x9fc list, adder BF2.exe
+  // 0x781ff0 (docs/functions/hud-map.md, "Spot kinds"). An object holds one
+  // mark: the adder returns when the id is already listed. The flash timer
+  // counts down first, then the duration (0x77a900); the mark goes when both
+  // are spent. Kind 0 and 3 (spot reports) stay in `WorldView::visibleSpots`.
+  //   kind 1  a teammate's radio message (HUD event 60, posted by 0x440c00)
+  //   kind 2  an enemy under the UAV's sweeping beam (0x782710)
+  //   kind 4  a specialist call (HUD events 46..50, 0x782990 and 0x783440)
+  struct MapMark {
+    std::uint16_t object = 0;
+    int kind = 0;
+    std::uint32_t start = 0;  // the game tick it was added on
+    float duration = 0.0f;    // entry +0x14 and +0x1c
+    float flash = 0.0f;       // entry +0x18
+    std::string texture;      // entry +0x0; empty keeps the object's own icon
+  };
+  std::vector<MapMark> mapMarks;
+  void addMapMark(std::uint16_t object, int kind, float duration, float flash,
+                  std::string texture = {});
+  const MapMark* mapMarkOf(std::uint16_t object) const;
+  // The duration left over its whole, 1 while the flash timer runs: kind 2's
+  // alpha (0x77a9a0).
+  float mapMarkFade(const MapMark& mark) const;
+  void receiveSpecialistCall(const net::bf2::RemoteEvent& event);
+  // A voice frame from `player` arrived (app/match_voice.cpp):
+  // Player::setIsTalking(true) stamps the time.
+  void noteVoice(std::uint32_t player);
+  std::map<std::uint32_t, std::uint32_t> lastTalkTick;
+  // The map node's own per-frame state (BF2.exe; hud-map.md "Kind 2").
+  float mapSpin = 0.0f;       // +0xabc, zeroed by the constructor and by a UAV start
+  float mapSpinStep = 0.0f;   // +0xac4, this frame's dt × 4
+  struct SatelliteScan {
+    float active = 0.0f;      // +0xa84, getSatelliteScanActiveTime when started
+    float elapsed = 0.0f;     // +0xa88
+    float line = 0.0f;        // +0xa98
+    float previous = 0.0f;    // +0xa9c, the last line x a test used
+    float reload = 0.0f;      // +0xaa4
+    bool on = false;          // +0xa7d
+  } satelliteScan;
+  // +0x7c (medic/revive), +0x7d (ammo), +0x7e (repair): the local player's
+  // own call, until the next map draw.
+  bool ownCallMedic = false, ownCallAmmo = false, ownCallRepair = false;
+  // One map frame (the node update 0x77b280 and 0x772680, then the soldier and
+  // vehicle draws' adds, then 0x785200). `drawnWidth` is +0xb64, nullopt when
+  // no map is drawn; `worldSize` is GLSWorldSizeX. Returns how many times
+  // `HUD_Satellite_target` was asked for.
+  int stepMap(float dt, std::optional<float> drawnWidth, float worldSize);
+  std::array<std::uint32_t, 8> commanderReloadUntil{};
+  std::optional<float> vehicleDropRemaining;
+  std::optional<PendingSupport> pendingSupport;
+  bool commanderAssetReady(net::bf2::CommanderTool tool) const;
+  void receiveCommanderHud(const net::bf2::RemoteEvent& event);
+  void sendSupportReply(const net::bf2::SquadOrder& request, bool accepted);
+  std::string commanderRole(net::bf2::CommanderAction action);
+  std::string commanderTool(net::bf2::CommanderTool tool, Vec3f position, unsigned squad = 0);
+  std::string commanderRespond(unsigned squad, unsigned id, bool accept);
+  bool isCommander() const;
+  std::optional<Vec3f> commanderTarget(float u, float v) const;
+  std::optional<Vec3f> commanderCameraTarget() const;
+  std::optional<Vec3f> commanderCameraEye() const;
+  std::uint32_t commanderScanUntil = 0;
+  void resetCommanderState();
+  std::string setCommanderCamera(std::optional<Vec3f> target);
   bool teamSwitchRefused = false;
   std::string serverName;  // block 0's game name (`parseServerInfo`)
   std::vector<std::string> serverWelcome;
@@ -490,9 +606,12 @@ struct RemoteWorld {
   void resetRound() {
     endOfRound.reset();
     endOfRoundInfo.reset();
+    mapVote.reset();
+    kickVote.reset();
     world.clearSpots();
     world.clearSquadTactics();
     chats.clear();
+    radioSamples.clear();
     world.resetMotion();
     world.detonations().clear();
     controlledVehicleBaselines = {};
@@ -513,6 +632,7 @@ struct RemoteWorld {
     sent.clear();
     kitAsked = -1;
     spawnSelectionRejected = false;
+    resetCommanderState();
     join.reopen();
   }
 
@@ -553,6 +673,28 @@ struct RemoteWorld {
   // The chat strings the server sent, assembled; the application takes them.
   obf2::net::bf2::ChatAssembler chatStrings;
   std::vector<obf2::net::bf2::ChatString> chats;
+  struct RadioMessage {
+    std::string name, caption, sample, localSample;
+    int localFlags = 0;
+  };
+  std::vector<RadioMessage> radioMessages;
+  std::vector<std::string> radioSamples;
+  bool radioLoaded = false;
+  // `gamelogic.messages.addHelpMessage <name> <sample>`
+  // (Sound/VoiceMessages_Help.con), name in lower case (see helpVoiceName).
+  std::vector<std::pair<std::string, std::string>> helpVoices;
+  // The help voice-over's file, "" when the name is not listed. The folder is
+  // `common/sound/<GSLanguage>/` (0x4edb6c..0x4edc6c: the language setting,
+  // Engine::language), and `English` when
+  // `<language>/Help_VO/HUD_HELP_BATTLERECORDER_controlsQ.ogg` is missing
+  // (the file system's +0x38 at 0x4edc49; English at 0x4edc64). The data has
+  // Help_VO for English, French and German only (Common_client.zip).
+  std::string helpVoicePath(std::string_view name, const std::string& language);
+  void loadRadioMessages();
+  void receiveRadio(const net::bf2::RadioCall& call);
+  std::string communicate(std::string_view command, Vec3f eye, Vec3f direction,
+                          std::optional<Vec3f> selectedPoint = {});
+  void noteSquadEvent(const net::bf2::Event& event);
   int killCount = 0;
   // Results belong to the current round. The server controls when it resets.
   std::optional<obf2::net::bf2::Event::EndOfRound> endOfRound;
@@ -2350,8 +2492,10 @@ struct RemoteWorld {
           {
             const int before = world.positionUpdates();
             const int detonationsBefore = world.detonationCount();
+            const int oldTeam = world.ownTeam();
             world.feedEvents(packetEvents);
             world.feedGhosts(*more);
+            if (oldTeam > 0 && world.ownTeam() != oldTeam) resetCommanderState();
             if (const auto state = obf2::net::bf2::readControlObjectState(*more);
                 state && !state->isSoldier) {
               const auto header = obf2::net::bf2::readGhostHeader(*more);
@@ -2458,6 +2602,9 @@ struct RemoteWorld {
               }
               continue;
             }
+            noteSquadEvent(event);
+            if (event.vote) receiveVote(*event.vote);
+            if (event.voiceSession) voiceSession = event.voiceSession;
             // The HUD's medal case (BF2.exe 0x759e50, HUD event 0x27) shows an
             // award only when the event's player is the local one.
             if (event.medal && static_cast<int>(event.medal->player) == world.ownPlayer()) {
@@ -2466,6 +2613,7 @@ struct RemoteWorld {
             if (event.rank && event.rank->kind == 1 && static_cast<int>(event.rank->player) == world.ownPlayer()) {
               awardNotices.push_back({true, 0, 0, event.rank->rank});
             }
+            if (event.radioCall) receiveRadio(*event.radioCall);
             if (event.squadName) {
               std::printf("  squad named: team %u squad %u '%s' by player %u\n", event.squadName->team,
                           event.squadName->squad, event.squadName->name.c_str(),
@@ -2591,6 +2739,14 @@ struct RemoteWorld {
                               remote.value ? (" = " + std::to_string(*remote.value)).c_str() : "");
                 }
                 ++unhandledHudCount;
+                receiveCommanderHud(remote);
+                receiveSpecialistCall(remote);
+                // `ECHudHECommanderInvitation` (35, hudEventName): the server offers
+                // the command to the player its value names.
+                if (remote.number == 35) {
+                  commanderOffer = remote.value == world.ownPlayer();
+                  if (commanderOffer) std::printf("  COMMANDER: offer received\n");
+                }
                 continue;
               }
               if (remote.category != obf2::net::bf2::kNetworkCategory) {

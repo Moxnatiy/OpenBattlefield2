@@ -461,3 +461,117 @@ live owners (`ControlPointNetworkable` not read), destroyed icons.
 the dynamic spawn groups (192..255, the squads'): `CreateSpawnGroupEvent` carries
 no squad, only the group's ghost does, and until it came such a group was drawn as
 everyone's — a circle at some squad leader's feet that vanished a moment later.
+
+## Timed marks on objects (the +0x9fc list)
+
+**Spot kinds in the +0x9fc list.** The adder is 0x781ff0 (kind = argument 19;
+duration +0x14/+0x1c = argument 15; flash timer +0x18 = argument 18).
+* The spot report (case 0x2b) adds kind 0 for an enemy it knows: duration
+  +0xa2c = 12 s (0x781d98), flash 0. In 0x77a9a0 kind 0 only lets the enemy's
+  own icon draw (soldier or vehicle, coloured by vtbl +0xf0 = 0x7788b0 with
+  id 0xf), and it would blink while its flash timer runs. With a flash of 0
+  it is a steady 12 s. An enemy it doesn't know becomes kind 3 (above).
+* The adder returns when the id is already listed (except kind 3): the first
+  mark on an object wins. 0x77a900 counts the flash timer +0x18 down first and
+  the duration +0x14 only after it; the entry goes when both are spent and
+  +0x28 (duration below 0 at the add: permanent) is clear. The entry's +0x0 is
+  a texture: when set, vtbl +0xec (0x775720) puts it and the entry's size
+  (+0x8/+0xc, 16 × 16 when given as 0) on the object's icon.
+* **Kind 1, a teammate's radio message.** HUD event 60 has no enum name (the
+  registration 0x74e6xx..0x74e8e4 skips 53–56, 60 and 63). It is not sent by
+  the server: the client posts it itself. A radio message from a player reaches
+  0x4441d0 (from the `RadioMessageEvent` path 0x4c4f10 at 0x4c515b, and from
+  0x444640 at 0x444702), which passes channel message type 3 through 0x4424a0
+  to 0x440c00. Case 3 there, for a sender other than the local player whose
+  player vtbl +0xa0 object (the vehicle when seated) has a networkable, posts
+  (2, 0x3c) with that object's id (0x440cc9). The map's case 0x3c adds kind 1:
+  duration +0xa2c = 12 s, +0xa24/+0xa28, flash 0 (0x782c8a). 0x77a9a0 colours
+  it (1, 1, 0, 1) (0x97e170 → 0xa1cff8, 0x865a2f) while its flash runs or the
+  blink +0xa18 is on, at the node alpha, icon type 0x19. The soldier draw also
+  adds kind 1 (0x783b41, 12 s, flash 0) for a player with vtbl +0x278 true and
+  +0x274 false; the Linux `Player` vtable has `setVoipSessionId` and
+  `getIsMuted` near those slots: the VOIP speaker (below).
+* **Kind 2, swept by the commander's satellite or UAV.**
+  * Satellite (0x782580, from the soldier draw 0x783a48 and the vehicle draw
+    0x7846e4, while +0xa7d is on). HUD event 41 (case 0x29) starts the scan:
+    +0xa84 = `getSatelliteScanActiveTime` (vtbl +0x28c, 11 s), +0xa8c =
+    `getSatelliteScanVisibleTime` (+0x29c, 7 s), +0xaa4 =
+    `getSatelliteScanReloadTime` (+0x298, 16 s) (Linux GameLogic::GameLogic
+    0x47782b..0x477843). Each frame +0xa88 += dt and +0xa98 = (150 (+0xaa0,
+    0x78189a) + w) / 11 × +0xa88 (0x77272e), w = +0xb64, the map's drawn width
+    (0x784c7d). The line is at x = (+0xa98 / w − 0.5) × `GLSWorldSizeX`; an
+    object it has just passed (x − line < 0, |x − line| < this frame's step, 10
+    on the first) gets kind 2: duration 2 s, flash +0xa8c = 7 s, texture
+    +0xa94 = `mini_SatelliteObject.tga` (0x781785), and the sound
+    `HUD_Satellite_target`.
+  * UAV (0x782710, from 0x783a87 and 0x78471c). For each entry of +0xb3c (the
+    UAV, centre +0xab0, radius +0xad0; or a radar object, its radius) an object
+    within the radius whose map bearing atan2(Δu, Δv) (+2π below 0, 0x8ac48c)
+    is within +0xac4 of spin − +0xac4 gets kind 2: duration +0xaec = 0.5 s
+    (0x78195a), flash 0.3 s, and the sound. +0xac4 is this frame's spin step,
+    dt × 4 (0x77b2a1). The texture is +0x988 = `mini_Soldier.tga` (0x781579)
+    from the soldier draw and 0 (the object's own icon) from the vehicle draw.
+  * 0x77a9a0 draws kind 2 in table 0xa1cc28 at the local team: (1, 0, 0) for
+    both teams (0x97dfc0 and 0x97e150, copied at 0x8658a0), alpha = +0x14 /
+    +0x1c × node alpha, so full during the flash and fading over the duration;
+    icon type 0x18.
+* **Kind 4, a specialist call.** HUD events 46 `CallForMedic`, 47
+  `CallForAmmo`, 48 `CallForRepair`, 49 `CallForRevive`, 50
+  `AutoCallForRevive` (the enum registration, 0x74e83c..0x74e8e4). The client
+  sends a `SpottedEvent` with the number; the server posts it back as (2,
+  +0x24) with the 24-byte body from +0x10 (Linux SpottedEvent::executeServer
+  0x430321). The server sends 50 itself when a soldier goes down
+  (Soldier::handleMessage 0x54d2e9 → Game::callForSpecialist 0x4145f0). Case
+  0x2e..0x32 takes the caller's object from the first two bytes and its player;
+  only for the local team:
+  * Another player: when the local player's kit can answer (kit `Ability`
+    bytes 0 healing for 46/49/50, 2 ammo for 47, 1 repair for 48; Linux
+    AbilityGLCompTemplate +0x18/+0x19/+0x1a), or the node's +0x7f is set (who
+    sets it is not established), the caller gets kind 4 for 12 s (+0xa2c),
+    flash 0 (0x782def), texture vtbl +0x110 = 0x7730b0: +0x9b4 `mini_Medic`
+    (46), +0x9a8 `mini_Ammo` (47), +0x9ac `mini_Repair` (48), +0x9b0
+    `mini_Revive` (49, 50) (loader 0x7815f0..0x7816d1).
+  * The local player: sets +0x7c (46/49/50), +0x7d (47) or +0x7e (48). The
+    soldier draw then marks each drawn soldier whose kit has the matching
+    ability (0x783929, 0x783994, 0x7839ff): duration 0, flash +0xa2c = 12 s,
+    kind 4, `mini_Medic`, `mini_Repair` or `mini_Ammo`. The map draw clears
+    the three flags after each frame (0x785200).
+  * 0x77a9a0 leaves kind 4 its texture. The soldier draw gives an icon whose
+    texture is `mini_Medic`, `mini_Repair` or `mini_Ammo` 16 × 16 and a second
+    texture +0x9b8 `mini_MedicArrow` that takes the heading (0x783bc4).
+
+**Kinds 1, 2 and 4: ported, frame by frame.** `RemoteWorld::stepMap` is one
+map frame of the node, called from the frame loop (`app::stepMap`,
+map_hit_sound.h) with the frame's dt:
+* 0x77b280: +0xac4 = dt × 4, +0xabc += it, set to 0 past 2π. A UAV's start
+  zeroes it (0x77a0d0); so does our reset, standing in for the constructor
+  (0x7818e2). The UAV circle and the radar circles turn by it.
+* 0x772680: while +0xa88 < +0xa84 the scan time runs and +0xa98 = (150 + w)
+  / 11 × +0xa88; after, the reload +0xaa4 counts down and +0xa7d goes off.
+  HUD event 41 (case 0x29) starts a scan only once +0xaa4 is 0: +0xa84 = 11,
+  +0xaa4 = 16, +0xa88 = +0xa98 = +0xa9c = 0.
+* The soldier draw (0x783440), for each soldier on foot from the ghost
+  stream:
+  * An enemy gets 0x782580 (when the scan is on and a map is drawn) and
+    0x782710 (for each UAV and local radar object), with their own tests on
+    its current position. 0x782580 includes the +0xa9c quirk: each test
+    stores its line, so later objects in a frame see a step of 10 m.
+  * A teammate gets the local player's own-call marks (+0x7c/+0x7d/+0x7e)
+    and the VOIP mark: getIsTalking from `lastTalkTick` (stamped by
+    `noteVoice` on each voice frame, the `setIsTalking(true)` of Linux
+    0x494920) within 0.5 s, and not muted.
+* The vehicle draw (0x783f90): the same two sweeps for an enemy-occupied
+  vehicle, texture 0 from the UAV.
+* 0x785200: the own-call flags clear.
+* Every add asks for `HUD_Satellite_target` (`Sound/GameSounds.con`:
+  `Common/Sound/Hud/Satellite_target.wav`, volume 0.42), kept or not.
+  `stepMap` returns how many there were.
+
+Kind 1 from radio (`receiveRadio`, HUD event 60) and kind 4 from a teammate's
+call (`receiveSpecialistCall`) are added when their events come, as 0x782990
+does. Test: `test_map_marks`.
+
+**Not yet on screen.** The marks are kept and timed (`RemoteWorld::mapMarks`),
+but nothing draws them yet, and the frame loop does not call `stepMap` yet: the
+map's live contacts are a debt of their own (CLAUDE.md, "the control points'
+owners on `--connect`"), and they are what reads the marks.

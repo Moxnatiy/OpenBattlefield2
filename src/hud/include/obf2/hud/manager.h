@@ -55,6 +55,11 @@ class Manager {
     std::function<void(const SquadList::Action& action)> squadAction;
     // `openbf2.spawnAt <group>` — a spawn straight by the server's group number.
     std::function<void(int team, int kit, int group)> spawnAtGroup;
+    // The scoreboard's manage page (OpenBF2 `HudScoreboard::singleClick`):
+    // column 4 mutes or unmutes a player's voice; 7 and 8 start a kick vote on
+    // him, or cast yes / no on the one already open.
+    std::function<void(int player)> toggleMute;
+    std::function<void(int player, int column)> kickVote;
     // `--hud-rects`: every rectangle drawn, in the original frame dump's format.
     std::function<void(const char* where, const std::vector<DrawPiece>& pieces)> reportRects;
   };
@@ -152,6 +157,10 @@ class Manager {
   // with the scoreboard held, the right button switches the HUD to its mouse mode
   // (12) — "Right click to activate mouse" — and letting go of the key ends both.
   void scoreboardRightClick();
+  // Who the manage page's kick-vote columns are for: whether the server takes
+  // votes, whether a kick is for our own team only, and the player an open kick
+  // vote is about (-1 for none).
+  void scoreboardVoting(bool enabled, bool teamOnly, int kickTarget);
 
   // The map's live icons (OpenBF2 `Bf2MenuMapNode`): our team's living players
   // (`collectIconFamily783440`, `populatePlayerMapIcon`, `colorMapIcon`) and the

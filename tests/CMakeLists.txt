@@ -62,6 +62,7 @@ obf2_add_test(test_sound_envelope obf2_app)
 obf2_add_test(test_engine_sound obf2_app)
 obf2_add_test(test_infantry_sounds obf2_app)
 obf2_add_test(test_menu_music obf2_app)
+obf2_add_test(test_match_voice obf2_app)
 obf2_add_test(test_hud_combat_area obf2_hud obf2_texture)
 obf2_add_test(test_hud_bottom_left obf2_hud)
 obf2_add_test(test_hud_map_node obf2_hud)
@@ -94,6 +95,7 @@ target_compile_definitions(test_bf2_events PRIVATE
   OBF2_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")
 
 obf2_add_test(test_session obf2_session)
+obf2_add_test(test_map_marks obf2_session)
 obf2_add_test(test_bf2_world obf2_net)
 target_compile_definitions(test_bf2_world PRIVATE
   OBF2_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data")

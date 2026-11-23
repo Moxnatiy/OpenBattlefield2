@@ -39,6 +39,7 @@ add_library(obf2_app
   src/tinnitus_sound.cpp
   src/infantry_sounds.cpp
   src/menu_music.cpp
+  src/match_voice.cpp
 )
 add_library(obf2::app ALIAS obf2_app)
 if(TARGET obf2_video)
