@@ -80,6 +80,11 @@ struct PhysicsConstants {
   // 2*6/14.73 = 0.81 s.
   float jumpSpeed = 6.0f;
 
+  // BF2.exe 0x85afd0/0x85aff0/0x85b010, used by 0x61ded0.
+  float animationLandHeight = 1.0f;  // anim_startLandAtHeight
+  float animationLandSpeed = -0.5f; // anim_startLandAtSpeed
+  float animationJumpSpeed = 2.5f;  // anim_startJumpAtSpeed
+
   // `p-pos-damp` and `p-pos-damp-water`: `BF2.exe` registers them at 0x8607a0
   // (`PUSH 0x3f7d70a4`, 0.99) and 0x8607c0 (`PUSH 0x3f666666`, 0.9).
   // `SoldierPhysicsNode::updatePositionalPhysics` (Linux server 0x6f1de0)
