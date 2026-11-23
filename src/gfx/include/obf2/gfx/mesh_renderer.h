@@ -52,6 +52,14 @@ struct GpuMesh {
     // (docs/functions/blended-materials.md).
     bool alphaBlend = false;
     bool additiveBlend = false;
+    // A bundled `ColormapGloss` technique: the colour map's alpha is its gloss
+    // (`obf2::mesh::materialColorMapGloss`).
+    bool colorMapGloss = false;
+    // The level's water (`level::buildWater`): drawn by the water's own shader,
+    // `lightmap` its patch's light map (docs/functions/water.md).
+    bool water = false;
+    // A placed `objects/water/` mesh: drawn as water when its item is baked.
+    bool waterMesh = false;
     // Drawn as leaves: its own shader in the original, and its own two colours
     // (`obf2::mesh::markVegetationLeaves`).
     bool leaf = false;
@@ -157,6 +165,10 @@ class MeshRenderer {
   // atlas, which many placements share. The renderer keeps it and frees it with
   // itself; nullptr when the upload failed.
   SDL_GPUTexture* uploadSharedTexture(const texture::Texture& source);
+  // A volume texture or a cube map (`texture::Texture::isVolume`/`isCube`),
+  // kept and freed like `uploadSharedTexture`; nullptr for a flat one or on
+  // failure.
+  SDL_GPUTexture* uploadVolumeOrCube(const texture::Texture& source);
 
   // New pixels for a texture already on the card, its top level only, BGRA8,
   // width × height × 4 bytes. For a picture that changes every frame (the
@@ -310,6 +322,28 @@ class MeshRenderer {
   // only because a highlight depends on who is looking.
   void setCameraPosition(Vec3f position) { cameraPosition_ = position; }
 
+  // The water's clock, in seconds. `WaterCycleTime` is made of it every frame
+  // (`RendDX9.dll`, 0x100dc130): see `setWater`.
+  void setWaterTime(float seconds) { waterTime_ = seconds; }
+
+  // The level's water, as `RaShaderWaterBase.fx` takes it
+  // (`docs/functions/water.md`). The textures are the caller's: `volume` the
+  // 3D `WaterMap` (`common/textures/watervolume.dds`), `cube` the level's
+  // `CubeMap`; either may be null, and then the water is not drawn.
+  struct Water {
+    float color[3]{};              // renderer.waterColor
+    float specularColor[4]{};      // renderer.waterSpecularColor
+    float specularPower = 1.0f;    // renderer.waterSpecularPower
+    float scroll[2]{};             // renderer.waterScroll
+    float animSpeed = 10.0f;       // renderer.waterAnimSpeed
+    float alphaHeightMul = 0.0f;   // renderer.waterAlphaHeightMul
+    float alphaAdd = 0.32f;        // renderer.waterAlphaAdd
+    float height = 0.0f;           // the sea level, `WaterHeight`
+    SDL_GPUTexture* volume = nullptr;
+    SDL_GPUTexture* cube = nullptr;
+  };
+  void setWater(const Water& water) { water_ = water; }
+
   // The specular highlight: `Lightmanager.staticSpecularColor` as the level
   // writes it, and `StaticGloss`. Both were measured in a frame dump of the
   // original — the colour reaches the pixel stage whole and the gloss is the
@@ -403,6 +437,14 @@ class MeshRenderer {
   // The blended ranges' pipelines (`GpuMesh::Range::alphaBlend`), indexed
   // [skinned][additive]: the same shaders, no culling, no depth write.
   SDL_GPUGraphicsPipeline* blendedPipelines_[2][2] = {};
+  // `water_fragment` behind the vertex stage everything uses: both sides,
+  // blended SRCALPHA/INVSRCALPHA, no depth write (`RaShaderWaterBase.fx`,
+  // technique defaultShader: CullMode NONE, AlphaBlendEnable).
+  SDL_GPUGraphicsPipeline* waterPipeline_ = nullptr;
+  // Its samplers as the effect declares them: the water map and the cube
+  // LINEAR on all three filters and WRAP, the light map LINEAR and CLAMP.
+  SDL_GPUSampler* waterSampler_ = nullptr;
+  SDL_GPUSampler* waterLightmapSampler_ = nullptr;
   SDL_GPUGraphicsPipeline* overlayPipeline_ = nullptr;
   // The open upload batch: the command buffer every `upload` writes into, the
   // transfer buffers to free once it has been submitted, and how deep the nesting
@@ -437,6 +479,8 @@ class MeshRenderer {
   Vec3f sunDirection_{-0.26f, -0.80f, -0.54f};
   Color pointColor_{0.0f, 0.0f, 0.0f, 1.0f};
   std::vector<EffectLight> effectLights_;
+  float waterTime_ = 0.0f;
+  Water water_;
   Vec3f cameraPosition_{0.0f, 0.0f, 0.0f};
   Color staticSpecular_{0.65f, 0.60f, 0.52f, 1.0f};
   float staticGloss_ = 0.2f;

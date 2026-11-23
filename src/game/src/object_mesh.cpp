@@ -108,6 +108,7 @@ std::optional<mesh::RenderMesh> loadMesh(FileSystem& files, const std::string& p
   // Whether this mesh is vegetation is decided by its path, and by nothing
   // else — that is the engine's own test (`obf2::mesh::isVegetationPath`).
   mesh::markVegetationLeaves(*render, normalized);
+  mesh::markWaterMesh(*render, normalized);
 
   if (verbose) {
     std::printf("mesh: %s\n  version %u, geom %zu/%zu, lod %zu, vertices %zu, triangles %zu, "

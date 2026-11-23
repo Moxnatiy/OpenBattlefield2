@@ -5,8 +5,14 @@
 //   DXT5     999   DXT1     502   A4R4G4B4  337
 //   A8R8G8B8 251   DXT3     131   R5G6B5      9   + one 8-bit icon
 //
-// So there are no DX10 headers, no cube maps and no volume textures here —
-// which is exactly why the parser can stay small.
+// No DX10 headers. Two kinds are not flat pictures, and the water needs both
+// (`docs/functions/water.md`):
+//
+//   * a volume texture, one in the whole game:
+//     `Common_client.zip:Textures/watervolume.dds`, 256x256x8 R5G6B5 with nine
+//     mips (DDSCAPS2 0x200000) — the water's animated normals;
+//   * cube maps, every level's `Water/EnvMap.dds` and `Envmaps/EnvMap0.dds`,
+//     128x128 DXT1 with all six faces (DDSCAPS2 0xfe00) — what it reflects.
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -31,7 +37,8 @@ struct MipLevel {
   std::uint32_t width = 0;
   std::uint32_t height = 0;
   std::size_t offset = 0;  // offset into Texture::data
-  std::size_t size = 0;
+  std::size_t size = 0;    // all of the level's slices
+  std::uint32_t depth = 1; // slices: more than one only in a volume texture
 };
 
 struct Texture {
@@ -40,6 +47,18 @@ struct Texture {
   std::uint32_t height = 0;
   std::vector<MipLevel> mips;   // mips[0] is the full size
   std::vector<std::byte> data;  // every level, back to back
+
+  // A volume texture's slices at the top level; 1 for a flat one.
+  std::uint32_t depth = 1;
+  // 6 for a cube map, 1 otherwise. A DDS cube holds its faces one after the
+  // other in the order +X, -X, +Y, -Y, +Z, -Z, each with its whole mip chain,
+  // so `mips` describes face 0 and face f's level l starts at
+  // `f * faceSize + mips[l].offset`.
+  std::uint32_t faces = 1;
+  std::size_t faceSize = 0;
+
+  bool isVolume() const { return depth > 1; }
+  bool isCube() const { return faces == 6; }
 
   bool isCompressed() const {
     return format == Format::Bc1 || format == Format::Bc2 || format == Format::Bc3;

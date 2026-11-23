@@ -431,26 +431,6 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
         return float4(albedo.rgb * tint, albedo.a * -in.material.y);
     }
 
-    // Leaves, fences, grates: the shape is cut out of the base map's alpha.
-    // The technique switches it on per material (`AlphaTestEnable = <AlphaTest>`,
-    // `Shaders_client.zip:RaShaderSTM.fx:583`) and the line under it sets the
-    // reference: `AlphaRef = 127`, with the author's own note that it is there
-    // because the setting it should come from does not work. 127 of 255.
-    //
-    // It is the **base** map's alpha, before the detail is multiplied in: with
-    // `_ALPHATEST_` the shader keeps `totalDiffuse.a` and only scales it by
-    // Transparency, while without it the alpha is thrown away and the detail's
-    // becomes gloss instead (`RaShaderSTM.fx:282`).
-    //
-    // A bundled mesh's own shader (`BundledMesh.fx`, a weapon, a vehicle) sets
-    // `AlphaRef = 0` with `AlphaFunc = GREATER` in every technique (lines 430, 483,
-    // 506, 679, 710): a pixel is cut only where its alpha is zero. The material's
-    // number tells the two apart: `1 + reference` — 1 for a bundled one.
-    if (in.material.w > 0.5) {
-        const float reference = in.material.w - 1.0;
-        if (reference < 0.001 ? albedo.a < 0.5 / 255.0 : albedo.a < reference) discard_fragment();
-    }
-
     // A road is two textures, not one. The template names both and a factor to
     // mix them by, and the shader mixes them exactly that way
     // (`Shaders_client.zip:Road.fx:73`):
@@ -487,11 +467,39 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
     // and is not alpha-tested, it **is** the gloss the specular is scaled by
     // (`RaShaderSTM.fx:283`, `gloss = detail.a`) — the same channel the alpha
     // test would otherwise have used.
-    float gloss = in.staticSpecular.w;
+    //
+    // A bundled `ColormapGloss` technique keeps its gloss in the colour map's
+    // own alpha instead (`Shaders_client.zip:RaShaderBM.fx`); roadParams.y −1
+    // marks one.
+    const bool colorMapGloss = in.roadParams.y < -0.5;
+    float gloss = colorMapGloss ? albedo.a : in.staticSpecular.w;
     if (in.material.x > 0.5) {
         const float4 detailSample = detail.sample(detailSampler, in.uv2);
         albedo *= detailSample;
         if (in.material.w < 0.5) gloss = detailSample.a;
+    }
+
+    // Leaves, fences, grates: the shape is cut out of the diffuse's alpha.
+    // The technique switches it on per material (`AlphaTestEnable = <AlphaTest>`,
+    // `Shaders_client.zip:RaShaderSTM.fx:583`) and the line under it sets the
+    // reference: `AlphaRef = 127`, with the author's own note that it is there
+    // because the setting it should come from does not work. 127 of 255.
+    //
+    // It is the **composite** diffuse's alpha, the detail multiplied in:
+    // `getCompositeDiffuse` scales the base alpha by the detail's
+    // (`RaShaderSTM.fx:278–287`). The stock wire fence has an opaque base atlas
+    // and its holes only in the detail.
+    //
+    // A bundled mesh's own shader (`BundledMesh.fx`, a weapon, a vehicle) sets
+    // `AlphaRef = 0` with `AlphaFunc = GREATER` in every technique (lines 430, 483,
+    // 506, 679, 710): a pixel is kept only where its alpha is above the
+    // reference. The material's number tells the two apart: `1 + reference` —
+    // 1 for a bundled one. With `ColormapGloss` the alpha is the gloss, and
+    // RaShaderBM's DOT3 test takes the coverage from the diffuse's colour.
+    if (in.material.w > 0.5) {
+        const float reference = in.material.w - 1.0;
+        const float coverage = colorMapGloss ? dot(albedo.rgb, float3(1.0)) : albedo.a;
+        if (reference < 0.001 ? coverage < 0.5 / 255.0 : coverage <= reference) discard_fragment();
     }
 
     // The two channels after the detail, in the order `getCompositeDiffuse`
@@ -947,6 +955,77 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
     return float4(color, in.material.y > 0.5 ? albedo.a * in.vertexAlpha :
                          (in.roadParams.y > 0.5 ? albedo.a : 1.0));
 }
+
+// The water: `Shaders_client.zip:RaShaderWaterBase.fx` as `RaShaderWater3D.fx`
+// and `RaShaderWaterHighEnd3D.fx` compile it (USE_SPECULAR, PIXEL_CAMSPACE,
+// USE_3DTEXTURE; USE_FRESNEL off), which is what `waterQuality` 2, 3 and 4 pick
+// (`RendDX9.dll`, 0x100da870). Its notes are `docs/functions/water.md`.
+struct WaterConstants {
+    // `WaterColor`: renderer.waterColor, and in w the alpha bias the renderer
+    // makes of waterAlphaHeightMul and waterAlphaAdd (0x100d9c30).
+    float4 color;
+    // `SpecularColor`: renderer.waterSpecularColor, its w a strength.
+    float4 specular;
+    // xy `WaterScroll`, z `WaterCycleTime`, w `SpecularPower`.
+    float4 scroll;
+};
+
+fragment float4 water_fragment(VertexOut in [[stage_in]],
+                               texture2d<float> waterLightmap [[texture(0)]],
+                               texture3d<float> waterMap [[texture(1)]],
+                               texturecube<float> cubeMap [[texture(2)]],
+                               sampler waterLightmapSampler [[sampler(0)]],
+                               sampler waterMapSampler [[sampler(1)]],
+                               sampler cubeMapSampler [[sampler(2)]],
+                               constant WaterConstants& water [[buffer(0)]]) {
+    // The patch's light map over the cell, LightMapOffset (1, 1, 0, 0)
+    // (0x100dca60): red is how opaque the water is, green how lit. A water
+    // mesh (`objects/water/`) brings its placement's window into the level's
+    // object atlas instead, on its last UV set (`lmtex * LightMapOffset.xy +
+    // LightMapOffset.zw`; 0x100fbab0 copies the instance's offset).
+    float2 lightmapUv = in.uv;
+    if (in.lightmapOffset.x > 0.0) {
+        lightmapUv = in.uvLightmap * in.lightmapOffset.xy + in.lightmapOffset.zw;
+    }
+    const float4 lightmap = waterLightmap.sample(waterLightmapSampler, lightmapUv);
+
+    // waterVertexShader, USE_3DTEXTURE. Linear in the world position, so it is
+    // the same per pixel as interpolated from the vertices.
+    float3 tex;
+    tex.xy = in.worldPosition.xz / float2(29.13, 31.81);
+    tex.xy += water.scroll.xy * water.scroll.z;
+    tex.z = water.scroll.z * 10.0 + (tex.x * 0.7 + tex.y * 1.13);
+
+    // `Water`: the normal is the map's as it is, not normalised and not in
+    // tangent space.
+    const float3 tn = waterMap.sample(waterMapSampler, tex).rgb * 2.0 - 1.0;
+    const float3 lookup = in.worldPosition - in.cameraPosition.xyz;
+    const float3 reflection = reflect(lookup, tn);
+    const float3 envcol = cubeMap.sample(cubeMapSampler, reflection).rgb;
+
+    // `Lights[0].dir` is the way the light travels, as our sunDirection is.
+    float specular = saturate(dot(-in.sunDirection.xyz, normalize(reflection)));
+    specular = pow(specular, water.scroll.w) * water.specular.w;
+
+    // SHADOW_FACTOR 0.75, COLOR_ENVMAP_RATIO 0.4. USE_SHADOWS would multiply
+    // the shadow map into shadFac as well; that is not ported.
+    const float shadFac = lightmap.g;
+    const float lerpMod = -(1.0 - saturate(shadFac + 0.75));
+    float3 color = specular * water.specular.rgb * shadFac +
+                   mix(water.color.rgb, envcol, 0.4 + lerpMod);
+
+    // `fogenable = true`: the same fog as the rest of the scene.
+    if (in.fogParams.y > 0.0) {
+        float t = saturate((in.viewDepth - in.fogParams.x) /
+                           max(in.fogParams.y - in.fogParams.x, 0.001));
+        float visibility =
+            saturate(max(1.0 - in.fogShape.x * t, in.fogColor.w) - t * t * t);
+        color = mix(in.fogColor.rgb, color, visibility);
+    }
+    // a = lightmap.r + WaterColor.w, which reaches past 1 in deep water; the
+    // original's 8-bit target clamps it, and so does this.
+    return float4(color, saturate(lightmap.r + water.color.w));
+}
 )MSL";
 
 // The interface shader: the texture as it is, with alpha, without lighting.
@@ -1024,7 +1103,9 @@ SDL_GPUShader* createShader(SDL_GPUDevice* gpu, SDL_GPUShaderStage stage, const 
   info.num_uniform_buffers = static_cast<Uint32>(uniformBuffers);
   // Colour, light map, detail, the ground's light and its texture, normal,
   // dirt, crack, the patch's two chart maps, and the six terrain materials.
-  info.num_samplers = isVertex ? 0 : 16;
+  // The water's three: its light map, the 3D water map and the cube.
+  const bool water = std::string_view(entrypoint) == "water_fragment";
+  info.num_samplers = isVertex ? 0 : water ? 3 : 16;
   return SDL_CreateGPUShader(gpu, &info);
 }
 
@@ -1094,9 +1175,91 @@ struct FragmentUniforms {
   float flags[MeshRenderer::kTerrainMaterials][4]{};
 };
 
+// A mirror of `WaterConstants` in the shader, the water's fragment buffer 0.
+struct WaterUniforms {
+  float color[4]{};
+  float specular[4]{};
+  float scroll[4]{};
+};
+
 }  // namespace
 
 static_assert(sizeof(mesh::Vertex) == 80, "the vertex layout must match the shader");
+
+SDL_GPUTexture* MeshRenderer::uploadVolumeOrCube(const texture::Texture& source) {
+  SDL_GPUDevice* gpu = device_->gpu();
+  const SDL_GPUTextureFormat format = toGpuFormat(source.format);
+  if (format == SDL_GPU_TEXTUREFORMAT_INVALID || source.mips.empty()) return nullptr;
+  if (!source.isVolume() && !source.isCube()) return nullptr;
+  const SDL_GPUTextureType type =
+      source.isCube() ? SDL_GPU_TEXTURETYPE_CUBE : SDL_GPU_TEXTURETYPE_3D;
+  if (!SDL_GPUTextureSupportsFormat(gpu, format, type, SDL_GPU_TEXTUREUSAGE_SAMPLER)) {
+    return nullptr;
+  }
+
+  SDL_GPUTextureCreateInfo info{};
+  info.type = type;
+  info.format = format;
+  info.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
+  info.width = source.width;
+  info.height = source.height;
+  info.layer_count_or_depth = source.isCube() ? 6u : source.depth;
+  info.num_levels = static_cast<Uint32>(source.mips.size());
+  info.sample_count = SDL_GPU_SAMPLECOUNT_1;
+  SDL_GPUTexture* gpuTexture = SDL_CreateGPUTexture(gpu, &info);
+  if (gpuTexture == nullptr) return nullptr;
+
+  // The whole file in one staging buffer: a cube's faces lie one after the
+  // other and each face's levels follow it, a volume's slices lie within
+  // their level — `texture::Texture` keeps both layouts as DirectX wrote them.
+  SDL_GPUTransferBufferCreateInfo transferInfo{};
+  transferInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+  transferInfo.size = static_cast<Uint32>(source.data.size());
+  SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(gpu, &transferInfo);
+  if (transfer == nullptr) {
+    SDL_ReleaseGPUTexture(gpu, gpuTexture);
+    return nullptr;
+  }
+  auto* mapped = static_cast<std::byte*>(SDL_MapGPUTransferBuffer(gpu, transfer, false));
+  if (mapped == nullptr) {
+    SDL_ReleaseGPUTransferBuffer(gpu, transfer);
+    SDL_ReleaseGPUTexture(gpu, gpuTexture);
+    return nullptr;
+  }
+  std::memcpy(mapped, source.data.data(), source.data.size());
+  SDL_UnmapGPUTransferBuffer(gpu, transfer);
+
+  SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(gpu);
+  if (commands == nullptr) {
+    SDL_ReleaseGPUTransferBuffer(gpu, transfer);
+    SDL_ReleaseGPUTexture(gpu, gpuTexture);
+    return nullptr;
+  }
+  SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(commands);
+  for (Uint32 face = 0; face < source.faces; ++face) {
+    for (Uint32 level = 0; level < static_cast<Uint32>(source.mips.size()); ++level) {
+      const texture::MipLevel& mip = source.mips[level];
+      SDL_GPUTextureTransferInfo location{};
+      location.transfer_buffer = transfer;
+      location.offset = static_cast<Uint32>(face * source.faceSize + mip.offset);
+      location.pixels_per_row = mip.width;
+      location.rows_per_layer = mip.height;
+      SDL_GPUTextureRegion region{};
+      region.texture = gpuTexture;
+      region.mip_level = level;
+      region.layer = source.isCube() ? face : 0;
+      region.w = mip.width;
+      region.h = mip.height;
+      region.d = mip.depth;
+      SDL_UploadToGPUTexture(copy, &location, &region, false);
+    }
+  }
+  SDL_EndGPUCopyPass(copy);
+  SDL_SubmitGPUCommandBuffer(commands);
+  SDL_ReleaseGPUTransferBuffer(gpu, transfer);
+  sharedTextures_.push_back(gpuTexture);
+  return gpuTexture;
+}
 
 SDL_GPUTexture* MeshRenderer::uploadSharedTexture(const texture::Texture& source) {
   SDL_GPUTexture* uploaded = uploadTexture(source);
@@ -1114,6 +1277,9 @@ MeshRenderer::~MeshRenderer() {
   if (roadPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, roadPipeline_);
   if (skyPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, skyPipeline_);
   if (skinnedPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, skinnedPipeline_);
+  if (waterPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, waterPipeline_);
+  if (waterSampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, waterSampler_);
+  if (waterLightmapSampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, waterLightmapSampler_);
   for (auto& row : blendedPipelines_) {
     for (SDL_GPUGraphicsPipeline* blended : row) {
       if (blended != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, blended);
@@ -1296,6 +1462,21 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   }
   if (skinnedVertexShader != nullptr) SDL_ReleaseGPUShader(gpu, skinnedVertexShader);
 
+  // The water: `water_fragment` behind the vertex stage everything uses, with
+  // the states of `RaShaderWaterBase.fx` technique defaultShader — CullMode
+  // NONE, AlphaBlendEnable with SRCALPHA / INVSRCALPHA, no depth write. A
+  // failure leaves the water undrawn, not the renderer.
+  SDL_GPUGraphicsPipeline* waterPipeline = nullptr;
+  if (SDL_GPUShader* waterShader = createShader(gpu, SDL_GPU_SHADERSTAGE_FRAGMENT, "water_fragment")) {
+    SDL_GPUGraphicsPipelineCreateInfo waterInfo = info;
+    waterInfo.fragment_shader = waterShader;
+    waterInfo.target_info.color_target_descriptions = &roadTarget;  // SRCALPHA / INVSRCALPHA
+    waterInfo.depth_stencil_state.enable_depth_write = false;
+    waterInfo.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+    waterPipeline = SDL_CreateGPUGraphicsPipeline(gpu, &waterInfo);
+    SDL_ReleaseGPUShader(gpu, waterShader);
+  }
+
   SDL_ReleaseGPUShader(gpu, vertexShader);
   SDL_ReleaseGPUShader(gpu, fragmentShader);
   if (pipeline == nullptr) return fail("graphics pipeline");
@@ -1315,6 +1496,25 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   renderer->skyPipeline_ = skyPipeline;
   renderer->skinnedPipeline_ = skinnedPipeline;
   std::memcpy(renderer->blendedPipelines_, blendedPipelines, sizeof(blendedPipelines));
+  renderer->waterPipeline_ = waterPipeline;
+  {
+    // `RaShaderWaterBase.fx`: WaterMapSampler and CubeMapSampler are LINEAR
+    // min/mag/mip with WRAP on U, V and W; LightMapSampler LINEAR and CLAMP.
+    SDL_GPUSamplerCreateInfo wrap{};
+    wrap.min_filter = SDL_GPU_FILTER_LINEAR;
+    wrap.mag_filter = SDL_GPU_FILTER_LINEAR;
+    wrap.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_LINEAR;
+    wrap.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
+    wrap.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
+    wrap.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
+    wrap.max_lod = 1000.0f;
+    renderer->waterSampler_ = SDL_CreateGPUSampler(gpu, &wrap);
+    SDL_GPUSamplerCreateInfo clamp = wrap;
+    clamp.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    clamp.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    clamp.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+    renderer->waterLightmapSampler_ = SDL_CreateGPUSampler(gpu, &clamp);
+  }
 
   // The ground's light. Its own pass, its own file: what it is and what the
   // game does with it is in `obf2/gfx/terrain_light.h`. A failure here is not
@@ -1557,7 +1757,12 @@ void MeshRenderer::fillRanges(GpuMesh& gpuMesh, const mesh::RenderMesh& source,
       return uploaded;
     };
 
-    if (source_range.lightmapInSecondSlot) {
+    if (source_range.technique == "WaterSurface") {
+      // `level::buildWater`: one map, the patch's light map. Drawn by the
+      // water's own pipeline with the blended ranges.
+      range.water = true;
+      range.lightmap = load(0);
+    } else if (source_range.lightmapInSecondSlot) {
       // The terrain's own slots, in the order `level::buildTerrainPatches`
       // fills them: the colour map, the baked light, the low-detail component
       // map and the two chart maps. The positions are fixed and a patch that
@@ -1608,7 +1813,9 @@ void MeshRenderer::fillRanges(GpuMesh& gpuMesh, const mesh::RenderMesh& source,
       range.additiveBlend =
           range.alphaBlend && source_range.fxFile.find("StaticMesh") != std::string::npos;
       range.bundledAlpha = source_range.fxFile.find("BundledMesh") != std::string::npos;
+      range.colorMapGloss = range.bundledAlpha && mesh::materialColorMapGloss(source_range.technique);
       range.leaf = source_range.leaf;
+      range.waterMesh = source_range.waterMesh;
     }
     gpuMesh.ranges.push_back(range);
   }
@@ -1790,8 +1997,11 @@ bool MeshRenderer::refill(GpuMesh& gpuMesh, const mesh::RenderMesh& source,
     SDL_ReleaseGPUTransferBuffer(gpu, transfer);
   }
 
-  // The textures the old ranges owned are the renderer's, not the mesh's — they
-  // live in `textureByPath_` and are shared — so there is nothing to free here.
+  // The shared textures stay in `textureByPath_`. The mesh's own (`#flash`,
+  // `#movie`: made for this mesh alone) go before the ranges are rebuilt, or
+  // every refill would leave one more behind.
+  for (SDL_GPUTexture* texture : gpuMesh.ownedTextures) SDL_ReleaseGPUTexture(gpu, texture);
+  gpuMesh.ownedTextures.clear();
   gpuMesh.hasLightmapUv = source.hasLightmapUv;
   const Vec3f minimum{source.bounds.min.x, source.bounds.min.y, source.bounds.min.z};
   const Vec3f maximum{source.bounds.max.x, source.bounds.max.y, source.bounds.max.z};
@@ -2122,6 +2332,37 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
     return texture != nullptr ? texture : placeholder_;
   };
 
+  // The water's per-frame constants, made the way the renderer makes them
+  // (`docs/functions/water.md`).
+  WaterUniforms waterUniforms{};
+  {
+    // WaterCycleTime, 3D path (`RendDX9.dll`, 0x100dc130, +0x728 set):
+    // time / waterAnimSpeed less that rounded to the nearest whole, so it runs
+    // from -0.5 to 0.5 and jumps back once a cycle.
+    const float speed = water_.animSpeed != 0.0f ? water_.animSpeed : 1.0f;
+    const float cycles = waterTime_ / speed;
+    const float cycle = cycles - std::nearbyint(cycles);
+    // WaterColor.w (0x100d9c30): ((20 - eye height) + WaterHeight) * 0.05 *
+    // waterAlphaHeightMul + waterAlphaAdd — 20 and 0.05 are 0x1021a380 and
+    // 0x10219fa4, the effect's own MAX_HEIGHT and its reciprocal.
+    const float alphaBias =
+        ((20.0f - cameraPosition_.y) + water_.height) * 0.05f * water_.alphaHeightMul +
+        water_.alphaAdd;
+    waterUniforms.color[0] = water_.color[0];
+    waterUniforms.color[1] = water_.color[1];
+    waterUniforms.color[2] = water_.color[2];
+    waterUniforms.color[3] = alphaBias;
+    std::memcpy(waterUniforms.specular, water_.specularColor, sizeof(waterUniforms.specular));
+    waterUniforms.scroll[0] = water_.scroll[0];
+    waterUniforms.scroll[1] = water_.scroll[1];
+    waterUniforms.scroll[2] = cycle;
+    waterUniforms.scroll[3] = water_.specularPower;
+  }
+  // Whether the water can be drawn at all: the static-mesh draw only routes a
+  // water mesh to the water's own when the water object exists (0x100fed6c,
+  // `[0x1024b930]`).
+  const bool waterReady = waterPipeline_ != nullptr && water_.volume != nullptr && water_.cube != nullptr;
+
   // Three passes over the same list, each through its own pipeline: the sky is
   // the background, then everything solid, then the roads as a skin on the
   // terrain.
@@ -2187,7 +2428,32 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
       uniforms.fogParams[1] = item.sky ? 0.0f : fog_.end;
 
       for (const GpuMesh::Range& range : item.mesh->ranges) {
-        if (range.indexCount == 0 || range.alphaBlend != blendedPass) continue;
+        // The water is blended: it comes with the blended ranges, far to near.
+        // A placed `objects/water/` mesh is water only with its baked light map
+        // and the water ready; otherwise it is its own material.
+        const bool asWater = range.water || (range.waterMesh && bakedItem && waterReady);
+        if (range.indexCount == 0 || (asWater || range.alphaBlend) != blendedPass) continue;
+        if (asWater) {
+          if (!waterReady) continue;
+          SDL_BindGPUGraphicsPipeline(pass, waterPipeline_);
+          SDL_BindGPUVertexBuffers(pass, 0, vertexBindings, 1);
+          SDL_BindGPUIndexBuffer(pass, &indexBinding, SDL_GPU_INDEXELEMENTSIZE_32BIT);
+          // A placed water mesh's light map is the item's (its window into the
+          // object atlas); the level's water keeps its patch's own.
+          SDL_GPUTexture* lightmap = bakedItem ? item.lightmap : range.lightmap;
+          const SDL_GPUTextureSamplerBinding bindings[3] = {
+              {lightmap != nullptr ? lightmap : placeholder_, waterLightmapSampler_},
+              {water_.volume, waterSampler_},
+              {water_.cube, waterSampler_},
+          };
+          SDL_BindGPUFragmentSamplers(pass, 0, bindings, 3);
+          SDL_PushGPUVertexUniformData(frame.commands, 0, &uniforms, sizeof(uniforms));
+          SDL_PushGPUFragmentUniformData(frame.commands, 0, &waterUniforms, sizeof(waterUniforms));
+          SDL_DrawGPUIndexedPrimitives(pass, range.indexCount, 1, range.indexStart, 0, 0);
+          // The terrain materials are the next draw's fragment buffer 0 again.
+          SDL_PushGPUFragmentUniformData(frame.commands, 0, &materialUniforms, sizeof(materialUniforms));
+          continue;
+        }
         if (blendedPass) {
           // The blend is the range's own (`GpuMesh::Range::additiveBlend`), so the
           // pipeline changes between ranges and the buffers are bound again.
@@ -2270,7 +2536,8 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
         uniforms.material[3] =
             range.alphaBlend ? 1.0f :
             range.alphaTest ? 1.0f + (range.bundledAlpha ? 0.0f : 127.0f / 255.0f) : 0.0f;
-        uniforms.roadParams[1] = range.alphaBlend ? 1.0f : 0.0f;
+        // y: 1 a blended range, −1 a `ColormapGloss` one, 0 otherwise.
+        uniforms.roadParams[1] = range.alphaBlend ? 1.0f : (range.colorMapGloss ? -1.0f : 0.0f);
         uniforms.treeSunColor[3] = range.leaf ? 1.0f : 0.0f;
         uniforms.fogShape[1] =
             range.normalMap == nullptr ? 0.0f : (range.normalOnDetailUv ? 2.0f : 1.0f);
@@ -2300,7 +2567,10 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
         SDL_DrawGPUIndexedPrimitives(pass, range.indexCount, 1, range.indexStart, 0, 0);
       }
 
-      if (!blendedPass && std::ranges::any_of(item.mesh->ranges, &GpuMesh::Range::alphaBlend)) {
+      const bool hasWater = std::ranges::any_of(item.mesh->ranges, [&](const GpuMesh::Range& range) {
+        return range.water || (range.waterMesh && bakedItem && waterReady);
+      });
+      if (!blendedPass && (hasWater || std::ranges::any_of(item.mesh->ranges, &GpuMesh::Range::alphaBlend))) {
         // The distance is the clip-space w of the bounds' centre.
         const Vec3f center = transformPoint(transform, item.mesh->boundsCenter);
         const float depth = viewProjection.m[3] * center.x + viewProjection.m[7] * center.y +

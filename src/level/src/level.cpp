@@ -82,6 +82,7 @@ class LevelBuilder {
     }
     if (path == "heightmapcluster.setseawaterlevel") {
       level_.terrain.seaLevel = command.argFloat(0).value_or(0.0f);
+      level_.terrain.seaLevelSet = true;
       return;
     }
     //   gameLogic.setTeamName 1 "CH"
@@ -372,6 +373,39 @@ class LevelBuilder {
       if (const auto color = command.argVec3(0)) {
         level_.terrain.waterColor = Vec3f{color->x, color->y, color->z};
       }
+      return;
+    }
+    if (path == "renderer.wateranimspeed") {
+      level_.terrain.waterAnimSpeed = command.argFloat(0).value_or(level_.terrain.waterAnimSpeed);
+      return;
+    }
+    if (path == "renderer.waterscroll") {
+      if (const auto scroll = command.argVec2(0)) {
+        level_.terrain.waterScroll[0] = (*scroll)[0];
+        level_.terrain.waterScroll[1] = (*scroll)[1];
+      }
+      return;
+    }
+    if (path == "renderer.waterspecularcolor") {
+      // Four components, the fourth a strength (`0.901961/0.886275/0.8/1.5`).
+      float values[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+      if (parseSlashList(command.argStr(0), values, 4) == 4) {
+        std::copy(values, values + 4, level_.terrain.waterSpecularColor);
+      }
+      return;
+    }
+    if (path == "renderer.waterspecularpower") {
+      level_.terrain.waterSpecularPower =
+          command.argFloat(0).value_or(level_.terrain.waterSpecularPower);
+      return;
+    }
+    if (path == "renderer.wateralphaheightmul") {
+      level_.terrain.waterAlphaHeightMul =
+          command.argFloat(0).value_or(level_.terrain.waterAlphaHeightMul);
+      return;
+    }
+    if (path == "renderer.wateralphaadd") {
+      level_.terrain.waterAlphaAdd = command.argFloat(0).value_or(level_.terrain.waterAlphaAdd);
       return;
     }
 
@@ -795,6 +829,15 @@ std::vector<TerrainPatch> buildTerrainPatches(const Level& level, const FileSyst
           vertex.uv[0] = static_cast<float>(x) / static_cast<float>(patchSize);
           vertex.uv[1] = static_cast<float>(z) / static_cast<float>(patchSize);
 
+          // The patch's bounds take every height sample, not only the edges:
+          // the terrain passes cull by them.
+          const auto& at = vertex.position;
+          auto& bounds = patch.geometry.bounds;
+          if (patch.geometry.vertices.empty()) bounds = {at, at};
+          bounds.min = {std::min(bounds.min.x, at.x), std::min(bounds.min.y, at.y),
+                        std::min(bounds.min.z, at.z)};
+          bounds.max = {std::max(bounds.max.x, at.x), std::max(bounds.max.y, at.y),
+                        std::max(bounds.max.z, at.z)};
           patch.geometry.vertices.push_back(vertex);
         }
       }
@@ -899,24 +942,89 @@ std::optional<mesh::RenderMesh> buildSkyDome(const Level& level, const FileSyste
   return dome;
 }
 
-mesh::RenderMesh buildWaterPlane(const Level& level) {
-  const float extent = level.halfExtent() * level.primary.scale.x;
-  const float y = level.terrain.seaLevel;
-
+mesh::RenderMesh buildWater(const Level& level, const FileSystem& files) {
+  // The original lays its water out per terrain patch (`RendDX9.dll`,
+  // 0x100dd0b0): one cell the size of a patch for every patch in view, drawn
+  // with that patch's own light map unless the patch's lowest point is above
+  // the water (+0x72c, a margin the constructor leaves at 0). The cell is one
+  // grid of 65x65 vertices over [0, 1] (0x100dca60: step 0x3c800000 = 1/64,
+  // 0x41 a side) scaled to the patch and lifted to the water height, and the
+  // grid's own [0, 1] is the light map's coordinate, with LightMapOffset
+  // (1, 1, 0, 0). So the light map covers the cell exactly as the patch's
+  // covers the ground — the same unwrap as `buildTerrainPatches`.
+  //
+  // Not ported: the cells beyond the terrain, which the original draws with
+  // `WaterSurrounding3D` and no light map (water.md).
+  constexpr int kGrid = 64;
   mesh::RenderMesh water;
-  water.vertices = {
-      mesh::Vertex{{-extent, y, -extent}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-      mesh::Vertex{{extent, y, -extent}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-      mesh::Vertex{{-extent, y, extent}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}},
-      mesh::Vertex{{extent, y, extent}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
-  };
-  water.indices = {0, 2, 1, 1, 2, 3};
-  water.bounds = mesh::Aabb{{-extent, y, -extent}, {extent, y, extent}};
+  const int size = level.primary.size;
+  const int patchSize = level.terrain.patchSize > 0 ? level.terrain.patchSize : 128;
+  if (size <= 1) return water;
+  const int patchCount = (size - 1) / patchSize;
+  const float y = level.terrain.seaLevel;
+  bool first = true;
 
-  mesh::DrawRange range;
-  range.indexCount = static_cast<std::uint32_t>(water.indices.size());
-  range.maps.push_back(kWaterColorMap);
-  water.ranges.push_back(std::move(range));
+  for (int row = 0; row < patchCount; ++row) {
+    for (int column = 0; column < patchCount; ++column) {
+      const int gx0 = column * patchSize;
+      const int gz0 = row * patchSize;
+      float lowest = level.heightAt(gx0, gz0);
+      for (int z = 0; z <= patchSize; ++z) {
+        for (int x = 0; x <= patchSize; ++x) {
+          lowest = std::min(lowest, level.heightAt(gx0 + x, gz0 + z));
+        }
+      }
+      if (lowest > y) continue;
+
+      const float x0 = level.worldX(gx0);
+      const float z0 = level.worldZ(gz0);
+      const float x1 = level.worldX(gx0 + patchSize);
+      const float z1 = level.worldZ(gz0 + patchSize);
+      const auto base = static_cast<std::uint32_t>(water.vertices.size());
+      const auto indexStart = static_cast<std::uint32_t>(water.indices.size());
+      for (int v = 0; v <= kGrid; ++v) {
+        for (int u = 0; u <= kGrid; ++u) {
+          const float fu = static_cast<float>(u) / kGrid;
+          const float fv = static_cast<float>(v) / kGrid;
+          mesh::Vertex vertex;
+          vertex.position = {x0 + (x1 - x0) * fu, y, z0 + (z1 - z0) * fv};
+          vertex.normal = {0.0f, 1.0f, 0.0f};
+          vertex.uv[0] = fu;
+          vertex.uv[1] = fv;
+          vertex.uv2[0] = fu;
+          vertex.uv2[1] = fv;
+          water.vertices.push_back(vertex);
+        }
+      }
+      for (int v = 0; v < kGrid; ++v) {
+        for (int u = 0; u < kGrid; ++u) {
+          const std::uint32_t at = base + static_cast<std::uint32_t>(v * (kGrid + 1) + u);
+          water.indices.insert(water.indices.end(),
+                               {at, at + kGrid + 1, at + 1, at + 1, at + kGrid + 1, at + kGrid + 2});
+        }
+      }
+
+      const mesh::Vec3 low{std::min(x0, x1), y, std::min(z0, z1)};
+      const mesh::Vec3 high{std::max(x0, x1), y, std::max(z0, z1)};
+      if (first) water.bounds = mesh::Aabb{low, high};
+      water.bounds.min = {std::min(water.bounds.min.x, low.x), y, std::min(water.bounds.min.z, low.z)};
+      water.bounds.max = {std::max(water.bounds.max.x, high.x), y, std::max(water.bounds.max.z, high.z)};
+      first = false;
+
+      mesh::DrawRange range;
+      range.indexStart = indexStart;
+      range.indexCount = static_cast<std::uint32_t>(water.indices.size()) - indexStart;
+      range.technique = "WaterSurface";
+      char name[64];
+      std::snprintf(name, sizeof(name), "%02dx%02d.dds", column, row);
+      std::string lightmap;
+      if (!level.terrain.lightmapBase.empty() && files.exists(level.terrain.lightmapBase + name)) {
+        lightmap = level.terrain.lightmapBase + name;
+      }
+      range.maps = {lightmap};
+      water.ranges.push_back(std::move(range));
+    }
+  }
   return water;
 }
 

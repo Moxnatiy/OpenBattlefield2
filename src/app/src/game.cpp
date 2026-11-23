@@ -314,13 +314,8 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
 
   auto resolveTexture =
       [&](const std::string& mapName) -> std::optional<obf2::texture::Texture> {
-    // Names starting with '#' are not files but colours: the game sometimes gives a
-    // colour as a number (renderer.waterColor), and we also need fills for screens
-    // with no image.
-    if (level && mapName == obf2::level::kWaterColorMap) {
-      const obf2::Vec3f color = level->terrain.waterColor;
-      return obf2::texture::solidColor(color.x, color.y, color.z);
-    }
+    // Names starting with '#' are not files: the menu's frames, and fills for
+    // screens with no image.
     if (mapName == "#flash") return menu.flashFrame();
     if (mapName == "#movie") return menu.movieFrame();
     // The spawn screen's red hatch, under `#combatarea` — like `#flash`, a picture
@@ -1163,6 +1158,9 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
       }
       // The specular is the one thing that depends on where the eye is.
       renderer->setCameraPosition(eye);
+      // The water's clock: our seconds, wrapped at 1000 s (docs/functions/water.md,
+      // "Ours" — the original's global clock at 0x100dc130 is not ours).
+      renderer->setWaterTime(static_cast<float>(SDL_GetTicks() % 1000000) * 0.001f);
       renderer->renderScene(*acquired, *toDraw, projection * view,
                             obf2::gfx::Color{0.42f, 0.55f, 0.68f, 1.0f});
 
