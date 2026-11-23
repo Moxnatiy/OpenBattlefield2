@@ -198,6 +198,10 @@ class Manager {
   std::vector<DrawPiece> buildDynamic(DynamicNode& node);
 
   const std::vector<KeyScreen>& keyScreens() const { return keyScreens_; }
+  // A node from a layout outside the tree (the comm roses, obf2/app/field_ui.h),
+  // built on this screen with the HUD's fonts and localisation, in its final
+  // state. The pieces point at `node`, which has to outlive them.
+  std::vector<DrawPiece> buildLoose(const Node& node);
 
   // --- input ---
   // A click on the spawn screen: the circles on the map first, then the buttons,

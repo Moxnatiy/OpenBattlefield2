@@ -39,6 +39,7 @@ add_library(obf2_app
   src/tinnitus_sound.cpp
   src/infantry_sounds.cpp
   src/menu_music.cpp
+  src/field_ui.cpp
   src/match_voice.cpp
   src/environment_audio.cpp
   src/combat_feedback.cpp

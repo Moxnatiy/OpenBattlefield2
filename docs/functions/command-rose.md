@@ -87,10 +87,30 @@ slot 0x2a8 (0x7afe90) is the radio message `req_new_order` on channel 2.
 
 `FieldUi` loads the five layouts and tables, opens the rose `roseFor` gives
 (the order of 0x758540), labels it from the table through the localisation,
-and on release over an entry runs the table's command; `roseCommand` routes
-it onto the session's `communicate` (`order move`, `request uav`, `radio go`…),
-which aims with the camera's ray as before. Repair (7) and destroy (8) were
-added to it.
+and on release over an entry runs the table's command through the console, as
+the button's `setButtonNodeConCmd` does. The tables' commands
+(`SquadLeader.sendOrder`, `Radio.callForMedic`, `game.radioMessage`,
+`Commander.uav`…) are bound in the session: `roseCommand` routes each onto the
+session's `communicate` (`order move`, `request uav`, `radio go`…), aimed along
+the last frame's view. Repair (7) and destroy (8) were added to it.
+
+The rose is drawn from its own layout through the HUD's fonts
+(`hud::Manager::buildLoose`): each button with `setButtonNodeTexture 1`, the
+entry under the pointer with texture 2, and its `<button>Label` text node with
+the table's label in the node's own style and colour. A slot without a label
+node, or with a `*NOT USED*` entry, shows no caption. The RadioRose screen the
+HUD used to bake for Q is gone: it showed the radio's buttons only, with no
+labels and nothing lit.
+
+The pointer starts at `hudManager.setCommMousePos 400 300`
+(GeneralHudSettings.con, line 12) and moves by the mouse in HUD units. Ours,
+not read: it is kept within the buttons' mouse areas
+(`setButtonNodeMouseArea`) so that it never strays out of reach — the
+engine's bound is likely `setCommPos 150 150` / `setCommSize 490 300` (lines
+10–11) — and it takes the mouse unscaled. While a rose is open the mouse
+neither turns the view nor fires. `openbf2.roseHold <frames> <T|Q> <dx> <dy>`
+(ours, for the checks) holds the key for a number of frames and moves the
+pointer once when the rose opens.
 
 Live (`tools/squads_run.py --rose`, FuShe Co-op, 22 Nov 2026): a squad created,
 T held with the pointer up — the rose drawn in Retail's layout with Retail's

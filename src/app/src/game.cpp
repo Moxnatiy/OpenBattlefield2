@@ -27,6 +27,7 @@
 #include "obf2/app/main_menu.h"
 #include "obf2/app/combat_feedback.h"
 #include "obf2/app/environment_audio.h"
+#include "obf2/app/field_ui.h"
 #include "obf2/app/map_contacts.h"
 #include "obf2/app/map_hit_sound.h"
 #include "obf2/app/match_voice.h"
@@ -317,6 +318,20 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
   // The radio messages' voice, one at a time (menu_music.h plays WAV and Ogg).
   obf2::app::MenuMusic radioAudio;
   obf2::app::MenuMusic mapHitAudio;
+  // The communication roses (field_ui.h): the open rose, its pieces on the card
+  // and the revision they were built from. The console commands the rose tables
+  // run aim where the last frame looked.
+  obf2::app::FieldUi fieldUi;
+  int roseShown = -1;
+  obf2::Vec3f lastCommEye{}, lastCommDirection{0.0f, 0.0f, 1.0f};
+  // `openbf2.roseHold <frames> <T|Q> <dx> <dy>` (ours, for the checks): the rose
+  // key held for a number of frames, the pointer moved once when it opens.
+  struct RoseHold {
+    int frames = 0;
+    bool tactical = false;
+    float dx = 0.0f, dy = 0.0f;
+    bool moved = false;
+  } roseHold;
   obf2::app::TextureCache textureCache(files);
   const auto cacheTexture = [&](const std::string& path) { return textureCache.cache(path); };
 
@@ -367,6 +382,8 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
   // The screens on a key, baked once, and the live nodes, each rebuilt on its own.
   std::vector<std::vector<OwnedPiece>> keyScreenPieces;
   std::vector<std::vector<OwnedPiece>> dynamicPieces;
+  // The open communication rose (field_ui.h), rebuilt when it changes.
+  std::vector<OwnedPiece> rosePieces;
   // What the interface's rebuilds cost, in milliseconds and in number, split
   // between building the geometry and putting it on the card.
   int shownSpawnGroups = -1;  // the session's spawn group revision the HUD has
@@ -525,6 +542,35 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
     engine.console().bind("openbf2.look", [&](const obf2::con::Command& command) {
       yaw = command.argFloat(0).value_or(0.0f);
       std::printf("  view: angle %.1f\n", static_cast<double>(yaw));
+    });
+    // The rose tables' own console commands (HUD/HudSetup/Communication/*.con),
+    // `SquadLeader.sendOrder 5 0` and the rest, routed onto the session's
+    // `communicate` (field_ui.h, `roseCommand`) and aimed where the last frame
+    // looked.
+    for (const char* name :
+         {"SquadLeader.sendOrder", "SquadLeader.sendRequest", "SquadLeader.sendRequestForOrder",
+          "Radio.sendSpottedMessage", "Radio.callForAmmo", "Radio.callForMedic",
+          "Radio.callForRepair", "game.radioMessage", "Commander.uav", "Commander.artillery",
+          "Commander.supplies", "Commander.vehicleDrop"}) {
+      engine.console().bind(name, [&, name = std::string(name)](const obf2::con::Command& command) {
+        if (!remote) return;
+        std::string retail = name;
+        for (const auto& argument : command.args) retail += " " + argument;
+        const auto line = obf2::app::roseCommand(retail);
+        if (!line) {
+          std::printf("  rose: not routed yet: %s\n", retail.c_str());
+          return;
+        }
+        const auto status = remote->communicate(*line, lastCommEye, lastCommDirection);
+        std::printf("  rose: %s -> %s: %s\n", retail.c_str(), line->c_str(), status.c_str());
+      });
+    }
+    engine.console().bind("openbf2.roseHold", [&](const obf2::con::Command& command) {
+      roseHold = {};
+      roseHold.frames = command.argInt(0).value_or(60);
+      roseHold.tactical = command.args.size() > 1 && (command.args[1] == "T" || command.args[1] == "t");
+      roseHold.dx = command.argFloat(2).value_or(0.0f);
+      roseHold.dy = command.argFloat(3).value_or(0.0f);
     });
 
     hudManager.load(files, engine, level ? &*level : nullptr, registry, hudSetup, std::move(hooks));
@@ -825,6 +871,50 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
         frameInput.sprint = frameInput.jump = frameInput.crouch = frameInput.prone = false;
         frameInput.reload = false;
         frameInput.weaponKeys = 0;
+      }
+    }
+    // The communication roses (field_ui.h, docs/functions/command-rose.md): Q
+    // (`c_GIRadioComm`) or T (`c_GITacticalComm`) held opens the rose `roseFor`
+    // picks for our role, the mouse moves its pointer instead of the view, and a
+    // release over an entry runs the table's console command, as the button's
+    // `selectOrder` does. While it is open the mouse neither turns nor fires.
+    if (remote != nullptr && hudManager.ready() && remote->combatAlive()) {
+      const std::string_view radioKey = hudManager.controls().key("c_GIRadioComm");
+      const std::string_view tacticalKey = hudManager.controls().key("c_GITacticalComm");
+      const bool scripted = roseHold.frames > 0;
+      if (scripted) --roseHold.frames;
+      const bool typing = device->editingTextField();
+      const bool tactical =
+          (!tacticalKey.empty() && device->isKeyDown(tacticalKey)) || (scripted && roseHold.tactical);
+      const bool held = !typing && (tactical || scripted || (!radioKey.empty() && device->isKeyDown(radioKey)));
+      if (scripted && fieldUi.radioOpen() && !roseHold.moved) {
+        frameInput.mouseDeltaX += roseHold.dx;
+        frameInput.mouseDeltaY += roseHold.dy;
+        roseHold.moved = true;
+      }
+      const bool consumed = held || fieldUi.radioOpen();
+      if (held && !fieldUi.radioOpen()) {
+        fieldUi.prepareRadio(files);
+        fieldUi.setLocalize(
+            [&engine](std::string_view key) { return std::string(engine.lexicon().text(key)); });
+      }
+      const auto self = remote->world.players().find(static_cast<std::uint32_t>(remote->world.ownPlayer()));
+      const unsigned squad = self != remote->world.players().end() ? self->second.squad.value_or(0) : 0;
+      const bool leader = squad != 0 && self->second.squadLeader;
+      const auto rose = obf2::app::roseFor(tactical, leader, remote->isCommander(), squad != 0,
+                                           remote->vehicleRootOf(remote->ourSoldier) != 0);
+      const float pixelsPerHudUnit = static_cast<float>(hudManager.screen().height) / 600.0f;
+      if (const auto retail = fieldUi.radioRelative(held, frameInput.mouseDeltaX, frameInput.mouseDeltaY,
+                                                    frameInput.clicked, pixelsPerHudUnit, rose)) {
+        std::printf("  rose: %s\n", retail->c_str());
+        if (!engine.console().executeLine(*retail)) {
+          std::printf("  rose: the command was not recognised: %s\n", retail->c_str());
+        }
+      }
+      if (consumed) {
+        frameInput.mouseDeltaX = frameInput.mouseDeltaY = 0.0f;
+        frameInput.clicked = false;
+        frameInput.fire = frameInput.altFire = false;
       }
     }
     // The server sends pings and waits for answers: staying silent frame after frame
@@ -1169,6 +1259,8 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
         args.topDown && !bootMode ? obf2::Vec3f{0.0f, 0.0f, 1.0f}
         : throughVehicle && vehicleUp ? *vehicleUp : obf2::Vec3f{0.0f, 1.0f, 0.0f};
     const obf2::Mat4 view = obf2::lookAt(eye, lookTarget, up);
+    lastCommEye = eye;
+    lastCommDirection = obf2::normalize(lookTarget - eye);
 
     if (bootMode) {
       const auto overlay =
@@ -1794,7 +1886,7 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
             break;
           }
         }
-        // The radio and the map menu go over everything while a key is held. The
+        // The map menu goes over everything while its key is held. The
         // scoreboard is not here: it is part of the combat HUD's own walk now, a
         // state rather than a baked screen.
         for (std::size_t i = 0; i < hudManager.keyScreens().size(); ++i) {
@@ -1809,6 +1901,15 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
           }
           if (!visible) continue;
           for (const OwnedPiece& piece : keyScreenPieces[i]) pushPiece(piece);
+        }
+        // The open communication rose, over the HUD (field_ui.h).
+        if (fieldUi.revision() != roseShown) {
+          roseShown = fieldUi.revision();
+          auto built = fieldUi.build(hudManager);
+          putOnCard(built, rosePieces);
+        }
+        if (fieldUi.radioOpen()) {
+          for (const OwnedPiece& piece : rosePieces) pushPiece(piece);
         }
         if (spawnVisible) {
           for (const OwnedPiece& piece : spawnPieces) pushPiece(piece);
@@ -1865,6 +1966,7 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
     for (OwnedPiece& piece : pieces) renderer->release(piece.mesh);
   }
   for (OwnedPiece& piece : ingamePieces) renderer->release(piece.mesh);
+  for (OwnedPiece& piece : rosePieces) renderer->release(piece.mesh);
   // --hud-vars: every variable the tree asks for, and whether anyone fills it.
   if (args.hudVars && hudManager.ready()) hudManager.reportVariables();
 

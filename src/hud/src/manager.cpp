@@ -1442,7 +1442,8 @@ void Manager::bakeKeyScreens() {
   // nor the order, and a tab clicked on it never showed, because the bake was
   // never made again.
   for (const KeyScreenSetup& setup : {
-           KeyScreenSetup{"RadioRose", "c_GIRadioComm", "RadioInterfaceShow"},
+           // The radio's rose is not baked here any more: all five roses are
+           // drawn live, with the entry under the pointer, by app::FieldUi.
            KeyScreenSetup{"MapMenu", "c_GIMapSize", "MapMenuShow"},
        }) {
     Context keyContext = context_;
@@ -1485,6 +1486,13 @@ void Manager::bakeKeyScreens() {
                 std::string(controls_.key(setup.action)).c_str(), screen.pieces.size());
     keyScreens_.push_back(std::move(screen));
   }
+}
+
+std::vector<DrawPiece> Manager::buildLoose(const Node& node) {
+  Context loose;
+  loose.localize = context_.localize;
+  loose.fontFor = context_.fontFor;
+  return buildNode(node, font_.font, font_.atlasPath, screen_, loose);
 }
 
 int Manager::listRevision(const Node& node) const {
