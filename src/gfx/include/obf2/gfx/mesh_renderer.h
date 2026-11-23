@@ -38,6 +38,18 @@ struct GpuMesh {
     // alpha is above 0 (`AlphaRef = 0`, `AlphaFunc = GREATER`, in each of its
     // techniques); the static-mesh shader's reference is 127 of 255.
     bool bundledAlpha = false;
+    // Blended by its texture's alpha, after everything opaque
+    // (`obf2::mesh::materialAlphaBlend`). Two families do it in the game's
+    // meshes, and the shader each names sets the blend (`Shaders_client.zip`):
+    //   * `BundledMesh.fx` "Alpha…" (229 materials, vehicle glass among them):
+    //     technique `alpha` (BundledMesh.fx:668) — SRCALPHA / INVSRCALPHA;
+    //   * `StaticMesh.fx` "Alpha_One" (12: the glow, the tank tracer): technique
+    //     `alpha_one` (StaticMesh.fx:423) — SRCALPHA / ONE, `additiveBlend`.
+    // Both: no depth write, no culling, alpha test GREATER 0. The counts are
+    // `mesh_info <mod> --alpha` over every mesh of the mod
+    // (docs/functions/blended-materials.md).
+    bool alphaBlend = false;
+    bool additiveBlend = false;
     // Drawn as leaves: its own shader in the original, and its own two colours
     // (`obf2::mesh::markVegetationLeaves`).
     bool leaf = false;
@@ -355,6 +367,9 @@ class MeshRenderer {
   // The same pass as `pipeline_`, with the vertex stage moving every vertex by
   // its two bones first.
   SDL_GPUGraphicsPipeline* skinnedPipeline_ = nullptr;
+  // The blended ranges' pipelines (`GpuMesh::Range::alphaBlend`), indexed
+  // [skinned][additive]: the same shaders, no culling, no depth write.
+  SDL_GPUGraphicsPipeline* blendedPipelines_[2][2] = {};
   SDL_GPUGraphicsPipeline* overlayPipeline_ = nullptr;
   // The open upload batch: the command buffer every `upload` writes into, the
   // transfer buffers to free once it has been submitted, and how deep the nesting
