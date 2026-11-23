@@ -16,7 +16,9 @@ concurrency:
 jobs:
   macos:
     name: macOS arm64
-    runs-on: macos-14
+    # GitHub retired the macos-14 image: a job asking for it is cancelled at
+    # once ("The configuration 'macos-14-arm64-us-default' is not supported").
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
