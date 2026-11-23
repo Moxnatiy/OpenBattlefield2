@@ -40,7 +40,11 @@
 
 
 #if TU_CONFIG_LINK_TO_ZLIB
+#if defined(_WIN32)  // OpenBattlefield2: no system zlib on Windows; miniz has its API.
+#include <miniz.h>
+#else
 #include <zlib.h>
+#endif
 #endif // TU_CONFIG_LINK_TO_ZLIB
 
 
