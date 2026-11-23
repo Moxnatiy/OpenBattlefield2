@@ -37,6 +37,8 @@ endif()
 
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 include(sdl3)
+include(speex)
+include(stb_vorbis)
 
 add_subdirectory(third_party/miniz)
 add_subdirectory(third_party/stb)

@@ -5,6 +5,8 @@ add_library(obf2_net
   src/bf2_protocol.cpp
   src/bf2_events.cpp
   src/end_of_round.cpp
+  src/retail_voice.cpp
+  src/retail_voice_codec.cpp
   src/soldier_state.cpp
   src/player_state.cpp
   src/score_state.cpp
@@ -21,4 +23,4 @@ add_library(obf2_net
 add_library(obf2::net ALIAS obf2_net)
 
 target_include_directories(obf2_net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(obf2_net PUBLIC obf2_core PRIVATE obf2_flags miniz)
+target_link_libraries(obf2_net PUBLIC obf2_core PRIVATE obf2_flags miniz obf2_speex)
