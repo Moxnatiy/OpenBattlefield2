@@ -55,10 +55,28 @@ class CollisionLibrary {
   std::unordered_map<std::string, std::vector<CollisionPiece>> pieces_[4];  // by ColType
 };
 
+// Object flag 0x100 (`IObject` +8 on Linux, msvc +4): `SimpleObject::SimpleObject`
+// (Linux 0x58a50c → 0x58a6e5) sets it with `updateFlags(0x100, 0)` when the
+// template's +0xe8 bit 2 is on, which `SimpleObjectTemplate::makeScript`
+// (0x58d04b, string 0xb5ccf0) writes as `ObjectTemplate.hasCollisionPhysics`.
+// `SimpleObjectTemplate::SimpleObjectTemplate` clears it (0x58ba4d, `andb
+// $0x80`), `DynamicBundleTemplate::DynamicBundleTemplate` sets it with
+// hasMobilePhysics (0x57ccb5, `orb $0x6`); no other template constructor
+// touches it. Later changes at run time (`DestroyableWindow::setIsBroken`
+// 0x515aa9, `Ladder::attachSoldier` 0x52a084, `Kit::init` 0x526e0c) are not
+// ported.
+bool hasCollisionPhysics(const game::ObjectTemplate& object);
+
 // The level's placed objects in one grid: every piece of every object's tree,
-// the soldier's lod unless another is asked for.
+// the soldier's lod unless another is asked for. `collisionPhysicsOnly` keeps
+// only the pieces whose object has flag 0x100 (`hasCollisionPhysics`), what a
+// predicator asking for that flag sees (the sound's, BF2.exe 0x7df780).
 std::unique_ptr<CollisionWorld> buildCollisionWorld(CollisionLibrary& library,
                                                     const std::vector<level::StaticObject>& objects,
-                                                    mesh::ColType type = mesh::ColType::Soldier);
+                                                    mesh::ColType type = mesh::ColType::Soldier,
+                                                    bool collisionPhysicsOnly = false);
+
+// The pieces `collisionPhysicsOnly` keeps.
+std::vector<CollisionPiece> collisionPhysicsPieces(const std::vector<CollisionPiece>& pieces);
 
 }  // namespace obf2::server

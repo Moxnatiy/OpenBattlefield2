@@ -820,6 +820,7 @@ void CollisionWorld::normalStats(std::size_t* up, std::size_t* down) const {
   if (up != nullptr) *up = upCount;
   if (down != nullptr) *down = downCount;
 }
+
 bool CollisionWorld::groundHeight(const Vec3f& from, float maxDrop, float minNormalY,
                                   float* outHeight) const {
   // A strictly downward ray. The cells are walked with the same index as for a

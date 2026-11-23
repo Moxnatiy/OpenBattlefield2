@@ -1,5 +1,6 @@
 #include "obf2/server/collision_objects.h"
 
+#include <cctype>
 #include <cstdio>
 
 #include "obf2/core/path.h"
@@ -89,13 +90,29 @@ void CollisionLibrary::walkChildren(const game::ObjectTemplate& parent,
   }
 }
 
+bool hasCollisionPhysics(const game::ObjectTemplate& object) {
+  if (const auto value = object.number("hasCollisionPhysics")) return *value != 0;
+  std::string name = object.className;
+  for (char& c : name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  return name == "dynamicbundle";
+}
+
+std::vector<CollisionPiece> collisionPhysicsPieces(const std::vector<CollisionPiece>& pieces) {
+  std::vector<CollisionPiece> kept;
+  for (const CollisionPiece& piece : pieces)
+    if (piece.materialOwner && hasCollisionPhysics(*piece.materialOwner)) kept.push_back(piece);
+  return kept;
+}
+
 std::unique_ptr<CollisionWorld> buildCollisionWorld(CollisionLibrary& library,
                                                     const std::vector<level::StaticObject>& objects,
-                                                    mesh::ColType type) {
+                                                    mesh::ColType type, bool collisionPhysicsOnly) {
   auto world = std::make_unique<CollisionWorld>();
   int withCollision = 0, withoutCollision = 0;
   for (const level::StaticObject& object : objects) {
-    const auto& pieces = library.pieces(object.templateName, type);
+    std::vector<CollisionPiece> kept;
+    if (collisionPhysicsOnly) kept = collisionPhysicsPieces(library.pieces(object.templateName, type));
+    const auto& pieces = collisionPhysicsOnly ? kept : library.pieces(object.templateName, type);
     if (pieces.empty()) {
       ++withoutCollision;
       continue;

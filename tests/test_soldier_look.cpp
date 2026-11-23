@@ -93,7 +93,20 @@ void testClamps() {
 
 }  // namespace
 
+// The recoil is degrees added after the mouse's conditioning (0x5ae321..0x5ae347):
+// the same turn as a mouse of 2 (10 degrees) with 3 more degrees of yaw.
+void testRecoilAddsAfterTheMouse() {
+  PhysicsConstants physics;
+  SoldierLook look;
+  turnSoldier(look, 2.0f, 0.0f, 0.0f, physics, 1.0f, 3.0f, 0.0f);
+  CHECK(near(look.aimYaw, 13.0f));
+  SoldierLook zoomed;
+  turnSoldier(zoomed, 2.0f, 0.0f, 0.0f, physics, 0.5f, 3.0f, 0.0f);
+  CHECK(near(zoomed.aimYaw, 8.0f));  // the mouse is scaled, the recoil is not
+}
+
 TEST_MAIN({
+  testRecoilAddsAfterTheMouse();
   testAimAtTheLimitTurnsTheBody();
   testAimNearTheLimit();
   testStandingTurnsTheAim();

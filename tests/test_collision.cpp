@@ -6,6 +6,7 @@
 #include "obf2/con/interpreter.h"
 #include "obf2/game/object_template.h"
 #include "obf2/mesh/collision.h"
+#include "obf2/server/collision_objects.h"
 #include "obf2/server/collision_world.h"
 
 using namespace obf2;
@@ -292,6 +293,38 @@ static void testFaceTakesTheTemplatesMaterial() {
   CHECK(plain.has_value() && !plain->worldMaterial.has_value());
 }
 
+// Flag 0x100: `hasCollisionPhysics 1` sets it, `0` clears it, and a
+// DynamicBundle has it from its constructor (0x57ccb5) without the line.
+static void testCollisionPhysicsFlag() {
+  class MemoryFiles : public con::FileProvider {
+   public:
+    std::optional<std::string> loadText(std::string_view) override {
+      return std::string("ObjectTemplate.create SimpleObject with_flag\n"
+                         "ObjectTemplate.hasCollisionPhysics 1\n"
+                         "ObjectTemplate.create SimpleObject without_flag\n"
+                         "ObjectTemplate.create DynamicBundle bundle\n"
+                         "ObjectTemplate.create DynamicBundle bundle_cleared\n"
+                         "ObjectTemplate.hasCollisionPhysics 0\n");
+    }
+  } files;
+  game::Registry registry;
+  con::Interpreter interpreter(files, [&](const con::Command& c) { registry.feed(c); });
+  interpreter.runFile("all.con");
+  const auto flag = [&](const char* name) {
+    const auto* object = registry.find(name);
+    return object != nullptr && server::hasCollisionPhysics(*object);
+  };
+  CHECK(flag("with_flag"));
+  CHECK(!flag("without_flag"));
+  CHECK(flag("bundle"));
+  CHECK(!flag("bundle_cleared"));
+  const mesh::CollisionLayer wall = makeWall(0.0f);
+  const std::vector<server::CollisionPiece> pieces{{&wall, Mat4::identity(), registry.find("with_flag")},
+                                                   {&wall, Mat4::identity(), registry.find("without_flag")},
+                                                   {&wall, Mat4::identity(), nullptr}};
+  CHECK_EQ(server::collisionPhysicsPieces(pieces).size(), std::size_t(1));
+}
+
 static void testDegenerateTrianglesAreSkipped() {
   mesh::CollisionLayer layer;
   layer.vertices = {mesh::Vec3{0, 0, 0}, mesh::Vec3{0, 0, 0}, mesh::Vec3{0, 0, 0}};
@@ -394,6 +427,7 @@ TEST_MAIN({
   testSphereFarFromWallIsUntouched();
   testTransformIsApplied();
   testFaceTakesTheTemplatesMaterial();
+  testCollisionPhysicsFlag();
   testDegenerateTrianglesAreSkipped();
   testFacesWithBadIndicesAreSkipped();
 })

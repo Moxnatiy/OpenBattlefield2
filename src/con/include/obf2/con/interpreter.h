@@ -55,6 +55,22 @@ class FileProvider {
   virtual std::optional<std::string> loadText(std::string_view normalizedPath) = 0;
 };
 
+// Records successful loads, including files reached through include or run.
+class RecordingProvider : public FileProvider {
+ public:
+  explicit RecordingProvider(FileProvider& inner) : inner_(inner) {}
+  std::optional<std::string> loadText(std::string_view normalizedPath) override {
+    auto text = inner_.loadText(normalizedPath);
+    if (text) loaded_.emplace_back(normalizedPath);
+    return text;
+  }
+  const std::vector<std::string>& loaded() const { return loaded_; }
+
+ private:
+  FileProvider& inner_;
+  std::vector<std::string> loaded_;
+};
+
 struct Options {
   int maxIncludeDepth = 64;
   bool stopOnError = false;
