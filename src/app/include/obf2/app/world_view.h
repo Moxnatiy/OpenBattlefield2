@@ -116,6 +116,9 @@ class WorldView {
   // How each object was drawn: interpolated, extrapolated or from the newest
   // update, the largest step between frames, and the feet under the terrain.
   void report() const;
+  // The one pool of sound sources (sound_voices.h), for the sounds the session
+  // plays beside the world's (our weapon's, combat_feedback.h).
+  SoundVoices& voices() { return voices_; }
   void release(gfx::MeshRenderer& renderer);
 
  private:

@@ -39,6 +39,8 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 include(sdl3)
 include(speex)
 include(stb_vorbis)
+# LGPL-2.1, linked statically: read the note at the top of the file.
+include(openal-soft)
 
 add_subdirectory(third_party/miniz)
 add_subdirectory(third_party/stb)

@@ -25,6 +25,8 @@
 #include "obf2/app/hosted_game.h"
 #include "obf2/app/loading_screen.h"
 #include "obf2/app/main_menu.h"
+#include "obf2/app/combat_feedback.h"
+#include "obf2/app/environment_audio.h"
 #include "obf2/app/match_voice.h"
 #include "obf2/app/menu_music.h"
 #include "obf2/app/model_view.h"
@@ -641,6 +643,21 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
   std::optional<std::uint32_t> firstPersonAction;
   int firstPersonFireActions = 0;  // for the end-of-run report
   if (remote != nullptr) firstPersonView.init(files, registry, *renderer, resolveTexture);
+  // Our weapon's sounds (combat_feedback.h) through the level's reverb
+  // (environment_audio.h), from the world view's one pool of sources.
+  obf2::app::EnvironmentAudio environmentAudio;
+  obf2::app::CombatFeedback weaponSounds;
+  if (remote != nullptr) {
+    // The server names the level on `--connect`.
+    const std::string& levelName = remote->levelName.empty() ? args.levelName : remote->levelName;
+    std::printf("  reverb: %s\n", environmentAudio.load(files, levelName)
+                                      ? "the level's EAX environment is loaded"
+                                      : "none (the level names no environment, or it is unreadable)");
+    weaponSounds.prepareAudio();
+    weaponSounds.setEnvironment(&environmentAudio);
+    weaponSounds.setVoices(&worldView.voices());
+    weaponSounds.setVolume(engine.settings().audio.effectsVolume);
+  }
 
   std::vector<obf2::gfx::MeshRenderer::DrawItem> items;
   items.reserve(scene.instances.size());
@@ -1245,7 +1262,14 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
                   (fired ? 1u : 0u) | (fireHeld && firstPersonView.ammo().canFire() ? 2u : 0u));
               weaponFireTick[number % weaponFireTick.size()] = number;
               firstPersonAction = number;
+              // A round out: the weapon's first-person fire sound.
+              if (fired) {
+                weaponSounds.shot(files, remote->registry,
+                                  obf2::app::weaponOut(remote->registry, kitText, ownItem.value_or(item)),
+                                  true);
+              }
             }
+            weaponSounds.releaseFinished();
             // The movement in the camera's own frame, as `updateAnimationSystems`
             // measures it against the movement matrix (Linux 0x554bde): x the side,
             // z forward, the vertical left out.
@@ -1846,6 +1870,8 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
   ambientEffects.release(*renderer);
   worldView.release(*renderer);
   if (remote != nullptr) {
+    std::printf("  weapon sounds played: %d (reverb %s)\n", weaponSounds.played(),
+                environmentAudio.ready() ? "on" : "off");
     std::printf("  first person: rounds fired %u, actions with the fire button %d, "
                 "frames with the fire clip %d\n",
                 firstPersonView.roundsFired(), firstPersonFireActions,
