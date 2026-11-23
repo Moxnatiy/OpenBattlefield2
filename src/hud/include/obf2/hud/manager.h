@@ -70,6 +70,10 @@ class Manager {
     int kit = 0;
     int team = 1;
     std::string levelName;
+    // The round's gameplay layer — the `GamePlayObjects.con` of the mode and
+    // size the server runs (`RemoteWorld::roundGameplay`). Null: the level's
+    // Conquest 16 layer, as before, for our own game and the menu.
+    const level::GameplayObjects* gameplay = nullptr;
   };
 
   // A screen visible only while a key is held: the scoreboard, the radio, the map
@@ -225,6 +229,15 @@ class Manager {
     int state = 0;
   };
   void updateTickets(const TeamTickets& friendly, const TeamTickets& enemy, float dt);
+  // The control points' owners as the server's `ControlPointNetworkable` says
+  // (the level's `controlPointId` → team): the map's flags follow them.
+  void controlPointTeams(const std::map<int, int>& teamById);
+  // The medal case's window (`MedalArea`, HudElementsActionIcons.con:105): a
+  // promotion (`rank`) or a medal, its icon, and how long it stays up. 0x74f6b0
+  // (medal) and 0x74f5b0 (rank): with a time above zero the other kind is
+  // hidden, the path goes into its string variable and its show variable comes
+  // on; when the time runs out both go off.
+  void showAward(bool rank, const std::string& iconPath, float seconds);
 
   // The in-game chat (`HudChat`, list data 3 — chat.h).
   Chat& chat() { return chat_; }
@@ -371,6 +384,7 @@ class Manager {
   bool bigMap_ = false;
   bool mapKeyWasDown_ = false;
   bool zoomKeyWasDown_ = false;
+  float awardLeft_ = 0.0f;  // the award window's time left (showAward)
 
   Animator animator_;
   Scoreboard scoreboard_;

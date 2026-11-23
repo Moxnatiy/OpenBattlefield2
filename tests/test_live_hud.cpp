@@ -5,6 +5,7 @@
 #include <string>
 
 #include "check.h"
+#include "obf2/app/awards.h"
 #include "obf2/app/kill_feed.h"
 #include "obf2/app/live_hud.h"
 #include "obf2/con/interpreter.h"
@@ -106,9 +107,31 @@ void testChatSender() {
   CHECK_EQ(line.text, std::string("hello"));
 }
 
+// The medal case (awards.h): the icon paths, and one kind hiding the other
+// (0x74f6b0 / 0x74f5b0) until the time runs out.
+void testAwardWindow() {
+  CHECK_EQ(app::medalIconPath(2051907, 0), std::string("Ingame/GeneralIcons/Medals/AWARD_NAME_2051907.tga"));
+  CHECK_EQ(app::medalIconPath(1031406, 2),
+           std::string("Ingame/GeneralIcons/Medals/AWARD_NAME_1031406_2.tga"));
+  CHECK_EQ(app::rankIconPath(7), std::string("Ingame/GeneralIcons/Ranks/rank_07_Large.tga"));
+  hud::Manager hud;
+  hud.showAward(false, app::medalIconPath(2051907, 0), 1.0f);
+  CHECK(hud.variables()["ShowMedalIcon"]);
+  CHECK(!hud.variables()["ShowRankUpIcon"]);
+  CHECK_EQ(hud.strings()["MedalIconPathString"], app::medalIconPath(2051907, 0));
+  hud.showAward(true, app::rankIconPath(7), 1.0f);
+  CHECK(!hud.variables()["ShowMedalIcon"]);
+  CHECK(hud.variables()["ShowRankUpIcon"]);
+  hud.animate(0.5f, 0.0f, {});
+  CHECK(hud.variables()["ShowRankUpIcon"]);
+  hud.animate(0.6f, 0.0f, {});
+  CHECK(!hud.variables()["ShowRankUpIcon"]);
+}
+
 }  // namespace
 
 TEST_MAIN({
+  testAwardWindow();
   testWeaponOnFoot();
   testWeaponWithoutHudOnFoot();
   testVehicleNamesTheKill();

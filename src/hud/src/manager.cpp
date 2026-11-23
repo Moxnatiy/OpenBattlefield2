@@ -599,7 +599,12 @@ void Manager::buildMapWindow(FileSystem& files, const level::Level* level,
   if (!setup_.levelName.empty()) {
     context_.mapTexture = "Levels/" + setup_.levelName + "/Hud/Minimap/ingameMap.tga";
   }
-  const auto gameplay = level != nullptr
+  // The capture points, the spawners and the combat area are the round's own
+  // layer when the session knows it (a 32- or 64-player server has other
+  // points, with other ids, than the 16 layer); Conquest 16 otherwise.
+  const auto gameplay = setup_.gameplay != nullptr
+                            ? std::optional<level::GameplayObjects>(*setup_.gameplay)
+                        : level != nullptr
                             ? level::loadGameplayObjects(files, level->name, "gpm_cq", 16)
                             : std::optional<level::GameplayObjects>{};
   if (!gameplay || gameplay->combatArea.empty()) {
@@ -1613,9 +1618,53 @@ void Manager::zoomKey(bool down) {
   zoomKeyWasDown_ = down;
 }
 
+void Manager::controlPointTeams(const std::map<int, int>& teamById) {
+  bool changed = false;
+  for (auto& point : controlPoints_) {
+    const auto found = teamById.find(point.id);
+    if (found == teamById.end() || found->second == point.team) continue;
+    std::printf("  map: control point %d (%s) now team %d (was %d)\n", point.id,
+                point.templateName.c_str(), found->second, point.team);
+    point.team = found->second;
+    changed = true;
+  }
+  if (!changed) return;
+  // The combat map's flags are its first markers, one per point in this order
+  // (`load`); the spawn screen takes the teams on its next rebuild
+  // (applySpawnState).
+  for (std::size_t i = 0; i < controlPoints_.size() && i < contextFlagMarkers_ &&
+                          i < context_.mapMarkers.size();
+       ++i) {
+    const auto& point = controlPoints_[i];
+    const std::string side = point.team <= 0 || point.team > 2 || level_ == nullptr
+                                 ? std::string{}
+                                 : level_->teamNames[point.team];
+    context_.mapMarkers[i].texture = controlPointIcon(side, point.unableToChangeTeam);
+  }
+  for (auto& live : dynamic_) {
+    if (live.node->type == NodeType::Map || live.node->type == NodeType::MiniMap) live.built = false;
+  }
+  applySpawnState();
+  spawnDirty_ = true;
+  dirty_ = true;
+}
+
+void Manager::showAward(bool rank, const std::string& iconPath, float seconds) {
+  variables_[rank ? "ShowMedalIcon" : "ShowRankUpIcon"] = false;
+  strings_[rank ? "RankUpIconPathString" : "MedalIconPathString"] = iconPath;
+  variables_[rank ? "ShowRankUpIcon" : "ShowMedalIcon"] = seconds > 0.0f;
+  awardLeft_ = seconds;
+  dirty_ = true;
+}
+
 void Manager::animate(float seconds, float yaw, const Vec3f& eye) {
   // `HudChat::update` every frame: the bands' timers.
   chat_.update(seconds);
+  // The award window's time; at zero both show variables go off.
+  if (awardLeft_ > 0.0f && (awardLeft_ -= seconds) <= 0.0f) {
+    variables_["ShowMedalIcon"] = variables_["ShowRankUpIcon"] = false;
+    dirty_ = true;
+  }
   const float slice = seconds > 0.25f ? 0.25f : seconds;
   animator_.advance(slice);
   if (animator_.animating()) {

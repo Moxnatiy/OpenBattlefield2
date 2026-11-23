@@ -180,7 +180,12 @@ square whole. Ours: `hud::MapNode` (`kMapZoomExponents`, `cycleZoom`), and the
 combat-area hatch is drawn from the part of its square the zoomed window shows.
 
 At zoom 0 we take the window as a square around the combat area — the one
-measured from the original's frame dump. That the engine shows exactly that
+measured from the original's frame dump. The combat area, the capture points
+and the spawners are the round's own layer on a live server (the
+`GamePlayObjects.con` of the mode and size it runs, `RemoteWorld::roundGameplay`,
+handed in as `hud::Manager::Setup::gameplay`); without one, Conquest 16. Until
+24 Nov 2026 the HUD always read Conquest 16, so a 32-player Gulf of Oman showed
+four points the server does not have, with other ids. That the engine shows exactly that
 at zoom 0 is **not proven**: it is our inference from the button being called
 "zoom in".
 
@@ -523,8 +528,15 @@ change, and the spawn screen, which bakes the map with the rest of the
 screen, at most four times a second (a rebuild costs a frame) — a choice of
 ours, not the original's rate, which paints every frame. Not done: the local
 player's arrow, the kit icons (`showKitsOnMap`), enemies seen from a vehicle,
-the control points' live owners (`ControlPointNetworkable` not read), the
+the
 map's turn (+0x76c is 0 here).
+
+**The control points' owners.** Each point's flag follows its
+`ControlPointNetworkable` team (bit 0x01, `setTeam`, control_point_state.h)
+once a record has come: `app::updateLiveHud` hands the level's
+`controlPointId` → team to `hud::Manager::controlPointTeams`, which re-picks
+the combat map's flag (`controlPointIcon`) and rebuilds the spawn screen. A
+capture is not yet seen on screen.
 
 **What looked like the map "reloading" on the spawn screen's first second** was
 the dynamic spawn groups (192..255, the squads'): `CreateSpawnGroupEvent` carries

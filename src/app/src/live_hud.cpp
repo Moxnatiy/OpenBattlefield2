@@ -1,5 +1,6 @@
 #include "obf2/app/live_hud.h"
 
+#include "obf2/app/awards.h"
 #include "obf2/app/kill_feed.h"
 
 namespace obf2::app {
@@ -53,6 +54,14 @@ void updateLiveHud(session::RemoteWorld& remote, hud::Manager& hud, float second
     hud.chatString(chatLineForHud(chat, players, ownPlayer), ownPlayer >= 0);
   }
   remote.chats.clear();
+
+  std::map<int, int> teams;
+  for (const auto& [id, point] : remote.world.controlPoints()) {
+    if (point.stateKnown) teams[point.levelId] = point.team;
+  }
+  if (!teams.empty()) hud.controlPointTeams(teams);
+
+  takeAwards(remote, hud);
 }
 
 }  // namespace obf2::app

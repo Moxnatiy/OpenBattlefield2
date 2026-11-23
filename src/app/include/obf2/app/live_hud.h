@@ -7,7 +7,11 @@
 //   * the kill feed — each `KilledByEvent` the session kept (`kills`) as the
 //     manager's lines (kill_feed.h, `hud::Manager::killedBy`);
 //   * the chat — each string the session assembled (`chats`, chat_string.h) as
-//     `Game::outputChatString` routes it (`hud::Manager::chatString`).
+//     `Game::outputChatString` routes it (`hud::Manager::chatString`);
+//   * the control points' owners — each point's `ControlPointNetworkable`
+//     team (control_point_state.h, bit 0x01, `setTeam`) once a record has
+//     come, so the map's flags follow captures (`hud::Manager::controlPointTeams`);
+//   * our awards — the medal case's window (awards.h).
 //
 // The session's queues are drained here, once per frame.
 #include <map>

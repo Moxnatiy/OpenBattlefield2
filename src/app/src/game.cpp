@@ -433,6 +433,7 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
     hudSetup.kit = args.kit;
     hudSetup.team = args.team;
     hudSetup.levelName = args.levelName;
+    if (remote != nullptr && remote->roundGameplay) hudSetup.gameplay = &*remote->roundGameplay;
 
     obf2::hud::Manager::Hooks hooks;
     // What DONE does. There are two paths, and both are equally "real":
