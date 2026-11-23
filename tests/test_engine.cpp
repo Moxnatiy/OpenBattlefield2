@@ -102,6 +102,8 @@ static void testSettingsFromRealFileShape() {
        "game.setMinimapTransparency 20\n"
        "game.setCrossHairColor 255.000000 128.000000 0.000000\n"
        "GeneralSettings.setViewIntroMovie 0\n"
+       "GeneralSettings.setPlayedVOHelp \"HUD_HELP_VEHICLE_GENERAL_CONTROLS_enterVehicle\"\n"
+       "GeneralSettings.setPlayedVOHelp \"HUD_HELP_VEHICLE_CONTROLS_exitVehicle\"\n"
        "AudioSettings.setMusicVolume 0.35\n");
 
   CHECK(settings.video.fullScreen);
@@ -120,6 +122,10 @@ static void testSettingsFromRealFileShape() {
   CHECK_EQ(settings.general.connectionType, 2);
   CHECK_EQ(settings.general.minimapTransparency, 20);
   CHECK(!settings.general.viewIntroMovie);
+  CHECK_EQ(settings.general.playedVoHelp.size(), std::size_t(2));
+  if (settings.general.playedVoHelp.size() == 2) {
+    CHECK_EQ(settings.general.playedVoHelp[1], std::string("HUD_HELP_VEHICLE_CONTROLS_exitVehicle"));
+  }
   CHECK(settings.general.crosshairColor[1] > 127.9f && settings.general.crosshairColor[1] < 128.1f);
 
   CHECK(settings.audio.musicVolume > 0.34f && settings.audio.musicVolume < 0.36f);

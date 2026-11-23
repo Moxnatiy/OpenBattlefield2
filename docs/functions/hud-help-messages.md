@@ -102,9 +102,11 @@ key GeneralSettings +0x118 knows. So **each message shows once per
 profile**, and no two within 10 s. Retail showed 0x44 on entering the M1A2
 because that profile had not played it.
 
-Ported: `hud::HelpScheduler` (help_messages.h), `Manager::tickHelpMessages`,
-the conditions in `main.cpp`; the profile's `GeneralSettings.setPlayedVOHelp`
-lines are read (`GeneralSettings::playedVoHelp`). Debt:
+Ported: `hud::HelpScheduler` (help_messages.h); the profile's
+`GeneralSettings.setPlayedVOHelp` lines are read (`GeneralSettings::playedVoHelp`,
+engine/settings.h). Not wired yet: the manager's per-frame tick that hands the
+played keys to the scheduler at start (0x5edb80) and the conditions it is ticked
+with, so no help message shows. Debt:
 
 * writing the played keys back to the profile (we keep them for the run);
 * message 0x43: 0x5de7e0 (what it searches for, its +0x60/+0x50 filters,

@@ -64,6 +64,15 @@ ones that turn up in `.con`: `HUD_INGAME_QUIT`, `WEAPON_NAME_ammobag`,
 There are several files per language (base, patch, add-on) — later ones
 override earlier ones. The English set has **3777 lines**.
 
+Within one file a key may be defined twice, and then the **first** line
+wins. English.utxt has six such keys whose texts differ (English_Patch.utxt
+and XPEnglish.utxt one each), among them
+`EOR_3_combat` ("BEST COMBAT", line 1826; "COMBAT", 2635) and
+`EOR_4_gamemode` ("GAME MODE", 1844; "GAME MODE:", 2627). The running
+original's end-of-round pages show the first of each: the TOP SCORES column
+is headed BEST COMBAT and the MAP BRIEFING section GAME MODE, without the
+colon. Where the engine's loader keeps the first is not read.
+
 A missing key is not invented: the key itself is returned — exactly how it
 looks in the original game.
 
