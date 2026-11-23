@@ -21,6 +21,9 @@ add_library(obf2_app
   src/first_person.cpp
   src/menu_movie.cpp
   src/loading_screen.cpp
+  src/hit_direction.cpp
+  src/death_camera.cpp
+  src/third_person_look.cpp
 )
 add_library(obf2::app ALIAS obf2_app)
 if(TARGET obf2_video)
