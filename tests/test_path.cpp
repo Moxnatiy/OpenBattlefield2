@@ -1,6 +1,9 @@
 #include "check.h"
 #include "obf2/core/path.h"
 
+#include <chrono>
+#include <fstream>
+
 using obf2::assetExtension;
 using obf2::assetParentDir;
 using obf2::joinAssetPath;
@@ -31,4 +34,14 @@ static void testJoinAndSplit() {
 TEST_MAIN({
   testNormalize();
   testJoinAndSplit();
+  namespace fs = std::filesystem;
+  const auto suffix = std::chrono::steady_clock::now().time_since_epoch().count();
+  const auto root = fs::temp_directory_path() / ("obf2-path-" + std::to_string(suffix));
+  const auto archive = root / "Levels" / "Test_Map" / "Client.ZIP";
+  fs::create_directories(archive.parent_path());
+  std::ofstream(archive).put('x');
+  CHECK(fs::equivalent(obf2::resolveAssetPath(root, R"(levels\test_map\client.zip)"), archive));
+  CHECK(obf2::resolveAssetPath(root, "../Client.ZIP").empty());
+  CHECK(obf2::resolveAssetPath(root, "Levels/Test_Map/server.zip").empty());
+  fs::remove_all(root);
 })

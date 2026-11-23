@@ -1,4 +1,5 @@
 #pragma once
+#include <filesystem>
 #include <string>
 #include <string_view>
 
@@ -9,6 +10,9 @@ namespace obf2 {
 // segments removed and ".." expanded. This is the canonical key we look a
 // file up by, both in a zip archive and on disk.
 std::string normalizeAssetPath(std::string_view raw);
+// Resolve a relative BF2 path against an on-disk directory, preserving disk casing.
+std::filesystem::path resolveAssetPath(const std::filesystem::path& root,
+                                       const std::filesystem::path& relative);
 
 // Joins two asset paths and normalises the result.
 std::string joinAssetPath(std::string_view base, std::string_view rel);

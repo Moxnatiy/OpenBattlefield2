@@ -53,6 +53,36 @@ std::string joinAssetPath(std::string_view base, std::string_view rel) {
   return normalizeAssetPath(combined);
 }
 
+std::filesystem::path resolveAssetPath(const std::filesystem::path& root,
+                                       const std::filesystem::path& relative) {
+  namespace fs = std::filesystem;
+  std::string name = relative.generic_string();
+  for (char& c : name) if (c == '\\') c = '/';
+  const fs::path path(name);
+  if (path.empty() || path.has_root_path()) return {};
+  auto current = root;
+  for (const auto& part : path) {
+    if (part == "..") return {};
+    if (part == ".") continue;
+    std::error_code error;
+    if (fs::exists(current / part, error)) {
+      current /= part;
+      continue;
+    }
+    const auto wanted = normalizeAssetPath(part.string());
+    fs::path match;
+    for (fs::directory_iterator it(current, error), end; !error && it != end;
+         it.increment(error)) {
+      if (normalizeAssetPath(it->path().filename().string()) != wanted) continue;
+      if (!match.empty()) return {};
+      match = it->path();
+    }
+    if (error || match.empty()) return {};
+    current = std::move(match);
+  }
+  return current;
+}
+
 std::string_view assetParentDir(std::string_view normalized) {
   const std::size_t slash = normalized.find_last_of('/');
   if (slash == std::string_view::npos) return {};
