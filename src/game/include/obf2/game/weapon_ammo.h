@@ -51,6 +51,7 @@ enum class ReloadMessage { None, Once, Hold, Clear };
 class WeaponAmmo {
  public:
   void setWeapon(const AmmoTemplate& weapon);
+  void synchronize(int rounds, int magazines);
 
   // `AmmoComp::requestFire` (0x5ea150) with `busy` (0x5ec230): a round may leave
   // when the magazine is not empty, the component is not asking for a reload
