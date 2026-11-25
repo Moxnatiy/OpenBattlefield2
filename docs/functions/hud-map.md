@@ -295,12 +295,142 @@ would otherwise be. So a spawner's template is asked for its strategic icon
 first and its vehicle icon second.
 
 Laid beside the original's dump, every icon it names now lands within about 1.3
-pixels — the same residual the map itself carries. **One difference stands:**
-the original draws one icon per bridge and we draw one per destroyable segment.
+pixels — the same residual the map itself carries. **One difference stood:**
+the original draws one icon per bridge and we drew one per destroyable segment.
 Karkand's north bridge is two `lrg_stonebridge` at world x -95.0 and -51.1, and
 the original's icon sits at 644.5 — the midpoint of the two we draw, at 629.5
-and 660.7. How the engine gathers a bridge's segments into one icon is **not
-established**.
+and 660.7. How the engine gathers a bridge's segments: Linux server 1.5,
+`GameLogic::addStrategicObject` (0x482e00). The key is the template's
+`strategicObjectName` plus one character, a running index `n` (0, 1, 2, …), in
+a map at `GameLogic+0x2c0` of `StrategicObjectHolder`. For each `n` whose key
+exists, the new object joins that holder when the template is not
+`isOnePiece` (vtable +0xd0 false) and the distance from the holder's first
+object to it is less than `2 × (r_new + r_first)` (each `r` from the object's
+vtable +0x130, `getPhysicBoundingRadius`, below). Otherwise `n` goes up. With
+no match, a new holder is made under that key with index `n`. This is the
+server's copy; the client's is 0x4f1750 (same key and merge).
+The holder's position is the mean of its objects' absolute positions
+(`StrategicObjectHolder::getPosition`, Linux 0x5be230). The radius is
+`Object::getPhysicBoundingRadius` (Linux 0x687770, vtable +0x130): the
+field at `Object+0x80`'s vtable +0xf0 plus `getBoundingRadiusModifier`
+(+0x138), widened to cover child objects. Traced whole (22 Nov), every slot named
+from the Linux vtables (`Object`, `DestroyableObject`, `StrategicObjectComp`):
+
+| step | address | what |
+|---|---|---|
+| `Object+0x80` | `Object::setComponent` 0x688fc3 | the `IID_ICollisionMesh` component's interface, stored there, then `setBoundRadiusIsDirty` |
+| who makes it | `SimpleObject::SimpleObject` 0x58a860 | `CollisionManager` vtbl+0x58 (mesh name from template vtbl+0x138, part from template +0x78), then `setComponent(0xcaa32)`; "Couldn't create collision mesh" on failure |
+| template +0x78 | `SimpleObjectTemplate::setCollisionPart` 0x507830 | `ObjectTemplate.collisionPart` |
+| `+0x80` vtbl+0xf0 | `CollisionMesh::getMaxBoundingRadius` 0x718a90 | its template (+0x18) → `CollisionMeshTemplate::getMaxBoundingRadius` 0x719a70 |
+| 0x719a70 | | first geom with a non-empty lod vector (`isGeomValid` 0x718f00); in it the first type t = 0 .. lods-1 that `isLodValid(geom, t)` (0x7194e0) accepts; returns `getValidLod(geom, t)` +0xec; 0 when none |
+| lod +0xec | `CollisionMeshTemplate::load` 0x71f600 | copied from +0xc8 after the lod's 0x18-byte box (+0xb0, min then max, read from the file) goes through `LocalBoundingBox::calcRadius` 0x72cb50 |
+| +0xc8 | 0x72cb50 | sqrt of the largest squared length of the box's eight corners: distance of the farthest corner from the mesh origin |
+| vtbl+0x138 | `Object::getBoundingRadiusModifier` 0x4bd530 | 0. Overridden by `PlayerControlObject` (0x536af0, a float at `[+0x250]+0x3d0`, not taken apart) and `ZiplineRope` (0x572460) |
+| children | vtbl+0x1e0 `getChild`, link `+0x58` | each child whose own `getPhysicBoundingRadius` > 0 widens r to that plus the length of `getRelativePosition` (vtbl+0x1c0) |
+| early out | `Object+8` bit 0 | radius 0; what sets the bit is not established |
+| position | vtbl+0xd8 | `getAbsolutePosition` |
+| `isOnePiece` | comp vtbl+0xd0 0x5be5d0 → template vtbl+0xc8 0x5bf0a0 | the byte at template +0x44, `StrategicObject.isOnePiece`, 0 in the constructor 0x5be840 |
+
+The merge (0x482e00): for n = 0, 1, … while key `name + n` exists: a one-piece
+object skips; a holder with no first object takes it; otherwise it joins when
+`r_new + r_first + r_new + r_first > distance` (the engine's test is
+`reach <= distance` → next n). The distance is to the holder's **first**
+object, not its mean. The bridge templates (`woodsteel_bridge_segment`,
+`lrg_stonebridge`, `highway_bridge_low_segment`) are `DestroyableObject` with a
+`collisionMesh` of their own name, no `collisionPart`, and no `isOnePiece`;
+two templates in the game set `isOnePiece 1`.
+
+Ported: `CollisionMesh::maxBoundingRadius` (src/mesh), `groupStrategicObjects`
+(src/hud/strategic_objects.h), the radius walk in `manager.cpp`
+(`physicRadiusOf`); test `test_hud_strategic_objects`. The spawners'
+strategic objects (artillery, radars, UAV towers) join the same holders after
+the placed objects, with mesh part 0 (`ObjectSpawner`, 0x52f8e7). The
+`PlayerControlObject` modifier (0x536af0) is the template's float +0x3d0,
+`ObjectTemplate.boundingRadiusModifierWhenOccupied`: the console command that
+writes it is at 0x8f1b6e, its name string is registered at 0x8ca949, and the
+constructor sets it to 0 (0x53ba88).
+
+**Turn and alpha (client, 23 Nov).** 0x77e500 walks the first object's
+children with the filter at vtable 0x92ff4c (0x6273a0). That filter keeps
+children whose template answers class id 0x9c42 (0x91c394), which is the Linux
+server's `CID_RemoteControlledObjectTemplate`.
+* With no such child, the icon turns by
+  `map(+0x76c) − atan2(m[+0x20], m[+0x28]) + π/2` (0x77e689..0x77e69d, π/2 at
+  0x92fe8c), from the first object's matrix (vtable +0x80, row 2). Our Gulf of
+  Oman render turns the bridges the same way as
+  `retail-spawn-map-gulf-of-oman-3/north-zoom.png`.
+* With such a child, the icon stays upright and is skipped for another team.
+  The data never builds that case: the only `RemoteControlledObject` template
+  in `Objects_server.zip` is `ArtilleryControlObjectMEC`, and no template adds
+  it as a child (`addTemplate`). Ours keeps such an icon upright and does not
+  take the team test.
+
+The alpha is the node's +0x6fc. It eases (0x77c330, `1 − e^(−10·dt)`) toward
++0x704. That target is 1.0 from the constructor (0x7818aa) and 0.5 on the
+spawn screen (0x777fe8). In game (0x777eef) and on the big map (0x7780fd)
+the target is the setting `MenuMapIconAlpha` (string 0x89ed54), and the map's
+own alpha (+0x700/+0x718) is `MenuMapAlpha` (0x89ed68). Ours: `Context::mapIconAlpha`,
+the settled 0.5 on the spawn screen and the constructor's 1.0 elsewhere; the
+setting and the ease are not ported. The other layer draws that read +0x6fc:
+0x783f90 walks the game-logic object list (`DAT_0099ef80` vtbl+0x198) and
+draws vehicles by kind (0x778680: 0xf, 0x12, 0x24); 0x783440 and 0x782480
+(layer 0x26, kinds 0x11/0x16) walk the player list (`DAT_00a08f60` vtbl+0x40)
+and draw soldiers. So our vehicle spawners, the live vehicles and the live
+soldiers (with their heading arrows) take the node alpha too
+(`MapMarker::atIconAlpha`). The flags (layer 3, 0x77e720) do not read it and
+stay at full alpha.
+
+**The original draws strategic icons outside the combat area too.** On Gulf of
+Oman Co-op 16 (a capture of retail 1.50's spawn screen, 22 Nov, zoomed on the
+north) the `bridge` icons stand in the hatched ground north of Construction
+Site: faint (the node's alpha at +0x6fc), turned along each bridge and **one
+per bridge**. An earlier reading at 1× missed them against the hatch and was
+wrong. A live read of the running game's map node agrees: the spawn map node
+is view 1, zoom 0, and its row `000001308001845b` has layer 0x10 on. Ours
+draws them the same way: one per holder, turned and at 0.5.
+
+What the binary shows so far: the map node's vtable is 0x930188 and its
+draw is slot 26, **0x784a80**, which calls one sub-draw per layer flag
+(`vtbl+0x104(id)`). Layer 0x10 is **0x77e500**, the strategic icons. It walks
+the map returned by the global at `DAT_0099ef80`, `vtbl+0x1a4` (a map of
+holders; on the server that is `GameLogic::getStrategicObjectMap`, Linux
+0x475640). For each holder:
+
+* it collects the first object's children of one kind (`FUN_0071b670` walks the
+  child tree, `vtbl+0xec` / `+0x2c`, with a filter object at vtable 0x92ff4c);
+  when there is one and its team (component 0xc4c5, `vtbl+0x98`, via
+  `FUN_006004f0`) is not the local player's (`vtbl+0xe4`), the icon is
+  **skipped**; when there is none the icon is turned by the object's heading
+  (`fpatan` of the +0x20/+0x28 axis, plus pi/2, less the map's +0x76c);
+* the icon is the intact one (`vtbl+0x44`) when the holder's count at
+  `+0x28 → +0x14` is below 1, else the destroyed one (`vtbl+0x48`);
+* size 19 × 19 (0x41980000), alpha from the node's +0x6fc, draw `FUN_0077d450(0x10, …)`.
+
+**There is no combat-area test in 0x77e500**, which matches the capture: the
+bridges outside the area are drawn. What was traced on the way (22 Nov):
+
+* **Registration is unconditional.** Server `StrategicObjectComp::init` (Linux
+  0x5be100) calls `gameLogic->addStrategicObject` at once. The client's copy
+  is **0x4f1750** (same `name + '0'+n` key, same `2 × (r1 + r2)` merge, a
+  `new(0x28)` holder), and its only early-out is `GameLogic+0x1fc`. The level
+  load (0x4f30d0) sets that flag to 1 around one object-creation pass after
+  `Triggerables.con` (0x4f4e2c) and clears it again (0x4f4ea9). It is not an
+  area test. So every Gulf of Oman bridge (all `StrategicObject`,
+  `Bridge.tga`, in their `.tweak` files) is in the holder map on Co-op 16.
+* **The shared icon draw does not clip.** `FUN_0077d450(layer, icon)` only
+  checks `vtbl+0x104(layer)` and `vtbl+0x108(layer)`, scales by a per-layer
+  factor, and pushes (`FUN_0077c1f0`). `FUN_00776af0` is world → map.
+* **Layer visibility depends on the view and the zoom.** `vtbl+0x104`
+  (0x776fd0) reads bit `layer` of a 43-bit set at
+  `node + 0x390 + (view×3 + zoom)×8`, where view is the byte at +0x68e and
+  zoom is the int at +0x6d0 clamped to 0..2. `vtbl+0x108` (0x777030) reads a
+  second table at +0x4e8 behind the flag at +0x7f9. Read live on
+  the Gulf of Oman Co-op 16 spawn screen (`map-layers.json`): one map node,
+  view 1, zoom 0. Its +0x390 rows are, for (view, zoom) 0..8:
+  `308001045b`, `1308001845b` ×5, `7f000000ff`, `308001045b`, `1308001845b`
+  (43-bit sets, high word first). Its +0x4e8 rows are 0, all, all, 0, 0, all.
+  Who writes them is still not taken apart (the constructor 0x780180 does not
+  decompile cleanly).
 
 Which point is a base is not read out of the binary either: we go by the level's
 own `unableToChangeTeam`, which on Karkand picks out exactly the one point the

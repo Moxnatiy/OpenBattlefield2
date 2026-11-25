@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <unordered_set>
+
+#include "obf2/game/object_template.h"
 
 namespace obf2::server {
 namespace {
@@ -422,6 +425,7 @@ void CollisionWorld::sphereContacts(const Vec3f& from, const Vec3f& motion, floa
     for (const CollisionTriangle* tri : object.faces) {
       MeshContact contact;
       contact.material = tri->material;
+      contact.worldMaterial = tri->worldMaterial;
       if (resting) {
         if (!sphereTri(*tri, to, radius, contact.point, contact.normal, contact.depth)) continue;
         if (contact.depth > 0.0f) continue;
@@ -441,6 +445,7 @@ void CollisionWorld::sphereContacts(const Vec3f& from, const Vec3f& motion, floa
     for (const CollisionTriangle* tri : object.faces) {
       MeshContact contact;
       contact.material = tri->material;
+      contact.worldMaterial = tri->worldMaterial;
       if (!movingSphereEdges(*tri, from, to, radius, contact.point, contact.normal, contact.depth,
                              contact.travel)) {
         continue;
@@ -471,9 +476,29 @@ std::uint64_t CollisionWorld::cellKey(int x, int y, int z) {
 namespace {
 
 // The layer's faces in world space, degenerate and corrupt ones left out.
+// `faceToTriangle`, when given, gets the index in `out` of each face's
+// triangle, -1 for a face left out.
 void worldTriangles(const mesh::CollisionLayer& layer, const Mat4& transform,
-                    std::uint32_t object, std::vector<CollisionTriangle>& out) {
+                    std::uint32_t object, const game::ObjectTemplate* materialOwner,
+                    std::vector<CollisionTriangle>& out,
+                    std::vector<std::int32_t>* faceToTriangle = nullptr) {
+  if (faceToTriangle) faceToTriangle->assign(layer.faces.size(), -1);
+  std::size_t faceIndex = 0;
+  std::unordered_map<std::uint16_t, std::uint16_t> materials;
+  // mapMaterial gives the mesh slot, material name, and global material number
+  // (`Objects_server.zip:staticobjects/common/com_objects/antennamast/antennamast.tweak`).
+  if (const auto* rules = materialOwner ? materialOwner->propertyHistory("mapMaterial") : nullptr) {
+    for (const auto& rule : *rules) {
+      const auto local = rule.asInt(0);
+      const auto global = rule.asInt(2);
+      if (local && *local >= 0 && *local <= UINT16_MAX &&
+          global && *global >= 0 && *global <= UINT16_MAX) {
+        materials[static_cast<std::uint16_t>(*local)] = static_cast<std::uint16_t>(*global);
+      }
+    }
+  }
   for (const mesh::CollisionFace& face : layer.faces) {
+    const std::size_t thisFace = faceIndex++;
     if (face.a >= layer.vertices.size() || face.b >= layer.vertices.size() ||
         face.c >= layer.vertices.size()) {
       continue;  // a corrupt face — skipped rather than fatal
@@ -495,8 +520,38 @@ void worldTriangles(const mesh::CollisionLayer& layer, const Mat4& transform,
     triangle.normal = normal * (1.0f / area);
     triangle.object = object;
     triangle.material = face.material;
+    if (const auto found = materials.find(face.material); found != materials.end()) {
+      triangle.worldMaterial = found->second;
+    }
+    if (faceToTriangle) (*faceToTriangle)[thisFace] = static_cast<std::int32_t>(out.size());
     out.push_back(triangle);
   }
+}
+
+// The inverse of an affine transform (the 3×3 part by its adjugate), to take a
+// world line into a mesh's own space for its tree.
+Mat4 affineInverse(const Mat4& m) {
+  const float a = m.m[0], b = m.m[4], c = m.m[8];
+  const float d = m.m[1], e = m.m[5], f = m.m[9];
+  const float g = m.m[2], h = m.m[6], i = m.m[10];
+  const float det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+  Mat4 out = Mat4::identity();
+  if (det == 0.0f) return out;
+  const float s = 1.0f / det;
+  out.m[0] = (e * i - f * h) * s;
+  out.m[4] = (c * h - b * i) * s;
+  out.m[8] = (b * f - c * e) * s;
+  out.m[1] = (f * g - d * i) * s;
+  out.m[5] = (a * i - c * g) * s;
+  out.m[9] = (c * d - a * f) * s;
+  out.m[2] = (d * h - e * g) * s;
+  out.m[6] = (b * g - a * h) * s;
+  out.m[10] = (a * e - b * d) * s;
+  const Vec3f t = transformDirection(out, Vec3f{m.m[12], m.m[13], m.m[14]});
+  out.m[12] = -t.x;
+  out.m[13] = -t.y;
+  out.m[14] = -t.z;
+  return out;
 }
 
 }  // namespace
@@ -530,10 +585,18 @@ std::size_t CollisionWorld::movableCount() const {
 
 void CollisionWorld::placeTriangles(Movable& movable, const Mat4& transform) {
   movable.triangles.clear();
+  movable.meshes.assign(movable.pieces.size(), MeshObject{});
   for (std::size_t i = 0; i < movable.pieces.size(); ++i) {
     const CollisionPiece& piece = movable.pieces[i];
     if (piece.layer == nullptr) continue;
-    worldTriangles(*piece.layer, transform * piece.local, movable.objects[i], movable.triangles);
+    MeshObject& mesh = movable.meshes[i];
+    mesh.toWorld = transform * piece.local;
+    worldTriangles(*piece.layer, mesh.toWorld, movable.objects[i], nullptr, movable.triangles,
+                   &mesh.triangleOfFace);
+    if (piece.layer->bsp) {
+      mesh.layer = piece.layer;
+      mesh.toLocal = affineInverse(mesh.toWorld);
+    }
   }
   const float big = std::numeric_limits<float>::max();
   movable.minimum = Vec3f{big, big, big};
@@ -548,10 +611,15 @@ void CollisionWorld::placeTriangles(Movable& movable, const Mat4& transform) {
   }
 }
 
-void CollisionWorld::addLayer(const mesh::CollisionLayer& layer, const Mat4& transform) {
+void CollisionWorld::addLayer(const mesh::CollisionLayer& layer, const Mat4& transform,
+                              const game::ObjectTemplate* materialOwner) {
   const std::uint32_t object = layers_++;
   const std::size_t first = triangles_.size();
-  worldTriangles(layer, transform, object, triangles_);
+  std::vector<std::int32_t> faceToTriangle;
+  worldTriangles(layer, transform, object, materialOwner, triangles_, &faceToTriangle);
+  if (layer.bsp) {
+    trees_[object] = MeshObject{&layer, transform, affineInverse(transform), std::move(faceToTriangle)};
+  }
   for (std::size_t i = first; i < triangles_.size(); ++i) {
     const CollisionTriangle& triangle = triangles_[i];
     const auto index = static_cast<std::uint32_t>(i);
@@ -612,21 +680,44 @@ void CollisionWorld::forEachNearby(
 }
 
 std::optional<CollisionWorld::SegmentContact> CollisionWorld::segmentContact(
-    const Vec3f& start, const Vec3f& motion, const Vec3f& around, float radius) const {
+    const Vec3f& start, const Vec3f& motion, const Vec3f& around, float radius, bool movables,
+    bool firstFace) const {
   const Vec3f end = start + motion;
   std::optional<SegmentContact> best;
+  // The nearest object wins (0x696030 keeps the smallest distance).
+  const auto offer = [&](const SegmentContact& contact) {
+    if (best && !(contact.along < best->along)) return;
+    best = contact;
+  };
   const auto test = [&](const CollisionTriangle& tri) {
     SegmentContact contact;
     if (!faceAndEdge(tri.a, tri.b, tri.c, tri.normal, start, end, contact.point,
                      contact.endDepth, contact.along)) {
       return;
     }
-    if (best && !(contact.along < best->along)) return;
     contact.normal = tri.normal;
     contact.material = tri.material;
-    best = contact;
+    contact.worldMaterial = tri.worldMaterial;
+    offer(contact);
   };
-  forEachNearby(around, radius, test);
+  // An object with a tree is asked once, through the tree; its triangles in
+  // the grid only say that it is near. The repeat guard is a set, not a list
+  // searched (a list made forEachNearby quadratic in a dense city cell).
+  std::vector<std::uint32_t> withTree;
+  std::unordered_set<std::uint32_t> seenTree;
+  forEachNearby(around, radius, [&](const CollisionTriangle& tri) {
+    if (trees_.count(tri.object) == 0) {
+      test(tri);
+    } else if (seenTree.insert(tri.object).second) {
+      withTree.push_back(tri.object);
+    }
+  });
+  for (const std::uint32_t object : withTree) {
+    if (const auto contact = treeContact(trees_.at(object), triangles_, start, motion, firstFace)) {
+      offer(*contact);
+    }
+  }
+  if (!movables) return best;
   for (const Movable& movable : movables_) {
     if (!movable.alive) continue;
     if (around.x + radius < movable.minimum.x || around.x - radius > movable.maximum.x ||
@@ -634,9 +725,64 @@ std::optional<CollisionWorld::SegmentContact> CollisionWorld::segmentContact(
         around.z + radius < movable.minimum.z || around.z - radius > movable.maximum.z) {
       continue;
     }
-    for (const CollisionTriangle& tri : movable.triangles) test(tri);
+    for (std::size_t i = 0; i < movable.meshes.size(); ++i) {
+      const MeshObject& mesh = movable.meshes[i];
+      if (mesh.layer != nullptr) {
+        if (const auto contact = treeContact(mesh, movable.triangles, start, motion, firstFace)) {
+          offer(*contact);
+        }
+        continue;
+      }
+      for (const std::int32_t index : mesh.triangleOfFace) {
+        if (index >= 0) test(movable.triangles[static_cast<std::size_t>(index)]);
+      }
+    }
   }
   return best;
+}
+
+std::optional<CollisionWorld::SegmentContact> CollisionWorld::treeContact(
+    const MeshObject& object, const std::vector<CollisionTriangle>& triangles, const Vec3f& start,
+    const Vec3f& motion, bool firstFace) const {
+  const mesh::CollisionLayer& layer = *object.layer;
+  const Vec3f localStart = transformPoint(object.toLocal, start);
+  const Vec3f localMotion = transformDirection(object.toLocal, motion);
+  const auto toMesh = [](const Vec3f& v) { return mesh::Vec3{v.x, v.y, v.z}; };
+  const auto fromMesh = [](const mesh::Vec3& v) { return Vec3f{v.x, v.y, v.z}; };
+  // checkFaceAndEdgeCollision (0x724ae0) in the mesh's space; ours is the
+  // one-sided form, which is what getDistance asks (twoSided false).
+  const mesh::BspFaceTest test = [&](std::uint16_t face, const mesh::Vec3& normal,
+                                     const mesh::Vec3& from, const mesh::Vec3& to,
+                                     mesh::BspFaceHit& hit) {
+    const mesh::CollisionFace& f = layer.faces[face];
+    Vec3f point;
+    float depth = 0.0f, travel = 0.0f;
+    if (!faceAndEdge(fromMesh(layer.vertices[f.a]), fromMesh(layer.vertices[f.b]),
+                     fromMesh(layer.vertices[f.c]), fromMesh(normal), fromMesh(from), fromMesh(to),
+                     point, depth, travel)) {
+      return false;
+    }
+    hit.point = toMesh(point);
+    hit.depth = depth;
+    hit.distance = travel;
+    return true;
+  };
+  // getDistance's bools for a line (sound-template.md, "Obstruction ray"):
+  // twoSided false, flip false, stopFirst = firstFace.
+  const auto found = mesh::closestFace(layer, toMesh(localStart), toMesh(localMotion), false, false,
+                                       firstFace, test);
+  if (!found || found->face >= object.triangleOfFace.size()) return std::nullopt;
+  const std::int32_t index = object.triangleOfFace[found->face];
+  if (index < 0) return std::nullopt;  // a face we left out as degenerate
+  const CollisionTriangle& tri = triangles[static_cast<std::size_t>(index)];
+  SegmentContact contact;
+  contact.point = transformPoint(object.toWorld, fromMesh(found->hit.point));
+  contact.normal = tri.normal;
+  contact.along = found->hit.distance;
+  contact.endDepth = found->hit.depth;
+  contact.material = tri.material;
+  contact.worldMaterial = tri.worldMaterial;
+  return contact;
 }
 
 int CollisionWorld::resolveSphere(Vec3f& position, float radius) const {

@@ -7,11 +7,16 @@
 // plan there says, and for a plain reason: it needs `obf2::server` for the
 // soldier's physics, and `obf2_server` already links `obf2_net`, so putting it
 // there would close a cycle. It sits above all of them instead.
+// What of the server's conversation this session reads, acts on, or still only
+// walks past is listed item by item in docs/todo/network.md — the map to keep
+// current whenever something here changes.
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <utility>
 #include <cstdio>
+#include <cstdlib>
 #include <deque>
 #include <functional>
 #include <map>
@@ -22,17 +27,24 @@
 #include <vector>
 
 #include "obf2/core/math.h"
+#include "obf2/core/path.h"
 #include "obf2/core/platform.h"
-#include "obf2/engine/engine.h"
+#include "obf2/engine/console.h"
+#include "obf2/engine/settings.h"
 #include "obf2/game/object_mesh.h"
 #include "obf2/game/object_template.h"
+#include "obf2/game/scene.h"
 #include "obf2/game/template_numbers.h"
+#include "obf2/game/weapon_recoil.h"
+#include "obf2/level/gameplay.h"
 #include "obf2/level/level.h"
 #include "obf2/net/bf2_events.h"
 #include "obf2/net/bf2_join.h"
 #include "obf2/net/bf2_link.h"
 #include "obf2/net/bf2_protocol.h"
 #include "obf2/net/bf2_world.h"
+#include "obf2/net/chat_string.h"
+#include "obf2/net/end_of_round.h"
 #include "obf2/net/md5.h"
 #include "obf2/net/udp.h"
 #include "obf2/server/collision_objects.h"
@@ -52,6 +64,8 @@ struct Settings {
   std::string connectTo;
   std::string connectPassword;
   std::string playerName;
+  std::int32_t profileId = 0;
+  std::function<std::optional<net::bf2::ChallengeResponse>(std::string_view)> answerChallenge;
   std::string modDir;
   std::string recordTo;      // --record: where to write the captured traffic
   int ordinal = -1;          // --ordinal: which fingerprint of the archive list
@@ -81,7 +95,8 @@ struct ContentHashes {
   std::array<std::byte, 16> level{};
 };
 std::vector<KnownObject> buildKnownObjects(FileSystem& files, const std::string& levelName,
-                                          std::string* error);
+                                          std::string* error,
+                                          const std::optional<level::GameplayObjects>* selected = nullptr);
 // The named object standing at a point, if one does within `tolerance` metres.
 const KnownObject* nearestKnown(const std::vector<KnownObject>& known, const Vec3f& at,
                                 float tolerance = 2.0f);
@@ -97,21 +112,69 @@ game::Registry buildRegistry(FileSystem& files);
 struct RemoteWorld {
   RemoteWorld(Settings a, FileSystem& f) : args(std::move(a)), files(f) {
     world.setOwnName(args.playerName);
-    // The connection type the player's profile names, sent as the original does
-    // (`ConnectionTypeEvent`, bf2_protocol.h). No profile — no event, and the
-    // server keeps its lowest row, as before.
+    world.setSeatRotationLayout([this](std::uint16_t id)
+        -> std::optional<net::bf2::WorldView::SeatRotationLayout> {
+      const auto seat = vehicleSeatOf(id);
+      const auto parent = seat ? seat->parent : id;
+      const auto root = world.objects().find(parent);
+      const auto* name = root == world.objects().end()
+          ? nullptr : templateNumbers.nameOf(root->second.templateId);
+      if (!name) return std::nullopt;
+      const auto key = *name + "#" + std::to_string(id - parent);
+      auto [entry, added] = turretBundleCounts.try_emplace(key);
+      if (added) {
+        auto& layout = entry->second;
+        layout.root = parent;
+        bool other = false;
+        for (const auto& member : game::vehicleDescriptorMembers(registry, *name, id - parent)) {
+          using Kind = net::bf2::DescriptorMember::Kind;
+          net::bf2::DescriptorMember wire;
+          wire.kind = member.kind == game::DescriptorMember::Kind::Engine ? Kind::Engine
+              : member.kind == game::DescriptorMember::Kind::Spring ? Kind::Spring : Kind::Rotational;
+          wire.gearBits = member.gearBits;
+          wire.engineField100 = member.engineField100;
+          wire.engineBlock400 = member.engineBlock400;
+          wire.springExtra = member.springExtra;
+          if (wire.kind == Kind::Rotational) ++layout.bundles;
+          else other = true;
+          layout.members.push_back(wire);
+        }
+        // Only rotational members: the old count path reads the same bits.
+        if (!other) layout.members.clear();
+      }
+      if (!entry->second.bundles) return std::nullopt;
+      auto layout = entry->second;
+      layout.root = parent;
+      return layout;
+    });
+    world.setVehicleArmor([this](std::uint32_t id) -> std::optional<net::bf2::VehicleArmor> {
+      const auto* name = templateNumbers.nameOf(id);
+      const auto* object = name ? registry.find(*name) : nullptr;
+      if (!object || object->className != "PlayerControlObject") return std::nullopt;
+      const auto* armor = object->component("armor");
+      if (!armor) return std::nullopt;
+      const auto value = [&](const char* key) {
+        const auto found = armor->properties.find(key);
+        return found == armor->properties.end() || found->second.empty() ? 0 :
+            found->second.back().asInt(0).value_or(0);
+      };
+      return net::bf2::VehicleArmor{value("maxhitpoints"), value("wreckhitpoints"),
+          object->number("hasMobilePhysics").value_or(1.0f) != 0};
+    });
     {
       obf2::engine::Console console;
       obf2::engine::Settings profile;
       profile.bind(console);
       const std::string documents = obf2::userDocumentsDirectory();
-      if (!documents.empty()) {
-        const std::string read =
-            obf2::engine::loadDefaultProfile(documents + "/Battlefield 2/Profiles", console);
-        if (!read.empty()) {
-          connectionType = profile.general.connectionType;
-          std::printf("  profile %s: connection type %d\n", read.c_str(), *connectionType);
-        }
+      const std::string read =
+          documents.empty() ? std::string()
+                            : obf2::engine::loadDefaultProfile(
+                                  documents + "/Battlefield 2/Profiles", console);
+      if (!read.empty() && profile.general.connectionType > 0) {
+        connectionType = static_cast<std::uint32_t>(profile.general.connectionType);
+        std::printf("  profile %s: connection type %u\n", read.c_str(), connectionType);
+      } else {
+        std::printf("  no profile: connection type %u (broadband)\n", connectionType);
       }
     }
     if (!args.recordTo.empty()) {
@@ -124,11 +187,11 @@ struct RemoteWorld {
   ~RemoteWorld() {
     if (recording != nullptr) std::fclose(recording);
   }
-  std::optional<int> connectionType;
   // Whether a template's geometry assembles, for the report. It is the caller's,
   // because answering needs the mesh loaders and the flags they read
   // (`--geometry`, `--lod`), which belong to the application.
   std::function<DrawStage(const std::string&)> drawabilityOf;
+  std::function<void(const std::string&, const std::string&, int)> mapAnnounced;
   RemoteWorld(const RemoteWorld&) = delete;
   RemoteWorld& operator=(const RemoteWorld&) = delete;
 
@@ -158,6 +221,7 @@ struct RemoteWorld {
   std::map<DrawStage, int> stageCounts;
   obf2::net::bf2::DataBlockAssembler blocks;
   bool levelReady = false;
+  bool serverDisconnected = false;
   std::chrono::steady_clock::time_point lastKeepAlive = std::chrono::steady_clock::now();
 
   // The join sequence lives separately and has a test of its own: every rule about
@@ -166,6 +230,9 @@ struct RemoteWorld {
   obf2::net::bf2::JoinSequence join;
   std::string levelName;
   int blockOrdinal = 0;
+  bool receivedContentOrdinal = false;
+  std::string failure;
+  std::chrono::steady_clock::time_point lastPacketAt = std::chrono::steady_clock::now();
   int pings = 0, dataPackets = 0, other = 0, challenges = 0;
   int eventCount = 0, objectCount = 0;
   // When the first packet arrived, so the report can give a rate rather than a
@@ -192,21 +259,62 @@ struct RemoteWorld {
   int controlStates = 0;
   std::set<std::uint16_t> ghostObjects;
   std::set<std::uint32_t> seenBlocks;
+  bool allowExternalViews = false;
+  std::optional<net::bf2::ServerMatchOptions> serverMatchOptions;
+  std::array<std::array<unsigned, 7>, 2> chosenUnlocks{};
   std::size_t dataBytes = 0;
-  // The delivery of our packets and the events they carry, as the engine's
-  // `SWConnection` and `GameEventManager` keep it (obf2/net/bf2_link.h).
-  obf2::net::bf2::Link link;
-  // Data packets the server sent twice, dropped as the engine drops them.
-  int droppedDuplicates = 0;
-  std::chrono::steady_clock::time_point lastDataSentAt{};
   bool answered = false;
+  bool sentConnectionType = false;
+  obf2::net::bf2::Link link;
+  int droppedDuplicates = 0;
+  std::chrono::steady_clock::time_point connectedAt{};
+  std::chrono::steady_clock::time_point lastDataSentAt{};
+  bool sentClientInfo = false;
+  // Connection type 5 is the profile's broadband row (`GeneralSettings`).
+  static constexpr std::uint32_t kBroadbandConnectionType = 5;
+  // What `ConnectionTypeEvent` sends: the player's profile's connection type
+  // (`GeneralSettings.setConnectionType`, as the original sends it), or broadband
+  // when no profile is found (no BF2 documents folder on this machine). Which
+  // row the original falls back to without a profile is not read.
+  std::uint32_t connectionType = kBroadbandConnectionType;
 
+  void replyToPing(const obf2::net::bf2::Incoming& packet) {
+    if (!packet.pingTime) return;
+    if (packet.extended) link.acceptPing(*packet.extended, packet.pingHaveSent);
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - connectedAt);
+    socket->send(obf2::net::bf2::writePingResponse(
+        id, link.pingHeader(), *packet.pingTime, static_cast<std::uint32_t>(elapsed.count())));
+    ++pings;
+  }
+
+  void sendClientInfoIfReady() {
+    namespace bf2 = obf2::net::bf2;
+    if (!answered || sentClientInfo || !seenBlocks.contains(bf2::kServerInfoBlock)) return;
+
+    bf2::ClientInfo info;
+    info.name = args.playerName;
+    info.nameHash = bf2::clientInfoNameHash(info.name);
+    info.profileId = args.profileId;
+    const auto blob = bf2::buildClientInfo(info);
+    const std::span<const std::byte> bytes(blob);
+    // The Windows trace's block 0 uses chunks of at most 63 bytes.
+    constexpr std::size_t kChunkSize = 63;
+    link.queue(bf2::dataBlockHeaderEvent(bf2::kClientInfoBlock,
+                                         static_cast<std::uint32_t>(bytes.size())));
+    for (std::size_t at = 0; at < bytes.size(); at += kChunkSize) {
+      link.queue(bf2::dataBlockChunkEvent(bytes.subspan(at, std::min(bytes.size() - at, kChunkSize))));
+    }
+    sentClientInfo = true;
+    std::printf("  ClientInfo sent: %zu bytes\n", bytes.size());
+  }
 
   // The player pressed DONE and pointed at a flag. We deliberately do not know the
   // group's number yet: the groups arrive as events after the level loads, while
   // the button can be pressed earlier. So we remember the **position** and pick the
   // number at the moment of sending — when the list certainly exists.
   void askSpawn(int team, int kit, float worldX, float worldZ, float worldSize) {
+    if (endOfRound) return;
     chosenX = worldX;
     chosenZ = worldZ;
     chosenWorld = worldSize;
@@ -217,6 +325,7 @@ struct RemoteWorld {
   // The same, but with the group's number given directly. This is for a headless
   // run: there is no spawn screen there, and the number comes from the command line.
   void askSpawnGroup(int team, int kit, int group) {
+    if (endOfRound) return;
     havePoint = false;
     directGroup = group;
     join.ask(obf2::net::bf2::JoinChoice{team, kit, group});
@@ -232,6 +341,29 @@ struct RemoteWorld {
   }
 
   int directGroup = 0;
+
+  // Whether the spawn group we asked for still takes us: it exists, it is active
+  // and it is our team's — the test `BF2HudManager::update` makes before it
+  // counts down to reopening the spawn screen after a death (OpenBF2
+  // BF2HudManagerUpdate.cpp: `!group || !getActive || getTeam != player team`).
+  bool chosenGroupValid() const {
+    const std::uint16_t id = chosenGroupId();
+    if (id == 0) return false;
+    for (const auto& group : world.spawnGroups()) {
+      if (group.id != id) continue;
+      return group.active && static_cast<int>(group.team) == world.ownTeam();
+    }
+    return false;
+  }
+
+  // `ClientGameLogic::selectSpawnGroup(player, 0)` (OpenBF2: PostRemote 6 with the
+  // group): the HUD's own reopening of the spawn screen takes the choice back.
+  void clearSpawnGroup() {
+    link.queue(obf2::net::bf2::postRemoteEvent(obf2::net::bf2::kNetworkCategory,
+                                               obf2::net::bf2::kNetSelectSpawnGroup, 0));
+    std::printf("  [%6.2f s] spawn group taken back (0)\n", elapsed());
+  }
+
   // Ticks counted for the `actions:` report only.
   std::uint64_t actionReportTicks = 0;
 
@@ -244,6 +376,11 @@ struct RemoteWorld {
   std::uint32_t beginRoundNextTick = 0;
   // How many round resets the server made while we were connected (`NEReset`).
   int roundResets = 0;
+  // How many times the server cleared our spawn group and asked us to choose
+  // again (its `NESelectSpawnGroup`, see the event handling). The application
+  // reopens the spawn screen's choice when it grows.
+  int spawnRefusals = 0;
+  int detonationsLogged = 0;  // projectiles' detonations said in the log
   // HUD events the server sent that nothing acts on: the kinds seen, and how many.
   std::set<std::uint32_t> unhandledHud;
   int unhandledHudCount = 0;
@@ -253,16 +390,28 @@ struct RemoteWorld {
   // When the last packet with the ghost flag set came.
   std::optional<std::chrono::steady_clock::time_point> lastGhostAt;
 
+  // A seat of a vehicle: the vehicle's root object and the seat's template, by
+  // the consecutive ids `NetworkManager::analyseObject` gives a control-object
+  // tree (vehicleSeatOf).
+  struct VehicleSeat {
+    std::uint16_t parent;
+    std::string_view templateName;
+  };
+  std::optional<VehicleSeat> vehicleSeatOf(std::uint16_t id) const;
+  mutable std::map<std::uint32_t, std::vector<std::string>> vehicleSeats;
+
   // The game mode and the size the server plays — which `GamePlayObjects.con`
   // its spawners come from (`gamemodes/<mode>/<size>`).
   std::string serverGameMode;
-  // The server's game name (block 0, `ServerInfo`): what the scoreboard's server
-  // info names it.
-  std::string serverName;
+  bool commanderEnabled = false;
+  bool teamSwitchRefused = false;
+  std::string serverName;  // block 0's game name (`parseServerInfo`)
+  std::vector<std::string> serverWelcome;
   bool votingEnabled = false;
   std::string serverHost;
   int serverPort = 0;
   int serverSize = 0;
+  std::optional<level::GameplayObjects> roundGameplay;
 
   // The spawn screen's SUICIDE button (`spawnManager.commitSuicide`). Sent on the
   // next turn of the conversation.
@@ -276,40 +425,59 @@ struct RemoteWorld {
     return std::chrono::duration<double>(std::chrono::steady_clock::now() - startedAt).count();
   }
 
-  // The squad requests the spawn screen's squad list makes (OpenBF2
-  // `ClientSquadManager`): each one game event, sent on the next turn. The server
-  // answers with the players' own state (their squad and the leader bit) and with
-  // the name and lock events, so nothing here changes until it does.
-  struct SquadRequest {
-    enum class Kind { Join, Leave, Name, Private } kind = Kind::Join;
-    int squad = 0;
-    std::string name;
-    bool flag = false;
-  };
-  std::vector<SquadRequest> squadRequests;
-  int reportedSquad = 0;
   std::uint32_t reportedSpawnAt = 0;
+  // Our own squad and leader bit as last logged (our player's state, 0x2000).
+  int reportedSquad = 0;
   bool reportedLeader = false;
-  void requestSquad(SquadRequest request) { squadRequests.push_back(std::move(request)); }
 
-  // `HudKitSelection::selectKit` (OpenBF2): a kit other than the one the server
-  // has for our player is asked for at once, packed with its unlock level
-  // (`ClientGameLogic::selectKitAndUnlockLevel`: unlock << 4 | kit & 0xF; the
-  // unlocks are not ours, so 0).
   int kitAsked = -1;
-  void selectKit(int kit) {
-    if (kit < 0) return;
+  int kitAskedTeam = 0;
+  // The highest unlock level the server gave us for a kit (UnlockEvent 42).
+  unsigned availableUnlock(int kit, int team = 0) const {
+    if (!team) team = world.ownTeam();
+    const auto self = world.players().find(static_cast<std::uint32_t>(world.ownPlayer()));
+    if (kit < 0 || kit >= 7 || team < 1 || team > 2 || self == world.players().end() ||
+        !self->second.availableUnlocks) return 0;
+    return self->second.availableUnlocks->levels[team - 1][kit];
+  }
+  unsigned selectedUnlock(int kit, int team = 0) const {
+    if (!team) team = world.ownTeam();
+    if (kit < 0 || kit >= 7 || team < 1 || team > 2) return 0;
+    return std::min(chosenUnlocks[team - 1][kit], availableUnlock(kit, team));
+  }
+  // The kit row's unlock arrow (BF2.exe 0x7a20b0): the next level, back to 0
+  // (the standard weapon) past the highest the player has; then the kit is
+  // asked for with it, as `[0x99ef80]->vtbl[0x7c](player, kit, level)` does.
+  unsigned cycleUnlock(int kit) {
+    const int team = world.ownTeam();
+    if (kit < 0 || kit >= 7 || team < 1 || team > 2) return 0;
+    unsigned next = selectedUnlock(kit, team) + 1;
+    if (next > availableUnlock(kit, team)) next = 0;
+    chosenUnlocks[team - 1][kit] = next;
+    selectKit(kit, team);
+    return next;
+  }
+  void selectKit(int kit, int team = 0) {
+    if (kit < 0 || kit >= 7 || endOfRound) return;
+    if (!team) team = world.ownTeam();
     int current = -1;
+    unsigned level = 0;
     if (const auto self = world.players().find(static_cast<std::uint32_t>(world.ownPlayer()));
-        self != world.players().end() && self->second.kit) {
-      current = *self->second.kit;
+        self != world.players().end()) {
+      if (self->second.kit && team == self->second.team) {
+        current = (self->second.unlockLevel.value_or(0) << 4) | *self->second.kit;
+      }
+      if (team >= 1 && team <= 2 && self->second.availableUnlocks) {
+        level = chosenUnlocks[team - 1][kit];
+        if (level > self->second.availableUnlocks->levels[team - 1][kit]) level = 0;
+      }
     }
-    if (kit == current || kit == kitAsked) return;
-    kitAsked = kit;
-    link.queue(obf2::net::bf2::postRemoteEvent(obf2::net::bf2::kNetworkCategory,
-                                               obf2::net::bf2::kNetSelectKit,
-                                               static_cast<std::int32_t>(kit & 0xF)));
-    std::printf("  [%6.2f s] kit %d asked for (the server had %d)\n", elapsed(), kit, current);
+    const int wire = (level << 4) | kit;
+    if (wire == current || (team == kitAskedTeam && wire == kitAsked)) return;
+    kitAsked = wire;
+    kitAskedTeam = team;
+    link.queue(net::bf2::postRemoteEvent(net::bf2::kNetworkCategory, net::bf2::kNetSelectKit, wire));
+    std::printf("  [%6.2f s] kit %d unlock %u asked for\n", elapsed(), kit, level);
   }
 
   // `NEStartSimulation` came: the server counts us as running.
@@ -320,13 +488,220 @@ struct RemoteWorld {
   // is gone, so the spawn screen is answered again — and nothing of the old life
   // is replayed into the next one.
   void resetRound() {
+    endOfRound.reset();
+    endOfRoundInfo.reset();
+    world.clearSpots();
+    world.clearSquadTactics();
+    chats.clear();
+    world.resetMotion();
+    world.detonations().clear();
+    controlledVehicleBaselines = {};
+    controlledVehicleTick = 0;
+    controlledHullTrack = {};
     std::printf("  round reset: the soldier is gone, the spawn screen is open again\n");
     playerSpawned = false;
     bodyReady = false;
+    swim = {};
     bodyTicks = 0;
     ourSoldier = 0;
+    infantryObject = 0;
+    vehicleDismountPending = false;
+    ownCombatFeedback = {};
+    world.retainLocalSoldier(0);
+    action = {};
+    clearInput();
     sent.clear();
+    kitAsked = -1;
+    spawnSelectionRejected = false;
     join.reopen();
+  }
+
+  // The level's control points (`GamePlayObjects.con` for the server's mode).
+  std::vector<obf2::level::ControlPoint> levelControlPoints;
+
+  // A created object that is one of the level's control points. The engine knows
+  // it by its template's class (`ControlPoint`); our numbering of the level's own
+  // templates is not reversed (template_numbers.h stops at the mod's), so we know
+  // it by the place the server created it — the point's `absolutePosition` in the
+  // same `GamePlayObjects.con` [CHOSEN, not recovered]. A record read to exactly
+  // its length is the check that the guess holds (the report's `control points:`).
+  void markIfControlPoint(std::uint16_t id, const obf2::Vec3f& at) {
+    for (const auto& point : levelControlPoints) {
+      const float dx = point.position.x - at.x, dy = point.position.y - at.y,
+                  dz = point.position.z - at.z;
+      if (dx * dx + dy * dy + dz * dz > 0.05f * 0.05f) continue;
+      world.markControlPoint(id, point.id, point.templateName);
+      std::printf("  control point: object %u is %s (level id %d)\n", id,
+                  point.templateName.c_str(), point.id);
+      return;
+    }
+  }
+
+  // The server's rotation (block 5), for the size of the map it plays.
+  obf2::net::bf2::MapList mapList;
+  // The server moved to another map while we played: the application ends its
+  // session on this level and opens the next one when `levelReady` is back.
+  bool levelChanged = false;
+  int mapChanges = 0;
+  // The kills the server announced (`KilledByEvent`), for the HUD's kill feed;
+  // the application takes them each frame.
+  std::vector<obf2::net::bf2::Event::KilledBy> kills;
+  std::function<void(const obf2::net::bf2::Event::KilledBy&)> onKill;
+  // The player who killed us last (`IPlayer::getTracePlayerId`), for the death
+  // camera; empty for a suicide or no killer.
+  std::optional<std::uint32_t> tracePlayer;
+  // The chat strings the server sent, assembled; the application takes them.
+  obf2::net::bf2::ChatAssembler chatStrings;
+  std::vector<obf2::net::bf2::ChatString> chats;
+  int killCount = 0;
+  // Results belong to the current round. The server controls when it resets.
+  std::optional<obf2::net::bf2::Event::EndOfRound> endOfRound;
+  // Our own awards and promotions as they arrive (MedalEvent 41, RankEvent 26),
+  // for the HUD to show and take: a medal's id and level, or the new rank.
+  struct AwardNotice {
+    bool rank = false;
+    unsigned id = 0, level = 0;
+    int newRank = 0;
+  };
+  std::vector<AwardNotice> awardNotices;
+  std::optional<obf2::net::bf2::EndOfRoundInfo> endOfRoundInfo;
+
+  // Mount the level the server named (block 2) and read what the session needs
+  // of it. The size is the rotation's entry for that level and mode; the
+  // rotation's current entry stands in when the names differ in form.
+  void loadServerLevel(const std::string& name, const std::string& mode) {
+    const auto same = [](const std::string& a, const std::string& b) {
+      if (a.size() != b.size()) return false;
+      for (std::size_t i = 0; i < a.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(a[i])) !=
+            std::tolower(static_cast<unsigned char>(b[i]))) {
+          return false;
+        }
+      }
+      return true;
+    };
+    int size = 0;
+    const obf2::net::bf2::MapListEntry* entry = nullptr;
+    for (const auto& candidate : mapList.entries) {
+      if (same(candidate.levelName, name) && same(candidate.gameMode, mode)) entry = &candidate;
+    }
+    if (entry == nullptr) entry = mapList.currentEntry();
+    if (entry != nullptr) size = entry->size;
+    std::printf("  the server plays %s, mode %s, size %d%s\n", name.c_str(), mode.c_str(), size,
+                entry == nullptr ? " (no rotation entry: size not known)" : "");
+    serverGameMode = mode;
+    serverSize = size;
+    if (mapAnnounced) mapAnnounced(name, mode, size);
+    std::string levelError;
+    if (!obf2::level::mountLevel(files, args.modDir, name, &levelError)) {
+      std::printf("  the level was not mounted: %s\n", levelError.c_str());
+      return;
+    } else {
+      roundGameplay = level::loadGameplayObjects(files, name, normalizeAssetPath(mode), size);
+      known = buildKnownObjects(files, name, &levelError, &roundGameplay);
+      registry = buildRegistry(files);
+      std::printf("  the level was read: known objects %zu\n", known.size());
+      // The server's template numbers (obf2/game/template_numbers.h).
+      if (const auto listed = files.read("ServerArchives.con")) {
+        const std::string text(reinterpret_cast<const char*>(listed->data()),
+                               listed->size());
+        std::vector<std::vector<std::string>> archives;
+        for (const auto& archive : obf2::game::archivesFromCon(text)) {
+          archives.push_back(files.archiveEntries(archive));
+        }
+        templateNumbers = obf2::game::TemplateNumbers::build(files, archives);
+        const auto lav = templateNumbers.numberOf("USAPC_LAV25");
+        std::printf("  template numbers: %zu, USAPC_LAV25 is %d\n",
+                    templateNumbers.size(), lav ? static_cast<int>(*lav) : -1);
+        // The width of a soldier's weapon index (0x1000): his
+        // template's `inventorySize` (soldier_state.h).
+        world.setInventorySize([this](std::uint32_t templateId) {
+          const std::string* name = templateNumbers.nameOf(templateId);
+          const obf2::game::ObjectTemplate* soldier =
+              name != nullptr ? registry.find(*name) : nullptr;
+          const auto size =
+              soldier != nullptr ? soldier->number("inventorysize") : std::nullopt;
+          return size ? static_cast<int>(*size) : -1;
+        });
+        // A projectile's template, and its armor (projectile_state.h): the
+        // client reads the 0x10 field only when the object has an armor
+        // component (0x636ac0, +0x3c) — `createComponent Armor` in its tweak.
+        world.setTemplateNet([this](std::uint32_t templateId)
+                                 -> std::optional<obf2::net::bf2::WorldView::TemplateNet> {
+          const std::string* name = templateNumbers.nameOf(templateId);
+          const obf2::game::ObjectTemplate* found =
+              name != nullptr ? registry.find(*name) : nullptr;
+          if (found == nullptr) return std::nullopt;
+          obf2::net::bf2::WorldView::TemplateNet net;
+          // The class as the file spells it; the interpreter ignores case.
+          std::string kind = found->className;
+          for (char& c : kind) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+          net.projectile = kind == "genericprojectile";
+          net.soldier = kind == "soldier";
+          net.overheadCamera = kind == "overheadcamera";
+          if (const obf2::game::Component* armor = found->component("Armor")) {
+            obf2::net::bf2::ProjectileArmor range;
+            const auto value = [&](const char* key) -> std::optional<float> {
+              const auto it = armor->properties.find(key);
+              if (it == armor->properties.end() || it->second.empty()) return std::nullopt;
+              return it->second.back().asFloat();
+            };
+            // `0x4f9a10` takes the rounded values (0x636ac0's ROUNDs).
+            if (const auto max = value("maxhitpoints")) {
+              range.maxHitPoints = static_cast<int>(std::lround(*max));
+            }
+            if (const auto wreck = value("wreckhitpoints")) {
+              range.maxWreckHitPoints = static_cast<int>(std::lround(*wreck));
+            }
+            net.armor = range;
+          }
+          return net;
+        });
+      }
+    }
+    // The level's control points for the server's mode and size — the same
+    // `GamePlayObjects.con` the server ran — to know its objects by.
+    {
+      const auto& gameplay = roundGameplay;
+      levelControlPoints = gameplay ? gameplay->controlPoints
+                                    : std::vector<obf2::level::ControlPoint>{};
+      std::printf("  the level's control points for %s/%d: %zu%s\n", mode.c_str(), size,
+                  levelControlPoints.size(), gameplay ? "" : " (no layout for this mode and size)");
+    }
+    levelReady = true;
+    join.setLevelReady();
+    join.setSkipContent(args.skipContent);
+    join.setSkipDatabase(args.skipDatabase);
+    join.setSkipSimulation(!args.startSimulation);
+    levelName = name;
+  }
+
+  // A new `MapInfo` while a level is up. The server sends one to a client only
+  // as it joins (`clientLoadLevel(id)`) and to everyone when it loads a level
+  // (`GameServer::loadPath` → `clientLoadLevel(-1)`), so a second one is always a
+  // load — the same map again included. The old level's objects go
+  // (`WorldView::leaveLevel`), the soldier with them, and the join starts over
+  // from `NELoadComplete` once the application has the new level on the card.
+  void leaveLevel(const std::string& next) {
+    ++mapChanges;
+    std::printf("  [%6.2f s] MAP CHANGE: %s is left%s%s\n", elapsed(), levelName.c_str(),
+                next.empty() ? "" : ", next ", next.c_str());
+    resetRound();
+    world.leaveLevel();
+    vehicleSeats.clear();
+    roundGameplay.reset();
+    levelControlPoints.clear();
+    world.setGroundProbe({});  // it held the old level's terrain
+    objects.clear();
+    known.clear();
+    join.restartForLevel();
+    databaseSentAt.reset();
+    terrain = nullptr;
+    collision = nullptr;
+    projectileCollision = nullptr;
+    collisionLibrary = nullptr;
+    levelReady = false;
+    levelChanged = true;
   }
 
   bool havePoint = false;
@@ -353,6 +728,9 @@ struct RemoteWorld {
   obf2::Vec3f correctionAxis{};
   const obf2::level::Level* terrain = nullptr;
   obf2::server::CollisionWorld* collision = nullptr;
+  // The same objects' Projectile lod: what a sound's obstruction ray meets
+  // (docs/functions/sound-template.md, "Obstruction ray"). May be null.
+  obf2::server::CollisionWorld* projectileCollision = nullptr;
   // Where a created object's collision comes from; nothing is added without it.
   obf2::server::CollisionLibrary* collisionLibrary = nullptr;
   obf2::server::PhysicsConstants physics;
@@ -361,7 +739,8 @@ struct RemoteWorld {
   // hold — a vehicle an ObjectSpawner made — kept in the collision world as long
   // as the server keeps them, at the place their newest update gives.
   struct MovableCollision {
-    std::uint32_t handle = 0;
+    std::optional<std::uint32_t> handle;            // in `collision`
+    std::optional<std::uint32_t> projectileHandle;  // in `projectileCollision`
     obf2::Vec3f position;
     std::optional<std::array<float, 4>> rotation;
   };
@@ -374,7 +753,9 @@ struct RemoteWorld {
     const auto& objects = world.objects();
     for (auto it = movableCollision.begin(); it != movableCollision.end();) {
       if (objects.count(it->first) == 0) {
-        collision->removeMovable(it->second.handle);
+        if (it->second.handle) collision->removeMovable(*it->second.handle);
+        if (it->second.projectileHandle && projectileCollision)
+          projectileCollision->removeMovable(*it->second.projectileHandle);
         it = movableCollision.erase(it);
       }
       else {
@@ -411,7 +792,9 @@ struct RemoteWorld {
         const obf2::Vec3f& was = found->second.position;
         if (was.x != object.position.x || was.y != object.position.y ||
             was.z != object.position.z || found->second.rotation != object.rotation) {
-          collision->placeMovable(found->second.handle, transform);
+          if (found->second.handle) collision->placeMovable(*found->second.handle, transform);
+          if (found->second.projectileHandle && projectileCollision)
+            projectileCollision->placeMovable(*found->second.projectileHandle, transform);
           found->second.position = object.position;
           found->second.rotation = object.rotation;
         }
@@ -434,12 +817,21 @@ struct RemoteWorld {
         continue;
       }
       const auto& pieces = collisionLibrary->soldierPieces(*name);
-      if (pieces.empty()) {
+      // Only what has flag 0x100 (`hasCollisionPhysics`): the sound's predicator
+      // (collision_objects.h).
+      const auto projectilePieces =
+          projectileCollision ? obf2::server::collisionPhysicsPieces(collisionLibrary->pieces(
+                                    *name, obf2::mesh::ColType::Projectile))
+                              : std::vector<obf2::server::CollisionPiece>{};
+      if (pieces.empty() && (projectileCollision == nullptr || projectilePieces.empty())) {
         noMovableCollision.insert(id);
         continue;
       }
-      const std::uint32_t handle = collision->addMovable(pieces, transform);
-      movableCollision[id] = {handle, object.position, object.rotation};
+      MovableCollision added{std::nullopt, std::nullopt, object.position, object.rotation};
+      if (!pieces.empty()) added.handle = collision->addMovable(pieces, transform);
+      if (projectileCollision && !projectilePieces.empty())
+        added.projectileHandle = projectileCollision->addMovable(projectilePieces, transform);
+      movableCollision[id] = added;
       std::printf("  collision: object %u %s at %.2f %.2f %.2f rotation %.1f %.1f %.1f, %zu pieces\n",
                   id, name->c_str(), object.position.x, object.position.y, object.position.z,
                   object.createdRotation ? object.createdRotation->x : 0.0f,
@@ -457,11 +849,100 @@ struct RemoteWorld {
   struct ActionContext {
     bool zoomed = false;
     float mouseSpeedMod = 1.0f;
+    obf2::game::RecoilDelta recoil;
   };
   ActionContext actionContext;
   std::array<ActionContext, 256> contextAt{};
-  // Our soldier's health, 0..1, as his last controlled state said (0x40).
+  // Health and support ability, normalized from the controlled-soldier state.
   std::optional<float> ownHealth;
+  std::optional<float> ownAbility;
+  std::optional<obf2::net::bf2::SoldierPlayerSync> ownPlayerSync;
+  struct CombatCues {
+    bool hit = false;
+    bool death = false;
+    bool down = false;
+  };
+  CombatCues ownCombatFeedback;
+  // The hit direction, as `Player::setStateSync` (`BF2.exe` 0x5018a0) keeps it:
+  // +0x1b8 the angle `getHitFromDirection` (vtable +0x1e0) returns, and +0x1bc a
+  // counter. A sync with a direction raises HUD event 0x34 (`*0x9ff964 +0x10
+  // (2, 0x34, 0, 0)`) only while the counter is 0, then sets it to 2; every sync
+  // takes one off. So a hit in each of two syncs running cues once.
+  float ownHitFromDirection = 0.0f;
+  int hitDirectionSyncs = 0;
+  // Raised for each HUD event 0x34; the HUD's hit-direction layer takes it.
+  int hitDirectionCues = 0;
+  // Raised for each kill event that names our player the victim of another
+  // living player: the HUD's case 3 (0x753de0) then puts
+  // HUD_TEXT_MENU_YOU_WERE_KILLED into `DeathMessage` (0x754347).
+  int ownKilledByOthers = 0;
+  std::unordered_map<std::string, net::bf2::WorldView::SeatRotationLayout> turretBundleCounts;
+
+  bool combatAlive() const {
+    return playerSpawned && !incapacitated();
+  }
+  bool incapacitated() const {
+    return ownCombatFeedback.down || (ownHealth && *ownHealth <= 0);
+  }
+
+  void announceOwnDeath() {
+    if (ownCombatFeedback.down) return;
+    ownCombatFeedback = {false, true, true};
+  }
+  struct EquippedWeaponSync {
+    std::uint16_t kit;
+    int item;
+    std::uint32_t action;
+    obf2::net::bf2::SoldierWeaponState ammo;
+  };
+  std::optional<EquippedWeaponSync> ownWeaponSync;
+  std::array<std::optional<int>, 8> soldierWeaponBaselines{};
+
+  int soldierInventorySize(std::uint16_t id) const {
+    const auto object = world.objects().find(id);
+    const auto* name = object == world.objects().end()
+        ? nullptr : templateNumbers.nameOf(object->second.templateId);
+    const auto* soldier = name ? registry.find(*name) : nullptr;
+    return soldier ? static_cast<int>(soldier->number("inventorysize").value_or(-1.0f)) : -1;
+  }
+
+  void applySoldierSync(const obf2::net::bf2::ControlObjectState& control) {
+    const auto& soldier = *control.soldier;
+    const auto previousHealth = ownHealth;
+    if (soldier.value40) ownHealth = static_cast<float>(*soldier.value40) / 255.0f;
+    if (soldier.ability) ownAbility = std::clamp(*soldier.ability, 0.0f, 1.0f);
+    auto& baseline = soldierWeaponBaselines[control.baselineSlot];
+    if (!control.delta) baseline = soldier.weaponIndex;
+    if (!control.playerSync) return;
+    ownPlayerSync = control.playerSync;
+    if (control.playerSync->hitFromDirection) {
+      ownHitFromDirection = *control.playerSync->hitFromDirection;
+      if (hitDirectionSyncs == 0) ++hitDirectionCues;
+      hitDirectionSyncs = 2;
+    }
+    if (hitDirectionSyncs != 0) --hitDirectionSyncs;
+    ownHealth = control.playerSync->health;
+    // The player's own man-down flag (+0xe8, BF2.exe getIsManDown 0x504a90) is what
+    // the HUD reads. A sync that says alive, not man down and with health back
+    // means the revive has landed even when the GameLogic 14 event was missed or
+    // named another object (docs/functions/man-down.md).
+    if (playerSpawned && ownCombatFeedback.down && !control.playerSync->manDown &&
+        *ownHealth > 0.0f) {
+      ownCombatFeedback.down = false;
+      std::printf("  THE PLAYER WAS REVIVED (player sync: man down cleared, health %.2f)\n",
+                  *ownHealth);
+    }
+    if (playerSpawned && !ownCombatFeedback.down && previousHealth &&
+        *previousHealth > 0.0f && *ownHealth < *previousHealth) {
+      if (*ownHealth == 0.0f) announceOwnDeath();
+      else ownCombatFeedback.hit = true;
+    }
+    const auto item = soldier.weaponIndex ? soldier.weaponIndex : baseline;
+    if (item && control.playerSync->weapon && control.counter >= 0) {
+      ownWeaponSync = EquippedWeaponSync{control.kitId, *item,
+          static_cast<std::uint32_t>(control.counter), *control.playerSync->weapon};
+    }
+  }
 
   // The eye over the pivot: the soldier template's `poseCameraPosition` for each
   // pose (standing, crouching, prone), set by the caller once the template is
@@ -470,13 +951,24 @@ struct RemoteWorld {
   // (B2BF's reading of Linux 0x5527a0; the follow factors are Linux 0x548058..
   // 0x54808a and the game's data). A camera is the client's own, so it moves
   // once per tick played for the first time, not again on a replay.
-  std::array<obf2::Vec3f, 3> poseCamera{};
+  std::array<obf2::Vec3f, 4> poseCamera{{
+      {}, {}, {}, {0.0f, 0.30f, 0.0f},
+  }};
   bool poseCameraKnown = false;
   obf2::Vec3f eyeOffset{};
+  // The eye at the start of the displayed tick, and the eye a frame shows: the
+  // same blend the body gets (`drawFraction`). The approach moves the eye once a
+  // tick, so drawn as it stands it stepped 8 cm every tick of a crouch, 2 frames
+  // still and then a jump. **Inferred**: that the engine's frame interpolator
+  // carries the camera's offset with the soldier's state is not read.
+  obf2::Vec3f eyeFrom{};
+  obf2::Vec3f drawnEyeOffset() const {
+    return eyeFrom + (eyeOffset - eyeFrom) * drawFraction();
+  }
   bool eyeKnown = false;
   void advanceEye() {
     if (!poseCameraKnown) return;
-    const int pose = std::clamp(body.pose, 0, 2);
+    const int pose = std::clamp(body.pose, 0, obf2::server::kPoseSwim);
     const obf2::Vec3f target = poseCamera[static_cast<std::size_t>(pose)];
     if (!eyeKnown) {
       eyeOffset = target;
@@ -487,6 +979,79 @@ struct RemoteWorld {
   }
 
   // A correction from the server: we put the body where the server sees it.
+  void placeSoldier(const obf2::Vec3f& pivot) {
+    vehicleDismountPending = false;
+    placedSoldier = ourSoldier;
+    infantryObject = ourSoldier;
+    world.retainLocalSoldier(infantryObject);
+    body = obf2::server::BodyState{};
+    bodyAt.fill(BodyRecord{});
+    eyeKnown = false;
+    ownHealth.reset();
+    ownAbility.reset();
+    ownPlayerSync.reset();
+    ownWeaponSync.reset();
+    soldierWeaponBaselines.fill(std::nullopt);
+    correct(pivot - obf2::Vec3f{0.0f, physics.pivotHeight, 0.0f});
+    std::printf("  the body was placed at %.1f %.1f %.1f\n", pivot.x, pivot.y, pivot.z);
+  }
+
+  void resumeDismountedSoldier(const obf2::net::bf2::ControlObjectState& control) {
+    if (!playerSpawned || !vehicleDismountPending || infantryObject == 0 ||
+        control.networkId != infantryObject || !control.soldier || control.soldier->ragdoll ||
+        !control.soldier->position || world.explicitlyDestroyed(infantryObject)) return;
+    ourSoldier = infantryObject;
+    placeSoldier(*control.soldier->position);
+    applySoldierSync(control);
+    reconcile(*control.soldier, control.counter);
+    std::printf("  dismounted soldier %u at server action %d\n", ourSoldier, control.counter);
+  }
+
+  void resumeRevivedSoldier(
+      std::uint16_t id, const std::optional<obf2::net::bf2::ControlObjectState>& control) {
+    std::printf("  GameLogic 14 (revive) for soldier %u (ours %u, infantry %u, destroyed %d)\n",
+                static_cast<unsigned>(id), static_cast<unsigned>(ourSoldier),
+                static_cast<unsigned>(infantryObject), world.explicitlyDestroyed(id) ? 1 : 0);
+    if (id == 0 || (id != ourSoldier && id != infantryObject) ||
+        world.explicitlyDestroyed(id)) return;
+    ownCombatFeedback.down = false;
+    // The health we last heard was the wounded 0, and the server may send no new
+    // control state for a while after a revive (seen on a 1.50 dedicated server):
+    // `incapacitated()` would hold the soldier down on that stale 0. Drop it; the
+    // next player sync sets the restored health.
+    if (ownHealth && *ownHealth <= 0.0f) ownHealth.reset();
+    const auto* state = control && control->networkId == id && control->soldier &&
+        !control->soldier->ragdoll ? &*control->soldier : nullptr;
+    const auto restoreStance = [&] {
+      const auto pose = state ? state->pose.value_or(obf2::net::bf2::kRevivedSoldierPose)
+                              : obf2::net::bf2::kRevivedSoldierPose;
+      body.pose = static_cast<int>(pose);
+      body.requestedPose = static_cast<int>(state ? state->requestedPose.value_or(pose) : pose);
+      swim.swimming = body.pose == obf2::server::kPoseSwim;
+    };
+    if (playerSpawned) {
+      // The server can keep the same control object through man-down. Keep
+      // the replayed stance when a complete motion correction already ran.
+      if (ourSoldier == id && (!state || !state->position || !state->pose)) restoreStance();
+      return;
+    }
+    ourSoldier = id;
+    playerSpawned = true;
+    bodyReady = false;
+    tracePlayer.reset();
+    // A revive reuses the soldier (BF2.exe 0x4e1ffa), so keep the last position
+    // from this life until the retail server supplies a controlled state.
+    auto pivot = body.position + obf2::Vec3f{0.0f, physics.pivotHeight, 0.0f};
+    if (state && state->position) pivot = *state->position;
+    placeSoldier(pivot);
+    restoreStance();
+    if (state) {
+      applySoldierSync(*control);
+      reconcile(*state, control->counter);
+    }
+    std::printf("  THE PLAYER WAS REVIVED (soldier %u)\n", static_cast<unsigned>(id));
+  }
+
   void correct(const obf2::Vec3f& position) {
     observe(position);
     body.position = position;
@@ -530,6 +1095,8 @@ struct RemoteWorld {
   float pendingLookX = 0.0f;  // axis units
   float pendingLookY = 0.0f;
   obf2::net::bf2::PlayerAction pendingKeys;
+  std::function<void(std::uint32_t, const obf2::net::bf2::PlayerAction&)> onAction;
+  std::function<obf2::game::RecoilDelta(std::uint32_t)> recoilAt;
   // Where the soldier looks — the body, the aim's offset, the pitch
   // (`soldier_look.h`), turned only by the quantized actions. Ours looks up with a
   // positive pitch, the engine's down, so `pitch()` turns the sign.
@@ -539,20 +1106,44 @@ struct RemoteWorld {
   // How far the last action turned the look: the yaw's and the pitch's delta
   // (the pitch positive down, as the engine's). `Soldier::handlePlayerInput`
   // keeps the same pair in +0x480 and +0x484 (Linux 0x54f7f3, 0x54f7fe), with
-  // the weapon's recoil added — which ours has none of — and the first-person
+  // the weapon's recoil added, and the first-person
   // camera spring reads them (0x552dd9). Kept until the next action.
   float lastTurn[2] = {0.0f, 0.0f};
 
   // A button pressed for one frame between two ticks (a jump is an edge) would be
   // lost if only the latest frame counted, so presses gather until a tick takes them.
   std::uint32_t pendingPresses = 0;
+  std::uint32_t nonRepeatingHeld = 0;
   std::string lastLookReport;
 
   void queueInput(float lookAxisX, float lookAxisY, const obf2::net::bf2::PlayerAction& keys) {
+    if (endOfRound || incapacitated()) {
+      clearInput();
+      return;
+    }
     pendingLookX += lookAxisX;
     pendingLookY += lookAxisY;
     pendingKeys = keys;
-    pendingPresses |= keys.buttons;
+    namespace bf2 = obf2::net::bf2;
+    constexpr auto onPress = bf2::kButtonUse | bf2::kButtonDrop | bf2::kWeaponSelectMask;
+    constexpr auto nonRepeating = onPress | bf2::kPositionSelectMask;
+    pendingKeys.buttons &= ~nonRepeating;
+    pendingPresses |= pendingKeys.buttons;
+    // Retail use, drop and position select are presses (Settings/Controls.con).
+    const auto held = keys.buttons & nonRepeating;
+    const auto pressed = held & ~nonRepeatingHeld;
+    nonRepeatingHeld = held;
+    pendingPresses |= pressed & onPress;
+    if ((pressed & bf2::kPositionSelectMask) && playerSpawned && vehicleRootOf(ourSoldier)) {
+      pendingPresses |= pressed & bf2::kPositionSelectMask;
+    }
+  }
+
+  void clearInput() {
+    pendingKeys = {};
+    pendingPresses = 0;
+    nonRepeatingHeld = 0;
+    pendingLookX = pendingLookY = 0.0f;
   }
 
   // One frame of the player's own simulation, cut into whole 1/30 s ticks
@@ -569,7 +1160,7 @@ struct RemoteWorld {
   // tick (`FUN_004cc400`), kept that backlog for the rest of the life.
   int tickAllowance = 1;
 
-  // What a frame shows between ticks — `BF2FrameInterpolator`. The frame loop
+  // What a frame shows between ticks. Retail's `BF2FrameInterpolator` frame loop
   // (`FUN_0040ca80`) stores the objects' state before it runs the frame's ticks
   // (`storeObjectStates`, 0x45bbb0, with the tick count at `+4`), and before
   // drawing blends each stored state toward the current one (`FUN_0045c190`):
@@ -577,6 +1168,9 @@ struct RemoteWorld {
   // 0x3f8ccccd), per object by `FUN_0045bfc0`. The soldier's camera is not
   // blended: `FUN_0045c190` hands it the input device's mouse movement of this
   // frame (component 0xc4d7, `+0x94`) — so the look turns every frame.
+  // Our position and eye use the latest tick pair after a multi-tick frame.
+  // Blending from the start of the whole batch left the camera several ticks
+  // behind and released that distance on the next ordinary frame.
   obf2::Vec3f drawFrom;
   int drawTicks = 0;
 
@@ -587,17 +1181,31 @@ struct RemoteWorld {
   }
   std::optional<obf2::Vec3f> drawnSoldierPosition() const {
     const auto at = soldierPosition();
-    if (!at || !bodyReady || drawTicks <= 0) return at;
-    return drawFrom + (body.position - drawFrom) * drawFraction();
+    if (!at || !bodyReady) return at;
+    return drawTicks > 0 ? drawFrom + (body.position - drawFrom) * drawFraction() : *at;
   }
   // The look this frame: the last tick's plus the mouse not yet in an action.
-  float cameraYaw() const { return yaw() + pendingLookX * physics.lookFactorX; }
+  // The mouse not yet in an action is scaled the way the tick will scale it — by
+  // `getMouseSpeedMod` (0x5ae27b; the zoom's field of view over the camera's).
+  // Without it, zoomed to the M24's 0.2, a frame turned 5.5 times further than
+  // the tick then did, and the view stepped back at every tick: 90.6, 90.9, 90.71,
+  // 91.01, 90.82… on a steady turn. That the original's per-frame camera turn
+  // (`FUN_0045c190`) takes the same mod is **not read**; it is what keeps the
+  // frame on the line the ticks draw.
+  float cameraYaw() const {
+    return yaw() + pendingLookX * physics.lookFactorX * actionContext.mouseSpeedMod;
+  }
   float cameraPitch() const {
     return std::max(-physics.lookMaxPitch,
-                    std::min(physics.lookMaxPitch, pitch() - pendingLookY * physics.lookFactorY));
+                    std::min(physics.lookMaxPitch,
+                             pitch() - pendingLookY * physics.lookFactorY *
+                                           actionContext.mouseSpeedMod));
   }
 
-  void predict(float step) {
+  void predict(float step) { advanceActions(step); }
+
+  void advanceActions(float step) {
+    if (incapacitated()) clearInput();
     int ticks = tick.take(step, 1 << 20);
     if (ticks > tickAllowance) {
       ticks = 1;
@@ -605,14 +1213,32 @@ struct RemoteWorld {
     } else if (tickAllowance < 3) {
       ++tickAllowance;
     }
-    if (ticks > 0) {
-      drawFrom = body.position;
-      drawTicks = ticks;
+    // Retail repeats the last action if its queue runs dry. A weapon-select
+    // action would then switch an equipped weapon's fire mode a second time.
+    // Borrow one tick when needed so the press and release can travel together.
+    int drawStartTick = ticks - 1;
+    if (ticks == 1 && playerSpawned && ourSoldier &&
+        (pendingPresses & obf2::net::bf2::kWeaponSelectMask)) {
+      ++ticks;
+      tick.pending -= obf2::server::kTickTime;
+      // The release tick was sent early. Keep the earlier presentation base
+      // until time for that tick has elapsed.
+      drawStartTick = 0;
     }
+    const auto flight = pilotControls();
     for (int i = 0; i < ticks; ++i) {
+      if (i == drawStartTick) {
+        drawFrom = body.position;
+        drawTicks = ticks - i;
+        eyeFrom = eyeKnown ? eyeOffset : poseCamera[0];
+      }
       obf2::net::bf2::PlayerAction next = pendingKeys;
       next.buttons |= pendingPresses;
       pendingPresses = 0;
+      if ((next.buttons & obf2::net::bf2::kPositionSelectMask) &&
+          !vehicleRootOf(ourSoldier)) {
+        next.buttons &= ~obf2::net::bf2::kPositionSelectMask;
+      }
       next.axes[obf2::net::bf2::kAxisMouseX] = obf2::net::bf2::axisToWire(pendingLookX);
       next.axes[obf2::net::bf2::kAxisMouseY] = obf2::net::bf2::axisToWire(pendingLookY);
       // What truncation left over stays for the next tick. This is ours, not the
@@ -620,6 +1246,23 @@ struct RemoteWorld {
       // without the carry a float like 3 * 0.02 * 100 = 5.9999 would lose a unit.
       pendingLookX -= obf2::net::bf2::axisFromWire(next.axes[obf2::net::bf2::kAxisMouseX]);
       pendingLookY -= obf2::net::bf2::axisFromWire(next.axes[obf2::net::bf2::kAxisMouseY]);
+      if (flight != PilotControls::None) {
+        namespace bf2 = obf2::net::bf2;
+        if (next.buttons & bf2::kButtonCrouch) {
+          next.buttons |= bf2::kButtonMouseLook;
+          next.buttons &= ~bf2::kButtonCrouch;
+        }
+        if (flight == PilotControls::Jet && !(next.buttons & bf2::kButtonMouseLook)) {
+          // Air.con binds the mouse to roll and pitch, with pitch inverted in
+          // the default profile. The look axes also serve the camera.
+          using Axis = std::int16_t;
+          const auto stick = [](int v) {
+            return static_cast<Axis>(std::clamp(v, -int(bf2::kAxisFull), int(bf2::kAxisFull)));
+          };
+          next.axes[bf2::kAxisRoll] = stick(next.axes[bf2::kAxisRoll] + next.axes[bf2::kAxisMouseX]);
+          next.axes[bf2::kAxisPitch] = stick(next.axes[bf2::kAxisPitch] - next.axes[bf2::kAxisMouseY]);
+        }
+      }
       action = next;
 
       // The client's tick loop moves the game tick by one (bf2_world.h).
@@ -649,7 +1292,7 @@ struct RemoteWorld {
                     actionTick, sent.size(), world.gameTick(), world.newestPacketTick());
       }
       // No soldier, no actions: the game tick runs, nothing is built or sent.
-      if (ourSoldier == 0) continue;
+      if (ourSoldier == 0 || !combatAlive()) continue;
       const std::uint32_t number = actionTick++;
       sent.push_back({number, action});
       sentAt[number % sentAt.size()] =
@@ -660,10 +1303,13 @@ struct RemoteWorld {
       // for a whole spawn screen. Ours, not the binary's.
       while (sent.size() > 256) sent.pop_front();
 
-      contextAt[number % contextAt.size()] = actionContext;
+      auto& context = contextAt[number % contextAt.size()];
+      context = actionContext;
+      if (recoilAt && !swim.swimming && !vehicleRootOf(ourSoldier)) context.recoil = recoilAt(number);
       playAction(number, action);
       advanceEye();
-      sendAction();
+      if (!(action.buttons & obf2::net::bf2::kWeaponSelectMask)) sendAction();
+      if (onAction && !vehicleDismountPending && !vehicleRootOf(ourSoldier)) onAction(number, action);
       if (bodyReady && terrain != nullptr) {
         // Where the body is, every two seconds of ticks, for the first minute of a
         // life: the measure for "the soldier hangs in the air".
@@ -689,6 +1335,7 @@ struct RemoteWorld {
 
   // One action applied to our soldier: the look, then one tick of movement.
   void playAction(std::uint32_t number, const obf2::net::bf2::PlayerAction& played) {
+    if (vehicleDismountPending || vehicleRootOf(ourSoldier)) return;
     // The body's matrix still stands where the previous tick left it: the input
     // (0x5adea0) turns the body first and builds the movement from that older
     // matrix. Measured on the live server: the reported velocity's heading is the
@@ -706,14 +1353,13 @@ struct RemoteWorld {
     obf2::server::turnSoldier(
         look, mouseX, mouseY,
         obf2::net::bf2::axisFromWire(played.axes[obf2::net::bf2::kAxisThrottle]), physics,
-        context.mouseSpeedMod);
-    lastTurn[0] = mouseX * physics.lookFactorX * context.mouseSpeedMod;
-    lastTurn[1] = mouseY * physics.lookFactorY * context.mouseSpeedMod;
+        context.mouseSpeedMod, context.recoil.yaw, context.recoil.pitch);
+    lastTurn[0] = mouseX * physics.lookFactorX * context.mouseSpeedMod + context.recoil.yaw;
+    lastTurn[1] = mouseY * physics.lookFactorY * context.mouseSpeedMod + context.recoil.pitch;
     if (bodyReady && terrain != nullptr && stepBody(played, matrixYaw, sprinting, context)) {
       // 0x54fe1d: the jump's stamina, straight off.
       sprint.stamina = std::max(0.0f, sprint.stamina - sprint.lossAtJump);
     }
-    bodyAt[number % bodyAt.size()] = {number, body};
 
     // The sprint message (`FUN_005c0460`): while the player's sprint is on, 0x2a on
     // the tick it came on, 0x29 after. The player's sprint is the key with the
@@ -726,6 +1372,7 @@ struct RemoteWorld {
     // `Soldier::handleUpdate` hands the recharge delay a jump started (0x54b6f5).
     // Not modelled: the blocking argument.
     obf2::server::updateSprint(sprint, false, body.sprintRechargeDelay, obf2::server::kTickTime);
+    bodyAt[number % bodyAt.size()] = {number, body, swim, look, sprint};
   }
   obf2::server::SprintState sprint;
   bool sprintKeyLastTick = false;
@@ -761,25 +1408,74 @@ struct RemoteWorld {
   //
   // We used to keep the counter's action and play it a second time: on a fast
   // turn that is one large mouse movement too many, taken back by the next state.
+  void acknowledgeActions(std::int32_t counter) {
+    // An explicit counter acknowledges that action and all preceding actions.
+    // The repeated-counter marker (-1) advances by one action.
+    if (counter < 0 && !sent.empty()) {
+      sprintKeyLastTick = sprintInputOf(sent.front().second);
+      sent.pop_front();
+      return;
+    }
+    while (!sent.empty() && static_cast<std::int64_t>(sent.front().first) <= counter) {
+      sprintKeyLastTick = sprintInputOf(sent.front().second);
+      sent.pop_front();
+    }
+    // During a slow frame the server can fill more ticks than we produced.
+    // The next input needs a counter newer than the last one it played.
+    if (counter >= 0) actionTick = std::max(actionTick, static_cast<std::uint32_t>(counter) + 1);
+  }
+
   void reconcile(const obf2::net::bf2::SoldierState& state, std::int32_t counter) {
-    if (!state.position || !bodyReady) return;
-    if (args.traceOwnState) traceOwnState(state, counter);
+    if (!bodyReady) return;
+    const auto* baseline = counter >= 0 ? &bodyAt[static_cast<std::uint32_t>(counter) % bodyAt.size()]
+                                        : nullptr;
+    if (baseline && baseline->number != static_cast<std::uint32_t>(counter)) baseline = nullptr;
+    const auto applyAngles = [&] {
+      if (state.bodyYaw) look.bodyYaw = *state.bodyYaw;
+      if (state.aimYaw) look.aimYaw = *state.aimYaw;
+      if (state.angle8) look.turnLeft = *state.angle8;
+      if (state.pitch) look.pitch = *state.pitch;
+    };
+    // SoldierNetworkable (BF2.exe 0x62d4e0) masks the angles independently
+    // of position. A stationary soldier can receive a look correction alone.
+    const bool hasAngles = state.bodyYaw || state.aimYaw || state.angle8 || state.pitch;
+    if (!state.position && (!hasAngles || !baseline)) {
+      if (hasAngles && sent.empty()) applyAngles();
+      if (counter >= 0) acknowledgeActions(counter);
+      return;
+    }
+    if (args.traceOwnState) {
+      if (state.position) traceOwnState(state, counter);
+      if (hasAngles && baseline) {
+        const auto recoil = contextAt[static_cast<std::uint32_t>(counter) % contextAt.size()].recoil;
+        if (recoil.yaw != 0.0f || recoil.pitch != 0.0f) {
+          std::printf("  recoil %d: local %+.4f %+.4f, predicted aim %.4f pitch %.4f, "
+                      "server aim %.4f pitch %.4f\n",
+                      counter, recoil.yaw, recoil.pitch, baseline->look.aimYaw, baseline->look.pitch,
+                      state.aimYaw.value_or(baseline->look.aimYaw),
+                      state.pitch.value_or(baseline->look.pitch));
+        }
+      }
+    }
     const obf2::Vec3f predicted = body.position;
     const float predictedYaw = yaw();
 
     // The position is the pivot, `coll-soldier-pivot-height` above the feet
     // (`FUN_006ed4c0`); our body's position is the feet.
-    obf2::Vec3f feet = *state.position;
-    feet.y -= physics.pivotHeight;
     // What the state does not carry — the surface speed a jump leaves standing, the
     // sticking flag, the ground's normal, the jump's timers and delays — is taken
     // from our own prediction of the same tick; the client's copies are its own
     // too, never networked.
-    if (counter >= 0) {
-      const BodyRecord& ours = bodyAt[static_cast<std::uint32_t>(counter) % bodyAt.size()];
-      if (ours.number == static_cast<std::uint32_t>(counter)) body = ours.body;
+    if (baseline) {
+      body = baseline->body;
+      swim = baseline->swim;
+      look = baseline->look;
+      sprint = baseline->sprint;
     }
-    body.position = feet;
+    if (state.position) {
+      body.position = *state.position;
+      body.position.y -= physics.pivotHeight;
+    }
     if (state.velocity) body.velocity = *state.velocity;
     // The physics node, as `SoldierNetworkable::setNetUpdate` puts it back (Linux
     // 0x5dd7d6, 0x5de45d, 0x5de440, 0x5de47a), and the ground flag (0x5dd90b).
@@ -795,19 +1491,16 @@ struct RemoteWorld {
     if (state.value400) body.forwardAxis = *state.value400;
     if (state.value800) body.strafeAxis = *state.value800;
     // The angles, each in its own field (soldier_state.h, `soldier_look.h`).
-    if (state.bodyYaw) look.bodyYaw = *state.bodyYaw;
-    if (state.aimYaw) look.aimYaw = *state.aimYaw;
-    if (state.angle8) look.turnLeft = *state.angle8;
-    if (state.pitch) look.pitch = *state.pitch;
+    applyAngles();
     // The sprint and its stamina (0x4000). The flag is the one the next tick's
     // input reads.
     if (state.flag4000) sprint.sprinting = *state.flag4000;
     if (state.value4000) sprint.stamina = *state.value4000;
-    // The health (0x40): `ceil(max(hit points, 0)) / max hit points × 255`, 8 bits
-    // (`SoldierNetworkable::updateStateMask`, Linux 0x5db45b..0x5db4bb).
-    if (state.value40) ownHealth = static_cast<float>(*state.value40) / 255.0f;
     // The pose and the one asked for (0x20, `Soldier +0x3c8`/`+0x3cc`).
-    if (state.pose) body.pose = static_cast<int>(*state.pose);
+    if (state.pose) {
+      body.pose = static_cast<int>(*state.pose);
+      swim.swimming = body.pose == obf2::server::kPoseSwim;
+    }
     if (state.requestedPose) body.requestedPose = static_cast<int>(*state.requestedPose);
 
     // How long this answer took: the action the counter names was sent by us, and
@@ -827,16 +1520,7 @@ struct RemoteWorld {
       }
     }
 
-    while (!sent.empty() && static_cast<std::int64_t>(sent.front().first) < counter) {
-      sent.pop_front();
-    }
-    // 0x4d4bce: the head goes whatever its tick. A counter the server already
-    // sent comes as -1 (`FUN_005b7390` against `+0x20e8`), and then this is the
-    // one action it took off its buffer.
-    if (!sent.empty()) {
-      sprintKeyLastTick = sprintInputOf(sent.front().second);
-      sent.pop_front();
-    }
+    acknowledgeActions(counter);
     for (const auto& [number, played] : sent) playAction(number, played);
 
     // The measure: how far the replayed body lands from where the prediction had
@@ -845,12 +1529,13 @@ struct RemoteWorld {
     body.position = predicted;
     observe(replayed);
     body.position = replayed;
+    const auto correction = replayed - predicted;
+    const float moved = obf2::length(correction);
     const float yawJump = std::remainder(yaw() - predictedYaw, 360.0f);
     yawCorrectionMax = std::max(yawCorrectionMax, std::abs(yawJump));
     yawCorrectionSum += std::abs(yawJump);
     // The corrections a player would see: a turn of over half a degree or a move of
     // over 5 cm, the first thirty of a run, with the state's angles and axes.
-    const float moved = obf2::length(replayed - predicted);
     if ((std::abs(yawJump) > 0.5f || moved > 0.05f) && ++bigCorrections <= 30) {
       std::printf("  big correction: counter %d, yaw %+.2f, moved %.3f m, replayed %zu; "
                   "server body %.2f aim %.2f 0x8 %.2f, axes %.3f %.3f, sprint %d stamina %.3f\n",
@@ -864,8 +1549,11 @@ struct RemoteWorld {
   // `--trace-own-state`: the server's state names the action it played last, and
   // this is where we had the body after the same one.
   struct BodyRecord {
-    std::uint32_t number = 0;
+    std::uint32_t number = UINT32_MAX;
     obf2::server::BodyState body;
+    obf2::server::SwimState swim;
+    obf2::server::SoldierLook look;
+    obf2::server::SprintState sprint;
   };
   std::array<BodyRecord, 256> bodyAt{};
 
@@ -936,7 +1624,7 @@ struct RemoteWorld {
     // The pose keys and what `executePoseChange` reads.
     intent.prone = (action.buttons & obf2::net::bf2::kButtonLie) != 0;
     intent.crouch = (action.buttons & obf2::net::bf2::kButtonCrouch) != 0;
-    const float water = terrain != nullptr ? terrain->terrain.seaLevel : -1.0e9f;
+    const float water = obf2::server::waterHeightAt(body.position, terrain, collision);
     intent.canGoProne = obf2::server::soldierCanGoProne(body, water, physics);
     intent.sprinting = sprinting;
     intent.zoomed = context.zoomed;
@@ -1033,6 +1721,8 @@ struct RemoteWorld {
 
   // The object we control. `EnterVehicleEvent` names it.
   std::uint16_t ourSoldier = 0;
+  std::uint16_t infantryObject = 0;
+  bool vehicleDismountPending = false;
   // The object the server sends the controlled-object state about. Before spawning
   // that is not a soldier but the spawn screen's camera.
   std::uint16_t controlObject = 0;
@@ -1040,6 +1730,7 @@ struct RemoteWorld {
   // soldier: before spawning there is no soldier, and the engine's `getSoldier`
   // returns nothing (0x445e01).
   bool playerSpawned = false;
+  bool spawnSelectionRejected = false;
   // Which soldier the predicted body was placed for. A respawn is a new object.
   std::uint16_t placedSoldier = 0;
   // The spawn screen's camera — the controlled object while the player has no
@@ -1047,8 +1738,72 @@ struct RemoteWorld {
   std::uint16_t cameraObject = 0;
 
   // Where our soldier is now. Empty means we have not spawned yet.
+  std::uint16_t vehicleRootOf(std::uint16_t object) const;
+  bool usesLocalDeathPose(std::uint16_t object) const {
+    return object != 0 && object == ourSoldier && !playerSpawned && vehicleRootOf(object) == 0;
+  }
+  enum class PilotControls { None, Helicopter, Jet };
+  static PilotControls aircraftControls(const game::ObjectTemplate* object) {
+    if (!object) return PilotControls::None;
+    const auto category = normalizeAssetPath(object->text("vehicleCategory"));
+    if (category == "vcair") return PilotControls::Jet;
+    if (category == "vchelicopter") return PilotControls::Helicopter;
+    return PilotControls::None;
+  }
+  // The fastest a driven hull's lead believes it moves, so that a bad sample is
+  // not carried forward: **not measured** (no engine figure is read for it).
+  static constexpr float kDrivenHullMaximumSpeed = 45.0f;
+  PilotControls aircraftControls(std::uint16_t id) const {
+    const auto vehicle = world.objects().find(id);
+    const auto* name = vehicle == world.objects().end()
+        ? nullptr : templateNumbers.nameOf(vehicle->second.templateId);
+    return aircraftControls(name ? registry.find(*name) : nullptr);
+  }
+  PilotControls pilotControls() const {
+    if (!playerSpawned || !ourSoldier || vehicleRootOf(ourSoldier) != ourSoldier) return PilotControls::None;
+    return aircraftControls(ourSoldier);
+  }
+  std::optional<net::bf2::GhostPose> controlledVehiclePose() const {
+    if (!playerSpawned || !ourSoldier || controlObject != ourSoldier ||
+        vehicleRootOf(ourSoldier) != ourSoldier) return std::nullopt;
+    const float leadMs = static_cast<float>(std::min<std::size_t>(sent.size(), 3)) *
+                         net::bf2::kGhostTickMs + tick.pending * 1000.0f;
+    return controlledHullTrack.leadVehicle(leadMs, kDrivenHullMaximumSpeed);
+  }
+  std::optional<net::bf2::GhostPose> occupiedVehiclePose() const {
+    const auto vehicle = vehicleRootOf(ourSoldier);
+    if (!playerSpawned || !vehicle) return std::nullopt;
+    if (auto controlled = controlledVehiclePose()) return controlled;
+    return world.poseOf(vehicle);
+  }
+  std::array<std::optional<net::bf2::SimpleObjectState>, 8> controlledVehicleBaselines;
+  std::uint32_t controlledVehicleTick = 0;
+  net::bf2::GhostTrack controlledHullTrack;
+  void updateControlledVehicle(std::span<const std::byte> packet,
+                               const net::bf2::ControlObjectState& state, std::uint32_t serverTick);
+
+  // The sound listener's velocity (BF2.exe 0x7de9a0): the positional speed of
+  // the root of `Player::getVehicle()` — the soldier on foot, the vehicle when
+  // seated. On foot: the predicted body. In a vehicle: the newest networked
+  // velocity of its hull (the controlled hull's track while driving, the
+  // ghost's otherwise); none received → 0. 0x7de9a0 asks this only while
+  // `hasFirstPersonView()` (Player +0x184); the caller decides that
+  // (WorldView, from the camera's view mode).
+  obf2::Vec3f soundListenerVelocity() const {
+    if (soldierPosition()) return body.velocity;
+    const std::uint16_t vehicle = playerSpawned ? vehicleRootOf(ourSoldier) : 0;
+    if (!vehicle) return {};
+    const net::bf2::GhostSample* newest = nullptr;
+    if (controlledVehiclePose()) {
+      newest = controlledHullTrack.newest();
+    } else if (const auto found = world.objects().find(vehicle); found != world.objects().end()) {
+      newest = found->second.track.newest();
+    }
+    return newest && newest->velocity ? *newest->velocity : obf2::Vec3f{};
+  }
+
   std::optional<obf2::Vec3f> soldierPosition() const {
-    if (ourSoldier == 0) return std::nullopt;
+    if (ourSoldier == 0 || vehicleDismountPending || vehicleRootOf(ourSoldier)) return std::nullopt;
     // We show the predicted position rather than the last correction: tenths of a
     // second pass between corrections, and without prediction the movement would
     // look like jerks.
@@ -1092,15 +1847,26 @@ struct RemoteWorld {
     // and on a mismatch sends its own back — so the error is visible at once.
     request.modDirectory = "mods/bf2";
 
-    if (!socket->send(obf2::net::bf2::writeConnectRequest(request))) {
-      std::fprintf(stderr, "could not send the request\n");
-      return false;
+    // The initial UDP request has no reliable event envelope. Keep the same
+    // source port and retry only while no answer has arrived.
+    const auto requestBytes = obf2::net::bf2::writeConnectRequest(request);
+    constexpr int kConnectAttempts = 3;
+    std::optional<std::vector<std::byte>> reply;
+    for (int attempt = 1; attempt <= kConnectAttempts && !reply; ++attempt) {
+      if (!socket->send(requestBytes)) {
+        failure = "Could not send the server connection request.";
+        std::fprintf(stderr, "%s\n", failure.c_str());
+        socket.reset();
+        return false;
+      }
+      std::printf("  request sent: protocol %#x, version %#x (attempt %d/%d)\n",
+                  request.magic, request.version, attempt, kConnectAttempts);
+      reply = socket->receive(2000);
     }
-    std::printf("  request sent: protocol %#x, version %#x\n", request.magic, request.version);
-
-    const auto reply = socket->receive(2000);
     if (!reply) {
-      std::fprintf(stderr, "  the server is silent\n");
+      failure = "The game server did not answer the connection request.";
+      std::fprintf(stderr, "%s\n", failure.c_str());
+      socket.reset();
       return false;
     }
 
@@ -1111,6 +1877,9 @@ struct RemoteWorld {
     }
 
     if (packet->denied) {
+      if (packet->denied->reason == obf2::net::bf2::DenyReason::WrongPassword) {
+        failure = "The server rejected the password.";
+      }
       std::printf("  denied: %s\n",
                   std::string(obf2::net::bf2::denyReasonName(packet->denied->reason)).c_str());
       if (!packet->denied->modDirectory.empty()) {
@@ -1120,6 +1889,10 @@ struct RemoteWorld {
     }
 
     if (!packet->accept) {
+      if (packet->kind == obf2::net::bf2::PacketKind::Disconnect) {
+        onServerDisconnect(packet->disconnectReason, "waiting for connection acceptance");
+        return false;
+      }
       std::printf("  unexpected packet of type %d\n", static_cast<int>(packet->kind));
       return false;
     }
@@ -1134,45 +1907,50 @@ struct RemoteWorld {
                                                   packet->accept->connectionId));
     std::printf("  acknowledgement sent\n");
     id = packet->accept->connectionId;
+    connectedAt = std::chrono::steady_clock::now();
     world.setOwnConnection(static_cast<int>(id));
     return true;
   }
 
-  // Keep the conversation up while we are busy with something long. Loading a
-  // level takes about eleven seconds, and all that time we did not answer pings —
-  // the server managed to disconnect us before we even said `NELoadComplete`. We
-  // deliberately do not advance the sequence's steps here: only the pings are needed.
-  // Call it no more often than twice a second: the socket is non-blocking, but the
-  //
-  // call still costs something, and loading is slow as it is.
-  // One turn: advance the spawn sequence and read what arrived. Waiting long is
-  void keepAlive() {
-    if (socket == nullptr) return;
-    const auto now = std::chrono::steady_clock::now();
-    if (now - lastKeepAlive < std::chrono::milliseconds(500)) return;
-    lastKeepAlive = now;
-    for (int i = 0; i < 8; ++i) {
-      const auto more = socket->receive(0);
-      if (!more) break;
-      const auto parsed = obf2::net::bf2::readPacket(*more);
-      if (!parsed) continue;
-      if (parsed->kind != obf2::net::bf2::PacketKind::PingRequest) continue;
-      if (parsed->extended) link.acceptPing(*parsed->extended, parsed->pingHaveSent);
-      socket->send(obf2::net::bf2::writePingResponse(id, link.pingHeader(),
-                                                     parsed->pingTime.value_or(0),
-                                                     parsed->pingTime.value_or(0)));
-      ++pings;
+  void onServerDisconnect(std::optional<std::uint32_t> reason, const char* stage) {
+    // What each reason number means to the original is not read here; the
+    // number is reported as the server sent it.
+    if (failure.empty()) {
+      failure = std::string("The server disconnected this client while ") + stage + ".";
+      if (reason) failure += " (reason " + std::to_string(*reason) + ")";
+    }
+    serverDisconnected = true;
+    socket.reset();
+    if (reason) std::fprintf(stderr, "  server disconnect reason: %u\n", *reason);
+    std::fprintf(stderr, "server disconnected (type 5), stage: %s\n", stage);
+  }
+
+  void onServerDisconnect(std::optional<std::uint32_t> reason) {
+    if (levelReady) {
+      onServerDisconnect(reason, obf2::net::bf2::joinStepName(join.step()));
+    } else if (sentClientInfo) {
+      onServerDisconnect(reason, "waiting for the selected map");
+    } else if (answered) {
+      onServerDisconnect(reason, "waiting for server block 0");
+    } else {
+      onServerDisconnect(reason, "waiting for the challenge");
     }
   }
 
-  // One turn: advance the join chain and read what arrived. Waiting long is
-  // only allowed outside a frame — inside one it would be a freeze.
-  // One turn of the conversation: send what is due and **parse one packet**.
-  // Returns whether there was a packet — because this has to be called until the
-  // queue is empty. The socket's queue does not clear itself: taking one packet
-  // per frame while the server sends more makes it grow, and we look at the world
-  // as it was several seconds ago.
+  // Keep acknowledging data while the level loads. JoinSequence waits for
+  // setClientLoaded(), so the normal pump can process pings and round events
+  // while the client prepares its assets.
+  void keepAlive() {
+    const auto now = std::chrono::steady_clock::now();
+    if (now - lastKeepAlive < std::chrono::milliseconds(50)) return;
+    lastKeepAlive = now;
+    for (int i = 0; i < 8 && pump(0); ++i) {}
+  }
+
+  // Send what is due and receive one datagram. Drain the queue each frame so
+  // gameplay does not fall behind the server.
   bool pump(int timeoutMs) {
+      if (!socket) return false;
       // When to send the next step is decided by JoinSequence — every rule about
       // pauses and waiting is there, together with its test. Assembling the packet
       // and reporting that we sent it is what is left here.
@@ -1243,7 +2021,7 @@ struct RemoteWorld {
             // `HudKitSelection::selectKit`: only a kit other than the player's is
             // sent — normally the moment it is clicked (`selectKit` below), so
             // by DONE there is nothing left to say.
-            selectKit(choice.kit);
+            selectKit(choice.kit, choice.team);
             break;
           case obf2::net::bf2::JoinStep::Group: {
             float away = 0.0f;
@@ -1281,11 +2059,17 @@ struct RemoteWorld {
         std::printf("  [%6.2f s] step: suicide\n", elapsed());
       }
 
-      // Our own squad, as our player's state says, whenever it changes.
+      // Report the server’s spawn countdown separately from delivery latency, and
+      // our own squad, as our player's state says, whenever it changes.
       if (const auto self = world.players().find(static_cast<std::uint32_t>(world.ownPlayer()));
           self != world.players().end()) {
         const int squad = static_cast<int>(self->second.squad.value_or(0));
         const bool leader = self->second.squadLeader;
+        if (squad != reportedSquad || leader != reportedLeader) {
+          std::printf("  our squad: %d%s\n", squad, leader ? " (leader)" : "");
+          reportedSquad = squad;
+          reportedLeader = leader;
+        }
         // When the server lets us spawn (`spawnAtTick`, 0x20; the original's
         // spawn screen counts it down): the wait after DONE is this, not ours.
         if (self->second.spawnAtTick && *self->second.spawnAtTick != reportedSpawnAt) {
@@ -1296,78 +2080,50 @@ struct RemoteWorld {
                       elapsed(), reportedSpawnAt, now,
                       reportedSpawnAt > now ? (reportedSpawnAt - now) / 30.0 : 0.0);
         }
-        if (squad != reportedSquad || leader != reportedLeader) {
-          std::printf("  our squad: %d%s\n", squad, leader ? " (leader)" : "");
-          reportedSquad = squad;
-          reportedLeader = leader;
-        }
       }
-      for (const SquadRequest& request : squadRequests) {
-        const int team = world.ownTeam();
-        const int player = ourPlayer;
-        if (team <= 0 || player < 0) {
-          std::printf("  squad request dropped: our team or player is not known yet\n");
-          continue;
-        }
-        switch (request.kind) {
-          case SquadRequest::Kind::Join:
-            link.queue(obf2::net::bf2::joinSquadEvent(team, player, request.squad));
-            std::printf("  squad: join %d\n", request.squad);
-            break;
-          case SquadRequest::Kind::Leave:
-            link.queue(obf2::net::bf2::leaveSquadEvent(team, player, request.squad, request.flag));
-            std::printf("  squad: leave %d\n", request.squad);
-            break;
-          case SquadRequest::Kind::Name:
-            link.queue(
-                obf2::net::bf2::changeSquadNameEvent(team, request.squad, player, request.name));
-            std::printf("  squad: name %d '%s'\n", request.squad, request.name.c_str());
-            break;
-          case SquadRequest::Kind::Private:
-            link.queue(obf2::net::bf2::setPrivateSquadEvent(team, request.squad, request.flag));
-            std::printf("  squad: %d %s\n", request.squad, request.flag ? "locked" : "open");
-            break;
-        }
-      }
-      squadRequests.clear();
 
       // Whatever events wait go now, in one data packet with no actions; an
       // action packet carries any that are queued after this (`sendAction`).
       //
-      // And with no soldier to send actions for, a data packet still goes at the
-      // connection's own pace — 20 a second (`ClientConnection` +0x14, 20 from
-      // its constructor; OpenBF2) — because our acknowledgement of the server's
-      // packets rides only on ours. Without them the server heard from us at the
+      // Acknowledgements still need an outgoing packet when no action has gone
+      // out at the connection's 20 Hz pace. A confirmed spawn or a change of
+      // controlled object can leave us between action streams. Without them the server heard from us at the
       // pings alone, its window of unconfirmed event blocks (15) filled with the
       // bots' deaths and spawns, and the spawn it sent us waited seconds behind
       // them.
       {
         const auto nowSent = std::chrono::steady_clock::now();
         const bool due = nowSent - lastDataSentAt >= std::chrono::milliseconds(50);
-        const bool acting = ourSoldier != 0 && playerSpawned;
-        if (link.canSend() && (link.hasEventsToSend() || (due && !acting && levelReady))) {
+        if (link.canSend() && (link.hasEventsToSend() || (due && answered))) {
           socket->send(obf2::net::bf2::writeDataPacket(id, link, nullptr));
           lastDataSentAt = nowSent;
         }
       }
 
       const auto more = socket->receive(timeoutMs);
-      if (!more) return false;
-      if (recording != nullptr) {
+      if (!more) {
+        if (timeoutMs > 0 && !sentConnectionType) {
+          link.queue(obf2::net::bf2::connectionTypeEvent(connectionType));
+          sentConnectionType = true;
+          std::printf("  ConnectionTypeEvent sent: %u\n", connectionType);
+        }
+        return false;
+      }
+      const auto parsed = obf2::net::bf2::readPacket(*more);
+      if (!parsed) return true;
+      lastPacketAt = std::chrono::steady_clock::now();
+      if (recording != nullptr && answered && !parsed->challenge) {
         const auto length = static_cast<std::uint32_t>(more->size());
         std::fwrite(&length, sizeof(length), 1, recording);
         std::fwrite(more->data(), 1, more->size(), recording);
       }
-      const auto parsed = obf2::net::bf2::readPacket(*more);
-      if (!parsed) return true;
 
       switch (parsed->kind) {
+        case obf2::net::bf2::PacketKind::Disconnect:
+          onServerDisconnect(parsed->disconnectReason);
+          return false;
         case obf2::net::bf2::PacketKind::PingRequest: {
-          ++pings;
-          if (parsed->extended) link.acceptPing(*parsed->extended, parsed->pingHaveSent);
-          socket->send(obf2::net::bf2::writePingResponse(id, link.pingHeader(),
-                                                         parsed->pingTime.value_or(0),
-                                                         parsed->pingTime.value_or(0)));
+          replyToPing(*parsed);
           break;
         }
         case obf2::net::bf2::PacketKind::Data: {
@@ -1426,16 +2182,31 @@ struct RemoteWorld {
                           sent.size());
             }
           }
-          // The controlled-object state. From it we take **only** the object's
-          // number for now: the triple of numbers in it is the compression
-          // reference point, not a position (see bf2_events.h).
-          if (const auto state = obf2::net::bf2::readControlObjectState(*more)) {
+          // The controlled-object header gives the object's ID and the
+          // compression reference point for the packet (see bf2_events.h).
+          const auto state = obf2::net::bf2::readControlObjectState(*more,
+              [this](std::uint16_t id) { return soldierInventorySize(id); });
+          if (state) {
             if (controlStates < 3) {
               std::printf("  controlled state: reference %.1f %.1f %.1f (counter %d, object %u)\n",
                           state->compressionReference.x, state->compressionReference.y,
                           state->compressionReference.z, state->counter, state->networkId);
             }
             ++controlStates;
+            if (!state->isSoldier && playerSpawned && state->networkId != cameraObject &&
+                vehicleRootOf(ourSoldier) != 0 &&
+                vehicleRootOf(ourSoldier) == vehicleRootOf(state->networkId)) {
+              acknowledgeActions(state->counter);
+              // The game tick, as for our soldier below: the packet's server tick
+              // plus one per action not yet answered (`FUN_004d4b30`, 0x4d4bc9 and
+              // 0x4d4c15 — the controlled object's state, whatever it is). Without
+              // it a seated player's clock ran on our actions alone and drifted
+              // ahead of the server's, dragging every ghost further into
+              // extrapolation.
+              if (const auto header = obf2::net::bf2::readGhostHeader(*more); header && !sent.empty()) {
+                world.setGameTick(header->time + static_cast<std::uint32_t>(sent.size()));
+              }
+            }
             // The compression reference point for the whole stream that follows.
             compressionReference = state->compressionReference;
             // Before we play a soldier there are no actions, and 0x4d4b30 leaves the
@@ -1452,6 +2223,7 @@ struct RemoteWorld {
                 bodyReady && placedSoldier == ourSoldier) {
               const auto& s = *state->soldier;
               const float predictedYaw = yaw();
+              applySoldierSync(*state);
               reconcile(s, state->counter);
               // The game tick: this packet's server tick plus one per action played
               // again (`FUN_004d4b30`, 0x4d4bc9 and 0x4d4c15; bf2_world.h).
@@ -1497,6 +2269,9 @@ struct RemoteWorld {
             // `NEPlayerDead`. So it is remembered, and never taken for a soldier.
             if (!playerSpawned && cameraObject == 0) cameraObject = state->networkId;
             if (state->networkId != controlObject) {
+              controlledVehicleBaselines = {};
+              controlledVehicleTick = 0;
+              controlledHullTrack = {};
               controlObject = state->networkId;
               std::printf("  controlled object: %u%s\n", controlObject,
                           (ourSoldier != 0 && controlObject != ourSoldier) ? " (not our soldier!)"
@@ -1507,7 +2282,7 @@ struct RemoteWorld {
             // without the number we send no action stream — and then the server
             // stops sending us state, because it has nothing to answer.
             if (playerSpawned && controlObject != 0 && controlObject != cameraObject &&
-                ourSoldier != controlObject) {
+                state->isSoldier && !vehicleDismountPending && ourSoldier != controlObject) {
               ourSoldier = controlObject;
               // A different soldier than the body was built for: a respawn whose
               // `NEPlayerDead` we missed or that arrived out of order. The same
@@ -1521,29 +2296,18 @@ struct RemoteWorld {
             // replay of unanswered actions is not reversed. Debt, not a decision.
             // Only after `NEPlayerSpawned`: before spawning we have no soldier,
             // and the enter event happens for other players too.
-            if (!bodyReady && playerSpawned && ourSoldier != 0) {
+            if (!bodyReady && playerSpawned && !vehicleDismountPending && ourSoldier != 0 && state->isSoldier) {
               const auto born = objects.find(ourSoldier);
+              // The creation position is the pivot, as every state's is: measured on
+              // the live server, a soldier created at 163.75 over terrain 162.50 is
+              // stood at 163.4971 by his first state, falling at 2.843 m/s. Placed
+              // there, our body falls the same way; placed at a later state with no
+              // velocity it does not, and the next state corrects it by ~0.18 m.
+              // The state's own position stands in only when no creation came.
               if (born != objects.end()) {
-                placedSoldier = ourSoldier;
-                // The creation position is the pivot, as every state's is: measured on
-                // the live server, a soldier created at 163.75 over terrain 162.50 is
-                // stood at 163.4971 by his first state, falling at 2.843 m/s — 0.25 m
-                // of fall from feet 1.0 under the creation point. Our body is the feet.
-                obf2::Vec3f feet = born->second;
-                feet.y -= physics.pivotHeight;
-                // A new soldier starts from nothing: `Soldier::resetInstance` (Linux
-                // 0x549df0) puts the air timers to -1, and the node starts with no
-                // forces. The previous life's records must not be replayed into him:
-                // on a respawn they carried its air steering into his first ticks.
-                body = obf2::server::BodyState{};
-                bodyAt.fill(BodyRecord{UINT32_MAX, obf2::server::BodyState{}});
-                eyeKnown = false;
-                ownHealth.reset();
-                correct(feet);
-                std::printf("  the body was placed at %.1f %.1f %.1f (the soldier's creation position), "
-                            "terrain %.2f\n",
-                            born->second.x, born->second.y, born->second.z,
-                            terrain != nullptr ? terrain->groundHeightAt(born->second) : -1.0f);
+                placeSoldier(born->second);
+              } else if (state->soldier && state->soldier->position) {
+                placeSoldier(*state->soldier->position);
               }
             }
           }
@@ -1563,18 +2327,52 @@ struct RemoteWorld {
           // with ghosts: players and objects arrive as events long before the first
           // record of the stream. The parsing lives in
           // `obf2::net::bf2::WorldView` (`src/net/src/bf2_world.cpp`).
-          {
-            const int before = world.positionUpdates();
-            world.feed(*more);
-            positionUpdates += world.positionUpdates() - before;
-            syncMovableCollision();
-          }
-
+          //
           // We parse every event in the packet: by the size table each can be
           // skipped by exactly its length, so unfamiliar types do not throw off the
-          // parsing of the ones after them.
+          // parsing of the ones after them. The packet's block is then handed to
+          // the link, which gives back the blocks now due in their order
+          // (`GameEventManager::processReceivedPacket`): a block that overtook a
+          // lost one waits for its resend, a repeat is dropped. The world and the
+          // session both see that ordered sequence, events before ghosts.
           obf2::net::bf2::EventWalk walk;
-          const auto packetEvents = obf2::net::bf2::readEvents(*more, &walk);
+          std::vector<obf2::net::bf2::Event> packetEvents;
+          {
+            auto read = obf2::net::bf2::readEvents(*more, &walk);
+            if (walk.hasBlock) {
+              for (auto& block : link.receiveBlock(walk.block, std::move(read))) {
+                for (auto& event : block) packetEvents.push_back(std::move(event));
+              }
+            } else {
+              packetEvents = std::move(read);
+            }
+          }
+          {
+            const int before = world.positionUpdates();
+            const int detonationsBefore = world.detonationCount();
+            world.feedEvents(packetEvents);
+            world.feedGhosts(*more);
+            if (const auto state = obf2::net::bf2::readControlObjectState(*more);
+                state && !state->isSoldier) {
+              const auto header = obf2::net::bf2::readGhostHeader(*more);
+              if (header) updateControlledVehicle(*more, *state, header->time);
+            }
+            positionUpdates += world.positionUpdates() - before;
+            syncMovableCollision();
+            const auto detonations = std::span(world.detonations());
+            const auto newDetonations = static_cast<std::size_t>(world.detonationCount() - detonationsBefore);
+            for (const auto& detonation : detonations.last(std::min(detonations.size(), newDetonations))) {
+              if (++detonationsLogged > 30) continue;
+              const std::string* name = templateNumbers.nameOf(detonation.templateId);
+              std::printf("  DETONATION object %u (%s) at %.2f %.2f %.2f, number %d, vector "
+                          "%.2f %.2f %.2f, target %d\n",
+                          static_cast<unsigned>(detonation.object),
+                          name != nullptr ? name->c_str() : "?", detonation.position.x,
+                          detonation.position.y, detonation.position.z, detonation.number,
+                          detonation.vector.x, detonation.vector.y, detonation.vector.z,
+                          detonation.target ? static_cast<int>(*detonation.target) : -1);
+            }
+          }
           // A walk that breaks loses every event after the one it broke on, and the
           // ghost stream behind them — a lost `NEReset` stalls the whole session.
           // Each type that breaks it is said once, by name.
@@ -1590,16 +2388,21 @@ struct RemoteWorld {
             ++eventCount;
             if (event.block) {
               const auto done = blocks.feed(*event.block);
-              if (done && seenBlocks.insert(done->first).second) {
-                // What the server sends in blocks at all: among them we look for the
-                // one that matches template numbers to names.
-                std::string head;
-                for (std::size_t k = 0; k < done->second.size() && k < 24; ++k) {
-                  const int byte = std::to_integer<int>(done->second[k]);
-                  head += (byte >= 32 && byte < 127) ? static_cast<char>(byte) : '.';
+              if (done && done->first == net::bf2::kServerInfoBlock) {
+                allowExternalViews = net::bf2::readServerExternalViews(done->second).value_or(false);
+                serverMatchOptions = net::bf2::readServerMatchOptions(done->second);
+                if (const auto head = net::bf2::parseServerInfo(done->second)) {
+                  serverName = head->gameName;
+                  serverWelcome = head->welcome;
+                  votingEnabled = head->votingEnabled.value_or(false);
+                  std::printf("  server: name '%s', welcome lines %zu, voting %s\n",
+                              serverName.c_str(), serverWelcome.size(),
+                              head->votingEnabled ? (*head->votingEnabled ? "on" : "off") : "?");
                 }
-                std::printf("  block %u: %zu bytes  %s\n", done->first, done->second.size(),
-                            head.c_str());
+              }
+              if (done && seenBlocks.insert(done->first).second) {
+                std::printf("  block %u: %zu bytes\n", done->first, done->second.size());
+                if (done->first == obf2::net::bf2::kServerInfoBlock) sendClientInfoIfReady();
               }
               // An experiment: acknowledge an assembled block with a NEDataBlockReady
               // event. The real client apparently does this — the server keeps its own
@@ -1613,80 +2416,55 @@ struct RemoteWorld {
               // Block 2 is the real MapInfo. From it we take the challenge number:
               // the server picks it when it loads the level, and it is against that
               // line of the fingerprints that it checks our content check.
-              if (done && done->first == obf2::net::bf2::kServerInfoBlock) {
-                if (const auto head = obf2::net::bf2::parseServerInfo(done->second)) {
-                  serverName = head->gameName;
-                  votingEnabled = head->votingEnabled.value_or(false);
-                  std::printf("  server: name '%s', welcome lines %zu, voting %s\n",
-                              serverName.c_str(), head->welcome.size(),
-                              head->votingEnabled ? (*head->votingEnabled ? "on" : "off") : "?");
+              if (done && done->first == net::bf2::kEndOfRoundInfoBlock) {
+                endOfRoundInfo = net::bf2::parseEndOfRoundInfo(done->second);
+                std::printf("  [%6.2f s] END-OF-ROUND SUMMARY: %zu bytes, %s\n",
+                            elapsed(), done->second.size(), endOfRoundInfo ? "decoded" : "invalid");
+              }
+              // Block 5 is the server's rotation (`MapList`); it only tells us the
+              // map's size, which the level's layer is chosen by.
+              if (done && done->first == obf2::net::bf2::kMapListBlock) {
+                if (auto list = obf2::net::bf2::parseMapList(done->second)) {
+                  std::printf("  server: map rotation of %zu, playing entry %d\n",
+                              list->entries.size(), list->current);
+                  for (std::size_t i = 0; i < list->entries.size(); ++i) {
+                    const auto& entry = list->entries[i];
+                    std::printf("    %zu. %s %s %d\n", i, entry.levelName.c_str(),
+                                entry.gameMode.c_str(), entry.size);
+                  }
+                  mapList = std::move(*list);
+                } else {
+                  std::printf("  server: the map rotation (block 5) did not parse\n");
                 }
               }
+              // Block 2 is the real `MapInfo`: the level the client loads
+              // (`GameClient::handleDataBlock` case 2) and the challenge number —
+              // the server picks it when it loads the level, and it is against that
+              // line of the fingerprints that it checks our content check. A second
+              // one while we play is the next map (`GameServer::loadPath` →
+              // `clientLoadLevel(-1)`).
               if (done && done->first == obf2::net::bf2::kMapInfoNetBuffer) {
                 if (const auto net = obf2::net::bf2::parseMapInfoNetBuffer(done->second)) {
-                  std::printf("  server: slots %d, commander %s, challenge number %d\n",
-                              net->maxPlayers, net->commanderEnabled ? "yes" : "no",
-                              net->challengeOrdinal);
+                  if (levelReady) leaveLevel(net->levelName);
+                  std::printf("  map info: %s / %s, content challenge %d\n",
+                              net->levelName.c_str(), net->gameMode.c_str(), net->challengeOrdinal);
                   if (args.ordinal < 0) blockOrdinal = net->challengeOrdinal;
-                }
-              }
-              // Block 5 is the server's rotation (`MapList`); the entry it names as
-              // current is the level played (net/bf2_events.h).
-              const auto rotation = done && done->first == obf2::net::bf2::kMapListBlock && !levelReady
-                  ? obf2::net::bf2::parseMapList(done->second) : std::nullopt;
-              if (rotation && !rotation->currentEntry()) {
-                std::printf("  the map rotation names entry %d of %zu\n", rotation->current,
-                            rotation->entries.size());
-              }
-              if (rotation && rotation->currentEntry()) {
-                if (const auto* info = rotation->currentEntry()) {
-                  std::printf("  the server plays %s, mode %s, size %d (rotation entry %d of %zu)\n",
-                              info->levelName.c_str(), info->gameMode.c_str(), info->size,
-                              rotation->current, rotation->entries.size());
-                  serverGameMode = info->gameMode;
-                  serverSize = info->size;
-                  // The challenge number no longer goes here: it is in block 2, while
-                  // block 5's first number is something else.
-                  std::string levelError;
-                  if (!obf2::level::mountLevel(files, args.modDir, info->levelName, &levelError)) {
-                    std::printf("  the level was not mounted: %s\n", levelError.c_str());
-                  } else {
-                    known = buildKnownObjects(files, info->levelName, &levelError);
-                    registry = buildRegistry(files);
-                    std::printf("  the level was read: known objects %zu\n", known.size());
-                    // The server's template numbers (obf2/game/template_numbers.h).
-                    if (const auto listed = files.read("ServerArchives.con")) {
-                      const std::string text(reinterpret_cast<const char*>(listed->data()),
-                                             listed->size());
-                      std::vector<std::vector<std::string>> archives;
-                      for (const auto& archive : obf2::game::archivesFromCon(text)) {
-                        archives.push_back(files.archiveEntries(archive));
-                      }
-                      templateNumbers = obf2::game::TemplateNumbers::build(files, archives);
-                      const auto lav = templateNumbers.numberOf("USAPC_LAV25");
-                      std::printf("  template numbers: %zu, USAPC_LAV25 is %d\n",
-                                  templateNumbers.size(), lav ? static_cast<int>(*lav) : -1);
-                      // The width of a soldier's weapon index (0x1000): his
-                      // template's `inventorySize` (soldier_state.h).
-                      world.setInventorySize([this](std::uint32_t templateId) {
-                        const std::string* name = templateNumbers.nameOf(templateId);
-                        const obf2::game::ObjectTemplate* soldier =
-                            name != nullptr ? registry.find(*name) : nullptr;
-                        const auto size =
-                            soldier != nullptr ? soldier->number("inventorysize") : std::nullopt;
-                        return size ? static_cast<int>(*size) : -1;
-                      });
-                    }
+                  receivedContentOrdinal = net->challengeOrdinal >= 0;
+                  commanderEnabled = net->commanderEnabled;
+                  if (!net->levelName.empty()) {
+                    loadServerLevel(net->levelName, net->gameMode);
                   }
-                  levelReady = true;
-                  join.setLevelReady();
-                  join.setSkipContent(args.skipContent);
-                  join.setSkipDatabase(args.skipDatabase);
-                  join.setSkipSimulation(!args.startSimulation);
-                  levelName = info->levelName;
                 }
               }
               continue;
+            }
+            // The HUD's medal case (BF2.exe 0x759e50, HUD event 0x27) shows an
+            // award only when the event's player is the local one.
+            if (event.medal && static_cast<int>(event.medal->player) == world.ownPlayer()) {
+              awardNotices.push_back({false, event.medal->id, event.medal->level, 0});
+            }
+            if (event.rank && event.rank->kind == 1 && static_cast<int>(event.rank->player) == world.ownPlayer()) {
+              awardNotices.push_back({true, 0, 0, event.rank->rank});
             }
             if (event.squadName) {
               std::printf("  squad named: team %u squad %u '%s' by player %u\n", event.squadName->team,
@@ -1696,6 +2474,68 @@ struct RemoteWorld {
             if (event.squadPrivate) {
               std::printf("  squad lock: team %u squad %u %s\n", event.squadPrivate->team,
                           event.squadPrivate->squad, event.squadPrivate->isPrivate ? "locked" : "open");
+            }
+            if (event.stringBlock) {
+              // `StringBlockEvent::executeClient` → the connection's `StringManager`
+              // (chat_string.h); a completed string is `GameClient::handleEvent`
+              // case 11's `outputChatString` — the application takes `chats`.
+              const auto& block = *event.stringBlock;
+              if (block.isNew) {
+                if (!chatStrings.begin(block.size)) {
+                  std::printf("  chat: a string announced while another assembles — refused\n");
+                }
+              } else {
+                bool refused = false;
+                if (auto done = chatStrings.add(block.chunk, &refused)) {
+                  std::printf("  [%6.2f s] CHAT: channel %d, type %d, sender %d, target %d, flags %d: "
+                              "%s\n",
+                              elapsed(), done->channel, done->type, done->sender, done->target,
+                              done->flags, done->text.c_str());
+                  chats.push_back(std::move(*done));
+                } else if (refused) {
+                  std::printf("  chat: a chunk of %zu bytes refused (no string, or past its size)\n",
+                              block.chunk.size());
+                }
+              }
+              continue;
+            }
+            if (event.killedBy) {
+              // `KilledByEvent::executeClient`: `ECGameLogic 3` to the HUD's kill
+              // feed (the application drains `kills`), and the victim's armour's
+              // last hit bone and direction — the ragdoll's push, not ours yet.
+              const auto& kill = *event.killedBy;
+              const std::string* weapon = templateNumbers.nameOf(kill.weaponTemplate);
+              const std::string* vehicle = templateNumbers.nameOf(kill.vehicleTemplate);
+              std::printf("  [%6.2f s] KILL: player %u killed player %u%s, weapon %u (%s), vehicle %u "
+                          "(%s), bone %u\n",
+                          elapsed(), kill.killer, kill.victim, kill.killerAlive ? "" : " (no killer)",
+                          kill.weaponTemplate, weapon != nullptr ? weapon->c_str() : "?",
+                          kill.vehicleTemplate, vehicle != nullptr ? vehicle->c_str() : "?",
+                          kill.lastHitBone);
+              kills.push_back(kill);
+              if (onKill) onKill(kill);
+              ++killCount;
+              // Who the death camera turns to: the one who hit us last, never
+              // ourselves (`Soldier`'s death, OpenBF2 Soldier.cpp: `setTracePlayerId(
+              // armor->getLastHitPlayer())` when he is alive and not the occupant).
+              if (world.ownPlayer() >= 0 &&
+                  kill.victim == static_cast<std::uint32_t>(world.ownPlayer())) {
+                if (kill.killerAlive && kill.killer != kill.victim) ++ownKilledByOthers;
+                if (playerSpawned) announceOwnDeath();
+                tracePlayer = kill.killerAlive && kill.killer != kill.victim
+                                  ? std::optional<std::uint32_t>(kill.killer)
+                                  : std::nullopt;
+              }
+              continue;
+            }
+            if (event.endOfRound) {
+              endOfRound = *event.endOfRound;
+              clearInput();
+              std::printf("  [%6.2f s] END OF ROUND: winner team %d, victory type %d, rounds "
+                          "left on this map %d\n",
+                          elapsed(), endOfRound->winner, endOfRound->victoryType,
+                          endOfRound->roundsLeft);
+              continue;
             }
             if (event.beginRound) {
               beginRoundState = static_cast<int>(event.beginRound->state);
@@ -1713,13 +2553,21 @@ struct RemoteWorld {
                 // `ClientGameLogic::handleEvent` (OpenBF2 ClientGameLogic.cpp): 1 is
                 // the status, 6 the round reset. Everything else is logged, since
                 // whatever we do not handle is a gap to find.
-                if (remote.number == obf2::net::bf2::kGameLogicStatus && remote.value) {
+                if (const auto revived = obf2::net::bf2::readRevivedSoldier(remote)) {
+                  resumeRevivedSoldier(*revived, state);
+                } else if (remote.number == obf2::net::bf2::kGameLogicStatus && remote.value) {
                   gameStatus = *remote.value;
                   static const char* const kNames[] = {"?", "playing", "end of game", "pre-game",
                                                        "paused", "restart", "not connected"};
                   std::printf("  game status: %s (%d)\n",
                               gameStatus >= 0 && gameStatus <= 6 ? kNames[gameStatus] : "?",
                               gameStatus);
+                } else if (remote.number == 8 && remote.value == world.ownPlayer() &&
+                           remote.data.size() == 8 &&
+                           std::ranges::all_of(std::span(remote.data).subspan(4),
+                                               [](auto b) { return b == 0xff; })) {
+                  // ServerGameLogic::selectTeam sends the player ID and -1 on refusal.
+                  teamSwitchRefused = true;
                 } else if (remote.number == obf2::net::bf2::kGameLogicReset) {
                   // The client's half of `ServerGameLogic::reset`: every player is
                   // reset (`GameLogic::resetAllPlayers`, `Player::reset` clears the
@@ -1758,6 +2606,9 @@ struct RemoteWorld {
                 // (RemoteEvent in bf2_events.h). Another player's are not ours.
                 const bool aboutUs =
                     !remote.value || ourPlayer < 0 || *remote.value == ourPlayer;
+                if (remote.number == obf2::net::bf2::kNetSelectSpawnGroup && !remote.value) {
+                  spawnSelectionRejected = true;
+                }
                 if (!aboutUs && (remote.number == obf2::net::bf2::kNetPlayerSpawned ||
                                  remote.number == obf2::net::bf2::kNetPlayerDead)) {
                   continue;
@@ -1783,7 +2634,23 @@ struct RemoteWorld {
                               remote.value.value_or(-1));
                   // The game-logic reset (category 0, 6) comes first; if it was
                   // missed, this is the same reset.
-                  if (playerSpawned || join.done()) resetRound();
+                  resetRound();
+                  continue;
+                }
+                // 6 from the server: "choose again". `ServerGameLogic::uPlayingSpawning`
+                // (Linux 0x4ab5a0) cleared our group (`setSpawnGroup(0)`, 0x4ab66a)
+                // because it is gone or refuses a human, and sent this without data
+                // (0x4ab696). The client posts `ECGame 7` for its local player
+                // (`GameClient::handleEvent`, OpenBF2 GameClient.cpp, case 6); no HUD
+                // listener of it is reconstructed there, so what the screen shows is
+                // not established. What is certain is the server's side: we have no
+                // group any more, so our choice is made again and the next DONE sends
+                // it — as after a round reset. Without this a second DONE sent nothing.
+                if (remote.number == obf2::net::bf2::kNetSelectSpawnGroup) {
+                  ++spawnRefusals;
+                  std::printf("  [%6.2f s] THE SERVER REFUSED OUR SPAWN GROUP: choose again\n",
+                              elapsed());
+                  join.reopen();
                   continue;
                 }
                 if (remote.number != obf2::net::bf2::kNetDatabaseComplete &&
@@ -1793,8 +2660,9 @@ struct RemoteWorld {
                   std::printf("  NOT HANDLED: network event %u\n", remote.number);
                 }
                 if (remote.number == obf2::net::bf2::kNetPlayerSpawned) {
+                  if (!playerSpawned) ownCombatFeedback.down = false;
                   playerSpawned = true;
-                  std::printf("  [%6.2f s] THE PLAYER SPAWNED\n", elapsed());
+                                std::printf("  [%6.2f s] THE PLAYER SPAWNED\n", elapsed());
                 }
                 // A life is over. Everything the prediction held belonged to that
                 // soldier: its position, its velocity, whether it was standing.
@@ -1803,10 +2671,15 @@ struct RemoteWorld {
                 // connection — `!bodyReady` — so on respawn the new soldier was
                 // simulated from wherever the old one died, mid-air included.
                 if (remote.number == obf2::net::bf2::kNetPlayerDead) {
+                  if (playerSpawned) announceOwnDeath();
                   playerSpawned = false;
                   bodyReady = false;
+                  vehicleDismountPending = false;
+                  sent.clear();
+                  clearInput();
+                  swim = {};
                   bodyTicks = 0;
-                  std::printf("  THE PLAYER DIED\n");
+                                std::printf("  THE PLAYER DIED\n");
                 }
               }
               continue;
@@ -1838,6 +2711,7 @@ struct RemoteWorld {
               // from: we do not know our own soldier yet, while the flags the server
               // sends at once — and it is next to them that the player appears.
               objects[event.object->networkId] = at;
+              markIfControlPoint(event.object->networkId, at);
               if (known.empty()) {
                 if (objectCount <= 3) {
                   std::printf("  object: template %u, id %u, position %.1f %.1f %.1f\n",
@@ -1889,15 +2763,23 @@ struct RemoteWorld {
             // Who controls what. A soldier in BF2 is "occupied" like a vehicle, and it
             // is with this event that the server says which object is ours.
             if (event.enter) {
-              // Whose object is whose the server says itself, without any guesswork:
-              // `CreatePlayerEvent` gives the player's team, and this event the object
-              // the player occupied. So a placeholder at this position is no longer
-              // "something alive" but a particular player of a particular team.
-              // particular team.
+              if (const auto seat = vehicleSeatOf(event.enter->object)) {
+                std::printf("  vehicle seat %u (%.*s), vehicle %u\n", event.enter->object,
+                            static_cast<int>(seat->templateName.size()), seat->templateName.data(),
+                            seat->parent);
+              }
               objectOwner[event.enter->object] = event.enter->player;
               if (ourPlayer >= 0 && static_cast<int>(event.enter->player) == ourPlayer) {
+                if (ourSoldier != event.enter->object) {
+                  bodyReady = false;
+                  swim = {};
+                  eyeKnown = false;
+                  poseCameraKnown = false;
+                              }
                 ourSoldier = event.enter->object;
-                std::printf("  our object: %u\n", ourSoldier);
+                const auto vehicle = vehicleRootOf(ourSoldier);
+                if (vehicle) vehicleDismountPending = true;
+                std::printf("  our object: %u (vehicle root %u)\n", ourSoldier, vehicle);
               } else {
                 std::printf("  player %u occupied object %u (team %d)\n", event.enter->player,
                             event.enter->object, teamOf(event.enter->player));
@@ -1906,43 +2788,48 @@ struct RemoteWorld {
             if (event.exitPlayer && ourPlayer >= 0 &&
                 static_cast<int>(*event.exitPlayer) == ourPlayer) {
               ourSoldier = 0;
+              pendingPresses &= ~obf2::net::bf2::kPositionSelectMask;
               std::printf("  we left the object\n");
+            }
+          }
+          // Apply the controlled soldier's exit transform after the seat events in
+          // this packet. The creation transform belongs to the original spawn.
+          if (state) resumeDismountedSoldier(*state);
+          if (playerSpawned && !bodyReady && !vehicleDismountPending &&
+              ourSoldier != 0 && !vehicleRootOf(ourSoldier)) {
+            if (const auto born = objects.find(ourSoldier); born != objects.end()) {
+              placeSoldier(born->second);
             }
           }
           if (parsed->challenge) {
             ++challenges;
             if (!answered) {
-              std::printf("  challenge event: %s, mod %s\n", parsed->challenge->challenge.c_str(),
-                          parsed->challenge->modDirectory.c_str());
+              std::printf("  challenge event: mod %s\n", parsed->challenge->modDirectory.c_str());
 
-              // No CD-key answer: the 73 bytes stay zero, as this client has always sent.
-              link.queue(obf2::net::bf2::challengeResponseEvent(obf2::net::bf2::ChallengeResponse{}));
+              // The CD-key answer is the caller's (`Settings::answerChallenge`).
+              // Without one the 73 bytes stay zero, as this client has always sent.
+              const auto response = !args.answerChallenge
+                  ? std::optional(obf2::net::bf2::ChallengeResponse{})
+                  : !parsed->challenge->challenge.empty()
+                  ? args.answerChallenge(parsed->challenge->challenge) : std::nullopt;
+              if (!response) {
+                failure = parsed->challenge->challenge.empty()
+                    ? "The server sent an empty Battlefield 2 CD-key challenge."
+                    : "The client could not answer the Battlefield 2 CD-key challenge.";
+                std::fprintf(stderr, "%s\n", failure.c_str());
+                socket.reset();
+                return false;
+              }
+
+              if (!sentConnectionType) {
+                link.queue(obf2::net::bf2::connectionTypeEvent(connectionType));
+                sentConnectionType = true;
+                std::printf("  ConnectionTypeEvent sent: %u\n", connectionType);
+              }
+              link.queue(obf2::net::bf2::challengeResponseEvent(*response));
               std::printf("  challenge reply sent\n");
               answered = true;
-
-              // Next the engine waits for the block with the client's details: without
-              // it the player does not exist. The block travels as events — first the
-              // header with the type and the size, then the chunks.
-              obf2::net::bf2::ClientInfo info;
-              info.name = args.playerName;
-              info.nameHash = obf2::net::bf2::clientInfoNameHash(info.name);
-              const auto blob = obf2::net::bf2::buildClientInfo(info);
-
-              link.queue(obf2::net::bf2::dataBlockHeaderEvent(obf2::net::bf2::kClientInfoBlock,
-                                                              static_cast<std::uint32_t>(blob.size())));
-              for (std::size_t at = 0; at < blob.size(); at += 200) {
-                const auto count = std::min<std::size_t>(200, blob.size() - at);
-                link.queue(obf2::net::bf2::dataBlockChunkEvent(
-                    std::span<const std::byte>(blob.data() + at, count)));
-              }
-              std::printf("  ClientInfo sent: name %s, %zu bytes\n",
-                          info.name.c_str(), blob.size());
-              if (connectionType) {
-                link.queue(obf2::net::bf2::connectionTypeEvent(
-                    static_cast<std::uint32_t>(*connectionType)));
-                std::printf("  ConnectionTypeEvent sent: %d\n", *connectionType);
-              }
-
+              sendClientInfoIfReady();
             }
           }
           break;
@@ -1950,25 +2837,7 @@ struct RemoteWorld {
         default:
           ++other;
           if (other <= 4) {
-            std::printf("  another packet: type %d%s\n", static_cast<int>(parsed->kind),
-                        parsed->kind == obf2::net::bf2::PacketKind::Disconnect
-                            ? " (Disconnect!)" : "");
-            // A break is not "another packet" but the server's answer. We show the
-            // bytes in full: the reason, if it is there at all, lies in them.
-            if (parsed->kind == obf2::net::bf2::PacketKind::Disconnect) {
-              std::string hex;
-              std::string text;
-              for (std::size_t k = 0; k < more->size() && k < 64; ++k) {
-                char pair[4];
-                const int byte = std::to_integer<int>((*more)[k]);
-                std::snprintf(pair, sizeof(pair), "%02x ", byte);
-                hex += pair;
-                text += (byte >= 32 && byte < 127) ? static_cast<char>(byte) : '.';
-              }
-              std::printf("    the step at this moment: %s, bytes %zu\n    %s\n    %s\n",
-                          obf2::net::bf2::joinStepName(join.step()), more->size(), hex.c_str(),
-                          text.c_str());
-            }
+            std::printf("  another packet: type %d\n", static_cast<int>(parsed->kind));
           }
           break;
       }
@@ -1982,10 +2851,43 @@ struct RemoteWorld {
                 "dropped %d; events still queued %zu, blocks unconfirmed %d\n",
                 link.blocksSent(), link.blocksResent(), link.packetsLost(), droppedDuplicates,
                 link.queuedEvents(), link.unconfirmedBlocks());
+    std::printf("  received blocks: repeats dropped %d, out of order %d, still held back %d\n",
+                link.blocksRepeated(), link.blocksOutOfOrder(), link.blocksHeldBack());
+    {
+      const auto& score = world.score();
+      std::printf("  score: records %d (read to their length %d); tickets %d / %d, bleeding "
+                  "%d / %d, ticket state %d / %d, rounds won %d / %d%s\n",
+                  world.scoreRecords(), world.scoreRecordsExact(), score.teams[0].tickets,
+                  score.teams[1].tickets, score.teams[0].ticketBleed ? 1 : 0,
+                  score.teams[1].ticketBleed ? 1 : 0, score.teams[0].ticketState,
+                  score.teams[1].ticketState, score.teams[0].roundsWon, score.teams[1].roundsWon,
+                  score.known ? "" : " (no record came)");
+    }
+    for (const auto& [id, point] : world.controlPoints()) {
+      std::printf("  control point %u %s: records %d (read to their length %d), team %d, flag "
+                  "team %d, neutral %d, take-over %.3f (%.3f a second), capture by 1/2 %d/%d, "
+                  "capturing state %d\n",
+                  id, point.templateName.c_str(), point.records, point.recordsExact, point.team,
+                  point.flagTeam, point.neutral ? 1 : 0, point.takeOverCounter,
+                  point.takeOverPerSecond, point.captureByTeam1 ? 1 : 0,
+                  point.captureByTeam2 ? 1 : 0, point.capturingState);
+    }
+    std::printf("  projectiles: created %d, records %d (read whole to their length %d), "
+                "detonations %d\n",
+                world.projectilesCreated(), world.projectileRecords(),
+                world.projectileRecordsExact(), world.detonationCount());
+    std::printf("  maps: %d changes, playing %s; last end of round %s\n", mapChanges,
+                levelName.c_str(),
+                endOfRound ? ("winner team " + std::to_string(endOfRound->winner) + ", victory type " +
+                              std::to_string(endOfRound->victoryType))
+                                 .c_str()
+                           : "none");
+    std::printf("  destroyed by the server: objects %d, players %d\n", world.destroyedObjects(),
+                world.destroyedPlayers());
     // The round as the server left it, and what of its talk we did not act on.
-    std::printf("  round: game status %d, begin-round state %d, resets %d; HUD events not "
-                "handled %d of %zu kinds; packets with a broken event walk %d (%zu types)\n",
-                gameStatus, beginRoundState, roundResets, unhandledHudCount, unhandledHud.size(),
+    std::printf("  round: game status %d, begin-round state %d, resets %d, spawn groups refused %d; "
+                "HUD events not handled %d of %zu kinds; packets with a broken event walk %d (%zu types)\n",
+                gameStatus, beginRoundState, roundResets, spawnRefusals, unhandledHudCount, unhandledHud.size(),
                 brokenWalks, brokenEventTypes.size());
     const float listenedMs = lastPacketMs - firstPacketMs;
     const float listened = listenedMs > 0.0f ? listenedMs / 1000.0f : 0.0f;
@@ -2003,8 +2905,6 @@ struct RemoteWorld {
                                  : -1.0f,
                   packetGapMax, packetGaps);
     }
-    // If the challenge came once, the server accepted our reply. While the reply
-    // does not satisfy it, it sends the challenge again and again.
     std::printf("  events parsed: %d, of them world objects: %d\n", eventCount, objectCount);
     std::printf("  packets with a ghost stream: %d, state updates: %d, distinct objects: %zu\n",
                 ghostPackets, ghostRecords, ghostObjects.size());
@@ -2113,8 +3013,7 @@ struct RemoteWorld {
         std::printf("    %-24s %d\n", std::string(drawStageName(stage)).c_str(), count);
       }
     }
-    std::printf("  challenges received: %d %s\n", challenges,
-                challenges == 1 ? "(the reply was accepted)" : "(the reply was not accepted)");
+    std::printf("  challenges received: %d\n", challenges);
 
   }
 

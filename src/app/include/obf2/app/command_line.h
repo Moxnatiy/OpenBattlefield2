@@ -76,6 +76,7 @@ struct Args {
   int watchPose = -1;  // --watch-pose <n>: watch a soldier in this pose (world_view.h)
   int watchWeapon = -1;  // --watch-weapon <item>: ... with this `itemIndex` out (0x1000)
   bool watchRagdoll = false;  // --watch-ragdoll: ... lying dead as a ragdoll (0x8000)
+  bool watchSeated = false;   // --watch-seated: ... sitting in a vehicle's open seat
   // --mouse-scale: how many axis units one mouse pixel gives. The link
   // "pixels -> axis" lives in the client's `ControlMap` and is **not reversed
   // yet**, so this number is NOT measured — it plays the role of sensitivity and
@@ -183,6 +184,12 @@ struct Args {
   std::vector<ScheduledFire> crouches;
   // --prone-at <frame>:<frames> — the prone key (`c_PILie`) held over a range.
   std::vector<ScheduledFire> prones;
+  // --use-at <frame>:<frames> — the use key (`c_PIUse`, E) held over a range.
+  std::vector<ScheduledFire> uses;
+  // --seat-at <frame>:<seat> — the seat key F<seat> pressed for that one frame.
+  std::vector<ScheduledSelect> seats;
+  // --camera-at <frame> — the vehicle camera key (C) pressed for that one frame.
+  std::vector<int> cameraKeys;
   // --trace-own-state: every controlled state of our soldier (session::Settings).
   bool traceOwnState = false;
   // --trace-tails <id>: the bits after the head of a simple object's records.

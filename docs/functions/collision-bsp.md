@@ -135,8 +135,10 @@ vtable +0xb8 after 0x6bfbab) passes lod 2, false, and last bools 1 (0x6bfbfb) an
 `loadCollisionMesh` where the tree used to be skipped; `mesh::closestFace`
 walks it, with stopFirst as a parameter. `tests/test_collision_bsp.cpp`
 checks the tree's shape and the walk against every face on a real mesh.
-The world's queries (`server::CollisionWorld::segmentContact`) do not use it
-yet: that, and keeping the nearest object (0x696030), come with the
-collision world. Not ported: mode 1 (`copyCollidingFaces`),
+`server::CollisionWorld::segmentContact` asks each object whose lod has a
+tree through the tree, with `firstFace` as stopFirst, placed objects and
+movables alike; an object without one gives its face crossed first. Of the
+objects, the nearest contact wins (`ObjectManager::intersectLine`,
+0x696030). Not ported: mode 1 (`copyCollidingFaces`),
 the sphere walk (0x70f7e0), the run-time `BspNode` tree (0x709700), and
 twoSided in `checkFaceAndEdgeCollision` (ours is one-sided only).

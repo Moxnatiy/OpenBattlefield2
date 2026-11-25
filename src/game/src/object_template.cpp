@@ -93,6 +93,13 @@ void Registry::applyProperty(PropertyMap& target, const std::string& key,
 
 void Registry::feed(const con::Command& command) {
   if (command.path.empty()) return;
+  // `GeometryTemplate.create <type> <name>`: only where it was declared is
+  // kept, so a geometry named by a template elsewhere (a mesh particle's
+  // `geometry mp_waterfall`) can be found beside its own `.con`.
+  if (command.lowerPath == "geometrytemplate.create") {
+    if (command.args.size() >= 2) geometryFiles_.try_emplace(toLower(command.args[1]), command.file);
+    return;
+  }
   if (toLower(command.path.front()) != "objecttemplate") return;
 
   // ObjectTemplate.<component>.<property> addresses a sub-object.
@@ -182,6 +189,11 @@ void Registry::feed(const con::Command& command) {
 const ObjectTemplate* Registry::find(std::string_view name) const {
   const auto it = templates_.find(toLower(name));
   return it == templates_.end() ? nullptr : it->second;
+}
+
+std::string_view Registry::geometryFile(std::string_view name) const {
+  const auto it = geometryFiles_.find(toLower(name));
+  return it == geometryFiles_.end() ? std::string_view{} : std::string_view(it->second);
 }
 
 std::vector<const ObjectTemplate*> Registry::all() const {

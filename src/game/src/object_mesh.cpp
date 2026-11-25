@@ -73,7 +73,7 @@ std::string resolveGeometryPath(FileSystem& files, const std::string& templateFi
 }
 
 std::optional<mesh::RenderMesh> loadMesh(FileSystem& files, const std::string& path,
-                                         int geometryOverride, int lodIndex, bool verbose) {
+                                         int geometryOverride, int lodIndex, bool verbose, bool clampLod) {
   const std::string normalized = normalizeAssetPath(path);
   const auto kind = mesh::kindFromExtension(assetExtension(normalized));
   if (!kind) return std::nullopt;
@@ -91,9 +91,13 @@ std::optional<mesh::RenderMesh> loadMesh(FileSystem& files, const std::string& p
     return std::nullopt;
   }
 
-  const std::size_t lod = static_cast<std::size_t>(std::max(0, lodIndex));
+  std::size_t lod = static_cast<std::size_t>(std::max(0, lodIndex));
   const std::size_t geometry =
-      geometryOverride >= 0 ? static_cast<std::size_t>(geometryOverride) : pickGeometry(*parsed, lod);
+      geometryOverride >= 0 ? static_cast<std::size_t>(geometryOverride)
+                            : pickGeometry(*parsed, clampLod ? 0 : lod);
+  if (clampLod && geometry < parsed->geometries.size() && !parsed->geometries[geometry].lods.empty()) {
+    lod = std::min(lod, parsed->geometries[geometry].lods.size() - 1);
+  }
 
   auto render = mesh::extract(*parsed, geometry, lod, &error);
   if (!render) {
@@ -104,6 +108,7 @@ std::optional<mesh::RenderMesh> loadMesh(FileSystem& files, const std::string& p
   // Whether this mesh is vegetation is decided by its path, and by nothing
   // else — that is the engine's own test (`obf2::mesh::isVegetationPath`).
   mesh::markVegetationLeaves(*render, normalized);
+  mesh::markWaterMesh(*render, normalized);
 
   if (verbose) {
     std::printf("mesh: %s\n  version %u, geom %zu/%zu, lod %zu, vertices %zu, triangles %zu, "
@@ -116,7 +121,7 @@ std::optional<mesh::RenderMesh> loadMesh(FileSystem& files, const std::string& p
 
 std::optional<mesh::RenderMesh> buildObjectMesh(FileSystem& files, const Registry& registry,
                                                 const std::string& templateName,
-                                                int geometryOverride, int lodIndex, bool verbose) {
+                                                int geometryOverride, int lodIndex, bool verbose, bool clampLod) {
   const auto* root = registry.find(templateName);
   if (root == nullptr) return std::nullopt;
 
@@ -130,7 +135,7 @@ std::optional<mesh::RenderMesh> buildObjectMesh(FileSystem& files, const Registr
       if (part.geometryName.empty()) continue;
       const std::string path = resolveGeometryPath(files, part.file, part.geometryName);
       if (path.empty()) continue;
-      const auto piece = loadMesh(files, path, geometryOverride, lodIndex, false);
+      const auto piece = loadMesh(files, path, geometryOverride, lodIndex, false, clampLod);
       if (!piece) continue;
       appendMesh(merged, *piece, part.transform);
       ++added;
@@ -159,7 +164,7 @@ std::optional<mesh::RenderMesh> buildObjectMesh(FileSystem& files, const Registr
   const std::string path = resolveGeometryPath(files, root->file, instance->geometryName);
   if (path.empty()) return std::nullopt;
 
-  auto render = loadMesh(files, path, geometryOverride, lodIndex, verbose);
+  auto render = loadMesh(files, path, geometryOverride, lodIndex, verbose, clampLod);
   if (!render) return std::nullopt;
 
   const auto transforms = partTransformMap(*instance);
@@ -171,6 +176,32 @@ std::optional<mesh::RenderMesh> buildObjectMesh(FileSystem& files, const Registr
                 moved, render->vertices.size());
   }
   return render;
+}
+
+std::optional<int> authoredCockpitGeometry(FileSystem& files, const Registry& registry,
+                                           const std::string& templateName) {
+  const auto* root = registry.find(templateName);
+  const auto instance = flattenObject(registry, templateName);
+  if (!root || !instance || instance->geometryName.empty()) return std::nullopt;
+  const auto path = resolveGeometryPath(files, root->file, instance->geometryName);
+  const auto kind = mesh::kindFromExtension(assetExtension(path));
+  const auto bytes = files.read(path);
+  if (!kind || !bytes) return std::nullopt;
+  const auto parsed = mesh::load(*bytes, *kind);
+  if (!parsed) return std::nullopt;
+  // Objects_client.zip:Vehicles/Air/ahe_havoc/Meshes/ahe_havoc.bundledmesh:
+  // geometry 0 is BundledMesh.fx/CockpitNoHemiLight, the exterior geometry 1.
+  // The technique, not the index: USJEP_HMMWV has a small placeholder at 0.
+  for (std::size_t g = 0; g < parsed->geometries.size(); ++g) {
+    const auto& lods = parsed->geometries[g].lods;
+    if (lods.empty()) continue;
+    if (std::ranges::any_of(lods.front().materials, [](const auto& material) {
+          return normalizeAssetPath(material.technique).find("cockpit") != std::string::npos;
+        })) {
+      return static_cast<int>(g);
+    }
+  }
+  return std::nullopt;
 }
 
 std::string_view drawStageName(DrawStage stage) {

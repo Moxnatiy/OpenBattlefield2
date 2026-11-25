@@ -27,6 +27,9 @@ struct ScriptedFrame {
   bool crouch = false;   // `--crouch-at`: the crouch key held
   bool prone = false;    // `--prone-at`: the prone key held
   std::uint32_t weaponKeys = 0;  // `--select-at`: the number keys pressed (bit N-1)
+  bool use = false;              // `--use-at`: the use key held
+  std::uint32_t seatKeys = 0;    // `--seat-at`: F1..F8 pressed (bit N-1)
+  bool camera = false;           // `--camera-at`: C, the vehicle camera key
 };
 
 // A range is `<frame>:<frames>:...`, so it covers `frame` to `frame + frames - 1`.

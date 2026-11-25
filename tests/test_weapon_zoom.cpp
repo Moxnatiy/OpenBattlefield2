@@ -70,9 +70,11 @@ static void testToggle() {
   game::WeaponZoom zoom;
   zoom.setWeapon(game::zoomOf(*registry.find("usrif_m24")));
   CHECK(zoom.present());
+  CHECK(!zoom.hidesMuzzle());
   CHECK(!zoom.update(100));
   zoom.press(101);
   CHECK(zoom.zoomed());
+  CHECK(zoom.hidesMuzzle());
   CHECK_EQ(zoom.fov(), 0.0f);          // not yet: 101 + 2
   CHECK(!zoom.update(102));
   CHECK(zoom.update(103));
@@ -82,6 +84,14 @@ static void testToggle() {
   zoom.update(104);                     // the zoom lod arrives with the zoom delay
   zoom.press(105);
   CHECK(!zoom.zoomed());
+  CHECK(!zoom.hidesMuzzle());
+  auto unsuppressed = game::zoomOf(*registry.find("usrif_m24"));
+  unsuppressed->disableMuzzleWhenZoomed = false;
+  game::WeaponZoom alternate;
+  alternate.setWeapon(unsuppressed);
+  alternate.press(101);
+  CHECK(alternate.zoomed());
+  CHECK(!alternate.hidesMuzzle());
   CHECK_EQ(zoom.fov(), 0.0f);           // a zoom out is at once
 }
 

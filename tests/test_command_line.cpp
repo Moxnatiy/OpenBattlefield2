@@ -123,9 +123,27 @@ static void testMalformedValueIsSkipped() {
   CHECK_EQ(args.frames, 7);
 }
 
+// A vehicle's keys on a schedule: E held to get in, a seat key and the camera key
+// on one frame each; a seat past F8 is refused.
+static void testVehicleSchedules() {
+  const app::Args args = parse({"--use-at", "1200:8", "--seat-at", "1400:2", "--seat-at", "1500:9",
+                                "--camera-at", "1600", "--watch-seated"});
+  CHECK_EQ(args.uses.size(), std::size_t(1));
+  if (!args.uses.empty()) {
+    CHECK_EQ(args.uses[0].frame, 1200);
+    CHECK_EQ(args.uses[0].frames, 8);
+  }
+  CHECK_EQ(args.seats.size(), std::size_t(1));
+  if (!args.seats.empty()) CHECK_EQ(args.seats[0].key, 2);
+  CHECK_EQ(args.cameraKeys.size(), std::size_t(1));
+  CHECK(args.watchSeated);
+  CHECK(args.watchSoldier);
+}
+
 }  // namespace
 
 TEST_MAIN({
+  testVehicleSchedules();
   testDefaults();
   testLevelAndScreenshot();
   testVectorFlags();

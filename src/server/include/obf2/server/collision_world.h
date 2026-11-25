@@ -11,11 +11,14 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
 #include "obf2/core/math.h"
 #include "obf2/mesh/collision.h"
+
+namespace obf2::game { class ObjectTemplate; }
 
 namespace obf2::server {
 
@@ -26,9 +29,13 @@ struct CollisionTriangle {
   // object's mesh on its own, and whether the edges are tried depends on that
   // mesh's faces alone.
   std::uint32_t object = 0;
-  // The collision mesh's own material index of the face; the template's mapping
-  // to a global material (`CollisionMeshTemplate` `+0x28`) is not read.
+  // The collision mesh's own material index of the face, and the global
+  // material the owner's template maps it to with `ObjectTemplate.mapMaterial
+  // <local> <name> <global>` (game data, e.g.
+  // `staticobjects/common/com_objects/antennamast/antennamast.tweak`); none
+  // when the template does not map it.
   std::uint16_t material = 0;
+  std::optional<std::uint16_t> worldMaterial;
 };
 
 // One contact of a sphere with a mesh — what
@@ -40,12 +47,14 @@ struct MeshContact {
   float depth = 0.0f;   // not above zero
   float travel = 0.0f;  // along the motion, past the surface
   std::uint16_t material = 0;
+  std::optional<std::uint16_t> worldMaterial;
 };
 
 // One collision layer of an object's tree, in the root's space.
 struct CollisionPiece {
   const mesh::CollisionLayer* layer = nullptr;
   Mat4 local = Mat4::identity();
+  const game::ObjectTemplate* materialOwner = nullptr;
 };
 
 class CollisionWorld {
@@ -54,8 +63,10 @@ class CollisionWorld {
   // memory for the index, a coarser one more wasted tests.
   explicit CollisionWorld(float cellSize = 8.0f) : cellSize_(cellSize) {}
 
-  // Adds a collision layer transformed into world coordinates.
-  void addLayer(const mesh::CollisionLayer& layer, const Mat4& transform);
+  // Adds a collision layer transformed into world coordinates. `materialOwner`
+  // is the template whose `mapMaterial` lines give the faces' global materials.
+  void addLayer(const mesh::CollisionLayer& layer, const Mat4& transform,
+                const game::ObjectTemplate* materialOwner = nullptr);
 
   // An object whose place the server gives and takes back — a vehicle an
   // ObjectSpawner made. It stays out of the grid and is searched by its bounds.
@@ -87,18 +98,29 @@ class CollisionWorld {
   // triangle (projected on two axes chosen by the normal, 0x724bxx).
   //
   // `along` is `(r − 1)·|motion|` — how far before the end the plane was crossed,
-  // not above zero — and `endDepth` the end's distance under the plane. Of every
-  // face crossed, the one crossed first wins; the engine's BSP walk returns the
-  // first in its own order, nearest first, and stops there.
+  // not above zero — and `endDepth` the end's distance under the plane.
+  //
+  // Inside one object whose lod has a tree, the face is the one the tree's walk
+  // gives (`BspV8::getClosestFace` 0x70ff70, docs/functions/collision-bsp.md):
+  // with `firstFace` the first face a leaf accepts (getDistance's last bool, the
+  // sound's b2), otherwise the smallest distance of the leaves reached. An object
+  // without a tree gives its face crossed first. Of the objects, the nearest
+  // contact wins (`ObjectManager::intersectLine`, 0x696030).
   struct SegmentContact {
     Vec3f normal;
     Vec3f point;
     float along = 0.0f;
     float endDepth = 0.0f;
     std::uint16_t material = 0;
+    std::optional<std::uint16_t> worldMaterial;
   };
+  // `movables` false: the placed objects only (the engine's static culler;
+  // a sound's far ray, docs/functions/sound-template.md). `firstFace`: the
+  // tree walk's stopFirst, getDistance's last bool.
   std::optional<SegmentContact> segmentContact(const Vec3f& start, const Vec3f& motion,
-                                               const Vec3f& around, float radius) const;
+                                               const Vec3f& around, float radius,
+                                               bool movables = true,
+                                               bool firstFace = false) const;
 
   // Pushes a sphere out of the geometry. Returns how many times it had to push —
   // zero means the way is clear.
@@ -125,8 +147,25 @@ class CollisionWorld {
   void forEachNearby(const Vec3f& position, float radius,
                      const std::function<void(const CollisionTriangle&)>& visit) const;
 
+  // One object's lod for the tree walk: the line goes into its own space and
+  // the face it answers maps back to the world triangle.
+  struct MeshObject {
+    const mesh::CollisionLayer* layer = nullptr;
+    Mat4 toWorld = Mat4::identity();
+    Mat4 toLocal = Mat4::identity();
+    std::vector<std::int32_t> triangleOfFace;  // -1 for a face left out
+  };
+  // The tree's answer for one object, or nullopt; `triangles` is the vector
+  // `triangleOfFace` indexes.
+  std::optional<SegmentContact> treeContact(const MeshObject& object,
+                                            const std::vector<CollisionTriangle>& triangles,
+                                            const Vec3f& start, const Vec3f& motion,
+                                            bool firstFace) const;
+
   float cellSize_;
   std::uint32_t layers_ = 0;
+  // The static objects whose lod has a tree, by object number.
+  std::unordered_map<std::uint32_t, MeshObject> trees_;
   std::vector<CollisionTriangle> triangles_;
   std::unordered_map<std::uint64_t, std::vector<std::uint32_t>> cells_;
   // `forEachNearby`'s guard against visiting a triangle twice: the query's number
@@ -138,6 +177,7 @@ class CollisionWorld {
     std::vector<CollisionPiece> pieces;
     std::vector<std::uint32_t> objects;  // one object number per piece
     std::vector<CollisionTriangle> triangles;
+    std::vector<MeshObject> meshes;  // one per piece, placed with it
     Vec3f minimum, maximum;
     bool alive = false;
   };

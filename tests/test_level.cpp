@@ -340,13 +340,20 @@ static void testPatchesSkipMissingColormaps() {
   CHECK_EQ(patches[0].colormap, std::string("Levels/testmap/Colormaps/tx00x00.dds"));
 }
 
-static void testWaterPlane() {
+static void testWater() {
   TempLevel temp;
   temp.writeCommon();
   temp.write("Heightdata.con", kHeightdata);
   temp.write("Terrain.con", kTerrain);
   temp.write("StaticObjects.con", "");
-  temp.write("Water.con", "renderer.waterColor 0.25/0.5/0.75\n");
+  // Gulf of Oman's own lines, and the two the renderer reads that no level sets.
+  temp.write("Water.con",
+             "renderer.waterScroll -0.5/-0.5\n"
+             "renderer.waterAnimSpeed 75\n"
+             "renderer.waterColor 0.25/0.5/0.75\n"
+             "renderer.waterSpecularColor 0.901961/0.886275/0.8/1.5\n"
+             "renderer.waterSpecularPower 50\n"
+             "renderer.waterAlphaAdd 0.25\n");
   temp.writeHeights("HeightmapPrimary.raw", std::vector<std::uint16_t>(25, 0));
 
   FileSystem files;
@@ -355,15 +362,48 @@ static void testWaterPlane() {
   CHECK(level.has_value());
   if (!level) return;
 
-  const auto water = level::buildWaterPlane(*level);
-  CHECK_EQ(water.vertices.size(), std::size_t(4));
-  CHECK_EQ(water.indices.size(), std::size_t(6));
-  // A plane at sea level and as wide as the map.
+  CHECK_EQ(level->terrain.waterAnimSpeed, 75.0f);
+  CHECK_EQ(level->terrain.waterScroll[0], -0.5f);
+  CHECK_EQ(level->terrain.waterScroll[1], -0.5f);
+  CHECK(level->terrain.waterSpecularColor[1] > 0.886f && level->terrain.waterSpecularColor[1] < 0.887f);
+  CHECK_EQ(level->terrain.waterSpecularColor[3], 1.5f);
+  CHECK_EQ(level->terrain.waterSpecularPower, 50.0f);
+  CHECK_EQ(level->terrain.waterAlphaAdd, 0.25f);
+  // Not in the file: the constructor's 0 (`RendDX9.dll`, 0x100df7c0, +0x738).
+  CHECK_EQ(level->terrain.waterAlphaHeightMul, 0.0f);
+
+  // The test map is one patch of 4 quads, all of it below the sea at 10.5:
+  // one 65x65 grid, its range carrying the patch's light map slot.
+  const auto water = level::buildWater(*level, files);
+  CHECK_EQ(water.ranges.size(), std::size_t(1));
+  CHECK_EQ(water.vertices.size(), std::size_t(65 * 65));
+  CHECK_EQ(water.indices.size(), std::size_t(64 * 64 * 6));
   CHECK(water.vertices[0].position.y > 10.4f && water.vertices[0].position.y < 10.6f);
   CHECK_EQ(water.vertices[0].position.x, -4.0f);
-  CHECK_EQ(water.ranges.size(), std::size_t(1));
-  CHECK_EQ(water.ranges[0].maps.at(0), std::string(level::kWaterColorMap));
+  CHECK_EQ(water.vertices.back().position.x, 4.0f);
+  CHECK_EQ(water.vertices.back().uv[0], 1.0f);
+  CHECK_EQ(water.vertices.back().uv[1], 1.0f);
+  CHECK_EQ(water.ranges[0].technique, std::string("WaterSurface"));
+  CHECK_EQ(water.ranges[0].maps.size(), std::size_t(1));
 }
+
+static void testWaterSkipsDryPatches() {
+  TempLevel temp;
+  temp.writeCommon();
+  temp.write("Heightdata.con", kHeightdata);
+  temp.write("Terrain.con", kTerrain);
+  temp.write("StaticObjects.con", "");
+  // Every node at 50 m, far above the 10.5 m sea: no cell reaches the water.
+  temp.writeHeights("HeightmapPrimary.raw", std::vector<std::uint16_t>(25, 100));
+
+  FileSystem files;
+  files.mountDirectory(temp.root());
+  const auto level = level::loadLevel(files, "testmap");
+  CHECK(level.has_value());
+  if (!level) return;
+  CHECK(level::buildWater(*level, files).ranges.empty());
+}
+
 
 static void testMissingHeightmapIsReported() {
   TempLevel temp;
@@ -484,6 +524,7 @@ TEST_MAIN({
   testTerrainCentredOnOrigin();
   testGroundContactTriangles();
   testPatchesSkipMissingColormaps();
-  testWaterPlane();
+  testWater();
+  testWaterSkipsDryPatches();
   testMissingHeightmapIsReported();
 })

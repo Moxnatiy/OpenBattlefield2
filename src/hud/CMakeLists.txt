@@ -14,9 +14,15 @@ add_library(obf2_hud
   src/list_data.cpp
   src/scoreboard.cpp
   src/squad_list.cpp
+  src/text_case.cpp
+  src/comm_interface.cpp
+  src/blinker.cpp
+  src/chat.cpp
+  src/help_messages.cpp
+  src/strategic_objects.cpp
   src/manager.cpp
 )
 add_library(obf2::hud ALIAS obf2_hud)
 
 target_include_directories(obf2_hud PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(obf2_hud PUBLIC obf2_con obf2_core obf2_meme obf2_engine obf2_font obf2_mesh obf2_game obf2_level obf2_texture obf2_vfs PRIVATE obf2_flags)
+target_link_libraries(obf2_hud PUBLIC obf2_con obf2_core obf2_meme obf2_engine obf2_font obf2_mesh obf2_game obf2_level obf2_texture obf2_vfs PRIVATE obf2_server obf2_flags)

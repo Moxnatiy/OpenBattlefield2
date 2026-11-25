@@ -11,6 +11,7 @@
 #include "check.h"
 #include "obf2/core/path.h"
 #include "obf2/mesh/collision.h"
+#include "obf2/server/collision_world.h"
 #include "obf2/vfs/filesystem.h"
 
 using namespace obf2;
@@ -149,6 +150,33 @@ void testWalk(const mesh::CollisionLayer& layer) {
   CHECK_EQ(foundMismatch, 0);
 }
 
+// The world asks the tree: with firstFace its answer is the walk's first face.
+void testWorld(const mesh::CollisionLayer& layer) {
+  server::CollisionWorld world;
+  world.addLayer(layer, Mat4::identity());
+  const mesh::Aabb box = layer.bsp->bounds;
+  const Vec3f centre{(box.min.x + box.max.x) * 0.5f, (box.min.y + box.max.y) * 0.5f,
+                     (box.min.z + box.max.z) * 0.5f};
+  const float reach = std::sqrt((box.max.x - box.min.x) * (box.max.x - box.min.x) +
+                                (box.max.y - box.min.y) * (box.max.y - box.min.y) +
+                                (box.max.z - box.min.z) * (box.max.z - box.min.z));
+  int asked = 0, differ = 0;
+  for (int i = 0; i < 64; ++i) {
+    const float angle = static_cast<float>(i) * 0.098174770f;  // 2π / 64
+    const Vec3f start{centre.x + std::cos(angle) * reach, centre.y + 1.0f, centre.z + std::sin(angle) * reach};
+    const Vec3f motion = (centre - start) * 2.0f;
+    const auto nearest = world.segmentContact(start, motion, start + motion * 0.5f, reach, true, false);
+    const auto first = world.segmentContact(start, motion, start + motion * 0.5f, reach, true, true);
+    CHECK_EQ(nearest.has_value(), first.has_value());
+    if (!nearest || !first) continue;
+    ++asked;
+    CHECK(nearest->along <= first->along);
+    if (first->along != nearest->along) ++differ;
+  }
+  std::printf("  world: %d rays hit, the first face differs from the nearest on %d\n", asked, differ);
+  CHECK(asked > 0);
+}
+
 }  // namespace
 
 void run() {
@@ -164,6 +192,7 @@ void run() {
   if (!layer->bsp) return;
   testTree(*layer);
   testWalk(*layer);
+  testWorld(*layer);
 }
 
 TEST_MAIN({ run(); })

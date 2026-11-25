@@ -74,6 +74,16 @@ class Device {
     bool prone = false;    // Z, `c_PILie` (Controls.con)
     // The number keys 1..9 held, bit N-1 for key N (`c_PIWeaponSelectN`).
     std::uint32_t weaponKeys = 0;
+    // E, `c_PIUse` (Settings/Default/Controls/Common.con: c_CMPushAndHold) —
+    // enter and leave a vehicle.
+    bool use = false;
+    // F1..F8 held or pressed since the last read, bit N-1 for FN
+    // (`c_PIPositionSelectN`, Settings/Controls.con).
+    std::uint32_t seatKeys = 0;
+    // The vehicle camera key pressed since the last read: C (`c_PIToggleCameraMode`),
+    // F9 or F10 (`c_PICameraMode1`, `c_PICameraMode2`; Settings/Default/Controls/Common.con,
+    // all c_CMNonRepetive). UNKNOWN when none was.
+    SDL_Scancode vehicleCameraKey = SDL_SCANCODE_UNKNOWN;
 
     // The cursor's absolute position in window pixels — for the menu, where the
     // mouse is not captured.
@@ -83,6 +93,14 @@ class Device {
     bool rightClicked = false;  // the right button was just pressed
   };
   InputState readInput();
+
+  // A HUD edit node holding the keyboard (the squad name box): typed text is
+  // appended up to `maxLength` bytes, Backspace deletes, Return or Escape end
+  // it. While it is active Escape does not quit.
+  void beginTextField(std::string text, std::size_t maxLength);
+  void endTextField();
+  bool editingTextField() const { return fieldActive_; }
+  const std::string& textField() const { return fieldText_; }
 
   // Whether a key is down, named the way the game writes it: "IDKey_Tab",
   // "IDKey_Q". The name comes from `ControlMap`, that is from the data, so no
@@ -121,9 +139,15 @@ class Device {
   std::string driver_;
   bool quit_ = false;
   bool escape_ = false;
+  bool fieldActive_ = false;
+  std::string fieldText_;
+  std::size_t fieldMax_ = 0;
   bool escapeQuits_ = true;
   bool mouseWasDown_ = false;
   bool rightWasDown_ = false;
+  // Presses seen between two reads, so a tap shorter than a frame still counts.
+  std::uint32_t seatPressed_ = 0;
+  SDL_Scancode vehicleCameraPressed_ = SDL_SCANCODE_UNKNOWN;
   float mouseDeltaX_ = 0.0f;
   float mouseDeltaY_ = 0.0f;
 

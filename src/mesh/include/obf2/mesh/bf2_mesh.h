@@ -135,6 +135,10 @@ struct DrawRange {
   // colours (`obf2::mesh::markVegetationLeaves`).
   bool leaf = false;
 
+  // A mesh under `objects/water/` (`obf2::mesh::markWaterMesh`): with a baked
+  // light map it is drawn by the water shader, not its own material.
+  bool waterMesh = false;
+
   // The rig number for skinning — it matches the material's number.
   int rig = -1;
 

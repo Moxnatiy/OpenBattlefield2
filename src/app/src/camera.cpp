@@ -30,6 +30,7 @@ CameraView chooseCamera(const CameraInputs& in) {
     view.target = view.eye + lookDirection(in.fixedYaw, in.fixedPitch);
     return view;
   }
+  if (in.vehicle) return *in.vehicle;
   if (in.soldierEye) {
     view.eye = *in.soldierEye;
     view.target = view.eye + lookDirection(in.soldierYaw, in.soldierPitch);
