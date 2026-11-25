@@ -11,6 +11,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <span>
 #include <vector>
 
 #include "obf2/core/math.h"
@@ -46,6 +47,48 @@ struct ObjectInstance {
   int cycles = 0;
   int maxDepth = 0;
 };
+
+// One networkable of a vehicle seat's descriptor that the client can decode
+// (docs/functions/network-events.md, "Engine and Spring networkables").
+struct DescriptorMember {
+  enum class Kind { Rotational, Engine, Spring };
+  Kind kind = Kind::Rotational;
+  std::string templateName;
+  // The object's class (RotationalBundle, Wing, Engine, Spring): FUN_006a5e20
+  // compares rotation only between equal classes (or RotationalBundle/Camera).
+  std::string className;
+  // Engine: bits of the gear field (mask 0x2), from the template's number of
+  // gears (EngineTemplate +0x448, Linux 0x630ee0).
+  unsigned gearBits = 0;
+  // Engine: getEngineType() & 0x20 reads mask 0x100; bit 7 reads mask 0x400.
+  bool engineField100 = false;
+  bool engineBlock400 = false;
+  // Spring: the extra 1 + 16 bits (SpringNetworkable +0x74, set in reset,
+  // Linux 0x5dfa20).
+  bool springExtra = false;
+  // Objects grouped with this one (BF2.exe 0x6aaa10, FUN_006a5e20): they have
+  // no networkable of their own and take this member's state.
+  std::vector<std::string> sharing;
+};
+// The consecutive decodable members of the seat's descriptor, in tree order
+// (BF2.exe 0x6a8970). Stops at the first member whose layout is not read.
+std::vector<DescriptorMember> vehicleDescriptorMembers(const Registry& registry, std::string_view vehicle,
+                                                       unsigned seat);
+// BF2 engine types (Linux operator<<(EngineType), 0x630fa0); nullopt for a name not listed.
+std::optional<int> engineTypeValue(std::string_view name);
+
+// Turret joints in the order of the retail descriptor for this vehicle seat:
+// the rotational members of `vehicleDescriptorMembers`; empty when there are none.
+std::vector<std::string> vehicleTurretBundles(const Registry& registry, std::string_view vehicle,
+                                             unsigned seat);
+// The same bundles, each with the objects that take its state (the bundle
+// first, then DescriptorMember::sharing).
+std::vector<std::vector<std::string>> vehicleTurretBundleObjects(const Registry& registry,
+                                                                 std::string_view vehicle, unsigned seat);
+Mat4 turretRotationAroundRest(const Mat4& rest, Vec3f angles);
+// BF2.exe 0x66dcc0: subtract root-relative parent heading before applying yaw.
+Mat4 composeTurretRotation(const Mat4& parentMotion, const Mat4& rest,
+                          const Mat4& parentRest, Vec3f angles, bool stabilizeYaw);
 
 // A child's place in its parent: `setPosition` after `setRotation`.
 Mat4 childTransform(const ChildTemplate& child);
