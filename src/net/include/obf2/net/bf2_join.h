@@ -103,6 +103,20 @@ class JoinSequence {
       asked_ = false;
     }
   }
+  // The server moved to another map (a new `MapInfo`, block 2). The client loads
+  // it and starts over from `NELoadComplete` (`GameClient::handleDataBlock`
+  // case 2, OpenBF2): the content check follows it, the server pushes the
+  // database again and our answer waits for it, and the choice is made on the
+  // new map's spawn screen. Until `setLevelReady` and `setClientLoaded` come for
+  // the new level nothing is sent.
+  void restartForLevel() {
+    step_ = JoinStep::Level;
+    started_ = false;
+    levelReady_ = false;
+    clientLoaded_ = false;
+    serverDatabase_ = false;
+    asked_ = false;
+  }
   // `NEStartSimulation` — "start counting". Whether it is needed for spawning we
   // are still working out, so the step is switched by a flag.
   void setSkipSimulation(bool skip) { skipSimulation_ = skip; }
@@ -112,6 +126,13 @@ class JoinSequence {
   void ask(const JoinChoice& choice) {
     choice_ = choice;
     asked_ = true;
+  }
+
+  // A new life repeats the selection phase on the existing connection.
+  void resetSpawnChoice() {
+    if (step_ == JoinStep::Done || step_ == JoinStep::Team || step_ == JoinStep::Kit ||
+        step_ == JoinStep::Group) step_ = JoinStep::Ready;
+    asked_ = false;
   }
 
   bool asked() const { return asked_; }

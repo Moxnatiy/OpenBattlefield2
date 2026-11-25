@@ -15,7 +15,7 @@
 // The fields in read order, both layouts:
 //
 //   mask                                  21 bits
-//   0x40      8 bits, 1 bit               the first is scaled by 1/255 and a maximum (health, by the look of the apply code — not established)
+//   0x40      8 bits of normalized health, then 1 bit
 //   0x20      two values 0..4, 3 bits each
 //   0x8000    the ragdoll's state, and **the record ends there** (0x62d6da jumps
 //             to the function's tail, 0x62dce4). `RagDoll::readCurrentState`
@@ -43,7 +43,7 @@
 //   0x4000    Controlled: 7 bits over 127, then one bit; Ghost: 5 bits over 31
 //   0x1000    a value 0..(weapon slots + 1), stored minus one — the weapon's index
 //   0x2000    2 bits
-//   0x20000   Controlled only: 7 bits expanded into ±1
+//   0x20000   Controlled only: 7 bits of ability charge expanded into ±1
 //   0x10000   a value 0..255 (9 bits); when not zero, 12 bits over 4095
 //   0x100000  16 bits; when not zero, 12 bits over 4095
 //   0x80000   a value 0..15 (5 bits)
@@ -75,6 +75,9 @@ enum class SoldierLayout {
 };
 
 inline constexpr unsigned kSoldierMaskBits = 21;
+// The retail LAN revive for soldier 1665 carried pose and requested pose 2
+// in the same packet as GameLogic 14 (FuShe Pass, server tick 1807).
+inline constexpr std::uint32_t kRevivedSoldierPose = 2;
 
 struct SoldierState {
   std::uint32_t mask = 0;
@@ -89,7 +92,7 @@ struct SoldierState {
   std::vector<Vec3f> ragdollParticles;
   std::uint32_t ragdollBits = 0;
 
-  std::optional<std::uint32_t> value40;  // 0x40: 8 bits — purpose not established
+  std::optional<std::uint32_t> value40;  // 0x40: health fraction over 255
   std::optional<bool> flag40;            // 0x40: 1 bit — purpose not established
   // 0x20: the pose and the pose asked for, 0..4 each. The Linux apply block of
   // `SoldierNetworkable::setNetUpdate` (0x5dc640) writes them to soldier +0x3c8 and
@@ -138,7 +141,7 @@ struct SoldierState {
 
   std::optional<int> weaponIndex;  // 0x1000
   std::optional<std::uint32_t> value2000;   // 0x2000: 2 bits
-  std::optional<float> value20000;          // 0x20000, Controlled only, ±1
+  std::optional<float> ability;            // 0x20000, Controlled only, ±1
   std::optional<std::uint32_t> id10000;     // 0x10000: 0..255
   std::optional<float> fraction10000;       // when id10000 is not zero
   std::optional<std::uint32_t> id100000;    // 0x100000: 16 bits

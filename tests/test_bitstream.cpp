@@ -268,7 +268,42 @@ static void testCompressedVectorRefusesTruncatedBuffer() {
   CHECK(!reader.readCompressedVector(obf2::Vec3f{}, 1.0f).has_value());
 }
 
+// The rest of the engine's `BitStream` (OpenBF2 IO/BitStream.cpp): the wide
+// vector's zero level, normal angles and vectors, the two quaternion forms —
+// each written and read back within its quantisation step.
+static void testNormalsAndQuaternions() {
+  std::vector<std::byte> buffer(128);
+  obf2::net::BitWriter writer(buffer);
+  const obf2::Vec3f base{10.0f, 20.0f, 30.0f};
+  CHECK(writer.writeWideVector(base, base, 0.01f));        // level 7, 3 bits
+  CHECK(writer.writeWideVector({10.5f, 20.0f, 29.0f}, base, 0.01f));
+  CHECK(writer.writeNormalVector({0.0f, 0.0f, 1.0f}, 10));
+  CHECK(writer.writeNormalAngle(1.0f, 12));
+  const float half = 0.70710678f;
+  CHECK(writer.writeUnitQuaternion3Comp({0.0f, half, 0.0f, -half}, 15));
+  CHECK(writer.writeUnitQuaternion({0.0f, 0.0f, half, half}, 16));
+  CHECK(writer.writeHighCompressedVector({11.0f, 20.0f, 30.0f}, base, 0.01f));
+
+  obf2::net::BitReader reader(std::span<const std::byte>(buffer.data(), writer.byteSize()));
+  const auto same = reader.readWideVector(base, 0.01f);
+  CHECK(same && same->x == 10.0f && same->z == 30.0f);
+  const auto moved = reader.readWideVector(base, 0.01f);
+  CHECK(moved && std::fabs(moved->x - 10.5f) < 0.011f && std::fabs(moved->z - 29.0f) < 0.011f);
+  const auto up = reader.readNormalVector(10);
+  CHECK(up && std::fabs(up->z - 1.0f) < 0.01f);
+  const auto angle = reader.readNormalAngle(12);
+  CHECK(angle && std::fabs(*angle - 1.0f) < 0.002f);
+  const auto three = reader.readUnitQuaternion3Comp(15);
+  CHECK(three && three->w < 0.0f && std::fabs(three->y - half) < 0.001f);
+  const auto four = reader.readUnitQuaternion(16);
+  CHECK(four && std::fabs(four->z - half) < 0.001f && std::fabs(four->w - half) < 0.001f);
+  const auto high = reader.readHighCompressedVector(base, 0.01f);
+  CHECK(high && std::fabs(high->x - 11.0f) < 0.011f);
+  CHECK(reader.bitPosition() == writer.bitPosition());
+}
+
 TEST_MAIN({
+  testNormalsAndQuaternions();
   testBitOrderIsLowBitsFirst();
   testSpansByteBoundary();
   testRoundTripOfManyWidths();

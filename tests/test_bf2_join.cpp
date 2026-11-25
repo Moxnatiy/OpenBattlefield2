@@ -106,6 +106,35 @@ static void testReopenAfterRoundReset() {
   CHECK(join.done());
 }
 
+// A map change starts the join over: nothing until the new level is named and
+// loaded, then `NELoadComplete` again, and the database answer waits for the
+// server's own again.
+static void testRestartForLevel() {
+  JoinSequence join;
+  join.setServerDatabaseSent();
+  join.ask(JoinChoice{2, 1, 3});
+  join.setLevelReady();
+  join.setClientLoaded();
+  Clock::time_point at{};
+  CHECK(take(join, at, JoinStep::Level));
+  CHECK(take(join, at, JoinStep::Content));
+  CHECK(take(join, at, JoinStep::Database));
+  CHECK(take(join, at, JoinStep::Team));
+  CHECK(take(join, at, JoinStep::Kit));
+  CHECK(take(join, at, JoinStep::Group));
+
+  join.restartForLevel();
+  CHECK(join.step() == JoinStep::Level);
+  CHECK(!join.asked());
+  CHECK(!join.next(at + std::chrono::minutes(1)).has_value());
+  join.setLevelReady();
+  CHECK(!join.next(at + std::chrono::minutes(1)).has_value());  // not loaded yet
+  join.setClientLoaded();
+  CHECK(take(join, at, JoinStep::Level));
+  CHECK(take(join, at, JoinStep::Content));
+  CHECK(!join.next(at + std::chrono::minutes(1)).has_value());  // waits for the server's database
+}
+
 // Without DONE the sequence stops at the spawn screen and goes no further.
 static void testStopsAtSpawnScreen() {
   JoinSequence join;
@@ -173,11 +202,39 @@ static void testSkippedStepsCostNoDelay() {
   CHECK(join.done());
 }
 
+static void testRespawnUsesOnlySpawnEvents() {
+  JoinSequence join;
+  join.setServerDatabaseSent();
+  join.setLevelReady();
+  join.setClientLoaded();
+  join.setSkipSimulation(true);
+  join.ask({1, 0, 1});
+  Clock::time_point at{};
+  CHECK(take(join, at, JoinStep::Level));
+  CHECK(take(join, at, JoinStep::Content));
+  CHECK(take(join, at, JoinStep::Database));
+  CHECK(take(join, at, JoinStep::Team));
+  CHECK(take(join, at, JoinStep::Kit));
+  CHECK(take(join, at, JoinStep::Group));
+  CHECK(join.done());
+
+  join.resetSpawnChoice();
+  CHECK(!join.next(at).has_value());
+  join.ask({2, 0, 2});
+  CHECK(take(join, at, JoinStep::Team));
+  CHECK(take(join, at, JoinStep::Kit));
+  CHECK(take(join, at, JoinStep::Group));
+  CHECK(join.done());
+  CHECK_EQ(join.choice().group, 2);
+}
+
 TEST_MAIN({
+  testRestartForLevel();
   testWaitsForLevelAndLoad();
   testContentGoesWithLoadComplete();
   testStopsAtSpawnScreen();
   testChoiceMadeEarlyDoesNotStop();
   testSkippedStepsCostNoDelay();
+  testRespawnUsesOnlySpawnEvents();
   testReopenAfterRoundReset();
 })

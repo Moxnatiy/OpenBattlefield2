@@ -1,5 +1,7 @@
 #include "obf2/net/bf2_link.h"
 
+#include <bit>
+
 namespace obf2::net::bf2 {
 
 bool Link::acceptData(const ExtendedHeader& header) {
@@ -31,6 +33,26 @@ void Link::acceptPing(const ExtendedHeader& header, bool haveSent) {
   confirm(header.ack & 0x3F, header.ackBits);
 }
 
+std::vector<std::vector<Event>> Link::receiveBlock(unsigned index, std::vector<Event> events) {
+  std::vector<std::vector<Event>> ready;
+  index &= 31;
+  const unsigned ahead = (index - (nextReceive_ & 31)) & 31;
+  if (ahead >= 16 || pending_.count(index) != 0) {
+    ++blocksRepeated_;
+    return ready;
+  }
+  if (ahead > 0) ++blocksOutOfOrder_;
+  pending_[index] = std::move(events);
+  for (;;) {
+    const auto found = pending_.find(nextReceive_ & 31);
+    if (found == pending_.end()) break;
+    ready.push_back(std::move(found->second));
+    pending_.erase(found);
+    ++nextReceive_;
+  }
+  return ready;
+}
+
 ExtendedHeader Link::nextDataHeader() {
   ExtendedHeader header;
   header.sequence = static_cast<std::uint8_t>(nextSequence_ & 0x3F);
@@ -43,7 +65,7 @@ ExtendedHeader Link::nextDataHeader() {
 
 ExtendedHeader Link::pingHeader() const {
   ExtendedHeader header;
-  header.sequence = static_cast<std::uint8_t>(lastSentSequence_ < 0 ? 0 : lastSentSequence_);
+  header.sequence = static_cast<std::uint8_t>(lastSentSequence_ < 0 ? 63 : lastSentSequence_);
   header.ack = static_cast<std::uint8_t>(remoteCounter_ & 0x3F);
   header.ackBits = receiveMask_;
   return header;
@@ -168,11 +190,20 @@ EventBits contentCheckEvent(const std::array<std::byte, 16>& misc,
   return bits;
 }
 
-EventBits challengeResponseEvent() {
+EventBits challengeResponseEvent(const ChallengeResponse& response) {
   EventBits bits;
   bits.put(2, kEventTypeBits);
-  for (int i = 0; i < 73; ++i) bits.put(0, 8);
+  for (const char byte : response) bits.put(static_cast<std::uint8_t>(byte), 8);
   bits.put(0, 32).put(kGameVersion, 32).put(0, 1).put(0x423, 31);
+  return bits;
+}
+
+EventBits voteEvent(const Vote& vote) {
+  EventBits bits;
+  bits.put(39, kEventTypeBits).put(vote.item, 8).put(vote.option, 8)
+      .put(vote.forCount, 8).put(vote.item, 8).put(vote.againstCount, 8)
+      .put(vote.needed, 8).put(vote.caster, 8).put(vote.status, 8)
+      .put(vote.type, 8).put(vote.time, 32);
   return bits;
 }
 
@@ -226,6 +257,122 @@ EventBits setPrivateSquadEvent(int team, int squad, bool isPrivate) {
       .put(static_cast<std::uint32_t>(squad) & 0xFF, 8)
       .put(static_cast<std::uint32_t>(team) & 0xFF, 8)
       .put(isPrivate ? 1u : 0u, 1);
+  return bits;
+}
+
+std::vector<EventBits> chatEvents(ChatChannel channel, unsigned sender, std::string_view text) {
+  if (text.empty() || text.size() > kMaxChatBytes ||
+      text.find_first_of(std::string_view("\0\r\n", 3)) != std::string_view::npos) return {};
+  // StringBlockEvent carries the text followed by a 12-byte StringManager header.
+  std::string bytes(text);
+  bytes.append(12, '\0');
+  bytes[text.size()] = static_cast<char>(channel);
+  bytes[text.size() + 4] = 2;  // player text
+  bytes[text.size() + 8] = static_cast<char>(sender);
+  bytes[text.size() + 9] = static_cast<char>(0xFF);  // no direct recipient
+  std::vector<EventBits> events;
+  events.emplace_back().put(15, kEventTypeBits).put(1, 1).put(static_cast<std::uint32_t>(bytes.size()), 8);
+  for (std::size_t start = 0; start < bytes.size(); start += 63) {
+    const auto chunk = std::string_view(bytes).substr(start, 63);
+    auto& event = events.emplace_back();
+    event.put(15, kEventTypeBits).put(0, 1).put(static_cast<std::uint32_t>(chunk.size()), 8);
+    for (unsigned char byte : chunk) event.put(byte, 8);
+  }
+  return events;
+}
+
+EventBits radioCallEvent(const RadioCall& call) {
+  EventBits bits;
+  bits.put(20, kEventTypeBits).put(call.message, 8).put(call.sender, 8)
+      .put(call.team, 2).put(call.extra, 8).put(call.channel, 5).put(call.type, 3);
+  return bits;
+}
+
+EventBits spotEvent(unsigned spotter, unsigned target, unsigned team, Vec3f point, unsigned hudEvent) {
+  EventBits bits;
+  bits.put(29, kEventTypeBits).put(spotter, 16).put(target, 16)
+      .put(std::bit_cast<std::uint32_t>(point.x), 32)
+      .put(std::bit_cast<std::uint32_t>(point.z), 32).put(team, 8)
+      .put(26, 32).put(hudEvent, 32);  // VTNoVehicleType, ECHud spotted
+  return bits;
+}
+
+EventBits inviteSquadEvent(unsigned team, unsigned player, unsigned squad, bool invited) {
+  EventBits bits;
+  bits.put(25, kEventTypeBits).put(team, 8).put(player, 8).put(squad, 8).put(invited, 1);
+  return bits;
+}
+
+EventBits squadOrderEvent(const SquadOrder& order) {
+  EventBits bits;
+  bits.put(24, kEventTypeBits).put(order.squad, 8).put(order.team, 8)
+      .put(order.id, 8).put(order.target != 0, 1);
+  if (order.target) {
+    bits.put(order.target, 16);
+  } else {
+    for (auto component : {&Vec3f::x, &Vec3f::y, &Vec3f::z}) {
+      for (const auto& point : order.points) bits.put(std::bit_cast<std::uint32_t>(point.*component), 32);
+    }
+  }
+  bits.put(static_cast<unsigned>(order.route), 8).put(order.accepted, 1);
+  return bits;
+}
+
+EventBits orderResponseEvent(const OrderResponse& response) {
+  EventBits bits;
+  bits.put(27, kEventTypeBits).put(response.squad, 8).put(response.team, 8)
+      .put(response.accepted, 1).put(static_cast<unsigned>(response.route), 8).put(response.id, 8);
+  return bits;
+}
+
+EventBits commanderOrderReplyEvent(unsigned squad, unsigned team, bool accepted) {
+  EventBits bits;
+  bits.put(50, kEventTypeBits).put(squad, 8).put(team, 8).put(accepted ? 2 : 3, 3);
+  return bits;
+}
+
+EventBits commanderEvent(CommanderAction action, int team, int player) {
+  EventBits bits;
+  bits.put(19, kEventTypeBits).put(static_cast<unsigned>(action), 4)
+      .put(team, 8).put(0, 1).put(player, 15);
+  return bits;
+}
+
+EventBits commanderCameraEvent(Vec3f position) {
+  EventBits bits;
+  bits.put(36, kEventTypeBits).put(std::bit_cast<std::uint32_t>(position.x), 32)
+      .put(std::bit_cast<std::uint32_t>(position.y), 32)
+      .put(std::bit_cast<std::uint32_t>(position.z), 32);
+  return bits;
+}
+
+EventBits commanderToolEvent(CommanderTool tool, int team, int squad, Vec3f target) {
+  EventBits bits;
+  const auto x = std::bit_cast<std::uint32_t>(target.x);
+  const auto z = std::bit_cast<std::uint32_t>(target.z);
+  switch (tool) {
+    case CommanderTool::Move:
+    case CommanderTool::Attack:
+    case CommanderTool::Defend: {
+      const unsigned order = tool == CommanderTool::Move ? 4 : tool == CommanderTool::Attack ? 5 : 6;
+      return squadOrderEvent({static_cast<unsigned>(squad), static_cast<unsigned>(team), order,
+                              0, {target, {}, {}}, OrderRoute::Commander, false});
+    }
+    case CommanderTool::UAV:
+    case CommanderTool::Scan:
+      bits.put(45, kEventTypeBits).put(x, 32).put(z, 32).put(team, 8)
+          .put(tool == CommanderTool::Scan, 1);
+      break;
+    case CommanderTool::Artillery:
+      bits.put(30, kEventTypeBits).put(1, 2).put(team, 32).put(x, 32).put(z, 32);
+      break;
+    case CommanderTool::Supplies:
+      bits.put(37, kEventTypeBits).put(team, 32).put(x, 32).put(z, 32);
+      break;
+    case CommanderTool::Vehicle:
+      bits.put(51, kEventTypeBits).put(x, 32).put(z, 32).put(team, 8).put(0, 1);
+      break;
+  }
   return bits;
 }
 

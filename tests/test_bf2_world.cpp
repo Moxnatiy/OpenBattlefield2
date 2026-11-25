@@ -3,12 +3,14 @@
 // The sample `tests/data/bf2-spawned.bin` was taken after the player spawned and
 // with input sent (`openbf2 --connect ... --record`), so it holds everything at
 // once: the player events, the controlled-object state and the ghost records.
+#include <bit>
 #include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
 
 #include "obf2/net/bf2_world.h"
+#include "obf2/net/bf2_link.h"
 #include "check.h"
 
 namespace {
@@ -44,6 +46,8 @@ void testWorldViewCollectsPlayersAndObjects() {
   // We recognised ourselves by name — the server sends it with a leading space.
   CHECK(world.ownPlayer() >= 0);
   CHECK(world.ownTeam() > 0);
+  CHECK_EQ(world.tickets(1).value_or(-1), 99);
+  CHECK_EQ(world.tickets(2).value_or(-1), 77);
 
   // The world's objects assembled too, and all of them are within the map.
   CHECK(!world.objects().empty());
@@ -208,7 +212,276 @@ void testRagdollRecordsReadWhole() {
   CHECK_EQ(world.soldierRecordsComplete(), world.soldierRecordsExact());
 }
 
+static void testUnitSpotVisibilityAndExpiry() {
+  using namespace obf2::net::bf2;
+  WorldView teamOne;
+  WorldView teamTwo;
+  teamOne.setOwnConnection(1);
+  teamTwo.setOwnConnection(2);
+  Link server;
+  for (unsigned team : {1u, 2u}) {
+    EventBits player;
+    player.put(5, kEventTypeBits).put(team, 3).put(0, 4).put(0, 1)
+        .put(team, 8).put(100 + team, 16).put(0, 16).put(0, 1);
+    for (int i = 0; i < 32; ++i) player.put(0, 8);
+    server.queue(player);
+  }
+  const auto start = WorldView::Clock::time_point{};
+  const auto roster = writeDataPacket(0, server, nullptr);
+  teamOne.feed(roster, start);
+  teamTwo.feed(roster, start);
+
+  EventBits spot;
+  spot.put(kPostRemoteEvent, kEventTypeBits).put(2, 4).put(43, 32).put(0, 32).put(24, 8);
+  for (std::uint32_t value : {0x00070000u, 1u, std::bit_cast<std::uint32_t>(100.0f),
+                             std::bit_cast<std::uint32_t>(-50.0f), 0u, 43u}) {
+    for (unsigned i = 0; i < 4; ++i) spot.put((value >> (8 * i)) & 0xff, 8);
+  }
+  server.queue(spot);
+  const auto broadcast = writeDataPacket(0, server, nullptr);
+  teamOne.feed(broadcast, start);
+  teamTwo.feed(broadcast, start);
+  const auto visible = teamOne.visibleSpots(start + std::chrono::seconds(11));
+  CHECK_EQ(visible.size(), std::size_t(1));
+  if (!visible.empty()) {
+    CHECK_EQ(visible.front().target, 7);
+    CHECK_EQ(visible.front().x, 100.0f);
+    CHECK_EQ(visible.front().z, -50.0f);
+  }
+  CHECK(teamTwo.visibleSpots(start).empty());
+  CHECK(teamOne.visibleSpots(start + std::chrono::seconds(12)).empty());
+  teamOne.clearSpots();
+  CHECK(teamOne.visibleSpots(start).empty());
+}
+
+static void testOccupancyDoesNotInventAnObjectAtTheOrigin() {
+  using namespace obf2::net::bf2;
+  WorldView world;
+  Link server;
+  EventBits enter;
+  enter.put(9, kEventTypeBits).put(77, 8).put(123, 16).put(0, 1);
+  server.queue(enter);
+  world.feed(writeDataPacket(0, server, nullptr));
+  CHECK(world.players().at(77).object == 123);
+  CHECK(world.ownerOf(123) != nullptr);
+  CHECK(!world.objects().contains(123));
+
+  EventBits created;
+  created.put(6, kEventTypeBits).put(42, 32).put(122, 16).put(0, 2)
+      .put(1, 1).put(2, 8);
+  server.queue(created);
+  world.feed(writeDataPacket(0, server, nullptr));
+  CHECK(world.objects().size() == 2);
+  CHECK(world.objects().at(123).templateId == 42);
+  CHECK(!world.objects().at(123).hasCreationPosition);
+}
+
+static void testDestroyObjectClearsTheReplicatedObject() {
+  using namespace obf2::net::bf2;
+  WorldView world;
+  const auto apply = [&](const EventBits& event) {
+    Link server;
+    server.queue(event);
+    world.feed(writeDataPacket(0, server, nullptr));
+  };
+  EventBits create;
+  create.put(6, kEventTypeBits).put(42, 32).put(123, 16).put(0, 2).put(1, 1).put(1, 8);
+  apply(create);
+  CHECK(world.objects().contains(123));
+
+  EventBits destroy;
+  destroy.put(7, kEventTypeBits).put(123, 16);
+  apply(destroy);
+  CHECK(world.explicitlyDestroyed(123));
+  CHECK(!world.objects().contains(123));
+
+  apply(create);
+  CHECK(!world.explicitlyDestroyed(123));
+  CHECK(world.objects().contains(123));
+}
+
+static void testDroppedKitCanBePickedUpAgain() {
+  using namespace obf2::net::bf2;
+  WorldView world;
+  const auto apply = [&](const EventBits& bits) {
+    Link server;
+    server.queue(bits);
+    world.feed(writeDataPacket(0, server, nullptr));
+  };
+  const auto create = [&](int id, int definition) {
+    EventBits kit;
+    kit.put(31, kEventTypeBits).put(definition, 32).put(id, 16)
+        .put(0, 32).put(0, 32).put(0, 32).put(0, 4).put(0, 4);
+    apply(kit);
+  };
+  const auto pickup = [&](int kit, int soldier) {
+    EventBits event;
+    event.put(14, kEventTypeBits).put(5, 8).put(kit, 16).put(soldier, 16);
+    apply(event);
+  };
+
+  create(123, 42);
+  pickup(123, 200);
+  CHECK_EQ(world.carriedKit(200), 123u);
+  CHECK_EQ(world.kitTemplateOf(200), 42u);
+  CHECK(!world.droppedKits().contains(123));
+
+  // The retail swap can replace one instance with another of the same template.
+  // A later drop of the old instance must keep the new one assigned.
+  create(124, 42);
+  pickup(124, 200);
+  CHECK_EQ(world.carriedKit(200), 124u);
+  CHECK(!world.droppedKits().contains(124));
+  EventBits drop;
+  drop.put(13, kEventTypeBits).put(5, 8).put(123, 16).put(200, 16)
+      .put(std::bit_cast<std::uint32_t>(2.0f), 32)
+      .put(std::bit_cast<std::uint32_t>(3.0f), 32)
+      .put(std::bit_cast<std::uint32_t>(4.0f), 32);
+  apply(drop);
+  CHECK_EQ(world.carriedKit(200), 124u);
+  CHECK_EQ(world.kitTemplateOf(200), 42u);
+  CHECK(world.droppedKits().contains(123));
+  CHECK_EQ(world.droppedKits().at(123).position.y, 3.0f);
+
+  pickup(123, 201);
+  CHECK_EQ(world.carriedKit(201), 123u);
+  CHECK_EQ(world.kitTemplateOf(201), 42u);
+  CHECK(!world.droppedKits().contains(123));
+
+  create(125, 44);
+  EventBits destroy;
+  destroy.put(7, kEventTypeBits).put(125, 16);
+  apply(destroy);
+  CHECK(!world.droppedKits().contains(125));
+  create(126, 44);
+  apply(postRemoteEvent(kGameLogicCategory, kGameLogicReset));
+  CHECK(world.droppedKits().empty());
+  CHECK_EQ(world.kitTemplateOf(201), 0u);
+}
+
+static void testRevivedSoldierPoseBeforeGhostUpdate() {
+  using namespace obf2::net::bf2;
+  WorldView world;
+  Event create;
+  create.object = CreateObject{.templateId = 42, .networkId = 123, .position = obf2::Vec3f{1, 2, 3}};
+  world.feedEvents({create});
+
+  Event revive;
+  revive.remote.emplace();
+  revive.remote->category = kGameLogicCategory;
+  revive.remote->number = kGameLogicRevived;
+  revive.remote->data = {123, 0};
+  world.feedEvents({revive});
+  const auto pose = world.poseOf(123, 0.0f);
+  CHECK(pose.has_value());
+  if (pose) {
+    CHECK_EQ(pose->stance, kRevivedSoldierPose);
+    CHECK_EQ(pose->position.y, 2.0f);
+  }
+}
+
+static void testProjectileDetonationQueuesOnce() {
+  using namespace obf2::net::bf2;
+  using obf2::net::BitWriter;
+  WorldView world;
+  world.setTemplateNet([](std::uint32_t) -> std::optional<WorldView::TemplateNet> {
+    return WorldView::TemplateNet{.projectile = true};
+  });
+  Event create;
+  create.object = CreateObject{.templateId = 42, .networkId = 123, .position = obf2::Vec3f{1, 2, 3}};
+  world.feedEvents({create});
+
+  std::vector<std::byte> payload(64);
+  BitWriter body(payload);
+  body.writeBits(kProjectileDetonation, 5);
+  body.writeBits(1, 1);
+  body.writeBits(0, 16);
+  body.writeHighCompressedVector({}, {}, 0.01f);
+  body.writeBits(0, 1);
+
+  std::vector<std::byte> packet(128);
+  BitWriter writer(packet);
+  writer.writeBits(static_cast<unsigned>(PacketKind::Data), 4);
+  for (const auto width : {8u, 6u, 6u, 32u, kStreamFramingBits}) writer.writeBits(0, width);
+  writer.writeBits(0, 1);  // actions
+  writer.writeBits(0, 1);  // events
+  writer.writeBits(1, 1);  // ghosts
+  writer.writeBits(10, 32);
+  writer.writeBits(1, 8);  // records
+  writer.writeBits(0, 1);  // controlled state
+  writer.writeBits(1, 2);  // update
+  writer.writeBits(123, 16);
+  writer.writeBits(0, 1);  // baseline
+  writer.writeBits(static_cast<std::uint32_t>(body.bitPosition()), kGhostLengthBits);
+  obf2::net::BitReader reader(payload);
+  for (std::size_t i = 0; i < body.bitPosition(); ++i) writer.writeBits(*reader.readBits(1), 1);
+  packet.resize(writer.byteSize());
+  world.feedGhosts(packet);
+  CHECK_EQ(world.detonations().size(), std::size_t{1});
+  CHECK_EQ(world.detonations().front().position.y, 2.0f);
+  world.detonations().clear();
+  world.feedGhosts(packet);
+  CHECK(world.detonations().empty());
+  CHECK_EQ(world.detonationCount(), 1);
+}
+
+static void testControlOwnershipFollowsSeatChanges() {
+  using namespace obf2::net::bf2;
+  WorldView world;
+  Event driver, passenger, switchSeat, exit, takePassengerSeat;
+  driver.enter = EnterVehicle{1, 500, false};
+  passenger.enter = EnterVehicle{2, 501, false};
+  world.feedEvents({driver, passenger});
+  CHECK_EQ(world.players().at(1).object, 500);
+  CHECK_EQ(world.players().at(2).object, 501);
+
+  switchSeat.enter = EnterVehicle{2, 502, false};
+  world.feedEvents({switchSeat});
+  CHECK(world.ownerOf(501) == nullptr);
+  CHECK(world.ownerOf(500) == &world.players().at(1));
+  CHECK(world.ownerOf(502) == &world.players().at(2));
+
+  takePassengerSeat.enter = EnterVehicle{3, 502, false};
+  exit.exitPlayer = 2;
+  world.feedEvents({takePassengerSeat, exit});
+  CHECK_EQ(world.players().at(2).object, 0);
+  CHECK(world.ownerOf(502) == &world.players().at(3));
+}
+
+static void testInfantryOwnershipSurvivesVehicleEntry() {
+  using namespace obf2::net::bf2;
+  WorldView world;
+  world.setTemplateNet([](std::uint32_t id) -> std::optional<WorldView::TemplateNet> {
+    return WorldView::TemplateNet{.soldier = id == 1};
+  });
+  Event soldier, infantry, exit, driver, gunner, destroy;
+  soldier.object = CreateObject{.templateId = 1, .networkId = 100};
+  infantry.enter = EnterVehicle{1, 100, false};
+  exit.exitPlayer = 1;
+  driver.enter = EnterVehicle{1, 200, false};
+  gunner.enter = EnterVehicle{1, 201, false};
+  destroy.destroyObject = 100;
+  world.feedEvents({infantry, soldier, exit, driver});
+  CHECK(world.ownerOf(100) == nullptr);
+  CHECK(world.infantryOwnerOf(100) == &world.players().at(1));
+  CHECK_EQ(world.players().at(1).object, 200);
+  world.feedEvents({exit, gunner, exit, infantry});
+  CHECK(world.infantryOwnerOf(100) == world.ownerOf(100));
+  CHECK(world.ownerOf(200) == nullptr);
+  CHECK(world.ownerOf(201) == nullptr);
+  world.feedEvents({destroy});
+  CHECK(world.infantryOwnerOf(100) == nullptr);
+}
+
 TEST_MAIN({
+  testInfantryOwnershipSurvivesVehicleEntry();
+  testControlOwnershipFollowsSeatChanges();
+  testProjectileDetonationQueuesOnce();
+  testDroppedKitCanBePickedUpAgain();
+  testRevivedSoldierPoseBeforeGhostUpdate();
+  testDestroyObjectClearsTheReplicatedObject();
+  testOccupancyDoesNotInventAnObjectAtTheOrigin();
+  testUnitSpotVisibilityAndExpiry();
   testRagdollRecordsReadWhole();
   testSoldierWeaponIndexWidth();
   testPlayerRecordsReadToTheirLength();

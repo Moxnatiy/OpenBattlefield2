@@ -169,7 +169,7 @@ std::optional<SoldierState> readSoldierState(BitReader& reader, const Vec3f& ref
   if (controlled && has(0x20000)) {
     const auto v = bits(7);
     if (!v) return out;
-    out.value20000 = expand(*v, 7, 1.0f);
+    out.ability = expand(*v, 7, 1.0f);
   }
   if (has(0x10000)) {
     const auto id = bits(rangedBits(0xff));

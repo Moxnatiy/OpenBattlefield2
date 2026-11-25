@@ -31,7 +31,9 @@ static void testPushCopiesTheNewest() {
   track.push(33.0f);
   CHECK(near(track.newest()->position.y, 2.0f));
   CHECK_EQ(track.count(), std::size_t(2));
-  for (int i = 0; i < 6; ++i) track.push(66.0f + 33.0f * static_cast<float>(i));
+  for (std::size_t i = 0; i < GhostTrack::kSlots; ++i) {
+    track.push(66.0f + 33.0f * static_cast<float>(i));
+  }
   CHECK_EQ(track.count(), GhostTrack::kSlots);
 }
 
@@ -95,7 +97,17 @@ static void testTheLimitIsNotIncluded() {
   CHECK(near(past->position.x, 0.0f));
 }
 
+static void testYawInterpolatesAcrossWrap() {
+  obf2::net::bf2::GhostTrack track;
+  track.push(0).bodyYaw = 179;
+  track.push(100).bodyYaw = -179;
+  const auto middle = track.poseAt(50, 0, 0);
+  CHECK(middle && middle->mode == obf2::net::bf2::GhostPrediction::Interpolated);
+  if (middle) CHECK_EQ(middle->bodyYaw, 180.0f);
+}
+
 TEST_MAIN({
+  testYawInterpolatesAcrossWrap();
   testExtrapolationCarriesTheVertical();
   testTheLimitIsNotIncluded();
   testInterpolatesBehindNow();

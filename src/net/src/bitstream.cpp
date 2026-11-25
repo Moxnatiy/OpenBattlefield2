@@ -13,6 +13,56 @@ std::uint32_t maskOf(unsigned bits) {
 
 }  // namespace
 
+namespace {
+
+constexpr float kPi = 3.1415927410125732f;
+constexpr float kFloatEpsilon = 1.1920928955078125e-07f;
+
+float floatOf(std::uint32_t raw) {
+  float value = 0.0f;
+  std::memcpy(&value, &raw, sizeof value);
+  return value;
+}
+
+std::uint32_t rawOf(float value) {
+  std::uint32_t raw = 0;
+  std::memcpy(&raw, &value, sizeof raw);
+  return raw;
+}
+
+// The quantiser `readNormalAngle` and `readQuatComponent` share, without the
+// pi: [-1, 1] from `bits` (or a raw float at 32); `deadZone` makes a value
+// within one step of zero zero.
+std::optional<float> readUnit(BitReader& reader, unsigned bits, bool deadZone) {
+  float value = 0.0f;
+  const auto raw = reader.readBits(bits);
+  if (!raw) return std::nullopt;
+  if (bits == 32) {
+    value = floatOf(*raw);
+  } else {
+    const auto top = static_cast<float>((1u << bits) - 1u);
+    value = (static_cast<float>(*raw) / top) * 2.0f - 1.0f;
+  }
+  if (deadZone) {
+    const float top = bits == 32 ? 4294967295.0f : static_cast<float>((1u << bits) - 1u);
+    if (2.0f / top >= std::fabs(value)) value = 0.0f;
+  }
+  return value;
+}
+
+// The writers' side: (v + 1) / 2 clamped from below (and from above when
+// `clampTop`), times 2^bits - 1, truncated; a raw float at 32.
+bool writeUnit(BitWriter& writer, float value, unsigned bits, bool clampTop) {
+  if (bits == 32) return writer.writeBits(rawOf(value), 32);
+  float unit = (value + 1.0f) * 0.5f;
+  if (unit < 0.0f) unit = 0.0f;
+  if (clampTop && unit > 1.0f) unit = 1.0f;
+  const auto top = static_cast<float>((1u << bits) - 1u);
+  return writer.writeBits(static_cast<std::uint32_t>(unit * top), bits);
+}
+
+}  // namespace
+
 std::string_view packetTypeName(PacketType type) {
   switch (type) {
     case PacketType::ConnectionRequest: return "ConnectionRequest";
@@ -153,6 +203,85 @@ bool BitWriter::writeCompressedVector(const Vec3f& value, const Vec3f& reference
   return true;
 }
 
+bool BitWriter::writeWideVector(const Vec3f& value, const Vec3f& base, float precision) {
+  if (precision == 0.0f) {
+    ok_ = false;
+    return false;
+  }
+  const float inverse = 1.0f / precision;
+  const Vec3f delta = value - base;
+  const float distance = length(delta);
+  // Shorter than FLT_EPSILON: level 7 and nothing else.
+  if (distance < 1.1920928955078125e-07f) return writeBits(7, 3);
+  const float scaled = distance * inverse;
+  std::uint32_t level = 0;
+  for (std::uint32_t i = 6; i >= 1; --i) {
+    if (static_cast<float>(1u << (kCompressionVectorBitTable2[i] - 1u)) > scaled) {
+      level = i;
+      break;
+    }
+  }
+  if (!writeBits(level, 3)) return false;
+  if (level == 0) {
+    return writeBits(floatToBits(value.x), 32) && writeBits(floatToBits(value.y), 32) &&
+           writeBits(floatToBits(value.z), 32);
+  }
+  const unsigned magnitudeBits = kCompressionVectorBitTable2[level] - 1u;
+  for (const float component : {delta.x * inverse, delta.y * inverse, delta.z * inverse}) {
+    const int quantized = static_cast<int>(component);
+    const bool negative = quantized < 0;
+    if (!writeBool(negative)) return false;
+    if (!writeBits(static_cast<std::uint32_t>(negative ? -quantized : quantized), magnitudeBits)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool BitWriter::writeNormalAngle(float angle, unsigned bits) {
+  return writeUnit(*this, angle / kPi, bits, false);
+}
+
+bool BitWriter::writeNormalVector(const Vec3f& normal, unsigned bits) {
+  const float azimuth = std::atan2(normal.y, normal.x);
+  const float z = std::clamp(normal.z, -1.0f, 1.0f);
+  const float elevation = std::acos(z);
+  // An angle beyond pi is the engine's error 4: nothing written.
+  if (std::fabs(azimuth) > kPi || std::fabs(elevation) > kPi) {
+    ok_ = false;
+    return false;
+  }
+  return writeNormalAngle(azimuth, bits) && writeNormalAngle(elevation, bits);
+}
+
+bool BitWriter::writeUnitQuaternion3Comp(const Quatf& rotation, unsigned bits) {
+  Quatf v = rotation;
+  if (std::fabs(v.x) > 1.0f || std::fabs(v.y) > 1.0f || std::fabs(v.z) > 1.0f) {
+    const float len = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z + v.w * v.w);
+    if (len < kFloatEpsilon) {
+      v = Quatf{};
+    } else {
+      v = Quatf{v.x / len, v.y / len, v.z / len, v.w / len};
+    }
+  }
+  return writeBits(v.w < 0.0f ? 1u : 0u, 1) && writeUnit(*this, v.x, bits, false) &&
+         writeUnit(*this, v.y, bits, false) && writeUnit(*this, v.z, bits, false);
+}
+
+bool BitWriter::writeUnitQuaternion(const Quatf& rotation, unsigned bits) {
+  Quatf v = rotation;
+  if (std::fabs(v.x) > 1.0f || std::fabs(v.y) > 1.0f || std::fabs(v.z) > 1.0f) {
+    const float len = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z + v.w * v.w);
+    if (len >= kFloatEpsilon) {
+      v = Quatf{v.x / len, v.y / len, v.z / len, v.w / len};
+    } else {
+      v = Quatf{};
+    }
+  }
+  return writeUnit(*this, v.w, bits, true) && writeUnit(*this, v.x, bits, true) &&
+         writeUnit(*this, v.y, bits, true) && writeUnit(*this, v.z, bits, true);
+}
+
 std::optional<Vec3f> BitReader::readCompressedVector(const Vec3f& reference, float precision,
                                                      const std::uint32_t (&table)[4]) {
   const auto level = readBits(kCompressionLevelBits);
@@ -201,6 +330,53 @@ std::optional<Vec3f> BitReader::readWideVector(const Vec3f& base, float precisio
     component = *negative ? -value : value;
   }
   return Vec3f{base.x + components[0], base.y + components[1], base.z + components[2]};
+}
+
+
+std::optional<float> BitReader::readNormalAngle(unsigned bits) {
+  const auto unit = readUnit(*this, bits, true);
+  if (!unit) return std::nullopt;
+  return *unit * kPi;
+}
+
+std::optional<Vec3f> BitReader::readNormalVector(unsigned bits) {
+  const auto azimuth = readNormalAngle(bits);
+  const auto elevation = readNormalAngle(bits);
+  if (!azimuth || !elevation) return std::nullopt;
+  return Vec3f{std::cos(*azimuth) * std::sin(*elevation), std::sin(*azimuth) * std::sin(*elevation),
+               std::cos(*elevation)};
+}
+
+std::optional<Quatf> BitReader::readUnitQuaternion3Comp(unsigned bits) {
+  const auto sign = readBits(1);
+  const auto x = readUnit(*this, bits, true);
+  const auto y = readUnit(*this, bits, true);
+  const auto z = readUnit(*this, bits, true);
+  if (!sign || !x || !y || !z) return std::nullopt;
+  float sum = *x * *x + *y * *y + *z * *z;
+  if (sum >= 1.0f) sum = 1.0f;
+  Quatf out{*x, *y, *z, std::sqrt(1.0f - sum)};
+  if (*sign) out.w = -out.w;
+  return out;
+}
+
+std::optional<Quatf> BitReader::readUnitQuaternion(unsigned bits) {
+  const auto w = readUnit(*this, bits, false);
+  const auto x = readUnit(*this, bits, false);
+  const auto y = readUnit(*this, bits, false);
+  const auto z = readUnit(*this, bits, false);
+  if (!w || !x || !y || !z) return std::nullopt;
+  Quatf out{*x, *y, *z, *w};
+  const float length = std::sqrt(out.w * out.w + out.x * out.x + out.y * out.y + out.z * out.z);
+  if (length >= kFloatEpsilon) {
+    out.w /= length;
+    out.x /= length;
+    out.y /= length;
+    out.z /= length;
+  } else {
+    out = Quatf{};
+  }
+  return out;
 }
 
 std::optional<BasicHeader> BitReader::readBasicHeader() {

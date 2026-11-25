@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "check.h"
+#include "obf2/net/bf2_events.h"
 #include "obf2/net/bf2_protocol.h"
 #include "obf2/net/bitstream.h"
 
@@ -128,7 +129,12 @@ static void testChallengeResponseLayout() {
   header.ack = 2;
   header.ackBits = 0xFFFFFFFFu;
 
-  const auto packet = writeChallengeResponse(0, header, 0);
+  const auto response = makeChallengeResponse("SYNTHETIC-KEY-FOR-TEST", "abCD1234", 0x1234abcdu);
+  CHECK_EQ(std::string_view(response.data(), response.size() - 1),
+           "b0126ade3ef1232624c029d0e5a2fb671234abcdadc15bb3d801bac3b6ddf08fb7f82cea");
+  CHECK_EQ(response.back(), '\0');
+  CHECK(response != makeChallengeResponse("SYNTHETIC-KEY-FOR-TEST", "abCD1235", 0x1234abcdu));
+  const auto packet = writeChallengeResponse(0, header, 0, response);
   // 12 basic + 44 extended + 16 length + 1 actions + 15 events + 7 type
   // + 584 block + 32 + 32 + 32 + 1 ghosts = 776 bits -> 97 bytes.
   CHECK_EQ(packet.size(), std::size_t(97));
@@ -149,10 +155,78 @@ static void testChallengeResponseLayout() {
   reader.readBits(1);
   CHECK_EQ(reader.readBits(kEventTypeBits).value_or(0), 2u);  // type 2
 
-  // We skip the block and check that the network version comes next.
-  for (int i = 0; i < 73; ++i) reader.readBits(8);
-  reader.readBits(32);
+  for (const char byte : response) {
+    CHECK_EQ(reader.readBits(8).value_or(256), static_cast<std::uint32_t>(byte));
+  }
+  CHECK_EQ(reader.readBits(32).value_or(99), 0u);
   CHECK_EQ(reader.readBits(32).value_or(0), kGameVersion);
+
+  const auto combined = writeChallengeResponse(0, header, 0, response, 0u);
+  CHECK_EQ(combined.size(), 99u);
+  net::BitReader initial(combined);
+  CHECK(initial.skipBits(74));
+  CHECK_EQ(initial.readBits(8).value_or(0), 2u);
+  CHECK(initial.skipBits(6));
+  CHECK_EQ(initial.readBits(kEventTypeBits).value_or(0), 3u);
+  CHECK_EQ(initial.readBits(3).value_or(99), 0u);
+  CHECK_EQ(initial.readBits(kEventTypeBits).value_or(0), 2u);
+}
+
+static void testPingBookkeeping() {
+  net::bf2::DataAcknowledgement received;
+  CHECK_EQ(received.mask, 0u);
+  received.receive(62);
+  received.receive(0);
+  CHECK_EQ(received.sequence, 0u);
+  CHECK_EQ(received.mask, 5u);
+  received.receive(63);
+  received.receive(0);
+  CHECK_EQ(received.mask, 7u);
+  received.receive(1);
+  CHECK_EQ(received.sequence, 1u);
+  CHECK_EQ(received.mask, 15u);
+
+  const auto reply = writePingResponse(0, {63, 0, 0}, 1234, 5678);
+  CHECK_EQ(reply.size(), 16u);
+  net::BitReader reader(reply);
+  CHECK_EQ(reader.readBits(4).value_or(0), 8u);
+  CHECK(reader.skipBits(8));
+  CHECK_EQ(reader.readBits(6).value_or(0), 63u);
+  CHECK_EQ(reader.readBits(6).value_or(99), 0u);
+  CHECK_EQ(reader.readBits(32).value_or(99), 0u);
+  CHECK_EQ(reader.readBits(1).value_or(99), 0u);
+  CHECK_EQ(reader.readBits(32).value_or(0), 1234u);
+  CHECK_EQ(reader.readBits(32).value_or(0), 5678u);
+}
+
+static void testClientInfoBatch() {
+  net::bf2::ClientInfo info;
+  info.name = "Player";
+  info.profileId = 100000123;
+  const auto blob = net::bf2::buildClientInfo(info);
+  const auto packet = net::bf2::writeDataBlockStart(
+      0, {2, 2, 3}, 1, net::bf2::kClientInfoBlock, static_cast<std::uint32_t>(blob.size()), blob);
+  CHECK_EQ(packet.size(), 44u);
+  const auto events = net::bf2::readEvents(packet);
+  CHECK_EQ(events.size(), 2u);
+  if (events.size() != 2 || !events[0].block || !events[1].block) {
+    CHECK(false);
+    return;
+  }
+  net::bf2::DataBlockAssembler assembler;
+  CHECK(!assembler.feed(*events[0].block));
+  const auto completed = assembler.feed(*events[1].block);
+  CHECK(completed.has_value());
+  if (completed) {
+    CHECK_EQ(completed->first, net::bf2::kClientInfoBlock);
+    CHECK(completed->second == blob);
+    net::BitReader identity(completed->second);
+    const auto length = identity.readBits(16).value_or(0);
+    for (unsigned i = 0; i < length; ++i) identity.readBits(8);
+    identity.readBits(32);
+    CHECK_EQ(identity.readBits(1).value_or(1), 0u);
+    CHECK_EQ(identity.readBits(31).value_or(0), 100000123u);
+  }
 }
 
 // The goodbye: type 5, the connection, then the 32-bit reason (13, as
@@ -168,6 +242,8 @@ static void testDisconnectCarriesItsReason() {
 
 TEST_MAIN({
   testDisconnectCarriesItsReason();
+  testClientInfoBatch();
+  testPingBookkeeping();
   testChallengeResponseLayout();
   testChallengeEventIsDecoded();
   testHeaderIsTwelveBits();
