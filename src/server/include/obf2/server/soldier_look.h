@@ -45,10 +45,11 @@ struct SoldierLook {
 // `soldierMouseSpeedMod`. The engine applies it itself, so the action carries
 // the axes unscaled.
 //
-// Not modelled: recoil (0x5a5f40, 0x5a5fa0), and the yaw limits of a seat
-// (`+0x208`), which do not apply to a soldier on foot.
+// Recoil is in degrees after the mouse conditioning (0x5ae321..0x5ae347).
+// The yaw limits of a seat (`+0x208`) do not apply to a soldier on foot.
 void turnSoldier(SoldierLook& look, float mouseX, float mouseY, float forwardInput,
-                 const PhysicsConstants& constants, float mouseSpeedMod = 1.0f);
+                 const PhysicsConstants& constants, float mouseSpeedMod = 1.0f,
+                 float recoilYaw = 0.0f, float recoilPitch = 0.0f);
 
 // `Soldier::getMouseSpeedMod` (`BF2.exe` 0x5a61a0, Linux 0x54e9a0): the player's
 // field of view (+0x8c) over the camera's active one (+0x58) when the camera's is

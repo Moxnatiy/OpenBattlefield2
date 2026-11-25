@@ -194,8 +194,8 @@ instead of scrambling the source.
 
 ### 11. One thing per file
 
-`src/app/main.cpp` is the application entry point: argument parsing, mode
-selection, the frame loop. Everything else lives in its own module with
+`src/app/main.cpp` is the application entry point: argument parsing and mode
+selection; a session and its frame loop are `app/game`. Everything else lives in its own module with
 its own header and its own test.
 
 The rule was not written out of tidiness: `main.cpp` grew past **6000
@@ -343,6 +343,8 @@ constant's value is needed, and no good where control flow is needed.
 | `tools/linuxded/vtable.py <Class> --msvc` | a class's vtables in the server with every slot named, and the offset the slot has in `BF2.exe` — what `(*obj + 0x50)()` in the client calls | MSVC's layout is derived (4-byte slots, one destructor); a base whose slot order differs between the ABIs would mislead |
 | `tools/control_constants.py` | every `c_PI*` constant with its number — the axis index in a `PlayerInput` and its mask bit (the button mask counts from `c_PIFire`) | reads the registration calls at 0x69045d on; a new register form would be skipped |
 | `tools/pe_field_users.py <pe> <global> <offset>` | every instruction that reaches `[ptr + offset]` right after loading a global pointer into `ptr` — "who touches field X of the object at global G", which Ghidra's xrefs do not answer | a straight-line follow: a pointer passed on, kept on the stack or copied is lost |
+| `tools/pe_address_refs.py <pe> <address> [--words N] [--rtti]` | every literal 32-bit reference to an address in any section, vtables included, with the words around it | literal references only: a computed address is not found |
+| `tools/pe_vtable_slots.py <pe> <vtable> [--max N]` | a vtable slot by slot, naming the plain MSVC field accessors (`get float +X`, `get dword +X`) | any other body is printed as `other` |
 | `tools/linuxded/vars_defaults.py <start> <stop>` | every `Vars::getInt`/`getFloat` a function registers: the name, the default, the global it lands in | follows only immediates and stack slots; what it cannot follow it prints as `?` |
 | `tools/exe_xref.py` | string → who refers to it | Ghidra does this better |
 | `tools/linuxded/gen_events.py` | the game event size table | marks an event conditional when its `deSerialize` reads anything but plain bits (a compressed vector, a string) |
@@ -403,8 +405,9 @@ third_party/    vendored single-file libraries: miniz, stb
 
 ### The application, module by module
 
-`main.cpp` went from 6000 lines to 1352: the arguments, the mode it is in,
-the wiring of the modules below and the frame loop — and nothing else.
+`main.cpp` went from 6000 lines to 1352, then to about 110: the arguments,
+the archives and the mode it is in — and nothing else. A session (the wiring
+of the modules below and the frame loop) is `app/game`.
 
 The names are the engine's own, from the source tree its checked build
 carries (docs/reference/engine-source-tree.txt). Where a module has a
@@ -414,6 +417,8 @@ to look when something does not match.
 | module | what it holds | the engine's |
 |---|---|---|
 | `app/command_line` | `Args` and the parsing; every measuring switch | `Game/Main/BF2EngineSetup` |
+| `app/game` | one session: the scene, the window, the HUD and the frame loop, for the menu, a level, a hosted round or a live server | `Game/Main/BF2Engine` |
+| `app/launch` | what a live connection takes from the command line, the `--probe` mode, the drawability check the session asks for | — |
 | `app/scene`, `app/scene_build` | the scene (unique geometry plus placements), the terrain, roads, water, sky and the placed objects | `Scene/Object/ObjectManager` |
 | `app/hosted_game` | a single-player game: our server and a client on a loop, with the round's settings from the game's data | `Game/GameServer` |
 | `app/render_context` | the window, the renderer, the texture cache and the upload of a scene | `Game/Main/BF2Render` |
@@ -433,15 +438,15 @@ Two rules the split follows, and both were bought with bugs:
 * **the interface builds, the application draws.** `hud::Manager` gives
   back `DrawPiece`s and never touches the card, which is the same division
   the engine makes between the manager and the renderer. Uploading lives in
-  `main.cpp` beside the other uploads;
+  the session (`app/game`) beside the other uploads;
 * **anything the frame loop calls lives at the outer level.** A lambda of
   a setup block captured by reference is dead memory by the time the loop
   runs — it happened again during this split, to the upload helper, and it
   is the first of the rakes below.
 
-What is still in `main.cpp` and could leave it: the frame loop's own body
-(the order of pump, predict, draw, HUD, screenshot) and the spawn screen's
-click plumbing.
+What is still in the session (`app/game`) and could leave it: the frame
+loop's own body (the order of pump, predict, draw, HUD, screenshot) and the
+spawn screen's click plumbing.
 
 ## Building
 

@@ -94,9 +94,9 @@ hand (`bf2_events.cpp`, `kObjectQuaternionBits`) — to move onto
 | `EnterVehicleEvent` (9) / `ExitVehicleEvent` (10) | 🟡 the soldier is put in or out; seats not read, a passenger not drawn |
 | `CreateKitEvent` (31), `HandlePickupEvent` (14) | ✅ |
 | `HandleDropEvent` (13) | 🟡 decoded. When the kit template is known, the client places its ground mesh at the reported position and removes it on pickup. A drop for a kit that was never created on this client has no mesh yet. |
-| `KilledByEvent` (21) | ❌ walked (the kill message, the killer's name) |
-| `RankEvent` (26), `MedalEvent` (41), `UnlockEvent` (42) | 🟡 decoded; rank and unlocks update player state, medal notices are displayed. Live progression backend verification pending. |
-| `VoipSessionEvent` (54), `VoipOnOffEvent` (35), `VoipPlayerMuteEvent` (38) | 🟡 session negotiation and voice transport implemented. Live retail audio verification and per-player mute pending |
+| `KilledByEvent` (21) | 🟡 read; the session keeps each kill for the kill feed (`kills`, `onKill`) and our killer for the death camera (`tracePlayer`). The kill feed itself is not drawn yet |
+| `RankEvent` (26), `MedalEvent` (41), `UnlockEvent` (42) | 🟡 decoded; rank and unlocks update player state, and our own medals and promotions are kept for the HUD (`awardNotices`). Nothing shows them yet |
+| `VoipSessionEvent` (54), `VoipOnOffEvent` (35), `VoipPlayerMuteEvent` (38) | 🟡 decoded and walked; this client has no voice yet, so nothing acts on them |
 | `KickBanEvent` (55) | ❌ walked |
 | `StringBlockEvent` (15), `StringManagerEvent` (0) | 🟡 walked (0's length fixed — Linux 0x431cb0); strings not kept |
 | `PythonCommandEvent` (49) | ❌ walked |
@@ -131,20 +131,18 @@ hand (`bf2_events.cpp`, `kObjectQuaternionBits`) — to move onto
 | 8 | SelectKit | ✅ sends the kit plus a locally selected level from the server-provided unlocks |
 | 9 | PlayerSpawned | ✅ |
 | 10 | PlayerDead | ✅ (its flag byte not read) |
-| 11 | StringReceived (chat) | Event 15 assembles incoming and outgoing messages. The retail server selects recipients. |
+| 11 | StringReceived (chat) | 🟡 event 15 assembles the incoming strings (`ChatAssembler`, kept in `chats`); nothing draws them yet, and this client sends none |
 | 12 | Suicide | ✅ |
-| 13 | RadioMessageReceived | Radio calls use reliable event 20. |
+| 13 | RadioMessageReceived | 🟡 radio calls arrive as event 20 and are decoded; nothing plays or shows them yet |
 | 14–16 | trace | ➖ |
 | 17 | NetworkableDestroyed | ➖ local to the engine |
 | 18 | RemoteConsoleCommand | ❌ |
 | 19 | RemoteConsoleFeedback | ❌ |
 | 20 | EndOfRoundGuard | ✅ nothing to send: the server counts it acknowledged when the packet carrying it is (`PostRemoteEvent::eventReceivedByRemote`), which our acknowledgement does (§3) |
 
-**Category 0, game logic**: 1 status ✅, 6 reset ✅, 8 a refused team change ❌,
+**Category 0, game logic**: 1 status ✅, 6 reset ✅, 8 a refused team change 🟡 (noted as `teamSwitchRefused`; nothing shows it),
 14 revived 🟡 the retail LAN server confirmed an OpenBF2 medic reviving an allied bot, and an allied bot reviving OpenBF2's existing soldier. The client moved that same soldier after the revive. The revive event switches the pose from ragdoll to prone. **Category 2, HUD**: the ~70 `ECHudHE*` events are named and logged
-once per kind (`hudEventName`). Squad notifications, invitations and spotting are
-handled. Several other events, including rank and medal notifications, still
-need HUD handling.
+once per kind (`hudEventName`) as `NOT HANDLED:`; none is acted on yet.
 
 ## 8. The ghost stream
 
@@ -184,14 +182,14 @@ The networkable classes the server ghosts (OpenBF2 `*Networkable::setNetUpdate`)
 | player actions (`PlayerActionManager`, three per packet) | ✅ |
 | suicide | ✅ |
 | squads: join, leave, name (create), lock | ✅ (leave and lock: answers not yet watched) |
-| squads: invitations and leadership | Event 25 sends and declines an invitation. Accept joins the squad after HUD event 16. A leader transfers to the next retail successor by leaving and rejoining an open squad. |
-| squad orders and support | Event 24 carries orders and support requests. The HUD and maps use received orders. A squad leader adopts an accepted commander order and sends a reply through events 50 and 27. |
-| commander | Role, camera, squad orders, support replies and the five asset requests are wired. See [commander multiplayer](../functions/commander-multiplayer.md) for server dependencies and verification. |
-| radio and spotting | Event 20 uses stock voice message IDs. Event 29 requests a spot. HUD 43 confirms the marker for the spotting team. |
-| outgoing chat | Event 15 packages the text and the All, Team, or Squad channel for retail server routing. |
-| votes (`VoteEvent`: kick, map) | 🟡 requests, ballots, and results wired. Live two-client verification pending. |
-| free camera toggle | 🟡 requires the server option and replicated player flag. Camera position is local. |
-| voice | 🟡 squad and command push-to-talk, relay transport, and playback implemented. Live retail verification pending. |
+| squads: invitations and leadership | ❌ the events exist (`inviteSquadEvent`); this client does not send them yet |
+| squad orders and support | ❌ event 24 is read (`WorldView`); this client sends no orders or requests yet |
+| commander | ❌ the events are built (`commanderEvent`, `commanderToolEvent`); nothing sends them yet |
+| radio and spotting | ❌ events 20 and 29 are built; nothing sends them yet |
+| outgoing chat | ❌ `chatEvents` packages a message; nothing sends one yet |
+| votes (`VoteEvent`: kick, map) | ❌ read; this client starts no vote and casts no ballot yet |
+| free camera toggle | ❌ the server's option is read (`ServerMatchOptions::freeCamera`); nothing asks for it |
+| voice | ❌ |
 
 ---
 

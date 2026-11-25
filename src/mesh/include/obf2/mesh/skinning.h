@@ -40,8 +40,24 @@ struct PoseStage {
 // How many clips the engine keeps per bone.
 inline constexpr int kMaxPoseStagesPerBone = 5;
 
-// A pose made of several clips.
-std::vector<Mat4> poseSkeleton(const Skeleton& skeleton, const std::vector<PoseStage>& stages);
+// A rotation laid over one bone after its clips: the bone's "post absolute"
+// transform (the pointer at Bone +0x40, `dice::anim::Skeleton::transform`,
+// Linux server 0x6c8760). The engine takes the bone's world matrix from its
+// clips and its parent, then multiplies the rotation part by this one in model
+// space and keeps the bone's position (0x6c8a9c..0x6c8ab4). Children are built
+// on the rotated bone, so a turn given to several bones of a chain adds up.
+//
+// `rotation` is in our column-major layout, which holds the same sixteen floats
+// as the engine's row-major one; only the order of products flips. Only its 3x3
+// part is used.
+struct BonePost {
+  std::uint32_t bone = 0;
+  Mat4 rotation{};
+};
+
+// A pose made of several clips, with optional post rotations.
+std::vector<Mat4> poseSkeleton(const Skeleton& skeleton, const std::vector<PoseStage>& stages,
+                               const std::vector<BonePost>& posts = {});
 
 // The world matrices of every bone. When a clip is given, the bones in it take
 // their rotation and translation at the stated frame, and the rest stay at rest.

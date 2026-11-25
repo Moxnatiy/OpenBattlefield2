@@ -62,6 +62,13 @@ struct Bundle {
   bool looping = true;              // +0x2b, `isLooping` (written only when 0)
   bool playBackward = false;        // +0x2c; not read by the player — purpose not established
   bool playForever = false;         // +0x2d: a one-shot that has ended holds its last frame
+  // The priority of the trigger that plays it (`Trigger` +0x1c, given by
+  // `TriggerManager::setPriosForTriggers`, see `System::assignPriorities`): its
+  // player goes before the first of a higher one (`playBundle`), so the higher
+  // is laid on the skeleton last and wins its bones. A bundle under two triggers
+  // takes the later one's in the walk — the engine passes the priority of
+  // whichever trigger plays it, which ours does not track.
+  int priority = 0;
 };
 
 // The value range a MovementTrigger fires on. The first and the third numbers
@@ -182,6 +189,9 @@ class System {
   // holder's third number is the speed a movement bundle's clips were animated
   // at (`MovementTrigger::applyAnimations`, `BF2.exe` 0x7ff490).
   const ValueHolder* holderForBundle(std::string_view bundle) const;
+  // MovementTrigger::applyAnimations, BF2.exe 0x7ff490: looping players on
+  // the ordinary movement branch set +0x36; the two-bundle foot choice does not.
+  bool isMovementBundle(std::string_view bundle) const;
 
   const std::map<std::string, Trigger>& triggers() const { return triggers_; }
   const std::map<std::string, ValueHolder>& valueHolders() const { return valueHolders_; }
@@ -192,6 +202,15 @@ class System {
   std::vector<std::string> roots() const;
 
   void feed(const con::Command& command);
+  // `TriggerManager::setPriosForTriggers` (Linux server 0x6cfeb0), which
+  // `AnimationSystemTemplate::loadScript` calls once the script has run
+  // (0x6b3626): the trigger map in its order, skipping a trigger whose byte
+  // +0x40 is set (0x6cfeeb; taken as "has a parent", which is inferred, not
+  // read), each root through `setPriosForTrigger` (0x6cfe60): the next number
+  // into +0x38, then the children (+0x20..+0x28) depth first. A trigger reached
+  // twice keeps the later number. Each trigger's bundles take its number. `load`
+  // calls it; a system fed by hand calls it itself.
+  void assignPriorities();
 
  private:
   // One trigger's `update`: false is the engine's "my child said no", which stops

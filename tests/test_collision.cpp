@@ -3,7 +3,10 @@
 #include <vector>
 
 #include "check.h"
+#include "obf2/con/interpreter.h"
+#include "obf2/game/object_template.h"
 #include "obf2/mesh/collision.h"
+#include "obf2/server/collision_objects.h"
 #include "obf2/server/collision_world.h"
 
 using namespace obf2;
@@ -253,6 +256,75 @@ static void testTransformIsApplied() {
   CHECK_EQ(world.resolveSphere(farAway, 0.5f), 0);
 }
 
+// A face's global material is the owner template's `mapMaterial <local> <name>
+// <global>` for the face's own material (antennamast.tweak's form); a face the
+// template does not map has none.
+static void testFaceTakesTheTemplatesMaterial() {
+  class MemoryFiles : public con::FileProvider {
+   public:
+    std::optional<std::string> loadText(std::string_view) override {
+      return std::string("ObjectTemplate.create SimpleObject wall_mapped\n"
+                         "ObjectTemplate.mapMaterial 3 Concrete 47\n");
+    }
+  } files;
+  game::Registry registry;
+  con::Interpreter interpreter(files, [&](const con::Command& c) { registry.feed(c); });
+  interpreter.runFile("wall.con");
+  const game::ObjectTemplate* owner = registry.find("wall_mapped");
+  CHECK(owner != nullptr);
+  if (owner == nullptr) return;
+
+  mesh::CollisionLayer mapped = makeWall(0.0f);
+  for (auto& face : mapped.faces) face.material = 3;
+  server::CollisionWorld world;
+  world.addLayer(mapped, Mat4::identity(), owner);
+  const auto hit = world.segmentContact({-1.0f, 0.0f, 0.0f}, {2.0f, 0.0f, 0.0f},
+                                        {0.0f, 0.0f, 0.0f}, 2.0f);
+  CHECK(hit.has_value());
+  if (hit) {
+    CHECK_EQ(hit->material, std::uint16_t(3));
+    CHECK(hit->worldMaterial.has_value() && *hit->worldMaterial == 47);
+  }
+
+  server::CollisionWorld unmapped;
+  unmapped.addLayer(makeWall(0.0f), Mat4::identity(), owner);  // material 0
+  const auto plain = unmapped.segmentContact({-1.0f, 0.0f, 0.0f}, {2.0f, 0.0f, 0.0f},
+                                             {0.0f, 0.0f, 0.0f}, 2.0f);
+  CHECK(plain.has_value() && !plain->worldMaterial.has_value());
+}
+
+// Flag 0x100: `hasCollisionPhysics 1` sets it, `0` clears it, and a
+// DynamicBundle has it from its constructor (0x57ccb5) without the line.
+static void testCollisionPhysicsFlag() {
+  class MemoryFiles : public con::FileProvider {
+   public:
+    std::optional<std::string> loadText(std::string_view) override {
+      return std::string("ObjectTemplate.create SimpleObject with_flag\n"
+                         "ObjectTemplate.hasCollisionPhysics 1\n"
+                         "ObjectTemplate.create SimpleObject without_flag\n"
+                         "ObjectTemplate.create DynamicBundle bundle\n"
+                         "ObjectTemplate.create DynamicBundle bundle_cleared\n"
+                         "ObjectTemplate.hasCollisionPhysics 0\n");
+    }
+  } files;
+  game::Registry registry;
+  con::Interpreter interpreter(files, [&](const con::Command& c) { registry.feed(c); });
+  interpreter.runFile("all.con");
+  const auto flag = [&](const char* name) {
+    const auto* object = registry.find(name);
+    return object != nullptr && server::hasCollisionPhysics(*object);
+  };
+  CHECK(flag("with_flag"));
+  CHECK(!flag("without_flag"));
+  CHECK(flag("bundle"));
+  CHECK(!flag("bundle_cleared"));
+  const mesh::CollisionLayer wall = makeWall(0.0f);
+  const std::vector<server::CollisionPiece> pieces{{&wall, Mat4::identity(), registry.find("with_flag")},
+                                                   {&wall, Mat4::identity(), registry.find("without_flag")},
+                                                   {&wall, Mat4::identity(), nullptr}};
+  CHECK_EQ(server::collisionPhysicsPieces(pieces).size(), std::size_t(1));
+}
+
 static void testDegenerateTrianglesAreSkipped() {
   mesh::CollisionLayer layer;
   layer.vertices = {mesh::Vec3{0, 0, 0}, mesh::Vec3{0, 0, 0}, mesh::Vec3{0, 0, 0}};
@@ -354,6 +426,8 @@ TEST_MAIN({
   testSphereIsPushedOutOfWall();
   testSphereFarFromWallIsUntouched();
   testTransformIsApplied();
+  testFaceTakesTheTemplatesMaterial();
+  testCollisionPhysicsFlag();
   testDegenerateTrianglesAreSkipped();
   testFacesWithBadIndicesAreSkipped();
 })
