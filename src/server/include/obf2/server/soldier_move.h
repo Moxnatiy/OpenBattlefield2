@@ -52,6 +52,13 @@ struct TickAccumulator {
   }
 };
 
+// The water surface over a point: the level's sea level, 0 with no terrain. The
+// swimming thresholds (`phy-soldier-start-float`, `stop-float`) are measured
+// against it. A placed water mesh (a pool) is not read yet; the collision world
+// is taken for it.
+float waterHeightAt(const Vec3f& position, const level::Level* terrain,
+                    const CollisionWorld* collision);
+
 // Our own local server's step (the hosted game): wish is the desired direction in
 // the plane, of length 0..1. terrain and collision may be empty: with no terrain
 // the ground counts as zero, with no collision there are no walls. Not the engine's

@@ -253,22 +253,45 @@ void Scoreboard::playerRow(ListData& list, const ScoreboardPlayer& player, int t
   std::snprintf(rankPath, sizeof rankPath, "Ingame/GeneralIcons/Ranks/rank_%02i.tga",
                 rank >= 0 && rank < 0x16 ? rank : 0);
   if (page_ == 2) {
-    // The manage page (OpenBF2 `paintRow`, `m_toggleManage`): the rank, the name
-    // with the player's id, the voice box. The kick-vote column needs the vote
-    // manager, which we do not have: it stays empty, as it does in the original
-    // while voting is off.
+    // The manage page (the VOIP and kick-vote columns, 0x7a3bae..0x7a3e5b): the
+    // rank, the name with the player's id, the voice box, the kick vote.
     list.addEmpty(1);
     list.addTexture(0, rankPath, 16.0f, 16.0f, kScoreboardColumnX[0], kIconY - 1.0f, kWhite);
     list.addEmpty(2);
     list.addText(3, "\xa7" "1" + player.name + " - " + std::to_string(player.index) + "\xa7" "0",
                  -20.0f, kTextY, color, 0);
     list.addEmpty(5);
-    list.addTexture(4, "Ingame/Scoreboard/Icons/checkbox_empty.tga", 15.0f, 15.0f, 0.0f, kIconY,
-                    kWhite);
+    // Column 4: our own row has no box; another player's is +0x334 muted or
+    // +0x328 empty.
+    if (player.index == localIndex_) {
+      list.addEmpty(4);
+    } else {
+      list.addTexture(4,
+                      player.muted ? "Ingame/Scoreboard/Icons/checkbox_voipMute.tga"
+                                   : "Ingame/Scoreboard/Icons/checkbox_empty.tga",
+                      15.0f, 15.0f, 0.0f, kIconY, kWhite);
+    }
     list.addEmpty(6);
     list.addEmpty(9);
-    list.addEmpty(7);
-    list.addEmpty(8);
+    // Columns 7 and 8: on the player an open kick vote is about, yes (+0x350) and
+    // no (+0x354); on anyone else we may vote off, the frame (+0x34c) that starts
+    // one. Which of +0x340..+0x348 the original draws where is not established —
+    // these three are the ones a vote needs.
+    const bool kickable = votingEnabled_ && player.index != localIndex_ &&
+                          (!teamVoteOnly_ || player.team == localTeam_);
+    if (kickTarget_ >= 0 && player.index == kickTarget_) {
+      list.addTexture(7, "Ingame/Scoreboard/Icons/kickvote_yes.tga", 15.0f, 15.0f, 0.0f, kIconY,
+                      kWhite);
+      list.addTexture(8, "Ingame/Scoreboard/Icons/kickvote_no.tga", 15.0f, 15.0f, 0.0f, kIconY,
+                      kWhite);
+    } else if (kickable && kickTarget_ < 0) {
+      list.addTexture(7, "Ingame/Scoreboard/Icons/kickvote_frame.tga", 15.0f, 15.0f, 0.0f, kIconY,
+                      kWhite);
+      list.addEmpty(8);
+    } else {
+      list.addEmpty(7);
+      list.addEmpty(8);
+    }
     list.addText(10, std::to_string(player.index), 0.0f, 0.0f, color, 0);
     if (player.index == localIndex_) {
       list.setRowBackground(row_, kLocalRow, 0.0f, kRowBackgroundY, kRowBackgroundHeight);

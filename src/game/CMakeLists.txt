@@ -8,6 +8,8 @@ add_library(obf2_game
   src/soldier_model.cpp
   src/weapon_hud.cpp
   src/weapon_fire.cpp
+  src/weapon_recoil.cpp
+  src/wind.cpp
   src/weapon_ammo.cpp
   src/weapon_zoom.cpp
   src/weapon_shift.cpp

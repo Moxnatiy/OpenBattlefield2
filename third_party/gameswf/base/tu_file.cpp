@@ -151,6 +151,10 @@ struct filebuf
 	}
 
 	unsigned char*	get_cursor() { return ((unsigned char*) m_.data()) + m_position; }
+	const unsigned char* get_read_cursor() const
+	{
+		return static_cast<const unsigned char*>(m_.data()) + m_position;
+	}
 };
 
 
@@ -167,7 +171,7 @@ static int mem_read_func(void* dst, int bytes, void* appdata)
 	int	bytes_to_read = imin(bytes, buf->m_.size() - buf->m_position);
 	if (bytes_to_read)
 	{
-		memcpy(dst, buf->get_cursor(), bytes_to_read);
+		memcpy(dst, buf->get_read_cursor(), bytes_to_read);
 	}
 	buf->m_position += bytes_to_read;
 
@@ -183,6 +187,8 @@ static int mem_write_func(const void* src, int bytes, void* appdata)
 
 	filebuf* buf = (filebuf*) appdata;
 	assert(buf->is_valid());
+
+	if (buf->m_read_only) return 0;  // OpenBattlefield2: borrowed data is read-only.
 
 	// Expand buffer if necessary.
 	int	bytes_to_expand = imax(0, buf->m_position + bytes - buf->m_.size());
@@ -349,7 +355,7 @@ tu_file::tu_file(const char * name, const char * mode)
 tu_file::tu_file(memory_buffer_enum m)
 // Create a read/write memory buffer.
 {
-	m_data = new membuf;
+	m_data = new filebuf;  // OpenBattlefield2: memory callbacks expect a filebuf.
 
 	m_read = mem_read_func;
 	m_write = mem_write_func;
@@ -365,7 +371,7 @@ tu_file::tu_file(memory_buffer_enum m)
 tu_file::tu_file(memory_buffer_enum m, int size, void* data)
 // Create a read-only memory buffer, using the given data.
 {
-	m_data = new membuf(data, size);
+	m_data = new filebuf(size, data);  // OpenBattlefield2: keep the cursor with the buffer.
 
 	m_read = mem_read_func;
 	m_write = mem_write_func;

@@ -8,6 +8,7 @@
 //
 // The result is ordinary RenderMesh in NDC coordinates, drawn by the same
 // overlay pipeline as the text.
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
@@ -70,6 +71,57 @@ struct FontRef {
   std::string atlas;
 };
 
+// One live icon on the map, gathered from the session's world each frame
+// (obf2/app/map_contacts.h, docs/functions/hud-map.md): a player, a vehicle, an
+// order, a commander asset or a spot.
+struct MapContact {
+  enum class Kind { Self, Squad, Team, Spotted, Order, PendingOrder, CommanderAsset, Neutral };
+  float worldX = 0.0f;
+  float worldZ = 0.0f;
+  Kind kind = Kind::Team;
+  unsigned order = 0;  // an order's id: 4 move, 5 attack, 6 defend, 7 repair, 8 destroy
+  bool commander = false;  // an order from the commander
+  enum class Asset { UAV, Artillery, Supplies, Vehicle };
+  Asset asset = Asset::UAV;
+  // The template's own icon (a vehicle's `VehicleHud.miniMapIcon`, a strategic
+  // object's `StrategicObject.intactIcon`, a squad leader's number); empty for
+  // the kind's own icon.
+  std::string texture{};
+  // The icon's side in base 800x600 units. 16 is the vehicle icon's measured
+  // size, 19 the strategic icon's (docs/functions/hud-map.md); a soldier's 16 is
+  // the size the map's player icons always had here, not measured.
+  float size = 16.0f;
+  // Turned counter-clockwise on screen by this many radians.
+  float angle = 0.0f;
+  // A spot at a reported position only (layer 0x1e, 0x7820e0): drawn while
+  // `Context::mapSpotsVisible` is on.
+  bool blinks = false;
+  // A spotted enemy drawn with its own icon in the enemy colour (0x7788b0).
+  bool enemy = false;
+  // A kind-1 mark (a teammate's radio message): yellow while
+  // `Context::mapSpotsVisible` is on (0x77a9a0; (1, 1, 0) from 0x97e170).
+  bool radioBlink = false;
+  // A kind-2 mark (under the UAV beam): the local team's entry of table
+  // 0xa1cc28, (1, 0, 0) for either team (0x97dfc0, 0x97e150), its alpha `alpha`.
+  bool swept = false;
+  // The network object drawn, 0 for none.
+  std::uint16_t object = 0;
+  // A second texture over the icon, 16 px, turned by `overlayHeading` (the
+  // object's atan2(forward x, forward z)) against the map's north: the
+  // specialist's `mini_MedicArrow` (0x783bc4, 0x783ddd).
+  std::string overlayTexture{};
+  float overlayHeading = 0.0f;
+  // Above 0: the icon's side in world metres, not pixels (the UAV circle,
+  // 2 × getUAVRadius, 0x77ff2d). `alpha` scales its tint.
+  float worldSize = 0.0f;
+  float alpha = 1.0f;
+  // A colour that replaces the kind's: the commander's white and the heading
+  // arrow's black (`colorMapIcon`, OpenBF2 Menu/Bf2MenuMapNode.cpp).
+  std::optional<Color> tint{};
+
+  bool operator==(const MapContact&) const = default;
+};
+
 struct Context {
   std::function<std::string_view(std::string_view key)> localize;
   // A node's font by its style. An empty result means we keep the general one.
@@ -84,6 +136,10 @@ struct Context {
   // Such a node's children are built as usual.
   std::function<bool(const Node&)> skipNode;
   std::function<std::string_view(std::string_view variable)> variableText;
+  // An edit node's text: string N (`setEditNodeString N`) of the HUD
+  // manager's string table (`BF2.exe` 0x7b13a0 writes it, 0x7b1410 reads it).
+  // Null, or null for a number, and the box draws empty.
+  std::function<const std::string*(int string)> editText;
   // A bar's fill, 0..1 (`setBarNodeValueVariable`).
   std::function<float(std::string_view variable)> variableValue;
   // A number some code has written, or nullopt when nobody has: what a node's
@@ -132,11 +188,29 @@ struct Context {
     // 19x19 (docs/functions/hud-map.md).
     float size = 0.0f;
     // A live icon's colour and turn (the map's player and vehicle icons); the
-    // level's markers keep white and upright.
+    // level's markers keep white, and a strategic icon turns with its object
+    // (0x77e500).
     Color color;
     float rotation = 0.0f;  // radians, counter-clockwise on screen
+    // Drawn at the map node's icon alpha, `mapIconAlpha` below: the strategic
+    // holders (layer 0x10, 0x77e500), the vehicles and their spawners (0x783f90)
+    // and the soldiers (0x783440, 0x782480). The flags (layer 3, 0x77e720) do
+    // not read it.
+    bool atIconAlpha = false;
   };
+  // The map node's icon alpha, +0x6fc, which the strategic (0x77e500), vehicle
+  // (0x783f90) and soldier (0x783440, 0x782480) layers draw with. It eases (0x77c330, 1 − e^(−10·dt))
+  // toward +0x704: 1.0 from the constructor (0x7818aa), 0.5 on the spawn screen
+  // (0x777fe8). The spawn screen is baked once, so it takes the settled value.
+  // In game the target is the setting `MenuMapIconAlpha` (0x777eef), not ported:
+  // the constructor's 1.0 stands.
+  float mapIconAlpha = 1.0f;
   std::vector<MapMarker> mapMarkers;
+  // The live icons (obf2/app/map_contacts.h), drawn over the markers.
+  std::vector<MapContact> minimapContacts;
+  // The map node's blink +0xa18 (`MapNode::spotsVisible`), which gates layer
+  // 0x1e's position-only spots and a kind-1 mark's yellow.
+  bool mapSpotsVisible = true;
   // The spawn point selection circles. The game has separate textures for them —
   // Minimap/Icons/spawn_UnSelected and spawn_Selected (plus the Inactive and
   // Squad variants). They are drawn with the same coordinate conversion as the

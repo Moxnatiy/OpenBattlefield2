@@ -8,6 +8,7 @@
 //
 // The default values are the ones in a stock BF2.
 #include <string>
+#include <vector>
 
 #include "obf2/engine/console.h"
 
@@ -58,6 +59,13 @@ struct GeneralSettings {
   int campaignPercentageOfCpu = 20;
   std::string defaultIp;
   int defaultPort = 0;
+  // The help messages already shown with this profile, by localisation key:
+  // one `GeneralSettings.setPlayedVOHelp "<key>"` each (the command 0x414d6d
+  // adds through GeneralSettings vtable +0x114; the help class asks +0x118 at
+  // start, 0x5edb80, hud::HelpScheduler::markPlayed). Who hands them to the
+  // scheduler on our side is not wired yet; writing them back to the profile
+  // is not ported.
+  std::vector<std::string> playedVoHelp;
 };
 
 // The chat messages' sizes — a separate block of `chat.*` commands.

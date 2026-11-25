@@ -162,16 +162,16 @@ retail `ServerInfo` block. First person uses the seat's camera mount,
 
 The exterior view uses the seat's default `Camera` node, its chase distance,
 angle, offset and field of view. The camera follows the replicated joint chain
-when the camera is mounted on a supported turret. The display interpolates
-those joints on the same server timeline used for hull motion. Terrain and map
-collision shorten the camera's path when it passes behind an obstacle.
+when the camera is mounted on a supported turret. Another seat's joints are
+drawn at the angle its networkable last set; the seat we control replays the
+actions the server has not answered yet on the angle it last confirmed
+(`WorldView::displayedTurretAngle`). Not done: the obstacle test that shortens
+the external camera's path (only the 1 m over the terrain is kept), and any
+smoothing of a joint between two states.
 
-For the local driver of a mobile ground vehicle or boat, the camera and hull
-sample the controlled-state history on the same presentation clock as the
-other actors.
-The action queue and its acknowledgements no longer shift the displayed hull.
-The renderer services vehicle input during long frames through the action
-clock. The server runs vehicle physics in all cases.
+The local driver's hull is drawn where `RemoteWorld::controlledVehiclePose`
+leads it from the controlled-state history. The server runs vehicle physics in
+all cases.
 
 On Gulf of Oman, the FAAV driver's packet compression reference matched the
 observer's hull position within 0.8 mm across 142 shared server ticks. The
@@ -186,7 +186,8 @@ positions agreed within 0.7 mm at 59 shared server ticks.
 
 Aircraft pilot input follows the stock `Air.con` and `Helicopter.con` mappings.
 The jet routes mouse motion to roll and inverted pitch. Helicopters use the
-mouse-look axes. The pilot can hold the crouch binding to look around.
+mouse-look axes. Which binding frees a pilot's look is not read: the camera
+stays on the hull while piloting.
 The controlled aircraft uses the absolute hull position in the packet's
 compression reference. The aircraft's vehicle category sets the motion limit
 for the pilot's exterior camera and remote hull rendering.

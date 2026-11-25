@@ -364,8 +364,10 @@ class WorldView {
     std::uint16_t object = 0;
     std::uint32_t templateId = 0;
     Vec3f position;
-    int number = 0;     // the projectile's +0x1c4 (purpose not established)
-    Vec3f vector;       // its +0x1cc (purpose not established)
+    // The surface material and the surface normal at the hit (Linux
+    // `DefaultDetonationComp::detonate` 0x61e0a0, docs/functions/projectiles.md).
+    int number = 0;     // the projectile's +0x1c4
+    Vec3f vector;       // its +0x1cc
     std::optional<std::uint16_t> target;
   };
   std::vector<Detonation>& detonations() { return detonations_; }

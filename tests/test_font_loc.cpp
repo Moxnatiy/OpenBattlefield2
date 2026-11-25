@@ -177,6 +177,17 @@ static void testLexiconLaterFilesOverride() {
   CHECK_EQ(lexicon.text("KEY"), std::string_view("New"));
 }
 
+static void testLexiconFirstLineInAFileWins() {
+  // English.utxt defines EOR_3_combat twice; the original shows the first.
+  loc::Lexicon lexicon;
+  CHECK(lexicon.addUtxt(utf16("EOR_3_combat   \033\033BEST COMBAT\033\033\r\n"
+                              "EOR_3_combat   \033\033COMBAT\033\033\r\n")));
+  CHECK_EQ(lexicon.text("EOR_3_combat"), std::string_view("BEST COMBAT"));
+  // A later file still overrides it.
+  CHECK(lexicon.addUtxt(utf16("EOR_3_combat   \033\033PATCHED\033\033\r\n")));
+  CHECK_EQ(lexicon.text("EOR_3_combat"), std::string_view("PATCHED"));
+}
+
 static void testUtf16Decoding() {
   // The BOM is skipped, a surrogate pair is combined into one character.
   const std::vector<std::byte> withEmoji = {
@@ -196,5 +207,6 @@ TEST_MAIN({
   testWrapText();
   testLexicon();
   testLexiconLaterFilesOverride();
+  testLexiconFirstLineInAFileWins();
   testUtf16Decoding();
 })

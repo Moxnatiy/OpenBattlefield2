@@ -24,6 +24,9 @@ void PhysicsConstants::bind(engine::Console& console) {
     if (!value) return;
 
     if (name == "coll-soldier-radius") radius = *value;
+    else if (name == "anim_startLandAtHeight") animationLandHeight = *value;
+    else if (name == "anim_startLandAtSpeed") animationLandSpeed = *value;
+    else if (name == "anim_startJumpAtSpeed") animationJumpSpeed = *value;
     else if (name == "coll-soldier-stand-height") standHeight = *value;
     else if (name == "coll-soldier-crouch-height") crouchHeight = *value;
     else if (name == "coll-soldier-prone-height") proneHeight = *value;

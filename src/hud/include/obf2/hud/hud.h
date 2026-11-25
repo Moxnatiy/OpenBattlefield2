@@ -75,6 +75,7 @@ std::string_view nodeTypeName(NodeType type);
 
 struct Color {
   float r = 1.0f, g = 1.0f, b = 1.0f, a = 1.0f;
+  bool operator==(const Color&) const = default;
 };
 
 // Which presentation the map is shown in. The thumbnail in the corner is ordinary

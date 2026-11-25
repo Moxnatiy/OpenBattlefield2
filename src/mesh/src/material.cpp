@@ -95,6 +95,10 @@ bool materialAlphaBlend(std::string_view technique, int alphaMode) {
   return alphaMode == 1 || containsNoCase(technique, "alpha");
 }
 
+bool materialColorMapGloss(std::string_view technique) {
+  return containsNoCase(technique, "colormapgloss");
+}
+
 bool isVegetationPath(std::string_view meshPath) {
   // The engine's own test is a plain substring search, case as it lies in the
   // archives (`RendDX9.dll`, 0x1011acd0). Our paths come through
@@ -110,6 +114,16 @@ void markVegetationLeaves(RenderMesh& mesh, std::string_view meshPath) {
     // leaf shader is the one that asks for it (see the header).
     range.leaf = range.alphaMode == 2;
   }
+}
+
+bool isWaterPath(std::string_view meshPath) {
+  // A substring of the normalized path, as the vegetation test above.
+  return meshPath.find("objects/water/") != std::string_view::npos;
+}
+
+void markWaterMesh(RenderMesh& mesh, std::string_view meshPath) {
+  if (!isWaterPath(meshPath)) return;
+  for (DrawRange& range : mesh.ranges) range.waterMesh = true;
 }
 
 }  // namespace obf2::mesh

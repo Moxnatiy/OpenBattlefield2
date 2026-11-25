@@ -26,10 +26,19 @@ class UdpSocket {
   std::optional<std::vector<std::byte>> receive(int timeoutMs);
 
   const std::string& describe() const { return description_; }
+  // The peer's numeric address and port ("a.b.c.d:port"), empty when unknown.
+  const std::string& peerEndpoint() const { return peerEndpoint_; }
 
  private:
+#if defined(_WIN32)
+  // A Winsock SOCKET (UINT_PTR), INVALID_SOCKET when closed; kept as an
+  // integer so this header does not pull in <winsock2.h>.
+  std::uintptr_t handle_ = ~std::uintptr_t{0};
+#else
   int handle_ = -1;
+#endif
   std::string description_;
+  std::string peerEndpoint_;
 };
 
 }  // namespace obf2::net
