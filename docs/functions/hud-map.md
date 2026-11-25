@@ -116,6 +116,21 @@ The wobble after a sharp turn (fields +0x724, +0x758, +0x768, +0x775, +0x777
 and a sine at frequency 4.5 from 0x930330) does exist in the original, but
 **we do not reproduce it**: it has not been cross-checked.
 
+**What Retail draws (25 Nov).** The direction comes from the caller:
+0x751c10 takes it as three floats, passed on from BF2HudManager's slot at
+0x926158 (0x756162..0x75617b). Who calls that slot, and with what vector, is
+not taken apart. On Retail the ring stays north-up at every heading, the
+texture's own orientation (`map_Compass.tga` has N at the top):
+
+* on foot facing south;
+* in the AH-1Z facing north-west.
+
+Source: stills of the original on 25 Nov (spawned, outside,
+entered, hovering). What turns is the white view cone at the player.
+So the port drives the ring toward 0, not toward the look angle. The earlier
+"+π, north at the bottom of the atlas" turned it with the view, which Retail
+never shows. The port does not draw the view cone yet.
+
 ## The minimap's centre and zoom
 
 The minimap does not show a fixed piece of the picture: it **follows the

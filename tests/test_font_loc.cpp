@@ -199,12 +199,30 @@ static void testUtf16Decoding() {
   CHECK_EQ(decoded.size(), std::size_t(4));  // U+1F600 -> 4 UTF-8 bytes
 }
 
+// digitalNumbers.dif (Fonts_client.zip) pads every line with tabs; it must
+// still load, with its 7 x 10 glyphs.
+static void testTabPaddedDif() {
+  const std::string padded =
+      "header\t\t\t\t\r\n2\t\t\t\r\nArial\t\t\r\n64\t\t\r\n22\t\t\r\n10\t\t\r\n"
+      "glyphs\t\t\t\r\n1\t\t\r\n51\t1\t7\t1\t0\t16\t0\t23\t10\t\t\t\r\n"
+      "kerning\t\t\t\r\n1\t\t\r\n49\t49\t-1\t\t\t\r\n";
+  std::string error;
+  const auto font = font::parseDif(padded, &error);
+  CHECK(font.has_value());
+  if (font) {
+    const auto* three = font->glyph('3');
+    CHECK(three != nullptr);
+    if (three) { CHECK_EQ(three->pixelWidth(), 7); CHECK_EQ(three->pixelHeight(), 10); }
+  }
+}
+
 TEST_MAIN({
   testParseDif();
   testMeasureUsesKerning();
   testUtf8IsDecodedAsCodepoints();
   testBuildTextGeometry();
   testWrapText();
+  testTabPaddedDif();
   testLexicon();
   testLexiconLaterFilesOverride();
   testLexiconFirstLineInAFileWins();

@@ -155,6 +155,64 @@ rolls with `PIPitch`/`PIRoll` (`setMinRotation 0/-8/-7`, `setMaxRotation
 the engine's world matrix and carries that tilt. The port uses the rest
 placement, so its downwash axis ignores the head's few degrees: **debt**.
 
+`drawVehicle` composes the rotor's placement as vehicle × turret joints ×
+rest, so the tilt is applied once the heads are decoded bundles (`ac00f49`).
+They are not yet (24 Nov, `object_info --descriptor`). Both heads carry
+`setNetworkableInfo BasicInfo` and belong to seat 0. Decoding stops at an
+earlier seat-0 member whose layout is not read:
+
+* `ahe_ah1z`: at `AHE_AH1Z_HydraLauncher` (GenericFireArm). Seat 0 decodes
+  0 members.
+* `chthe_z8`: at `chthe_z8_mainrotor` (class `Rotor`, `BasicInfo`). Seat 0
+  decodes 5 members and stops there.
+
+So the head angles depend on two networkables being read: Rotor's and
+GenericFireArm's (debt, "shared networkables"). Until then `joints` is empty
+and the downwash uses the rest placement.
+
+**24 November, Ghidra:** GenericFireArm has no networkable, and Rotor's is
+SimpleObjectNetworkable (network-events.md, "Which classes are
+networkable"). The seat-0 cut now reaches the heads: `ahe_ah1z_Rotorhead`,
+`Rotorhead2`, `chthe_z8_RotorHead1` and `RotorHead2`. This is not measured
+on a live helicopter record. The decoder throws away a cut that does not end
+on the record's last bit, so until a live record is measured the downwash
+may still fall back to the rest placement.
+
+**25 November, live (a dedicated server with an AH-1Z placed on Fushe Pass):**
+
+* **Parked records:** the AH-1Z root cut `XXRREE` ends on the record's last
+  bit (24 Nov). The head angles arrive as bundles 0 and 1 of seat 0.
+* **Controlled record:** the record of the AH-1Z we pilot used to keep only
+  the leading rotational members. That is none here, because the cut opens
+  with the two rotors. Now the whole cut is read, followed by
+  `Player::getStateSync` (10-bit length, ending on the record's last bit),
+  and it ends in all 4672 records of a run (`members XXRREE controlled ...
+  END`).
+* **Downwash trace:** `OBF2_TRACE_WIND` now measures the axis against the
+  untilted rest placement, and it reads 0.00° at rest.
+* **Why the heads read 0:** our input, not the server. A bundle takes
+  input only from the axes its template names (Linux
+  `RotationalBundle::handlePlayerInput` 0x586e80: `getInputToYaw/Pitch/Roll`
+  index the PlayerInput axes). The heads name `PIPitch` and `PIRoll`. The
+  port sent a helicopter pilot's mouse as `PIMouseLookX/Y`, following
+  `Settings/Default/Controls/Helicopter.con`. That file is a preset with no
+  pitch or roll axis at all. The shipped `Settings/Controls.con`
+  (`HelicopterPlayerInputControlMap`) maps the mouse with the same two lines
+  as the jet map: `c_PIPitch IDFMouse IDAxis_1 0 0` and
+  `c_PIRoll IDFMouse IDAxis_0 0 0`. `RemoteWorld` now maps the mouse that way
+  for both jets and helicopters.
+* **After the fix:** the heads arrive at ±7.9° pitch (limit ±8) and ±5.9° roll
+  (limit +6/−7).
+* **The heads cancel:** `ahe_ah1z_Rotorhead2` (child of `Rotorhead`, same
+  frame) always arrives as the exact negative of `Rotorhead`. The −86° is the
+  engine's own placement under Rotorhead2 (`addTemplate ahe_ah1z_Rotor`,
+  `setRotation 0/-86/0`), so the two heads are coaxial and cancel in both
+  axes. The drawn downwash tilt stays 0.00–0.03°, which is what the
+  networked angles compose to.
+* **Not seen:** what makes the server negate the child head. Nothing in the
+  templates says so: both are identical. The on-screen comparison with
+  Retail is still to do.
+
 ## The engine turns its affector on and off
 
 An object keeps its `WindAffector` component at +0x70. The component setter

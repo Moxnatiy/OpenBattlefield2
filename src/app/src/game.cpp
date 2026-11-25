@@ -411,6 +411,10 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
   // `PrimaryReloadTime`, which the next frame's block reads (0x7a8b2f).
   obf2::app::AmmoHud ammoShown;
   obf2::app::AmmoHud playerShown;
+  // The flight values of the vehicle we sit in (vehicle_flight_hud.h): what
+  // the layer holds, and the Torque carried from one update to the next.
+  obf2::app::AmmoHud flightShown;
+  float flightTorque = 0.0f;
   float ammoReloadProgress = 1.0f;
   int hudRebuilds = 0;
   float hudRebuildMs = 0.0f;
@@ -1715,6 +1719,9 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
             playerInput.sprinting = remote->sprint.sprinting;
             playerInput.alive = alive;
             playerInput.manDown = own->second.manDown.value_or(false);
+            // The round clock: the BeginRound event's next change tick (0 until one came).
+            if (remote->beginRoundNextTick) playerInput.nextStateChangeTick = remote->beginRoundNextTick;
+            playerInput.tick = remote->world.newestPacketTick();
             const obf2::app::AmmoHud playerNow = obf2::app::playerHud(playerInput);
             if (playerNow.values != playerShown.values || playerNow.strings != playerShown.strings ||
                 playerNow.flags != playerShown.flags) {
@@ -1724,6 +1731,49 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
               hudManager.markDirty();
               playerShown = playerNow;
             }
+          }
+          // The flight values (vehicle_flight_hud.h): BF2.exe 0x78cb10 and 0x78ce60
+          // write them for any occupied vehicle; the pilot HUDs draw them
+          // (HudElementsAh1zPilot.con: SpeedString, AltitudeString, TorqueString).
+          if (auto flight = worldView.occupiedFlightInput()) {
+            flight->throttle =
+                obf2::net::bf2::axisFromWire(remote->pendingKeys.axes[obf2::net::bf2::kAxisThrottle]);
+            const auto root = remote->vehicleRootOf(remote->ourSoldier);
+            const auto vehicle = remote->world.objects().find(root);
+            const std::string* name = vehicle != remote->world.objects().end()
+                                          ? remote->templateNumbers.nameOf(vehicle->second.templateId)
+                                          : nullptr;
+            if (const auto* definition = name ? registry.find(*name) : nullptr) {
+              if (const auto* hudComp = definition->component("VehicleHud")) {
+                if (const auto climb = hudComp->properties.find("maxclimbspeed");
+                    climb != hudComp->properties.end() && !climb->second.empty()) {
+                  flight->maxClimbSpeed = climb->second.back().asInt().value_or(10);
+                }
+              }
+            }
+            const auto values = obf2::app::vehicleFlightHud(*flight, flightTorque);
+            flightTorque = values.torque;
+            obf2::app::AmmoHud flightNow;
+            flightNow.values["VehicleAngle"] = values.angle;
+            flightNow.values["VehicleElevation"] = values.elevation;
+            flightNow.values["VehicleBanking"] = values.banking;
+            flightNow.values["AngleOfAttack"] = static_cast<float>(values.angleOfAttack);
+            flightNow.values["Torque"] = values.torque;
+            flightNow.values["TorqueAngle"] = values.torqueAngle;
+            flightNow.strings["AltitudeString"] = values.altitude;
+            flightNow.strings["TorqueString"] = values.torqueText;
+            if (values.speed) flightNow.strings["SpeedString"] = *values.speed;
+            if (values.elevationSpeedAngle) {
+              flightNow.values["VehicleElevationSpeedAngle"] = *values.elevationSpeedAngle;
+            }
+            if (flightNow.values != flightShown.values || flightNow.strings != flightShown.strings) {
+              for (const auto& [key, value] : flightNow.values) hudManager.values()[key] = value;
+              for (const auto& [key, value] : flightNow.strings) hudManager.strings()[key] = value;
+              hudManager.markDirty();
+              flightShown = std::move(flightNow);
+            }
+          } else {
+            flightTorque = 0.0f;
           }
         }
         // The scoreboard's rows, from whoever keeps the players in this mode.

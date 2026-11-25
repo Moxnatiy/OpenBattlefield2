@@ -1301,6 +1301,7 @@ struct RemoteWorld {
   // uploaded) sent the server a burst, and its action buffer, which plays one per
   // tick (`FUN_004cc400`), kept that backlog for the rest of the life.
   int tickAllowance = 1;
+  unsigned actionTraceTicks = 0;  // OBF2_TRACE_ACTIONS cadence
 
   // What a frame shows between ticks. Retail's `BF2FrameInterpolator` frame loop
   // (`FUN_0040ca80`) stores the objects' state before it runs the frame's ticks
@@ -1394,9 +1395,15 @@ struct RemoteWorld {
           next.buttons |= bf2::kButtonMouseLook;
           next.buttons &= ~bf2::kButtonCrouch;
         }
-        if (flight == PilotControls::Jet && !(next.buttons & bf2::kButtonMouseLook)) {
+        if (!(next.buttons & bf2::kButtonMouseLook)) {
           // Air.con binds the mouse to roll and pitch, with pitch inverted in
           // the default profile. The look axes also serve the camera.
+          // Settings/Controls.con gives HelicopterPlayerInputControlMap the
+          // same two lines as AirPlayerInputControlMap (`c_PIPitch IDFMouse
+          // IDAxis_1 0 0`, `c_PIRoll IDFMouse IDAxis_0 0 0`). The rotor heads
+          // read only PIPitch/PIRoll (ahe_ah1z.tweak, Rotorhead setInputToPitch
+          // / setInputToRoll; Linux RotationalBundle::handlePlayerInput
+          // 0x586e80), so look axes alone left them at zero.
           using Axis = std::int16_t;
           const auto stick = [](int v) {
             return static_cast<Axis>(std::clamp(v, -int(bf2::kAxisFull), int(bf2::kAxisFull)));
@@ -1406,6 +1413,21 @@ struct RemoteWorld {
         }
       }
       action = next;
+      // OBF2_TRACE_ACTIONS: once a second of ticks, the axes we send and, when
+      // seated, our vehicle's networked position. The measure for vehicle input.
+      static const bool traceActions = std::getenv("OBF2_TRACE_ACTIONS") != nullptr;
+      if (traceActions && (++actionTraceTicks % 30) == 0) {
+        const auto root = vehicleRootOf(ourSoldier);
+        const auto found = root ? world.objects().find(root) : world.objects().end();
+        std::printf("action: axes %d %d %d %d %d %d buttons 0x%llx vehicle %u",
+                    next.axes[0], next.axes[1], next.axes[2], next.axes[3], next.axes[4], next.axes[5],
+                    static_cast<unsigned long long>(next.buttons), root);
+        if (found != world.objects().end()) {
+          std::printf(" at %.2f %.2f %.2f", found->second.position.x, found->second.position.y,
+                      found->second.position.z);
+        }
+        std::printf("\n");
+      }
 
       // The client's tick loop moves the game tick by one (bf2_world.h).
       world.advanceGameTick();

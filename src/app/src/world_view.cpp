@@ -51,6 +51,9 @@ bool WorldView::init(FileSystem& files, const game::Registry& registry,
   // (obf2/level/placement_index.h). A spawner's object is drawn as the vehicle it
   // issues; a static placement is skipped, because the level draws it already.
   if (level != nullptr) {
+    // HeightmapCluster::getSeaWaterLevel: the level's `setSeaWaterLevel`, else
+    // −10000 as for the heightmap's ctor (0x6f48f0).
+    waterHeight_ = level->terrain.seaLevelSet ? level->terrain.seaLevel : -10000.0f;
     const std::string mode = remote.serverGameMode.empty() ? "gpm_cq" : remote.serverGameMode;
     const int size = remote.serverSize > 0 ? remote.serverSize : 16;
     if (const auto gameplay = level::loadGameplayObjects(files, level->name, mode, size)) {
@@ -310,6 +313,29 @@ Mat4 WorldView::objectRotation(std::uint16_t id, const net::bf2::RemoteObject& o
     return rotationYawPitchRoll(rotation.x, rotation.y, rotation.z);
   }
   return Mat4::identity();
+}
+
+std::optional<VehicleFlightInput> WorldView::occupiedFlightInput() const {
+  if (!remote_ || !remote_->playerSpawned) return std::nullopt;
+  const auto root = remote_->vehicleRootOf(remote_->ourSoldier);
+  const auto hull = root ? vehicleDrawTransforms_.find(root) : vehicleDrawTransforms_.end();
+  if (hull == vehicleDrawTransforms_.end()) return std::nullopt;
+  VehicleFlightInput input;
+  input.world = hull->second;
+  // HeightmapCluster::getSeaWaterLevel (vtbl +0x60): `setSeaWaterLevel` of the
+  // level, else −10000 as for the heightmap's ctor (0x6f48f0; the cluster's own
+  // default is not taken apart).
+  input.seaLevel = waterHeight_;
+  // The hull's newest networked velocity: the controlled hull's track while
+  // we drive, the ghost's otherwise (as RemoteWorld::soundListenerVelocity).
+  const net::bf2::GhostSample* newest = nullptr;
+  if (remote_->controlledVehiclePose()) {
+    newest = remote_->controlledHullTrack.newest();
+  } else if (const auto object = remote_->world.objects().find(root); object != remote_->world.objects().end()) {
+    newest = object->second.track.newest();
+  }
+  if (newest) input.velocity = newest->velocity;
+  return input;
 }
 
 const std::vector<game::VehicleSeat>& WorldView::seatsOf(const std::string& vehicle) {

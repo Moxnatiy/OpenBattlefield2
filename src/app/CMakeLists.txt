@@ -18,6 +18,7 @@ add_library(obf2_app
   src/crosshair.cpp
   src/ammo_hud.cpp
   src/player_hud.cpp
+  src/vehicle_flight_hud.cpp
   src/first_person.cpp
   src/menu_movie.cpp
   src/loading_screen.cpp

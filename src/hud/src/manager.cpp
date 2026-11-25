@@ -1710,12 +1710,19 @@ void Manager::animate(float seconds, float yaw, const Vec3f& eye) {
   }
   if (bottomLeft_.x != wasX || bottomLeft_.healthAlpha != wasHealth) dirty_ = true;
 
-  // The minimap's compass. 0x751d8b computes the direction as
-  // `atan2(direction.x, direction.z)`, and ours is exactly that: zero looks along
-  // +Z, so this is simply the look angle. The angle goes into a variable — the
+  // The minimap's compass. 0x751d8b computes `atan2(direction.x, direction.z)` of
+  // a direction its caller passes; the player marker below uses the look angle.
+  // The angle goes into a variable — the
   // compass is drawn by a live node, and it must not be routed through `dirty_`:
   // rebaking the whole HUD every frame is exactly the frame drop one can see.
-  mapAngle_.setTarget(yaw * 3.14159265358979323846f / 180.0f);
+  // The original draws the `MapCompass` ring (map_Compass.tga, N at the top of
+  // the file) unrotated, north up, at every heading: on foot facing south and
+  // in the AH-1Z facing north-west (stills of the original, 25 Nov). The angle
+  // 0x772470 stores is whatever direction the caller (BF2HudManager vtable
+  // slot at 0x926158) passes; that argument is not taken apart, and it is not
+  // the view. So the target is 0 until it is.
+  (void)yaw;
+  mapAngle_.setTarget(0.0f);
   mapAngle_.update(slice);
   values_["MinimapDelayedMapAngle"] = mapAngle_.delayed();
 

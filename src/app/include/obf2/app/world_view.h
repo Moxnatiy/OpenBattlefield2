@@ -7,6 +7,7 @@
 // not drawn from the predicted point but carried by his own physics from it, once
 // per game tick, and the frame blends the last two results — the same thing
 // `FUN_0045c190` does (docs/functions/soldier-physics.md).
+#include "obf2/app/vehicle_flight_hud.h"
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -107,6 +108,10 @@ class WorldView {
   };
   std::optional<VehicleView> occupiedCamera(float lookX, float lookY,
                                             SDL_Scancode cameraKey = SDL_SCANCODE_UNKNOWN);
+  // The flight HUD's inputs for the vehicle we sit in (vehicle_flight_hud.h):
+  // the hull's world matrix drawn this frame, its newest networked velocity
+  // and the level's sea level. None on foot or before the hull is drawn.
+  std::optional<VehicleFlightInput> occupiedFlightInput() const;
 
   // `--watch-soldier`: the soldier the camera holds on to. Zero when there is
   // none — the camera then stays where it was.
@@ -284,6 +289,8 @@ class WorldView {
   };
   std::unordered_map<std::string, WorldLods> worldLods_;
   float lodFovFactor_ = 1.0f;
+  // The level's sea level, for the flight HUD's altitude.
+  float waterHeight_ = -10000.0f;
   std::array<int, 6> lodPicks_{};  // draws per LOD, for `report`
   // A vehicle cut into the parts that move (uploadVehicleParts): its wheels, its
   // steered parts, its turrets and guns, its rotors and its engine.
