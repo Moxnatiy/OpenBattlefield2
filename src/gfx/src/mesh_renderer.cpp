@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <functional>
 
 #include "obf2/gfx/terrain_light.h"
 #include "obf2/mesh/material.h"
@@ -853,9 +854,12 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
         color = mix(in.fogColor.rgb, color, visibility);
     }
     // Roads blend into the terrain by the alpha of their own texture
-    // (`Shaders_client.zip:Road.fx:78`, `outcolor.a = tex0.a`); everything else
-    // is opaque.
-    return float4(color, in.material.y > 0.5 ? albedo.a * in.vertexAlpha : 1.0);
+    // (`Shaders_client.zip:Road.fx:78`, `outcolor.a = tex0.a`). A blended
+    // material writes its texture's alpha too (`BundledMesh.fx` psAlpha: the
+    // diffuse map's, untouched by the light), with roadParams.y set; everything
+    // else is opaque.
+    return float4(color, in.material.y > 0.5 ? albedo.a * in.vertexAlpha :
+                         (in.roadParams.y > 0.5 ? albedo.a : 1.0));
 }
 )MSL";
 
@@ -965,7 +969,7 @@ struct VertexUniforms {
   float pointColor[4]{};
   float lightmapOffset[4]{};
   float fogShape[4]{};   // x: the fog's base
-  float roadParams[4]{}; // x: a road's blend factor
+  float roadParams[4]{}; // x: a road's blend factor, y: a blended range (1), zw: frame size
   float terrainTiling[4]{};  // xy: the side planes, z: the top, w: the y offset
   float terrainDetail[4]{};  // xy: the half-texel fix, z: the height scale, w: on/off
   float terrainNear[4]{};    // x: this patch has chart maps, yz: their half-texel fix
@@ -1018,6 +1022,11 @@ MeshRenderer::~MeshRenderer() {
   if (roadPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, roadPipeline_);
   if (skyPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, skyPipeline_);
   if (skinnedPipeline_ != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, skinnedPipeline_);
+  for (auto& row : blendedPipelines_) {
+    for (SDL_GPUGraphicsPipeline* blended : row) {
+      if (blended != nullptr) SDL_ReleaseGPUGraphicsPipeline(gpu, blended);
+    }
+  }
   if (sampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, sampler_);
   if (normalSampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, normalSampler_);
   if (clampSampler_ != nullptr) SDL_ReleaseGPUSampler(gpu, clampSampler_);
@@ -1164,16 +1173,36 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   skinnedAttributes[9] = SDL_GPUVertexAttribute{9, 1, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, 0};
 
   SDL_GPUGraphicsPipeline* skinnedPipeline = nullptr;
+  SDL_GPUGraphicsPipelineCreateInfo skinnedInfo = info;
   if (skinnedVertexShader != nullptr) {
-    SDL_GPUGraphicsPipelineCreateInfo skinnedInfo = info;
     skinnedInfo.vertex_shader = skinnedVertexShader;
     skinnedInfo.vertex_input_state.vertex_buffer_descriptions = skinnedBuffers;
     skinnedInfo.vertex_input_state.num_vertex_buffers = 2;
     skinnedInfo.vertex_input_state.vertex_attributes = skinnedAttributes;
     skinnedInfo.vertex_input_state.num_vertex_attributes = 10;
     skinnedPipeline = SDL_CreateGPUGraphicsPipeline(gpu, &skinnedInfo);
-    SDL_ReleaseGPUShader(gpu, skinnedVertexShader);
   }
+
+  // The blended materials (`GpuMesh::Range::alphaBlend`): the states of
+  // `BundledMesh.fx` technique `alpha` (BundledMesh.fx:668: ZWriteEnable FALSE,
+  // CullMode NONE, SrcBlend SRCALPHA, DestBlend INVSRCALPHA) and of
+  // `StaticMesh.fx` technique `alpha_one` (StaticMesh.fx:423: the same, with
+  // DestBlend ONE). The skinned pair is for a bundled mesh drawn posed, as the
+  // weapon in hand is.
+  SDL_GPUGraphicsPipeline* blendedPipelines[2][2] = {};
+  for (int skinned = 0; skinned < 2; ++skinned) {
+    if (skinned && skinnedVertexShader == nullptr) continue;
+    for (int additive = 0; additive < 2; ++additive) {
+      SDL_GPUColorTargetDescription blendTarget = roadTarget;  // SRCALPHA / INVSRCALPHA
+      if (additive) blendTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+      SDL_GPUGraphicsPipelineCreateInfo blendInfo = skinned ? skinnedInfo : info;
+      blendInfo.target_info.color_target_descriptions = &blendTarget;
+      blendInfo.depth_stencil_state.enable_depth_write = false;
+      blendInfo.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+      blendedPipelines[skinned][additive] = SDL_CreateGPUGraphicsPipeline(gpu, &blendInfo);
+    }
+  }
+  if (skinnedVertexShader != nullptr) SDL_ReleaseGPUShader(gpu, skinnedVertexShader);
 
   SDL_ReleaseGPUShader(gpu, vertexShader);
   SDL_ReleaseGPUShader(gpu, fragmentShader);
@@ -1181,6 +1210,11 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   if (roadPipeline == nullptr) return fail("road pipeline");
   if (skyPipeline == nullptr) return fail("sky pipeline");
   if (skinnedPipeline == nullptr) return fail("skinned pipeline");
+  for (auto& row : blendedPipelines) {
+    for (SDL_GPUGraphicsPipeline* blended : row) {
+      if (blended == nullptr) return fail("blended pipeline");
+    }
+  }
 
   auto renderer = std::unique_ptr<MeshRenderer>(new MeshRenderer());
   renderer->device_ = &device;
@@ -1188,6 +1222,7 @@ std::unique_ptr<MeshRenderer> MeshRenderer::create(Device& device, std::string* 
   renderer->roadPipeline_ = roadPipeline;
   renderer->skyPipeline_ = skyPipeline;
   renderer->skinnedPipeline_ = skinnedPipeline;
+  std::memcpy(renderer->blendedPipelines_, blendedPipelines, sizeof(blendedPipelines));
 
   // The ground's light. Its own pass, its own file: what it is and what the
   // game does with it is in `obf2/gfx/terrain_light.h`. A failure here is not
@@ -1475,6 +1510,11 @@ void MeshRenderer::fillRanges(GpuMesh& gpuMesh, const mesh::RenderMesh& source,
       // Karkand's lines hung there as an opaque sheet
       // (`obf2::mesh::materialAlphaTest`).
       range.alphaTest = mesh::materialAlphaTest(source_range.technique, source_range.alphaMode);
+      // Blended by alpha instead, and how is the shader's: `StaticMesh.fx`'s one
+      // blend technique adds (`alpha_one`), `BundledMesh.fx`'s mixes (`alpha`).
+      range.alphaBlend = mesh::materialAlphaBlend(source_range.technique, source_range.alphaMode);
+      range.additiveBlend =
+          range.alphaBlend && source_range.fxFile.find("StaticMesh") != std::string::npos;
       range.bundledAlpha = source_range.fxFile.find("BundledMesh") != std::string::npos;
       range.leaf = source_range.leaf;
     }
@@ -1994,10 +2034,13 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
   // frame allocates it once instead of once per soldier.
   std::vector<mesh::Mat4> palette;
   BoneUniforms boneUniforms{};
-  auto drawLayer = [&](Layer wanted) {
-    for (const DrawItem& item : items) {
-      if (layerOf(item) != wanted) continue;
-      if (item.mesh == nullptr || item.mesh->vertices == nullptr) continue;
+  // The items with a blended range, each with its distance: they come back
+  // once everything opaque is drawn, the farthest first, since a blend without
+  // depth writes is only right over what already lies behind it.
+  std::vector<std::pair<float, const DrawItem*>> blended;
+  // One item: its opaque ranges, or (blendedPass) only its blended ones.
+  auto drawItem = [&](const DrawItem& item, bool skinned, bool blendedPass) {
+      if (item.mesh == nullptr || item.mesh->vertices == nullptr) return;
 
       Mat4 transform = item.transform;
       if (item.road) transform.m[13] += kRoadLift;
@@ -2007,13 +2050,12 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
       if (!item.sky && item.mesh->boundsRadius > 0.0f) {
         const Vec3f center = transformPoint(transform, item.mesh->boundsCenter);
         if (!frustum.intersectsSphere(center, item.mesh->boundsRadius)) {
-          ++culled_;
-          continue;
+          if (!blendedPass) ++culled_;
+          return;
         }
       }
-      ++drawn_;
+      if (!blendedPass) ++drawn_;
 
-      const bool skinned = wanted == Layer::Skinned;
       const SDL_GPUBufferBinding vertexBindings[2] = {{item.mesh->vertices, 0},
                                                       {item.mesh->skin, 0}};
       SDL_BindGPUVertexBuffers(pass, 0, vertexBindings, skinned ? 2 : 1);
@@ -2038,7 +2080,14 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
       uniforms.fogParams[1] = item.sky ? 0.0f : fog_.end;
 
       for (const GpuMesh::Range& range : item.mesh->ranges) {
-        if (range.indexCount == 0) continue;
+        if (range.indexCount == 0 || range.alphaBlend != blendedPass) continue;
+        if (blendedPass) {
+          // The blend is the range's own (`GpuMesh::Range::additiveBlend`), so the
+          // pipeline changes between ranges and the buffers are bound again.
+          SDL_BindGPUGraphicsPipeline(pass, blendedPipelines_[skinned ? 1 : 0][range.additiveBlend ? 1 : 0]);
+          SDL_BindGPUVertexBuffers(pass, 0, vertexBindings, skinned ? 2 : 1);
+          SDL_BindGPUIndexBuffer(pass, &indexBinding, SDL_GPU_INDEXELEMENTSIZE_32BIT);
+        }
 
         // Slot 1 is the light map. For the terrain it belongs to the range —
         // one patch, one map. For a placed object it belongs to the **item**:
@@ -2109,8 +2158,12 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
             (terrain && terrainMaterialsReady_ && range.chartA != nullptr) ? 1.0f : 0.0f;
         uniforms.terrainNear[3] = range.chartB != nullptr ? 1.0f : 0.0f;
         uniforms.material[0] = range.detailMultiply ? 1.0f : 0.0f;
+        // A blended range keeps its own test: GREATER 0 in both techniques
+        // (BundledMesh.fx:668 `alpha`, StaticMesh.fx:423 `alpha_one`).
         uniforms.material[3] =
+            range.alphaBlend ? 1.0f :
             range.alphaTest ? 1.0f + (range.bundledAlpha ? 0.0f : 127.0f / 255.0f) : 0.0f;
+        uniforms.roadParams[1] = range.alphaBlend ? 1.0f : 0.0f;
         uniforms.treeSunColor[3] = range.leaf ? 1.0f : 0.0f;
         uniforms.fogShape[1] =
             range.normalMap == nullptr ? 0.0f : (range.normalOnDetailUv ? 2.0f : 1.0f);
@@ -2139,6 +2192,18 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
 
         SDL_DrawGPUIndexedPrimitives(pass, range.indexCount, 1, range.indexStart, 0, 0);
       }
+
+      if (!blendedPass && std::ranges::any_of(item.mesh->ranges, &GpuMesh::Range::alphaBlend)) {
+        // The distance is the clip-space w of the bounds' centre.
+        const Vec3f center = transformPoint(transform, item.mesh->boundsCenter);
+        const float depth = viewProjection.m[3] * center.x + viewProjection.m[7] * center.y +
+                            viewProjection.m[11] * center.z + viewProjection.m[15];
+        blended.emplace_back(depth, &item);
+      }
+  };
+  auto drawLayer = [&](Layer wanted) {
+    for (const DrawItem& item : items) {
+      if (layerOf(item) == wanted) drawItem(item, wanted == Layer::Skinned, false);
     }
   };
 
@@ -2150,6 +2215,11 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
   drawLayer(Layer::Skinned);
   SDL_BindGPUGraphicsPipeline(pass, roadPipeline_);
   drawLayer(Layer::Road);
+  // The blended ranges last, the farthest first.
+  std::ranges::stable_sort(blended, std::ranges::greater{}, &std::pair<float, const DrawItem*>::first);
+  for (const auto& [depth, item] : blended) {
+    drawItem(*item, layerOf(*item) == Layer::Skinned, true);
+  }
 
   SDL_EndGPURenderPass(pass);
 }
