@@ -167,6 +167,11 @@ UploadedScene uploadScene(gfx::MeshRenderer& renderer, TextureCache& textures,
           static_cast<std::size_t>(instance.lightmapAtlas) < wanted.size()) {
         wanted[static_cast<std::size_t>(instance.lightmapAtlas)] = true;
       }
+      for (const auto& lod : instance.lodLightmaps) {
+        if (lod.atlas >= 0 && static_cast<std::size_t>(lod.atlas) < wanted.size()) {
+          wanted[static_cast<std::size_t>(lod.atlas)] = true;
+        }
+      }
     }
     int loaded = 0;
     for (std::size_t i = 0; i < out.lightmapPages.size(); ++i) {

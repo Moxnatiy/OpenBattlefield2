@@ -36,6 +36,9 @@ struct GpuMesh {
     // says so: 0 or 2 are the only values in the game's static meshes, and 2 is
     // what leaves, fences and grates carry.
     bool alphaTest = false;
+    // A placed `objects/roads/` mesh: drawn at terrain quality 2 and 3 only
+    // (`obf2::mesh::markRoadMesh`).
+    bool roadMesh = false;
     // The test's reference: a material of `BundledMesh.fx` keeps every pixel whose
     // alpha is above 0 (`AlphaRef = 0`, `AlphaFunc = GREATER`, in each of its
     // techniques); the static-mesh shader's reference is 127 of 255.
@@ -241,6 +244,9 @@ class MeshRenderer {
     float floorVisibility = 1.0f;
   };
   void setFog(const Fog& fog) { fog_ = fog; }
+  // The profile's `VideoSettings.setTerrainQuality` (1 low .. 3 high): below 2
+  // the road-path statics are not drawn (`RendDX9.dll` 0x100fe618).
+  void setTerrainQuality(int quality) { terrainQuality_ = quality; }
 
   // The texture-filtering setting, 1 to 3. What each level means is the
   // preamble the engine writes for the shader compiler — see the definition.
@@ -471,6 +477,7 @@ class MeshRenderer {
   // is owned by `sharedTextures_` and lives as long as the renderer.
   std::unordered_map<std::string, SDL_GPUTexture*> textureByPath_;
   Fog fog_;
+  int terrainQuality_ = 3;
   // Already scaled the way the engine stores them — see setTerrainLighting.
   Color terrainSun_{0.25f, 0.25f, 0.25f, 1.0f};
   Color terrainSky_{0.3f, 0.35f, 0.45f, 1.0f};

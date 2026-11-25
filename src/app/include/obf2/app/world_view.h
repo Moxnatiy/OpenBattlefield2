@@ -59,6 +59,10 @@ class WorldView {
     bool showOwnBox = false;
     int geometryIndex = -1;
     int lodIndex = 0;
+    bool clampLod = false;
+    // The settings' geometry quality: the distance scale of the LOD switch
+    // (`game::lodDistanceScale`, `game::lodDistanceScaleBundled`).
+    int geometryQuality = 3;
     // `--trace-frames <frame>:<frames>`: per frame, every soldier drawn.
     int traceFrom = -1;
     int traceFrames = 0;
@@ -86,6 +90,10 @@ class WorldView {
   // turns the effects' sprites to the camera (smoke_flare.h).
   void collect(std::vector<gfx::MeshRenderer::DrawItem>& out, int frame, float frameStep,
                const Vec3f& eye, const Mat4& view);
+
+  // The camera's LOD factor for this frame (`game::lodFovFactor`), set before
+  // `collect`.
+  void setLodFovFactor(float factor) { lodFovFactor_ = factor; }
 
   // The camera of the seat we sit in (docs/functions/vehicle-camera-modes.md):
   // its eye, its yaw and pitch in degrees and its field of view. `lookX/Y` is the
@@ -216,10 +224,12 @@ class WorldView {
               const net::bf2::GhostPose& pose);
   // The vehicle a created object is, by its template number, else by where it
   // was created.
-  const gfx::GpuMesh* vehicleMesh(std::uint16_t id, const net::bf2::RemoteObject& object);
+  // `distance` from the camera picks the LOD (0: the nearest one).
+  const gfx::GpuMesh* vehicleMesh(std::uint16_t id, const net::bf2::RemoteObject& object,
+                                  float distance = 0.0f);
   // A template's mesh, built and uploaded once; a `PlayerControlObject` is cut
   // into its moving parts (uploadVehicleParts).
-  const gfx::GpuMesh* worldObjectMesh(const std::string& name);
+  const gfx::GpuMesh* worldObjectMesh(const std::string& name, float distance = 0.0f);
   // The vehicle's geometry seen from inside: the seat's `cockpitSubGeom`, or
   // the authored cockpit (game::authoredCockpitGeometry) when `geometry` < 0.
   const gfx::GpuMesh* cockpitMesh(const std::string& name, int geometry);
@@ -263,6 +273,18 @@ class WorldView {
   // before the sounds so it outlives them.
   SoundVoices voices_;
 
+  // The LODs past the first one of a world model, by the same key as
+  // `vehicleByName_` (whose mesh is `meshes[0]`), and what picks among them
+  // (`game::pickLod`; static meshes 0x100fe5d0, bundled 0x101050c0).
+  struct WorldLods {
+    std::vector<const gfx::GpuMesh*> meshes;
+    std::vector<float> switchDistances;
+    float baseRadius = 0.0f;
+    float scale = 1.0f;
+  };
+  std::unordered_map<std::string, WorldLods> worldLods_;
+  float lodFovFactor_ = 1.0f;
+  std::array<int, 6> lodPicks_{};  // draws per LOD, for `report`
   // A vehicle cut into the parts that move (uploadVehicleParts): its wheels, its
   // steered parts, its turrets and guns, its rotors and its engine.
   struct SteeringJoint {

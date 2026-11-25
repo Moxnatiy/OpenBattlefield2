@@ -104,4 +104,14 @@ void markVegetationLeaves(RenderMesh& mesh, std::string_view meshPath);
 bool isWaterPath(std::string_view meshPath);
 void markWaterMesh(RenderMesh& mesh, std::string_view meshPath);
 
+// The load's third flag, `isRoad` (+0x29c, set at 0x1011af67). The static-mesh
+// draw returns early for such a mesh unless the renderer's +0x6a4 is set
+// (0x100fe618), and that byte is the terrain quality's: 0 at low, 1 at medium
+// and high (0x1000fb50, its `case 1/2/3` on the settings' +0x28, which is
+// `setTerrainQuality` by the order `VideoSettings` saves them, `BF2.exe`
+// 0x4b2280). The game's road statics are the concrete pads of
+// `Roads/staticsnoblend` — landing pads for helicopters, airstrip ends.
+bool isRoadPath(std::string_view meshPath);
+void markRoadMesh(RenderMesh& mesh, std::string_view meshPath);
+
 }  // namespace obf2::mesh

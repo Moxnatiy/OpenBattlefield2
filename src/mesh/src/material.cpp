@@ -126,4 +126,13 @@ void markWaterMesh(RenderMesh& mesh, std::string_view meshPath) {
   for (DrawRange& range : mesh.ranges) range.waterMesh = true;
 }
 
+bool isRoadPath(std::string_view meshPath) {
+  return meshPath.find("objects/roads/") != std::string_view::npos;
+}
+
+void markRoadMesh(RenderMesh& mesh, std::string_view meshPath) {
+  if (!isRoadPath(meshPath)) return;
+  for (DrawRange& range : mesh.ranges) range.roadMesh = true;
+}
+
 }  // namespace obf2::mesh

@@ -6,6 +6,7 @@
 #include <numbers>
 
 #include "obf2/core/path.h"
+#include "obf2/game/lod_switch.h"
 #include "obf2/game/object_mesh.h"
 #include "obf2/game/scene.h"
 #include "obf2/game/soldier_model.h"
@@ -1125,7 +1126,7 @@ Mat4 WorldView::vehicleTurretTransform(const TurretPiece& piece, std::uint16_t r
 }
 
 const gfx::GpuMesh* WorldView::vehicleMesh(std::uint16_t id,
-                                           const net::bf2::RemoteObject& object) {
+                                           const net::bf2::RemoteObject& object, float distance) {
   // What it is: the template its number names (obf2/game/template_numbers.h),
   // else what was placed on the spot it was **created** on — a jeep that drove
   // off stays a jeep. Resolved again when the object's template or creation spot
@@ -1146,26 +1147,77 @@ const gfx::GpuMesh* WorldView::vehicleMesh(std::uint16_t id,
   }
   const level::PlacedAt& placed = resolved->second.placed;
   if (placed.kind != level::PlacedAt::Kind::Spawned) return nullptr;
-  return worldObjectMesh(placed.templateName);
+  return worldObjectMesh(placed.templateName, distance);
 }
 
-const gfx::GpuMesh* WorldView::worldObjectMesh(const std::string& name) {
+const gfx::GpuMesh* WorldView::worldObjectMesh(const std::string& name, float distance) {
   const std::string key = normalizeAssetPath(name);
   auto found = vehicleByName_.find(key);
   if (found == vehicleByName_.end()) {
     const gfx::GpuMesh* uploaded = nullptr;
     if (auto built = game::buildObjectMesh(*files_, *registry_, name, options_.geometryIndex,
-                                           options_.lodIndex, false)) {
+                                           options_.lodIndex, false, options_.clampLod)) {
       const auto* definition = registry_->find(name);
-      if (definition && definition->className == "PlayerControlObject") {
-        uploaded = uploadVehicleParts(std::move(*built), name);
-      } else if (auto gpu = renderer_->upload(*built, resolve_)) {
+      const bool parts = definition && definition->className == "PlayerControlObject";
+      const auto upload = [&](mesh::RenderMesh&& mesh) -> const gfx::GpuMesh* {
+        if (parts) return uploadVehicleParts(std::move(mesh), name);
+        auto gpu = renderer_->upload(mesh, resolve_);
+        if (!gpu) return nullptr;
         vehicleMeshes_.push_back(std::move(*gpu));
-        uploaded = &vehicleMeshes_.back();
+        return &vehicleMeshes_.back();
+      };
+      // The LODs past the first one, for the switch by distance, when the LOD
+      // follows the settings. Static and bundled meshes switch; the skinned
+      // draw's switch is not traced, so a skinned model keeps its first LOD.
+      const std::size_t geometry = built->geometryIndex;
+      const std::size_t skip = built->lodIndex;
+      const std::size_t count = built->lodCount;
+      const mesh::Kind kind = built->fileKind;
+      const float baseRadius = game::lodBaseRadius(built->bounds);
+      uploaded = upload(std::move(*built));
+      if (uploaded && options_.clampLod && kind != mesh::Kind::Skinned && skip + 1 < count) {
+        WorldLods lods;
+        lods.meshes.push_back(uploaded);
+        for (std::size_t lod = skip + 1; lod < count; ++lod) {
+          auto next = game::buildObjectMesh(*files_, *registry_, name, static_cast<int>(geometry),
+                                            static_cast<int>(lod), false, false);
+          if (!next) break;
+          const auto* gpu = upload(std::move(*next));
+          if (!gpu) break;
+          lods.meshes.push_back(gpu);
+        }
+        if (lods.meshes.size() > 1) {
+          const std::vector<float>* given = nullptr;
+          if (definition) {
+            if (const auto* table = registry_->lodDistances(definition->text("geometry"));
+                table != nullptr && geometry < table->size()) {
+              given = &(*table)[geometry];
+            }
+          }
+          const bool bundled = kind == mesh::Kind::Bundled;
+          lods.switchDistances = game::lodSwitchDistances(
+              given, skip, lods.meshes.size(), bundled ? game::kBundledLodStep : game::kStaticLodStep);
+          lods.baseRadius = baseRadius;
+          lods.scale = bundled ? game::lodDistanceScaleBundled(options_.geometryQuality)
+                               : game::lodDistanceScale(options_.geometryQuality);
+          worldLods_.emplace(key, std::move(lods));
+        }
       }
     }
-    std::printf("  world model: %s%s\n", name.c_str(), uploaded != nullptr ? "" : " (no geometry)");
+    const auto lods = worldLods_.find(key);
+    std::printf("  world model: %s%s, %zu distance LODs\n", name.c_str(),
+                uploaded != nullptr ? "" : " (no geometry)",
+                lods != worldLods_.end() ? lods->second.meshes.size() : std::size_t(1));
     found = vehicleByName_.emplace(key, uploaded).first;
+  }
+  if (distance > 0.0f) {
+    if (const auto lods = worldLods_.find(key); lods != worldLods_.end()) {
+      const auto& chain = lods->second;
+      const auto lod = game::pickLod(chain.switchDistances, chain.scale, lodFovFactor_, distance,
+                                     chain.baseRadius);
+      if (lod < lodPicks_.size()) ++lodPicks_[lod];
+      return chain.meshes[lod];
+    }
   }
   return found->second;
 }
@@ -1251,7 +1303,10 @@ void WorldView::collect(std::vector<gfx::MeshRenderer::DrawItem>& out, int frame
                                found->second.placed.kind == level::PlacedAt::Kind::Static;
       // A static placement is skipped: the level draws it already.
       if (knownStatic) continue;
-      if (const gfx::GpuMesh* vehicle = vehicleMesh(id, object)) {
+      // The distance to the object's origin picks its LOD, as the static draw
+      // measures it; the bundled draw's distance (+0x264, 0x101050c0) is
+      // filled elsewhere and not traced.
+      if (const gfx::GpuMesh* vehicle = vehicleMesh(id, object, length(drawAt - eye))) {
         // The rotation is the object's own from its record (bit 0x1, a
         // quaternion — docs/functions/network-events.md), and the spawner's until
         // one has arrived.
@@ -1629,6 +1684,11 @@ std::uint16_t WorldView::watchSoldier(const Vec3f& from) {
 }
 
 void WorldView::report() const {
+  // How often each LOD of a world model was drawn, by distance (the measure
+  // for the switch; nearest first).
+  std::printf("  world model LODs drawn:");
+  for (const int count : lodPicks_) std::printf(" %d", count);
+  std::printf("\n");
   for (const auto& [id, stat] : stats_) {
     if (stat.largestStep < 0.01f) continue;  // standing still: nothing to measure
     std::printf("  drawn object %u: interpolated %d, extrapolated %d, newest %d frames, "
@@ -1679,6 +1739,7 @@ void WorldView::release(gfx::MeshRenderer& renderer) {
   vehicleParts_.clear();
   vehicleMotion_.clear();
   vehicleByName_.clear();
+  worldLods_.clear();
   localTurretSettings_.clear();
   seatsByVehicle_.clear();
   grenadeBlast_.release(renderer);

@@ -17,7 +17,10 @@ Args parseArgs(int argc, char** argv) {
     else if (flag == "--object" && i + 1 < argc) args.objectName = argv[++i];
     else if (flag == "--level" && i + 1 < argc) args.levelName = argv[++i];
     else if (flag == "--geom" && i + 1 < argc) args.geometryIndex = std::atoi(argv[++i]);
-    else if (flag == "--lod" && i + 1 < argc) args.lodIndex = std::atoi(argv[++i]);
+    else if (flag == "--lod" && i + 1 < argc) {
+      args.lodIndex = std::atoi(argv[++i]);
+      args.explicitLod = true;
+    }
     else if (flag == "--frames" && i + 1 < argc) args.frames = std::atoi(argv[++i]);
     else if (flag == "--screenshot" && i + 1 < argc) args.screenshot = argv[++i];
     else if (flag == "--screenshot-at" && i + 1 < argc) {

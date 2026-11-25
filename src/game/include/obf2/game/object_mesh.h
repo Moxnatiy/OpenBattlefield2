@@ -7,6 +7,7 @@
 // `geometryPart` (scene.h), while a control point has no mesh of its own and is
 // assembled from its children's. The engine does this in
 // `Code/BF2/Scene/Object/ObjectUtils.cpp`.
+#include <array>
 #include <optional>
 #include <string>
 
@@ -38,12 +39,15 @@ std::string resolveGeometryPath(FileSystem& files, const std::string& templateFi
                                 const std::string& geometryName);
 
 // One mesh file, unpacked into drawable geometry. `geometryOverride` below zero
-// means "choose by `pickGeometry`". `clampLod` picks the geometry for lod 0 and
-// takes the asked lod or the mesh's last, whichever comes first — for a mesh
-// with fewer lods than asked for (a mesh particle's one).
+// means "choose by `pickGeometry`". `clampLod` picks the geometry for lod 0;
+// `lodIndex` is then how many leading LODs the quality drops, capped by
+// `maxSkip` for geometry 0 and 1 (0 for any other, by the mesh's kind — see
+// `loadMesh`) and by the mesh's last LOD, which also serves a mesh with fewer
+// LODs than asked for (a mesh particle's one).
 std::optional<mesh::RenderMesh> loadMesh(FileSystem& files, const std::string& path,
                                          int geometryOverride, int lodIndex, bool verbose,
-                                         bool clampLod = false);
+                                         bool clampLod = false,
+                                         std::array<int, 2> maxSkip = {1 << 30, 1 << 30});
 
 // The whole tree of a template as one mesh, with the parts in their places.
 // When the root has no geometry of its own the children's meshes are merged —

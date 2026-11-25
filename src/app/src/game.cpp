@@ -53,6 +53,7 @@
 #include "obf2/engine/engine.h"
 #include "obf2/font/font_file.h"
 #include "obf2/font/text.h"
+#include "obf2/game/lod_switch.h"
 #include "obf2/game/object_mesh.h"
 #include "obf2/hud/bottom_left.h"
 #include "obf2/hud/ingame.h"
@@ -226,7 +227,10 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
 
     obf2::app::SceneOptions sceneOptions;
     sceneOptions.geometryIndex = args.geometryIndex;
-    sceneOptions.lodIndex = args.lodIndex;
+    sceneOptions.lodIndex = args.explicitLod
+                                ? args.lodIndex
+                                : obf2::app::skippedLods(engine.settings().video.geometryQuality);
+    sceneOptions.clampLod = !args.explicitLod;
     sceneOptions.noLightmaps = args.noLightmaps;
     loadPhase("Placement");
     obf2::app::placeObjects(files, registry, placement, sceneOptions, levelScene, scene,
@@ -302,6 +306,8 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
   }
   obf2::gfx::Device* device = render.device.get();
   obf2::gfx::MeshRenderer* renderer = render.renderer.get();
+  // Road statics are drawn from medium terrain quality up (0x100fe618).
+  renderer->setTerrainQuality(engine.settings().video.terrainQuality);
 
   if (level) {
     obf2::app::applyLevelLighting(*renderer, *level, args.topDown,
@@ -676,7 +682,11 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
     viewOptions.drawPredicted = args.drawPredicted;
     viewOptions.showOwnBox = args.showOwnBox;
     viewOptions.geometryIndex = args.geometryIndex;
-    viewOptions.lodIndex = args.lodIndex;
+    viewOptions.lodIndex = args.explicitLod
+                               ? args.lodIndex
+                               : obf2::app::skippedLods(engine.settings().video.geometryQuality);
+    viewOptions.clampLod = !args.explicitLod;
+    viewOptions.geometryQuality = engine.settings().video.geometryQuality;
     viewOptions.traceFrom = args.traceFrom;
     viewOptions.traceFrames = args.traceFrames;
     viewOptions.watchPose = args.watchPose;
@@ -715,6 +725,16 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
 
   std::vector<obf2::gfx::MeshRenderer::DrawItem> items;
   items.reserve(scene.instances.size());
+  // The items whose LOD is picked each frame by distance: {item, lod chain}.
+  struct LodItem {
+    std::size_t item;
+    int chain;
+    const obf2::app::Scene::Instance* instance;
+  };
+  std::vector<LodItem> lodItems;
+  // The first field of view the camera is given counts as 1 in the LOD factor
+  // (setFov, `RendDX9.dll` 0x101c2bd0); set on the first frame.
+  float firstFieldOfView = 0.0f;
   long long drawnTriangles = 0;
   for (const obf2::app::Scene::Instance& instance : scene.instances) {
     const int meshIndex = instance.mesh;
@@ -730,6 +750,7 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
         std::memcpy(item.lightmapOffset, instance.lightmapOffset, sizeof(item.lightmapOffset));
       }
     }
+    if (instance.lodChain >= 0) lodItems.push_back({items.size(), instance.lodChain, &instance});
     items.push_back(item);
     drawnTriangles += static_cast<long long>(scene.meshes[static_cast<std::size_t>(meshIndex)]
                                                  .indices.size() / 3);
@@ -1252,6 +1273,34 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
         throughVehicle ? obf2::app::aspectFieldOfView(*vehicleFov, 1.0f / aspect)
         : throughSoldier ? obf2::app::aspectFieldOfView(*soldierFov, 1.0f / aspect) : 1.05f;
     const obf2::Mat4 projection = obf2::perspective(fieldOfView, aspect, nearPlane, farPlane);
+    // Each placed mesh's LOD by its distance from the camera, every frame
+    // (`RendDX9.dll` 0x100fe5d0; `game::pickLod`). The distance is to the
+    // object's origin, as the draw measures it.
+    if (firstFieldOfView <= 0.0f) firstFieldOfView = fieldOfView;
+    const float fovFactor = obf2::game::lodFovFactor(fieldOfView, firstFieldOfView);
+    worldView.setLodFovFactor(fovFactor);
+    if (!lodItems.empty()) {
+      const float scale = obf2::game::lodDistanceScale(engine.settings().video.geometryQuality);
+      for (const LodItem& entry : lodItems) {
+        const auto& chain = scene.lodChains[static_cast<std::size_t>(entry.chain)];
+        auto& item = items[entry.item];
+        const obf2::Vec3f at{item.transform.m[12], item.transform.m[13], item.transform.m[14]};
+        const std::size_t lod = obf2::game::pickLod(chain.switchDistances, scale, fovFactor,
+                                                    obf2::length(at - eye), chain.baseRadius);
+        const auto mesh = static_cast<std::size_t>(chain.meshes[lod]);
+        if (!uploadedOk[mesh]) continue;
+        item.mesh = &gpuMeshes[mesh];
+        // The LOD drawn brings its own light map.
+        item.lightmap = nullptr;
+        if (lod < entry.instance->lodLightmaps.size()) {
+          const auto& light = entry.instance->lodLightmaps[lod];
+          if (light.atlas >= 0 && static_cast<std::size_t>(light.atlas) < lightmapPages.size()) {
+            item.lightmap = lightmapPages[static_cast<std::size_t>(light.atlas)];
+            std::memcpy(item.lightmapOffset, light.offset, sizeof(item.lightmapOffset));
+          }
+        }
+      }
+    }
     // From above "screen up" has to be Z rather than Y (which would coincide with the
     // view). In a left-handed system right is cross(up, forward), so with up = +Z
     // right ends up as +X — exactly as on the level's own minimap.

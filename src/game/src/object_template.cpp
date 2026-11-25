@@ -1,6 +1,7 @@
 #include "obf2/game/object_template.h"
 
 #include <cctype>
+#include <cstdlib>
 
 namespace obf2::game {
 namespace {
@@ -97,7 +98,42 @@ void Registry::feed(const con::Command& command) {
   // kept, so a geometry named by a template elsewhere (a mesh particle's
   // `geometry mp_waterfall`) can be found beside its own `.con`.
   if (command.lowerPath == "geometrytemplate.create") {
-    if (command.args.size() >= 2) geometryFiles_.try_emplace(toLower(command.args[1]), command.file);
+    if (command.args.size() >= 2) {
+      activeGeometry_ = toLower(command.args[1]);
+      geometryFiles_.try_emplace(activeGeometry_, command.file);
+    }
+    return;
+  }
+  if (command.lowerPath == "geometrytemplate.maxskip3plods" ||
+      command.lowerPath == "geometrytemplate.maxskipwrecklods") {
+    if (!activeGeometry_.empty() && !command.args.empty()) {
+      auto [entry, added] = geometrySkips_.try_emplace(activeGeometry_, std::array<int, 2>{1, 1});
+      entry->second[command.lowerPath == "geometrytemplate.maxskip3plods" ? 0 : 1] =
+          std::atoi(command.args[0].c_str());
+    }
+    return;
+  }
+  // `setSubGeometryLodDistance <geometry> <lod> <distance>` before the mesh is
+  // loaded (`RendDX9.dll` 0x10119740): a geometry seen for the first time gets
+  // its earlier slots 25, 50, 75 … m; a known one grows with zeros; then the
+  // slot is set. Negative arguments are refused.
+  if (command.lowerPath == "geometrytemplate.setsubgeometryloddistance") {
+    if (activeGeometry_.empty() || command.args.size() < 3) return;
+    const int geometry = std::atoi(command.args[0].c_str());
+    const int lod = std::atoi(command.args[1].c_str());
+    const float distance = static_cast<float>(std::atof(command.args[2].c_str()));
+    if (geometry < 0 || lod < 0 || distance < 0.0f) return;
+    auto& table = lodDistances_[activeGeometry_];
+    const bool newGeometry = table.size() < static_cast<std::size_t>(geometry) + 1;
+    if (newGeometry) table.resize(static_cast<std::size_t>(geometry) + 1);
+    auto& slots = table[static_cast<std::size_t>(geometry)];
+    if (slots.size() < static_cast<std::size_t>(lod) + 1) {
+      slots.resize(static_cast<std::size_t>(lod) + 1, 0.0f);
+      if (newGeometry) {
+        for (int i = 0; i < lod; ++i) slots[static_cast<std::size_t>(i)] = 25.0f * static_cast<float>(i + 1);
+      }
+    }
+    slots[static_cast<std::size_t>(lod)] = distance;
     return;
   }
   if (toLower(command.path.front()) != "objecttemplate") return;
@@ -189,6 +225,17 @@ void Registry::feed(const con::Command& command) {
 const ObjectTemplate* Registry::find(std::string_view name) const {
   const auto it = templates_.find(toLower(name));
   return it == templates_.end() ? nullptr : it->second;
+}
+
+const std::vector<std::vector<float>>* Registry::lodDistances(std::string_view geometryName) const {
+  const auto it = lodDistances_.find(toLower(geometryName));
+  return it == lodDistances_.end() ? nullptr : &it->second;
+}
+
+int Registry::maxSkipLods(std::string_view geometryName, std::size_t index) const {
+  if (index > 1) return 0;
+  const auto it = geometrySkips_.find(toLower(geometryName));
+  return it == geometrySkips_.end() ? 1 : it->second[index];
 }
 
 std::string_view Registry::geometryFile(std::string_view name) const {

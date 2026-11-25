@@ -45,7 +45,10 @@ struct LightmapPlacement {
 //
 // The two digits are the geometry and the lod: `00` is geom 0 lod 0, and the
 // file also carries `01`, `02`, `03` for the lower lods and `10`..`12` for a
-// second geometry. We draw lod 0, so we ask for `00`.
+// second geometry. The engine asks for geometry · 10 + LOD, the LOD counted
+// in the file (the quality skip added back), `RendDX9.dll` 0x10198460 and
+// 0x100fc630; every LOD keeps its light map, `maxLightMappedLod` being 9 from
+// the StaticMeshRenderer ctor (0x101226b0) and read at 0x100fb550.
 //
 // The 513 objects with no entry have none at any lod either: they are the
 // vegetation and the thin props, which the game lights with its own tree
@@ -60,7 +63,8 @@ class ObjectLightmaps {
   static ObjectLightmaps parse(std::string_view text, std::string_view levelName);
 
   // The entry for one placement, or nothing when the object has no light map.
-  const LightmapPlacement* find(std::string_view templateName, Vec3f position) const;
+  const LightmapPlacement* find(std::string_view templateName, Vec3f position,
+                                int geometryLod = 0) const;
 
   // `Levels/<name>/lightmaps/Objects/LightmapAtlas<N>.dds`.
   std::string atlasPath(int index) const;

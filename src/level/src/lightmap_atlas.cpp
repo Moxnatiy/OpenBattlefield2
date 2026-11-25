@@ -1,6 +1,7 @@
 #include "obf2/level/lightmap_atlas.h"
 
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <vector>
 
@@ -15,9 +16,11 @@ std::string lowerCase(std::string_view text) {
 
 // The key an entry is filed under, and the key a placement asks for: the two
 // have to be built the same way or nothing ever matches.
-std::string keyFor(std::string_view templateName, Vec3f position) {
+std::string keyFor(std::string_view templateName, Vec3f position, int geometryLod) {
   // Truncation towards zero, not rounding — see the header for the measurement.
-  return lowerCase(templateName) + "=00=" + std::to_string(static_cast<int>(position.x)) + "=" +
+  char code[8];
+  std::snprintf(code, sizeof code, "=%02d=", geometryLod);
+  return lowerCase(templateName) + code + std::to_string(static_cast<int>(position.x)) + "=" +
          std::to_string(static_cast<int>(position.y)) + "=" +
          std::to_string(static_cast<int>(position.z));
 }
@@ -94,8 +97,8 @@ ObjectLightmaps ObjectLightmaps::load(FileSystem& files, std::string_view levelN
 }
 
 const LightmapPlacement* ObjectLightmaps::find(std::string_view templateName,
-                                               Vec3f position) const {
-  const auto found = byKey_.find(keyFor(templateName, position));
+                                               Vec3f position, int geometryLod) const {
+  const auto found = byKey_.find(keyFor(templateName, position, geometryLod));
   return found == byKey_.end() ? nullptr : &found->second;
 }
 

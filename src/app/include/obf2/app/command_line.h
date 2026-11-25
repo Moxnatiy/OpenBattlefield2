@@ -29,6 +29,10 @@ struct Args {
   std::string levelName;
   int geometryIndex = -1;  // -1 = choose by the number of lods
   int lodIndex = 0;
+  // `--lod` given: every mesh draws that LOD. Without it the profile's geometry
+  // quality drops leading LODs (`app::skippedLods`) and the rest switch by
+  // distance (`game::pickLod`).
+  bool explicitLod = false;
   int frames = 0;  // 0 = run until the window is closed
   std::string screenshot;
   // --screenshot-at <frame>:<file>, as many as asked for.

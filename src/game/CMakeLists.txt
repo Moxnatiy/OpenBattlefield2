@@ -15,6 +15,7 @@ add_library(obf2_game
   src/weapon_shift.cpp
   src/scene.cpp
   src/object_mesh.cpp
+  src/lod_switch.cpp
 )
 add_library(obf2::game ALIAS obf2_game)
 

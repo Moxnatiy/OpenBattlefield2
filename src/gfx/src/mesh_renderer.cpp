@@ -1807,6 +1807,7 @@ void MeshRenderer::fillRanges(GpuMesh& gpuMesh, const mesh::RenderMesh& source,
       // Karkand's lines hung there as an opaque sheet
       // (`obf2::mesh::materialAlphaTest`).
       range.alphaTest = mesh::materialAlphaTest(source_range.technique, source_range.alphaMode);
+      range.roadMesh = source_range.roadMesh;
       // Blended by alpha instead, and how is the shader's: `StaticMesh.fx`'s one
       // blend technique adds (`alpha_one`), `BundledMesh.fx`'s mixes (`alpha`).
       range.alphaBlend = mesh::materialAlphaBlend(source_range.technique, source_range.alphaMode);
@@ -2433,6 +2434,9 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
         // and the water ready; otherwise it is its own material.
         const bool asWater = range.water || (range.waterMesh && bakedItem && waterReady);
         if (range.indexCount == 0 || (asWater || range.alphaBlend) != blendedPass) continue;
+        // `RendDX9.dll` 0x100fe618: a road-path static is skipped at low terrain
+        // quality (`obf2::mesh::markRoadMesh`).
+        if (range.roadMesh && terrainQuality_ < 2) continue;
         if (asWater) {
           if (!waterReady) continue;
           SDL_BindGPUGraphicsPipeline(pass, waterPipeline_);
