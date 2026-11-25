@@ -567,13 +567,24 @@ bool loadHeights(FileSystem& files, Level& level, std::string* error) {
 
 bool mountLevel(FileSystem& files, const std::filesystem::path& modDir, std::string_view levelName,
                 std::string* error) {
+  // The name comes from the server (its rotation, block 5, and MapInfo, block 2),
+  // so it may only name a folder under Levels/: no separators, no `.` or `..`.
+  if (levelName.empty() || levelName == "." || levelName == ".." ||
+      levelName.find_first_of("/\\:") != std::string_view::npos) {
+    if (error) *error = "invalid level name";
+    return false;
+  }
   const std::string mountPoint = "Levels/" + std::string(levelName);
-  const std::filesystem::path dir = modDir / "Levels" / std::string(levelName);
 
   int mounted = 0;
   for (const char* archive : {"server.zip", "client.zip"}) {
     std::string archiveError;
-    if (files.mountArchive(dir / archive, mountPoint, &archiveError)) {
+    // The server sends the name in lower case (`gulf_of_oman`) while the folder
+    // on disk is `Gulf_of_Oman`: on a case-sensitive file system it is found
+    // by its normalized name.
+    const auto path = resolveAssetPath(modDir, std::filesystem::path(mountPoint) / archive);
+    if (path.empty()) archiveError = "missing " + mountPoint + "/" + archive;
+    if (!path.empty() && files.mountArchive(path, mountPoint, &archiveError)) {
       ++mounted;
     } else if (error != nullptr && error->empty()) {
       *error = archiveError;

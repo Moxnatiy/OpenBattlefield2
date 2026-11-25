@@ -445,7 +445,39 @@ static void testSkydomeBlock() {
   CHECK(!level::buildSkyDome(*level, files).has_value());
 }
 
+// The level name comes from the server: one that would leave Levels/ is refused
+// before the disk is touched, and one in another case than the folder is found.
+void testMountLevelName() {
+  namespace fs = std::filesystem;
+  const auto root = fs::temp_directory_path() / ("obf2-mount-" + std::to_string(::getpid()));
+  fs::create_directories(root / "Levels" / "Gulf_of_Oman");
+  for (const char* bad : {"", ".", "..", "../Gulf_of_Oman", "a/b", "a\\b", "c:x"}) {
+    FileSystem files;
+    std::string error;
+    CHECK(!level::mountLevel(files, root, bad, &error));
+    CHECK_EQ(error, std::string("invalid level name"));
+  }
+  // An empty folder: both archives are missing, and the error names the
+  // mount point in the server's spelling.
+  FileSystem files;
+  std::string error;
+  CHECK(!level::mountLevel(files, root, "gulf_of_oman", &error));
+  CHECK_EQ(error, std::string("missing Levels/gulf_of_oman/server.zip"));
+
+  // Two empty archives (a zip's 22-byte end record alone) in the folder's own
+  // case: the lower-case name mounts them.
+  for (const char* name : {"server.zip", "client.zip"}) {
+    std::ofstream zip(root / "Levels" / "Gulf_of_Oman" / name, std::ios::binary);
+    const char end[22] = {'P', 'K', 5, 6};
+    zip.write(end, sizeof(end));
+  }
+  FileSystem mounted;
+  CHECK(level::mountLevel(mounted, root, "gulf_of_oman"));
+  fs::remove_all(root);
+}
+
 TEST_MAIN({
+  testMountLevelName();
   testLoadLevel();
   testSkydomeBlock();
   testStaticObjects();
