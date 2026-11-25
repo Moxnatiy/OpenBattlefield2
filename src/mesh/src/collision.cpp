@@ -1,5 +1,7 @@
 #include "obf2/mesh/collision.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace obf2::mesh {
@@ -68,26 +70,65 @@ class Reader {
   std::string error_;
 };
 
-// The BSP is meant for fast lookup inside one mesh; we build our own index over
-// the level, so the tree is merely skipped.
-void skipBsp(Reader& reader) {
-  reader.skip(12, "bsp.min");
-  reader.skip(12, "bsp.max");
+// `BspV8::load` (Linux 0x7107b0): bounds, the nodes, the face references.
+CollisionBsp readBsp(Reader& reader) {
+  CollisionBsp bsp;
+  bsp.bounds.min = reader.vec3("bsp.min");
+  bsp.bounds.max = reader.vec3("bsp.max");
 
   const std::uint32_t nodeCount = reader.dword("bsp.nodeCount");
-  if (nodeCount > reader.capacity<std::uint32_t>()) {
+  if (nodeCount > reader.capacity<std::uint32_t>() / 4) {
     reader.fail("implausible bsp node count");
-    return;
+    return bsp;
   }
-  // A node: a plane (float) plus three double words.
-  reader.skip(static_cast<std::size_t>(nodeCount) * 16, "bsp.nodes");
+  bsp.nodes.resize(nodeCount);
+  for (CollisionBspNode& node : bsp.nodes) {
+    std::uint32_t bits = reader.dword("bsp.node.split");
+    std::memcpy(&node.split, &bits, sizeof(float));
+    node.flags = reader.dword("bsp.node.flags");
+    node.child[0] = reader.dword("bsp.node.child0");
+    node.child[1] = reader.dword("bsp.node.child1");
+  }
 
   const std::uint32_t faceRefCount = reader.dword("bsp.faceRefCount");
   if (faceRefCount > reader.capacity<std::uint16_t>()) {
     reader.fail("implausible bsp reference count");
-    return;
+    return bsp;
   }
-  reader.skip(static_cast<std::size_t>(faceRefCount) * 2, "bsp.faceRefs");
+  bsp.faceRefs.resize(faceRefCount);
+  for (std::uint16_t& ref : bsp.faceRefs) ref = reader.word("bsp.faceRef");
+  return bsp;
+}
+
+// The face normals 0x70f2e0 builds: (v3 − v2) × (v2 − v1); left as it is when
+// already of unit length within 1.1920929e-7 (0xb2bfb0; 1.0 at 0xb2f3bc), zero
+// when its squared length is under that, else divided by its length.
+std::vector<Vec3> faceNormals(const CollisionLayer& layer) {
+  constexpr float kEpsilon = 1.1920929e-7f;  // Linux 0xb2bfb0
+  std::vector<Vec3> normals(layer.faces.size());
+  for (std::size_t i = 0; i < layer.faces.size(); ++i) {
+    const CollisionFace& face = layer.faces[i];
+    if (face.a >= layer.vertices.size() || face.b >= layer.vertices.size() ||
+        face.c >= layer.vertices.size()) {
+      continue;  // a corrupt face: zero
+    }
+    const Vec3& v1 = layer.vertices[face.a];
+    const Vec3& v2 = layer.vertices[face.b];
+    const Vec3& v3 = layer.vertices[face.c];
+    const Vec3 e1{v2.x - v1.x, v2.y - v1.y, v2.z - v1.z};
+    const Vec3 e2{v3.x - v2.x, v3.y - v2.y, v3.z - v2.z};
+    Vec3 n{e1.z * e2.y - e1.y * e2.z, e1.x * e2.z - e1.z * e2.x, e1.y * e2.x - e1.x * e2.y};
+    const float squared = n.x * n.x + n.y * n.y + n.z * n.z;
+    if (std::abs(squared - 1.0f) < kEpsilon) {
+      normals[i] = n;
+    } else if (std::abs(squared) < kEpsilon) {
+      normals[i] = Vec3{};
+    } else {
+      const float scale = 1.0f / std::sqrt(squared);
+      normals[i] = Vec3{n.x * scale, n.y * scale, n.z * scale};
+    }
+  }
+  return normals;
 }
 
 CollisionLayer readLayer(Reader& reader, std::uint32_t versionMinor, std::uint32_t index) {
@@ -131,7 +172,10 @@ CollisionLayer readLayer(Reader& reader, std::uint32_t versionMinor, std::uint32
 
   // The marker is ASCII '1' when a tree follows.
   const std::uint8_t marker = reader.byte("col.bspMarker");
-  if (marker == '1') skipBsp(reader);
+  if (marker == '1') {
+    layer.bsp = readBsp(reader);
+    layer.bsp->normals = faceNormals(layer);
+  }
 
   // Face adjacency data appeared in version 0.10.
   if (versionMinor >= 10) {
@@ -166,6 +210,29 @@ const CollisionLayer* CollisionMesh::validLayer(std::size_t part, std::size_t ge
   if (lod < 0 || static_cast<std::size_t>(lod) >= lods.lods.size()) return nullptr;
   const int index = lods.lods[static_cast<std::size_t>(lod)];
   return index < 0 ? nullptr : &layers[static_cast<std::size_t>(index)];
+}
+
+float CollisionMesh::maxBoundingRadius(std::size_t part) const {
+  if (part >= parts.size()) return 0.0f;
+  const auto& geometries = parts[part].geometries;
+  for (std::size_t geometry = 0; geometry < geometries.size(); ++geometry) {
+    const std::size_t lodCount = geometries[geometry].lods.size();
+    if (lodCount == 0) continue;
+    for (std::size_t type = 0; type < lodCount; ++type) {
+      const CollisionLayer* layer = validLayer(part, geometry, static_cast<ColType>(type));
+      if (layer == nullptr) continue;
+      // calcRadius (0x72cb50): the largest squared length of the eight corners.
+      float largest = 0.0f;
+      for (int corner = 0; corner < 8; ++corner) {
+        const float x = (corner & 1) ? layer->bounds.max.x : layer->bounds.min.x;
+        const float y = (corner & 2) ? layer->bounds.max.y : layer->bounds.min.y;
+        const float z = (corner & 4) ? layer->bounds.max.z : layer->bounds.min.z;
+        largest = std::max(largest, x * x + y * y + z * z);
+      }
+      return std::sqrt(largest);
+    }
+  }
+  return 0.0f;
 }
 
 std::optional<CollisionMesh> loadCollisionMesh(std::span<const std::byte> bytes,
