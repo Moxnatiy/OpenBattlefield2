@@ -32,8 +32,7 @@ float groundUnder(const Vec3f& position, const PhysicsConstants& physics,
 // certain share of his height he floats up (`phy-soldier-start-float`), while he
 // stands on the bottom again from a different one (`stop-float`) — no jitter at the boundary.
 bool updateSwimming(const BodyState& body, SwimState& swim, const PhysicsConstants& physics,
-                    const level::Level* terrain) {
-  const float waterLevel = terrain != nullptr ? terrain->terrain.seaLevel : 0.0f;
+                    float waterLevel) {
   const float submersion =
       physics.standHeight > 0.0f ? (waterLevel - body.position.y) / physics.standHeight : 0.0f;
   if (swim.swimming) {
@@ -47,8 +46,7 @@ bool updateSwimming(const BodyState& body, SwimState& swim, const PhysicsConstan
 // Floating: gravity does not apply, the soldier stays near the surface, and the
 // speed is his own (`phy-soldier-swim-speed`). Not reversed.
 void floatSoldier(BodyState& body, const Vec3f& wish, const PhysicsConstants& physics,
-                  const level::Level* terrain, float step) {
-  const float waterLevel = terrain != nullptr ? terrain->terrain.seaLevel : 0.0f;
+                  float waterLevel, float step) {
   const float surface = waterLevel - physics.standHeight * physics.startFloat;
   body.position = body.position + wish * (physics.swimSpeed * step);
   body.position.y += (surface - body.position.y) * std::min(1.0f, step * 4.0f);
@@ -114,12 +112,25 @@ void countDown(float& delay, float step) {
 
 }  // namespace
 
+float waterHeightAt(const Vec3f& position, const level::Level* terrain,
+                    const CollisionWorld* collision) {
+  (void)position;
+  (void)collision;
+  // Placed water is not read: how the engine tells a mesh is water is not
+  // established. The one placed water plane in the game's data,
+  // Taraba Quarry's `tabara_quarry_waterplane` (Objects/Water/), maps its
+  // material 0 to `water` and sets `physicsType 3`; which of these the engine
+  // goes by is not read.
+  return terrain != nullptr ? terrain->terrain.seaLevel : 0.0f;
+}
+
 void moveSoldier(BodyState& body, SwimState& swim, const Vec3f& wish, float maxSpeed, bool jump,
                  const PhysicsConstants& physics, const level::Level* terrain,
                  const CollisionWorld* collision, float step) {
   const float ground = groundUnder(body.position, physics, terrain, collision);
-  if (updateSwimming(body, swim, physics, terrain)) {
-    floatSoldier(body, wish, physics, terrain, step);
+  const float water = waterHeightAt(body.position, terrain, collision);
+  if (updateSwimming(body, swim, physics, water)) {
+    floatSoldier(body, wish, physics, water, step);
   } else {
     stepSoldier(body, wish, maxSpeed, jump, physics, ground, step);
   }
@@ -209,8 +220,9 @@ bool soldierInput(BodyState& body, const SoldierIntent& intent, const PhysicsCon
 bool tickSoldier(BodyState& body, SwimState& swim, const SoldierIntent& intent, float matrixYaw,
                  const PhysicsConstants& physics, const level::Level* terrain,
                  const CollisionWorld* collision, float step) {
-  if (updateSwimming(body, swim, physics, terrain)) {
-    floatSoldier(body, intent.wish, physics, terrain, step);
+  const float water = waterHeightAt(body.position, terrain, collision);
+  if (updateSwimming(body, swim, physics, water)) {
+    floatSoldier(body, intent.wish, physics, water, step);
     return false;
   }
   // `GameServer::simulateFrame` (0x45af70): the input, the node, the collision.
@@ -245,8 +257,9 @@ void carryRemoteSoldier(BodyState& body, SwimState& swim, const Vec3f& feet,
   // network says (0x5dc314, 0x6f2310, 0x6ddd80).
   body.position = feet;
   body.velocity = velocity;
-  if (updateSwimming(body, swim, physics, terrain)) {
-    floatSoldier(body, Vec3f{}, physics, terrain, step);
+  const float water = waterHeightAt(body.position, terrain, collision);
+  if (updateSwimming(body, swim, physics, water)) {
+    floatSoldier(body, Vec3f{}, physics, water, step);
     return;
   }
   stepSoldierNode(body, yaw, physics, step);

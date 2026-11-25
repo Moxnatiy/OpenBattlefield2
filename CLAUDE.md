@@ -194,8 +194,8 @@ instead of scrambling the source.
 
 ### 11. One thing per file
 
-`src/app/main.cpp` is the application entry point: argument parsing, mode
-selection, the frame loop. Everything else lives in its own module with
+`src/app/main.cpp` is the application entry point: argument parsing and mode
+selection; a session and its frame loop are `app/game`. Everything else lives in its own module with
 its own header and its own test.
 
 The rule was not written out of tidiness: `main.cpp` grew past **6000
@@ -343,6 +343,8 @@ constant's value is needed, and no good where control flow is needed.
 | `tools/linuxded/vtable.py <Class> --msvc` | a class's vtables in the server with every slot named, and the offset the slot has in `BF2.exe` — what `(*obj + 0x50)()` in the client calls | MSVC's layout is derived (4-byte slots, one destructor); a base whose slot order differs between the ABIs would mislead |
 | `tools/control_constants.py` | every `c_PI*` constant with its number — the axis index in a `PlayerInput` and its mask bit (the button mask counts from `c_PIFire`) | reads the registration calls at 0x69045d on; a new register form would be skipped |
 | `tools/pe_field_users.py <pe> <global> <offset>` | every instruction that reaches `[ptr + offset]` right after loading a global pointer into `ptr` — "who touches field X of the object at global G", which Ghidra's xrefs do not answer | a straight-line follow: a pointer passed on, kept on the stack or copied is lost |
+| `tools/pe_address_refs.py <pe> <address> [--words N] [--rtti]` | every literal 32-bit reference to an address in any section, vtables included, with the words around it | literal references only: a computed address is not found |
+| `tools/pe_vtable_slots.py <pe> <vtable> [--max N]` | a vtable slot by slot, naming the plain MSVC field accessors (`get float +X`, `get dword +X`) | any other body is printed as `other` |
 | `tools/linuxded/vars_defaults.py <start> <stop>` | every `Vars::getInt`/`getFloat` a function registers: the name, the default, the global it lands in | follows only immediates and stack slots; what it cannot follow it prints as `?` |
 | `tools/exe_xref.py` | string → who refers to it | Ghidra does this better |
 | `tools/linuxded/gen_events.py` | the game event size table | marks an event conditional when its `deSerialize` reads anything but plain bits (a compressed vector, a string) |
@@ -403,8 +405,9 @@ third_party/    vendored single-file libraries: miniz, stb
 
 ### The application, module by module
 
-`main.cpp` went from 6000 lines to 1352: the arguments, the mode it is in,
-the wiring of the modules below and the frame loop — and nothing else.
+`main.cpp` went from 6000 lines to 1352, then to about 110: the arguments,
+the archives and the mode it is in — and nothing else. A session (the wiring
+of the modules below and the frame loop) is `app/game`.
 
 The names are the engine's own, from the source tree its checked build
 carries (docs/reference/engine-source-tree.txt). Where a module has a
@@ -414,6 +417,8 @@ to look when something does not match.
 | module | what it holds | the engine's |
 |---|---|---|
 | `app/command_line` | `Args` and the parsing; every measuring switch | `Game/Main/BF2EngineSetup` |
+| `app/game` | one session: the scene, the window, the HUD and the frame loop, for the menu, a level, a hosted round or a live server | `Game/Main/BF2Engine` |
+| `app/launch` | what a live connection takes from the command line, the `--probe` mode, the drawability check the session asks for | — |
 | `app/scene`, `app/scene_build` | the scene (unique geometry plus placements), the terrain, roads, water, sky and the placed objects | `Scene/Object/ObjectManager` |
 | `app/hosted_game` | a single-player game: our server and a client on a loop, with the round's settings from the game's data | `Game/GameServer` |
 | `app/render_context` | the window, the renderer, the texture cache and the upload of a scene | `Game/Main/BF2Render` |
@@ -422,6 +427,7 @@ to look when something does not match.
 | `app/camera`, `app/scripted_input` | where the frame is seen from; `--look-at`, `--move-at`, `--jump-at` | `IO/Input` |
 | `app/model_view`, `app/calibrate`, `app/collision_probe` | the modes that are not the game: one mesh posed by its clips, template numbers matched to names, what collides at a point | — |
 | `app/scoreboard_players` | who the scoreboard lists, from the session's world or our own server | `Menu/Hud/Scoreboard` (its `update`) |
+| `app/live_hud`, `app/kill_feed` | what a live server's round hands the HUD each frame: the tickets, the kill feed, the chat | `Menu/Hud` (`HudInformationLayer`, `BF2HudManager`) |
 | `app/crosshair` | our soldier's crosshair: the weapon out, its deviation, the HUD's numbers | `Menu/Hud` + `SoldierDeviationComp` |
 | `app/first_person` | our own arms and weapon: the first-person skeleton on the camera, its clips, its camera | `Soldier::updateFirstPersonAnimations` |
 | `hud/manager` | the whole interface of a round: the tree, the variables, the state machine, the spawn screen, the animation | `Menu/BF2HudManager` |
@@ -433,15 +439,15 @@ Two rules the split follows, and both were bought with bugs:
 * **the interface builds, the application draws.** `hud::Manager` gives
   back `DrawPiece`s and never touches the card, which is the same division
   the engine makes between the manager and the renderer. Uploading lives in
-  `main.cpp` beside the other uploads;
+  the session (`app/game`) beside the other uploads;
 * **anything the frame loop calls lives at the outer level.** A lambda of
   a setup block captured by reference is dead memory by the time the loop
   runs — it happened again during this split, to the upload helper, and it
   is the first of the rakes below.
 
-What is still in `main.cpp` and could leave it: the frame loop's own body
-(the order of pump, predict, draw, HUD, screenshot) and the spawn screen's
-click plumbing.
+What is still in the session (`app/game`) and could leave it: the frame
+loop's own body (the order of pump, predict, draw, HUD, screenshot) and the
+spawn screen's click plumbing.
 
 ## Building
 
@@ -536,7 +542,7 @@ know how the original does it. Each has a measure.
 | a ghost record of kind 3 | **our own soldier: done.** Kind 3 stops an object's ghost (`GhostManager::readData` 0x445820: `disableObject`, `removeActiveDescriptor`); our own soldier gets one when his state moves to the controlled-object state, and erasing him lost his template and kit — no weapon in hand, no crosshair, 1 spawn in 3. He is kept now (`our object N: ghost stopped by the server (kind 3), kept`; 2 of 6 live spawns hit it, the weapon stayed in both). What the engine does to **other** objects on kind 3 — we still erase them, so a player out of scope vanishes from our screen — is not read | an object out of the server's scope behaves on our screen as in the original |
 | the eye and the field of view | **on `--connect`, from the binary**: the eye is the template's `poseCameraPosition` from the pivot, turned by the body's yaw — 1.47 over the feet standing (`updateCameraTransformation`, `BF2.exe` 0x5a8630); the world's field of view is the player's `getFov` (0x453270), the soldier camera's `insideFOV` 1.1, fitted to the aspect by the renderer's setter (0x101c2b80). What is left: which call sets the player's fov on foot (the chain is read, that link is not); the eye's 0.5 approach between poses; the spawn screen's and `--hosted`'s field of view (1.05) and `--hosted`'s eye (1.7) — not measured | a frame of the original from the same spot matches ours |
 | a sprinter's clip | **found**: a value holder's `values a b c` is min, normal, max (`ValueHolder::makeScript` Linux 0x6d1dca writes +0, +8, +4; `isWithinRange` 0x6cd370 tests +0..+4), so `3p_sprint` is 5.5–100, not 5.5–6.3 — every range had been read wrong (docs/functions/animation-system.md). The first-person `sprint` now plays on the live server; a sprinting bot's third-person clip is **not yet checked on screen**. The earlier reading, kept for its speed analysis: `Soldier::updateAnimationSystems` (Linux 0x5545e0; the client's own copy is 0x61e1a0, read) hands a soldier who cannot fire `getSoldierSpeed(4)` = 7.0 straight ahead — **and "cannot fire" is only the second after a jump** (`getCanFireWeapon` Linux 0x550f20: `fireDelay <= 0 && +0x5b8 <= 0`; it is not about sprinting, an earlier note had it wrong) — otherwise the planar length of the node's velocity less the ground's, the direction normalized in the aim matrix's frame (so the trigger's value is speed × cos of the angle to his aim, which ours takes against the body's yaw only); `stand_sprint` is a `ForwardTrigger` on `3p_sprint` 5.5–6.3; the client's `isWithinRange` (0x7fe720) is `a <= value <= b`. Ruled out by measurement: that displacement speed on our carried soldiers — median 6.64 over 1400 sprinting frames, 27 inside the range. What the original's animation system actually holds for a sprinting remote soldier is not measured, and statics alone will not settle it | a read of the running original's animation system (+0x20 speed, +0x1c forward) for a sprinting bot, and then that bot plays the sprint clip here |
-| tickets on `--connect` | the layout is known; it rides a ghost (`ScoreManager::setNetUpdate`, 0x5c9650), whose class mask is not taken yet | the numbers match the original on the same server |
+| tickets on `--connect` | **shown**: the score manager's ghost is read (score_state.h) and the HUD takes it through `HudInformationLayer::updateTickets` (0x4646b0, `app/live_hud`): the numbers and the bleed's blinkers. On the live server a suicide took ours from 330 to 329 on screen. What is left: the low-ticket sound (no sound), and a comparison with the original on the same server | the numbers match the original on the same server |
 | simple object state mask (19 bits) | all 19 are named in the notes (network-events.md, "A vehicle's update, read whole"); ours reads the head — position, velocity, angular velocity, rotation — and passes the tail by length: the health-like range (0x10) needs a range from the object's interface, the control object's fields (0x800..0x40000) its seats | the tail read and applied: a damaged vehicle's state, its seats' weapons |
 | soldier state mask (21 bits) | the layout of all 21 is read (`soldier_state.h`), and on the live server every soldier record now ends exactly at its length; position, velocity, yaw, pitch, pose, weapon index and the ragdoll are named, the rest are "purpose not established" | all 21 named |
 | template number → name | the number is creation order, ours differs | `--calibrate` says "matched 21" |
@@ -562,7 +568,7 @@ soldier through `tickSoldier`.
 | `VariableColorEffect`, `AlphaFadeEffect` in the graph | not executed | in `Menu/Ingame` they only appear on test squares under `showTest`, so there is no visible debt |
 | the control points' owners on `--connect` | the spawn circles are the server's groups now (`getGroupsForPlayer`, docs/functions/spawn.md), but the flags' icons on the map still show the level file's first owner: the points' live state rides `ControlPointNetworkable`, not read | a captured point shows its new owner's flag on our map |
 | the scoreboard | the rows are the engine's (`Scoreboard` 0x7a38d0, docs/functions/hud-scoreboard.md) and on `--connect` their numbers the server's (`Player::setNetUpdate`, docs/functions/player-state.md). The pages are `HudScoreboard::setPage` (OpenBF2): score, our team by squads, manage; the right button gives it the mouse (HUD mode 12) and its tabs, server info and lists take clicks; the server info names the server, address, port and level (docs/functions/hud-squads.md). Not done, logged as `NOT DONE`: the voice mute and the kick vote (no voice, no vote manager), the map vote (needs the vote manager; refused while the server has voting off), favourites; `--hosted` has no score | a frame dump of the original's scoreboard on the same server matches ours |
-| the squads | **join and create work on the live server** (leave and lock are sent the same way, their answer not yet seen) from the spawn screen's squad tab (`hud::SquadList`, OpenBF2 `HudSquad`; docs/functions/hud-squads.md); the leader bit is the player state's unmasked `m_isSquadLeader`; event 28 (`SetSquadLeaderEvent`) was missing from the table and lost every new squad. Not done: the commander's apply/resign/mutiny, the squad name edit box, the invite list, the refusal chat lines | a squad made with a typed name and an invited player |
+| the squads | **the squad tab is the engine's `SquadMenuNew`** (`hud::SquadList`, BF2.exe 0x791260.., docs/functions/squad-menu.md): the member list, the commander row (apply, resign), the create panel with its name box (an edit node, typed through the device's text field), the invite list and its apply (invite, uninvite, kick). On the live server: create with the name box's "Alpha" put us in ALPHA as its leader. Not done: the commander's mutiny, the create panel's lock (Retail never sends it), the team half of `TeamTopLabelString`, the voice and kit icons, scrolling | a squad made with a typed name and an invited player |
 
 **Menu.** The menu ↔ game bridge is reversed — seventeen objects, all
 forty methods of `Logic` with addresses (docs/functions/menu-bridge.md).
