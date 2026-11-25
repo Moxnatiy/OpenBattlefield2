@@ -2,6 +2,7 @@
 
 #include <cctype>
 #include <cstring>
+#include <unordered_set>
 
 namespace obf2::loc {
 
@@ -88,6 +89,16 @@ bool Lexicon::addUtxt(std::span<const std::byte> bytes, std::string* error) {
 
   const std::string text = utf16ToUtf8(bytes);
   std::size_t added = 0;
+  // A key a file defines twice keeps its first text; later files still override
+  // earlier ones. English.utxt (Localization/English) has `EOR_3_combat`
+  // "BEST COMBAT" at line 1826 and "COMBAT" at line 2635, and the original's
+  // end-of-round TOP SCORES page heads its column BEST COMBAT (a screenshot of
+  // the running original). `EOR_4_gamemode` is "GAME MODE" at line 1844 and
+  // "GAME MODE:" at 2627, and the original's MAP BRIEFING page heads its
+  // section GAME MODE, without the colon. `HUD_TEXT_MENU_TIME_TO_RESPAWN` is
+  // defined twice too (lines 83 and 141). Where the engine's loader keeps the
+  // first is not read.
+  std::unordered_set<std::string> inThisFile;
   std::size_t position = 0;
 
   while (position < text.size()) {
@@ -117,6 +128,7 @@ bool Lexicon::addUtxt(std::span<const std::byte> bytes, std::string* error) {
     // `strike_at_karkand` while the dictionary has `HUD_LEVELNAME_Strike_at_Karkand`.
     const std::string upper = upperKey(key);
     if (keepExisting_ && entries_.count(upper) != 0) continue;
+    if (!inThisFile.insert(upper).second) continue;
     entries_[upper] = std::string(value);
   }
 

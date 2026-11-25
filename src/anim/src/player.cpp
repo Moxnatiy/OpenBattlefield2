@@ -23,6 +23,22 @@ float Player::timeOf(const std::string& bundle) const {
   return found == time_.end() ? 0.0f : found->second;
 }
 
+Player::MovementTime Player::movementTime() const {
+  // BF2.exe 0x7f6b60; speed scales both outputs, preserving half-cycle phase.
+  // The getter walks sentinel->prev (node +4), whereas playBundle searches
+  // sentinel->next (node +0): 0x7f6b60 versus 0x7f7a20. Presentation order
+  // is ascending priority, so the movement query starts at the back.
+  for (auto it = active_.rbegin(); it != active_.rend(); ++it) {
+    const auto& active = *it;
+    if (!active.movement) continue;
+    const float magnitude = std::abs(active.speed);
+    return {magnitude * active.length,
+            active.speed > 0.0f ? active.speed * active.time
+                               : magnitude * (active.length - active.time)};
+  }
+  return {};
+}
+
 bool Player::advance(Active& active, float step) const {
   const Bundle& bundle = *active.bundle;
   const float length = active.length;
@@ -122,11 +138,20 @@ void Player::update(const System& system, const State& state, float step,
       // its own end.
       if (!bundle->looping && speed < 0.0f) fresh.time = fresh.length;
       fresh.touched = true;
-      active_.push_back(fresh);
+      fresh.movement = bundle->looping && system.isMovementBundle(bundle->name);
+      // `playBundle` (0x7f7a20): inserted before the first player of a higher
+      // priority, so the list runs from the lowest to the highest and the last
+      // one laid on the skeleton wins. Appended, a run begun mid-reload covered
+      // the reload's arms.
+      const auto before = std::find_if(active_.begin(), active_.end(), [&](const Active& a) {
+        return a.bundle->priority > bundle->priority;
+      });
+      active_.insert(before, fresh);
       continue;
     }
     if (found->touched && bundle->abruptPlayback) found->time = 0.0f;
     found->touched = true;
+    found->movement = found->movement || (bundle->looping && system.isMovementBundle(bundle->name));
     if (!bundle->jumpToLastAnimationAtStop) found->speed = speed;
   }
 

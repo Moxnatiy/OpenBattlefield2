@@ -106,7 +106,22 @@ static void testYawInterpolatesAcrossWrap() {
   if (middle) CHECK_EQ(middle->bodyYaw, 180.0f);
 }
 
+// The driven hull's lead (ours, not the engine's): along the last two updates,
+// and not at all across a relocation faster than the limit.
+static void testControlledHullLeadIsBounded() {
+  GhostTrack tank;
+  CHECK(!tank.leadVehicle(100, 26.0f));
+  tank.push(100).position = {10, 0, 0};
+  tank.push(150).position = {10.25f, 0, 0};
+  const auto led = tank.leadVehicle(300, 26.0f);
+  CHECK(led && near(led->position.x, 10.75f));
+  tank.push(200).position = {50, 0, 0};
+  const auto relocated = tank.leadVehicle(80, 26.0f);
+  CHECK(relocated && near(relocated->position.x, 50));
+}
+
 TEST_MAIN({
+  testControlledHullLeadIsBounded();
   testYawInterpolatesAcrossWrap();
   testExtrapolationCarriesTheVertical();
   testTheLimitIsNotIncluded();

@@ -66,6 +66,10 @@ Args parseArgs(int argc, char** argv) {
       args.watchSoldier = true;
       args.watchRagdoll = true;
     }
+    else if (flag == "--watch-seated") {
+      args.watchSoldier = true;
+      args.watchSeated = true;
+    }
     else if (flag == "--watch-weapon" && i + 1 < argc) {
       args.watchSoldier = true;
       args.watchWeapon = std::atoi(argv[++i]);
@@ -100,6 +104,24 @@ Args parseArgs(int argc, char** argv) {
       args.zooms.push_back(zoom);
     }
     else if (flag == "--reload-at" && i + 1 < argc) args.reloads.push_back(std::atoi(argv[++i]));
+    else if (flag == "--use-at" && i + 1 < argc) {
+      Args::ScheduledFire use{};
+      if (std::sscanf(argv[++i], "%d:%d", &use.frame, &use.frames) != 2) {
+        std::fprintf(stderr, "--use-at expects <frame>:<frames>, not %s\n", argv[i]);
+        continue;
+      }
+      args.uses.push_back(use);
+    }
+    else if (flag == "--seat-at" && i + 1 < argc) {
+      Args::ScheduledSelect seat{};
+      if (std::sscanf(argv[++i], "%d:%d", &seat.frame, &seat.key) != 2 || seat.key < 1 ||
+          seat.key > 8) {
+        std::fprintf(stderr, "--seat-at expects <frame>:<1..8>, not %s\n", argv[i]);
+        continue;
+      }
+      args.seats.push_back(seat);
+    }
+    else if (flag == "--camera-at" && i + 1 < argc) args.cameraKeys.push_back(std::atoi(argv[++i]));
     else if (flag == "--fire-at" && i + 1 < argc) {
       Args::ScheduledFire fire{};
       if (std::sscanf(argv[++i], "%d:%d", &fire.frame, &fire.frames) != 2) {

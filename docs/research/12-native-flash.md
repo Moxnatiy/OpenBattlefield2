@@ -43,6 +43,15 @@ converted from Latin-1 to UTF-8. Every local change is marked
 | `gameswf_action.cpp` | two pointer casts to `unsigned` printed with `%p` |
 | `gameswf_button.cpp` | `return false` from a function returning a pointer |
 | `CMakeLists.txt` | zlib by name (`ZLIB::ZLIB` puts the SDK ahead of libc++'s headers) |
+| `base/tu_file.cpp` | **the memory stream defect**: both memory constructors made a `membuf`, while the read, write and seek callbacks cast their data to a `filebuf` (a `membuf` plus a cursor). A movie read from memory (`swf::Player`'s `loadMovie`) kept no cursor of its own; a borrowed read-only buffer could be written into. Both now make a `filebuf`, and a read-only one refuses writes. `tests/test_swf_stream.cpp` fails on the old code |
+
+## Building on Windows
+
+| file | change |
+|---|---|
+| `CMakeLists.txt`, `base/zlib_adapter.cpp`, `gameswf/gameswf_impl.cpp` | Windows has no system zlib: there miniz's zlib-compatible API (`third_party/miniz`, MIT, already in the build) stands in. Checked on macOS by forcing that branch: the menu frame is identical to the zlib build's. The menu's own movies are uncompressed (`FWS`), so a compressed `CWS` movie has not been played through it |
+| `gameswf/gameswf_action.h` | `to_uint32_bits` told infinity by `1.0 / 0.0`, which MSVC rejects (C2124); `d - d == 0` holds only for a finite `d` |
+| `src/swf/CMakeLists.txt` | `-Wno-deprecated-declarations` for GCC and Clang only; cl.exe rejects it (D8021) |
 
 ## The measure: `swf_probe`
 

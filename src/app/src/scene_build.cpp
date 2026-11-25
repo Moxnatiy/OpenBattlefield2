@@ -45,7 +45,7 @@ LevelScene buildLevelScene(FileSystem& files, level::Level& level, Scene& scene)
     ++roadsPlaced;
   }
   std::printf("  roads in the scene: %d\n", roadsPlaced);
-  scene.add(level::buildWaterPlane(level), Mat4::identity());
+  scene.add(level::buildWater(level, files), Mat4::identity());
 
   // The sky dome. Its place is the camera's, so it is not a scene instance:
   // it is uploaded on its own and put into the draw list every frame.
