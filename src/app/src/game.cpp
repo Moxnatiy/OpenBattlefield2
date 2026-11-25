@@ -1254,9 +1254,14 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
     const float levelView = level ? level->maximumViewDistance : 0.0f;
     const float viewDistance = levelView * engine.settings().video.viewDistanceScale;
     const float fogFar = level ? level->terrain.fogEnd : 0.0f;
-    const float firstPersonFar = viewDistance > 1.0f ? viewDistance : fogFar;
+    // The original sets this far plane on every frame of a level, with or
+    // without a local player (`BF2.exe` 0x453270, docs/functions/render-camera.md),
+    // so a free `--camera` view uses it too. The top-down view keeps the scene's
+    // reach.
+    const float levelFar = viewDistance > 1.0f ? viewDistance : fogFar;
+    const bool levelView3d = level.has_value() && !args.topDown;
     const float farPlane =
-        firstPerson && firstPersonFar > 1.0f ? firstPersonFar : scene.radius * 40.0f;
+        (firstPerson || levelView3d) && levelFar > 1.0f ? levelFar : scene.radius * 40.0f;
 
     // The world's vertical field of view. Through the soldier's eye it is his
     // camera's (`soldierCameraFov`): a battle hands the renderer the player's

@@ -2537,9 +2537,21 @@ void MeshRenderer::renderScene(const Frame& frame, const std::vector<DrawItem>& 
         uniforms.material[0] = range.detailMultiply ? 1.0f : 0.0f;
         // A blended range keeps its own test: GREATER 0 in both techniques
         // (BundledMesh.fx:668 `alpha`, StaticMesh.fx:423 `alpha_one`).
+        // A leaf is tested on the leaf shader's output alpha, not the texture's:
+        // `RaShaderLeaf.fx` writes `Color.a = Transparency` and halves the
+        // colour (:115-116), and its `ps_1_3` block multiplies texture by vertex
+        // colour with `mul_x4` (:217), so the tested alpha is 2 · d · Transparency
+        // against `AlphaRef 127` (:235). With Transparency 1 that is d > 127/510.
+        // Transparency 1 is not measured (its register is not identified in a
+        // frame dump), and the overgrowth variant's HASALPHA2MASK
+        // `mul_x2 r0.a, t0.a` (:220) is not applied: whether the original
+        // enables it is not established.
+        const float leafAlphaRef = 127.0f / 255.0f / 2.0f;
         uniforms.material[3] =
             range.alphaBlend ? 1.0f :
-            range.alphaTest ? 1.0f + (range.bundledAlpha ? 0.0f : 127.0f / 255.0f) : 0.0f;
+            range.alphaTest
+                ? 1.0f + (range.bundledAlpha ? 0.0f : range.leaf ? leafAlphaRef : 127.0f / 255.0f)
+                : 0.0f;
         // y: 1 a blended range, −1 a `ColormapGloss` one, 0 otherwise.
         uniforms.roadParams[1] = range.alphaBlend ? 1.0f : (range.colorMapGloss ? -1.0f : 0.0f);
         uniforms.treeSunColor[3] = range.leaf ? 1.0f : 0.0f;
