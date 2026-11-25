@@ -56,9 +56,13 @@ bool materialAlphaTest(std::string_view technique, int alphaMode);
 
 // Whether the surface is blended rather than cut out: `alphaMode` 1, or a
 // technique that carries `Alpha` without `Alpha_Test` — glass, canopies, the
-// 144 `Alpha` materials of the game's bundled meshes. Read, and not drawn
-// differently yet: we have no blended pass for the world.
+// 144 `Alpha` materials of the game's bundled meshes.
 bool materialAlphaBlend(std::string_view technique, int alphaMode);
+
+// Whether a bundled technique keeps its gloss in the colour map's alpha
+// (`ColormapGloss`, `Shaders_client.zip:RaShaderBM.fx`): then that alpha is the
+// gloss, and the alpha test reads the diffuse's colour instead.
+bool materialColorMapGloss(std::string_view technique);
 
 // Whether the engine draws this mesh as vegetation, which is decided by its
 // **path** and nothing else. `StaticMeshTemplate::load` (`RendDX9.dll`,
@@ -92,5 +96,22 @@ bool isVegetationPath(std::string_view meshPath);
 // named otherwise, and those are leaves too by their geometry. It is an
 // inference, and it is written down as one.
 void markVegetationLeaves(RenderMesh& mesh, std::string_view meshPath);
+
+// The same load's second flag, `isWater` (+0x2a4, set at 0x1011af34). The
+// static-mesh draw (0x100fed63) hands such a mesh to the water's own draw
+// (0x100fbab0) when the water exists and the placement has a baked light map
+// (+0x26c); otherwise it is drawn as any static mesh. docs/functions/water.md.
+bool isWaterPath(std::string_view meshPath);
+void markWaterMesh(RenderMesh& mesh, std::string_view meshPath);
+
+// The load's third flag, `isRoad` (+0x29c, set at 0x1011af67). The static-mesh
+// draw returns early for such a mesh unless the renderer's +0x6a4 is set
+// (0x100fe618), and that byte is the terrain quality's: 0 at low, 1 at medium
+// and high (0x1000fb50, its `case 1/2/3` on the settings' +0x28, which is
+// `setTerrainQuality` by the order `VideoSettings` saves them, `BF2.exe`
+// 0x4b2280). The game's road statics are the concrete pads of
+// `Roads/staticsnoblend` — landing pads for helicopters, airstrip ends.
+bool isRoadPath(std::string_view meshPath);
+void markRoadMesh(RenderMesh& mesh, std::string_view meshPath);
 
 }  // namespace obf2::mesh

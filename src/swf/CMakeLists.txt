@@ -11,7 +11,9 @@ endif()
 # gameswf's headers are C++14-era code with its own warnings; ours is compiled
 # with the project's flags apart from those headers' noise.
 set_target_properties(obf2_swf PROPERTIES CXX_STANDARD 20)
-target_compile_options(obf2_swf PRIVATE -Wno-deprecated-declarations)
+if(NOT MSVC)  # a GCC/Clang flag; cl.exe rejects it (D8021)
+  target_compile_options(obf2_swf PRIVATE -Wno-deprecated-declarations)
+endif()
 # The menu's rasteriser touches every pixel of a 1024 × 768 frame each frame;
 # unoptimised (std::clamp and friends as calls) it held the menu at a frame or
 # two a second in the debug build. Debug information stays.

@@ -30,10 +30,29 @@ struct Scene {
     // and its window in it. -1 means the object has no baked light map.
     int lightmapAtlas = -1;
     float lightmapOffset[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    // Index into `lodChains`, or -1 when the template draws one LOD only.
+    int lodChain = -1;
+    // With a chain: the light map of each of its LODs, in the chain's order
+    // (every LOD has its own, `level::ObjectLightmaps`).
+    struct LodLightmap {
+      int atlas = -1;
+      float offset[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    };
+    std::vector<LodLightmap> lodLightmaps;
+  };
+
+  // The LODs of one template left after the quality skip, nearest first, and
+  // what picks among them each frame (`game::pickLod`, `RendDX9.dll`
+  // 0x100fe5d0). `meshes[0]` is the instance's own `mesh`.
+  struct LodChain {
+    std::vector<int> meshes;
+    std::vector<float> switchDistances;  // meshes.size() - 1 values
+    float baseRadius = 0.0f;
   };
 
   std::vector<mesh::RenderMesh> meshes;
   std::vector<Instance> instances;
+  std::vector<LodChain> lodChains;
   Vec3f center;
   float radius = 1.0f;
 

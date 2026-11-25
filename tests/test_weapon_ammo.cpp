@@ -82,6 +82,22 @@ static void testMagazines() {
   CHECK(!full.requestReload(5));
 }
 
+static void testServerResupply() {
+  game::AmmoTemplate grenade;
+  grenade.magSize = 1;
+  grenade.nrOfMags = 4;
+  game::WeaponAmmo ammo;
+  ammo.setWeapon(grenade);
+  ammo.synchronize(0, 1);
+  CHECK(!ammo.canFire());
+  ammo.synchronize(0, 5);
+  CHECK_EQ(ammo.spareMags(), 0);
+  ammo.synchronize(1, 4);
+  CHECK(ammo.canFire());
+  CHECK_EQ(ammo.spareMags(), 3);
+  CHECK_EQ(app::ammoHud(ammo, 0, 1.0f).values.at("PrimaryClips"), 3.0f);
+}
+
 // The reload, tick by tick: the message makes state 2 at once, the update of the same
 // tick starts it (state 3, message 2 once), the magazine changes at `changeMagAt`, and the
 // reload ends at the reload time.
@@ -186,6 +202,7 @@ static void testHud() {
 TEST_MAIN({
   testTemplate();
   testMagazines();
+  testServerResupply();
   testReloadTimeline();
   testAutoReloadRefusesKey();
   testNoSpare();

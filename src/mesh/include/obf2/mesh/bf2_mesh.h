@@ -135,6 +135,14 @@ struct DrawRange {
   // colours (`obf2::mesh::markVegetationLeaves`).
   bool leaf = false;
 
+  // A mesh under `objects/water/` (`obf2::mesh::markWaterMesh`): with a baked
+  // light map it is drawn by the water shader, not its own material.
+  bool waterMesh = false;
+
+  // A mesh under `objects/roads/` (`obf2::mesh::markRoadMesh`): drawn only at
+  // terrain quality medium or high.
+  bool roadMesh = false;
+
   // The rig number for skinning — it matches the material's number.
   int rig = -1;
 
@@ -157,7 +165,13 @@ struct RenderMesh {
   std::vector<Vertex> vertices;
   std::vector<std::uint32_t> indices;
   std::vector<DrawRange> ranges;
-  Aabb bounds;
+  Aabb bounds;  // the LOD's own box from the file
+  // Where it came from: the geometry and LOD unpacked, and how many LODs that
+  // geometry has. Zero `lodCount` for a mesh assembled from several files.
+  std::size_t geometryIndex = 0;
+  std::size_t lodIndex = 0;
+  std::size_t lodCount = 0;
+  Kind fileKind = Kind::Static;  // the kind of that file (with a nonzero `lodCount`)
 
   // BundledMesh: the part index for every vertex (turret, barrel, wheels —
   // all in one buffer, each part in its own local coordinates).

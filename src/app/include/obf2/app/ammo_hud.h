@@ -35,4 +35,7 @@ struct AmmoHud {
 // colour is `hudColor(1, 0.3)`, 0x7a8c6e), the icons' paths (`getHudIcons`).
 AmmoHud ammoHud(const game::WeaponAmmo& ammo, std::uint32_t tick, float reloadProgress);
 
+// The clip count's colour, as Retail draws it (ammo_hud.cpp).
+void putClipColor(AmmoHud& out);
+
 }  // namespace obf2::app

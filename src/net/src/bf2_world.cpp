@@ -565,7 +565,7 @@ void WorldView::feedGhosts(std::span<const std::byte> packet) {
             std::optional<TankWeaponState> tank;
             if (const auto rotations = readTankTurretRotations(packet, *control, *armor, &tank, layout->bundles, layout->members)) {
               applySeatRotations(id, *layout, header->time, *rotations, true);
-              if (tank) weapons = {tank->cannon, tank->coaxial};
+              if (tank) weapons = {tank->cannon, tank->hasCoaxial ? std::optional(tank->coaxial) : std::nullopt};
             }
           }
         }

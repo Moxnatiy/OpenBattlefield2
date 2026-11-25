@@ -510,8 +510,34 @@ The events (`addEvent`, fired from `BundlePlayer::update`), the trigger's +0x2d
 and the bundle's +0x2e flags (purpose not established), `playBackward` (not read by
 the player), the left/right-foot phase, and the blend of several players on one
 skeleton — `applyAnimationsOnSkeleton` with two animations and two floats, plus
-`getSlerpFactor`. A new player is appended; the engine inserts it before the first
-one of a higher priority (`playBundle`).
+`getSlerpFactor`.
+
+**Priorities — done.** `AnimationSystemTemplate::loadScript` calls
+`TriggerManager::setPriosForTriggers` once the script has run (Linux server
+0x6b3626 → 0x6cfeb0). It walks the trigger map in its order and skips a trigger
+whose byte +0x40 is set (0x6cfeeb; taken as "has a parent" — inferred, not read);
+each other trigger goes through `setPriosForTrigger` (0x6cfe60), which stores the
+next number at +0x38 and recurses into the children (+0x20..+0x28), so a trigger
+comes before its children and one reached twice keeps the later number.
+`playBundle` (BF2.exe 0x7f7a20) inserts a new player before the first of a higher
+priority, so the highest is laid on the skeleton last. Ours:
+`System::assignPriorities` (after `load`), the bundle's `priority`, `Player`
+inserting by it. Before, a new player was appended: a run begun in the middle of a
+reload went after it and covered the reload's arms. Live, reloading then running:
+the run's pose before, the reload's after. A bundle under two triggers takes the
+later one's number in the walk — the engine passes the playing trigger's, which
+ours does not track.
+
+**Movement players.** `MovementTrigger::applyAnimations` (BF2.exe 0x7ff490) marks
+the looping players of its ordinary movement branch (+0x36, false from 0x7fe190);
+the two-bundle foot choice does not. `AnimationSystem` vtable +0x3c (0x7f6b60)
+answers the first such player from the back of the list, with its length and time
+scaled by its speed: `Player::movementTime`, what the footsteps are timed by.
+
+**RandomTrigger.** `RandomTrigger::applyAnimations` (0x7fefa0) plays one of its
+bundles, `rand() % count`. With no random source given, ours now draws the C
+library's `rand()` too; before it took the first bundle every time, so a soldier
+only ever played `idle1`.
 
 Who fills the state is not established either: `setTriggerMovement`'s caller in
 the client, the frame the direction is measured in, and where the idle time comes

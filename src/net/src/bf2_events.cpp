@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include "obf2/net/bf2_events.h"
@@ -1327,6 +1328,55 @@ std::optional<TankWeaponState> readTankWeapons(
   return std::nullopt;
 }
 
+// Any vehicle's controlled weapon sync, from the bit after getStateSync's
+// 10-bit length (Linux Player::getStateSync 0x4a16a0): the prefix (flags, hit
+// direction, shake), then for each of three slots a presence bit and, when
+// present, the slot (readWeaponSlot: 2+2+2 bits, rounds + 1 in 11, magazines
+// + 1 in 10) and an 8-bit heat only for a weapon with heat (the slot's object
+// answers interface 0x94c0 and its vtbl +0x60). Then the 45-bit tail (tick 32,
+// 1, 1 + 8, 1, 1, 1), which ends on the record's last bit. Whether a slot has
+// heat is not in the record, so each layout over the present slots is tried;
+// more than one that ends is refused. Magazines −1 is a weapon without
+// magazines (the AH-1Z's countermeasures, slot 2: 6 rounds). Slots 0 and 1
+// are returned by index (the slot is the weapon's itemIndex − 1: the AH-1Z's
+// HydraLauncher has itemIndex 1 and comes in slot 0); slot 0 must be present.
+// Measure: vehicle-seats-20261125/mac-ah1z-15, 1868 of 1868 records.
+std::optional<TankWeaponState> readVehicleWeaponSync(std::span<const std::byte> packet,
+                                                     std::size_t begin, std::size_t end) {
+  std::optional<std::array<std::optional<SeatWeaponState>, 3>> found;
+  unsigned presentMask = 0;
+  for (unsigned heatMask = 0; heatMask < 8; ++heatMask) {
+    if ((heatMask & ~presentMask) != 0 && heatMask != 0) continue;
+    BitReader reader(packet);
+    if (!reader.skipBits(begin) || !skipWeaponSyncPrefix(reader)) return std::nullopt;
+    std::array<std::optional<SeatWeaponState>, 3> slots;
+    unsigned present = 0;
+    bool ok = true;
+    for (unsigned slot = 0; slot < 3 && ok; ++slot) {
+      const auto bit = reader.readBits(1);
+      if (!bit) { ok = false; break; }
+      if (!*bit) continue;
+      present |= 1u << slot;
+      const auto ammo = readWeaponSlot(reader);
+      if (!ammo || ammo->rounds < -1 || ammo->magazines < -1) { ok = false; break; }
+      std::optional<float> heat;
+      if (heatMask & (1u << slot)) {
+        const auto value = reader.readBits(8);
+        if (!value) { ok = false; break; }
+        heat = static_cast<float>(*value) / 255.0f;
+      }
+      slots[slot] = SeatWeaponState{ammo->rounds, ammo->magazines, heat};
+    }
+    if (heatMask == 0) presentMask = present;
+    if (!ok || !slots[0] || reader.bitPosition() + 45 != end) continue;
+    if (found) return std::nullopt;  // two layouts end: not decided
+    found = std::move(slots);
+  }
+  if (!found) return std::nullopt;
+  const auto& slots = *found;
+  return TankWeaponState{*slots[0], slots[1].value_or(SeatWeaponState{0, -1, std::nullopt}), slots[1].has_value()};
+}
+
 }  // namespace
 
 std::optional<ControlObjectState> readControlObjectState(
@@ -1584,8 +1634,27 @@ std::optional<std::vector<SeatRotation>> readTankTurret(
   // Authored networked rotational bundles follow SimpleObjectNetworkable.
   // The rest of the descriptor also contains wheel and engine state.
   if (!members.empty() && controlled) {
-    // The controlled record continues past the descriptor (getStateSync),
-    // so its end cannot check the cut: keep the leading rotational bundles.
+    // The controlled record continues past the descriptor with
+    // Player::getStateSync: a 10-bit length and that many bits, which end on
+    // the record's last bit (as readSeatRotations). That end checks the whole
+    // cut, so a descriptor that opens with a non-rotational member (a
+    // helicopter's rotors) still yields its bundles.
+    static const bool traceControlled = std::getenv("OBF2_TRACE_MEMBERS") != nullptr;
+    BitReader whole = reader;
+    auto all = readDescriptorMembers(whole, members, true, nullptr);
+    const auto sync = all ? whole.readBits(10) : std::nullopt;
+    const bool ends = sync && whole.bitPosition() + *sync == end;
+    if (traceControlled) {
+      std::string kinds;
+      for (const auto& member : members) kinds += "RESX"[static_cast<int>(member.kind)];
+      std::fprintf(stderr, "members %s controlled mask=0x%x read=%s %s\n", kinds.c_str(), mask,
+                   all ? "ok" : "fail", ends ? "END" : "MISS");
+    }
+    if (ends) {
+      reader = whole;
+      return all;
+    }
+    // Otherwise keep the leading rotational bundles, as before.
     const auto prefix = std::ranges::find_if(members, [](const DescriptorMember& member) {
       return member.kind != DescriptorMember::Kind::Rotational; });
     members = members.first(static_cast<std::size_t>(prefix - members.begin()));
@@ -1676,7 +1745,32 @@ std::optional<std::vector<SeatRotation>> readTankTurretRotations(
   const auto head = readSimpleObjectHead(reader, control.compressionReference, true, true);
   if (!head) return std::nullopt;
   const auto rotations = readTankTurret(reader, head->mask, control.stateEnd, true, armor, bundles, members);
-  if (rotations && weapons) *weapons = readTankWeapons(packet, reader.bitPosition(), control.stateEnd);
+  if (rotations && weapons) {
+    *weapons = readTankWeapons(packet, reader.bitPosition(), control.stateEnd);
+    // Another vehicle's slots, when the whole cut ended and `reader` stands at
+    // the start of the weapon sync (readTankTurret, controlled branch).
+    if (!*weapons) *weapons = readVehicleWeaponSync(packet, reader.bitPosition(), control.stateEnd);
+    // OBF2_TRACE_MEMBERS: the result, and the bits when nothing fits.
+    static const bool traceWeapons = std::getenv("OBF2_TRACE_MEMBERS") != nullptr;
+    if (traceWeapons) {
+      std::fprintf(stderr, "weapons controlled at=%zu end=%zu %s", reader.bitPosition(), control.stateEnd,
+                   *weapons ? "ok" : "none");
+      if (*weapons) std::fprintf(stderr, " slot0 %d/%d slot1 %d/%d", (*weapons)->cannon.rounds,
+                                 (*weapons)->cannon.magazines, (*weapons)->coaxial.rounds, (*weapons)->coaxial.magazines);
+      if (!*weapons) {
+        BitReader bits(packet);
+        if (bits.skipBits(reader.bitPosition())) {
+          std::string text;
+          for (std::size_t at = reader.bitPosition(); at < control.stateEnd; ++at) {
+            const auto bit = bits.readBits(1);
+            text += bit && *bit ? '1' : '0';
+          }
+          std::fprintf(stderr, " bits %s", text.c_str());
+        }
+      }
+      std::fprintf(stderr, "\n");
+    }
+  }
   return rotations;
 }
 

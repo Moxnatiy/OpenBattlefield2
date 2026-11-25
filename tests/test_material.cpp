@@ -150,9 +150,11 @@ static void testAlphaComesFromEitherTheModeOrTheName() {
   // Case and neighbouring tokens must not matter.
   CHECK(materialAlphaTest("tangent_alpha_test1Alpha_Test", 0));
   CHECK(materialAlphaTest("Alpha_TestColormapGloss", 2));
+  CHECK(materialColorMapGloss("Alpha_TestEnvMapColormapGloss"));
+  CHECK(!materialColorMapGloss("Alpha"));
   CHECK(materialAlphaTest("AnimatedUVAlpha_TestColormapGloss", 2));
 
-  // Blended: glass and canopies. Read, not drawn differently yet.
+  // Blended: glass and canopies.
   CHECK(materialAlphaBlend("Alpha", 1));
   CHECK(materialAlphaBlend("AlphaEnvMap", 1));
   CHECK(materialAlphaBlend("AlphaNoHemiLight", 1));

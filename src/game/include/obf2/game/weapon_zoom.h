@@ -27,7 +27,7 @@ struct ZoomTemplate {
   int zoomLod = 0;                  // `zoom.zoomLod`, +0x40 — a render detail, not used
   bool zoomOutAfterFire = false;    // `zoom.zoomOutAfterFire`, +0x44
   float mouseSpeedMod = 1.0f;       // `zoom.mouseSpeedMod`, +0x50
-  bool disableMuzzleWhenZoomed = false;  // `zoom.disableMuzzleWhenZoomed`, +0x54 — not used
+  bool disableMuzzleWhenZoomed = false;  // `zoom.disableMuzzleWhenZoomed`, +0x54
   int input = 31;                   // `ZoomCompTemplate` +0x10: c_PIAltFire (0x1f)
 
   int zoomDelayTicks() const { return static_cast<int>(zoomDelay * 30.0f); }
@@ -63,6 +63,7 @@ class WeaponZoom {
   std::size_t levels() const { return weapon_ ? weapon_->factors.size() : 0; }
   int index() const { return index_; }
   bool zoomed() const { return index_ > 0; }
+  bool hidesMuzzle() const { return zoomed() && weapon_ && weapon_->disableMuzzleWhenZoomed; }
   // The field of view the camera is set to: 0 means its own.
   float fov() const { return fov_; }
   // The detail level the weapon's mesh is drawn at: 0, and the template's `zoomLod`

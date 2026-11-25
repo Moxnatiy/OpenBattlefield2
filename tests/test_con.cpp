@@ -213,7 +213,24 @@ static void testIncludeCycle() {
   CHECK_EQ(r.diagnostics.back().message, std::string("cyclic include"));
 }
 
+// The recording provider lists every file a run loaded, the ones reached by
+// include and run too, and not the ones it asked for and did not find.
+static void testRecordingProvider() {
+  MemoryFiles files;
+  files.files["a.con"] = "include b.tweak\nrun missing.con\n";
+  files.files["b.tweak"] = "ObjectTemplate.create SimpleObject b\n";
+  RecordingProvider recording(files);
+  Interpreter interp(recording, [](const Command&) {}, [](const Diagnostic&) {});
+  interp.runFile("a.con");
+  CHECK_EQ(recording.loaded().size(), std::size_t(2));
+  if (recording.loaded().size() == 2) {
+    CHECK_EQ(recording.loaded()[0], std::string("a.con"));
+    CHECK_EQ(recording.loaded()[1], std::string("b.tweak"));
+  }
+}
+
 TEST_MAIN({
+  testRecordingProvider();
   testTokenizer();
   testBasicCommands();
   testBlockComments();

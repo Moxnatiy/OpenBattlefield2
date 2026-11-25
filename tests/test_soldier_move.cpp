@@ -283,7 +283,17 @@ static void testRemoteSoldierRunsWithTheNodeStep() {
   CHECK(std::abs(body.position.x - (speed + damped) * 0.5f * kTickTime) < 0.001f);
 }
 
+// The water the swim thresholds are measured against: the level's sea level, 0
+// without terrain; placed water is not read yet.
+static void testWaterIsTheSeaLevel() {
+  obf2::level::Level terrain;
+  terrain.terrain.seaLevel = 61.6f;
+  CHECK_EQ(obf2::server::waterHeightAt({0.0f, 64.5f, 0.0f}, &terrain, nullptr), 61.6f);
+  CHECK_EQ(obf2::server::waterHeightAt({0.0f, 64.5f, 0.0f}, nullptr, nullptr), 0.0f);
+}
+
 TEST_MAIN({
+  testWaterIsTheSeaLevel();
   testRemoteSoldierStopsOnTheFloor();
   testRemoteSoldierRunsWithTheNodeStep();
   testAxesRampLikeTheServer();

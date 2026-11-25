@@ -167,6 +167,11 @@ UploadedScene uploadScene(gfx::MeshRenderer& renderer, TextureCache& textures,
           static_cast<std::size_t>(instance.lightmapAtlas) < wanted.size()) {
         wanted[static_cast<std::size_t>(instance.lightmapAtlas)] = true;
       }
+      for (const auto& lod : instance.lodLightmaps) {
+        if (lod.atlas >= 0 && static_cast<std::size_t>(lod.atlas) < wanted.size()) {
+          wanted[static_cast<std::size_t>(lod.atlas)] = true;
+        }
+      }
     }
     int loaded = 0;
     for (std::size_t i = 0; i < out.lightmapPages.size(); ++i) {
@@ -234,6 +239,38 @@ UploadedScene uploadScene(gfx::MeshRenderer& renderer, TextureCache& textures,
       }
     }
     renderer.setTerrainMaterials(materials, chartSize);
+
+    // The water (`docs/functions/water.md`). At `waterQuality` 2 and above the
+    // renderer loads its 3D water map from `common/textures/` under the name
+    // `renderer.waterNormalMap` gives, `watervolume` by default (`RendDX9.dll`,
+    // 0x100da870; the default at 0x100df7c0, +0x6d0). The cube is the level's
+    // `Water/envmap.dds`, or its `Envmaps/EnvMap0.dds` when it has none (same
+    // function). We have no `waterQuality` and run the 3D path always.
+    gfx::MeshRenderer::Water water;
+    water.color[0] = level->terrain.waterColor.x;
+    water.color[1] = level->terrain.waterColor.y;
+    water.color[2] = level->terrain.waterColor.z;
+    std::copy(std::begin(level->terrain.waterSpecularColor),
+              std::end(level->terrain.waterSpecularColor), water.specularColor);
+    water.specularPower = level->terrain.waterSpecularPower;
+    water.scroll[0] = level->terrain.waterScroll[0];
+    water.scroll[1] = level->terrain.waterScroll[1];
+    water.animSpeed = level->terrain.waterAnimSpeed;
+    water.alphaHeightMul = level->terrain.waterAlphaHeightMul;
+    water.alphaAdd = level->terrain.waterAlphaAdd;
+    water.height = level->terrain.seaLevel;
+    if (auto decoded = resolve("common/textures/watervolume.dds")) {
+      water.volume = renderer.uploadVolumeOrCube(*decoded);
+    }
+    std::string envMap = "Levels/" + level->name + "/Water/envmap.dds";
+    if (!files.exists(envMap)) envMap = "Levels/" + level->name + "/Envmaps/EnvMap0.dds";
+    if (auto decoded = resolve(envMap)) water.cube = renderer.uploadVolumeOrCube(*decoded);
+    renderer.setWater(water);
+    std::printf("  water: map %s, cube %s (%s), anim speed %g, scroll %g/%g\n",
+                water.volume != nullptr ? "loaded" : "missing",
+                water.cube != nullptr ? "loaded" : "missing", envMap.c_str(),
+                static_cast<double>(water.animSpeed), static_cast<double>(water.scroll[0]),
+                static_cast<double>(water.scroll[1]));
   }
 
   if (levelScene.skyDome) {

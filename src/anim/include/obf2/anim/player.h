@@ -43,6 +43,10 @@ class Player {
   // The time a bundle has been playing — kept between steps, and dropped as soon
   // as a step does not ask for that bundle (the engine drops the player).
   float timeOf(const std::string& bundle) const;
+  struct MovementTime { float duration = -1.0f; float time = -1.0f; };
+  // AnimationSystem vtable +0x3c, BF2.exe 0x7f6b60: first movement player,
+  // walking backward from the sentinel, including fading-out players.
+  MovementTime movementTime() const;
 
  private:
   // One `BundlePlayer` (`BF2.exe`: its update 0x7fe3c0): the time (+0x10), the
@@ -56,6 +60,7 @@ class Player {
     float fade = 0.0f;
     float weight = 0.0f;
     bool touched = false;
+    bool movement = false;  // +0x36, initially false (BF2.exe 0x7fe190).
   };
   // One step of a player; false when it has ended.
   bool advance(Active& active, float step) const;

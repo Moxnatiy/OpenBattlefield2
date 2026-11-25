@@ -806,6 +806,7 @@ struct SeatWeaponState {
 struct TankWeaponState {
   SeatWeaponState cannon;
   SeatWeaponState coaxial;
+  bool hasCoaxial = true;  // false: weapon slot 1 is absent (readVehicleWeaponSync)
 };
 
 // One member of a vehicle seat's descriptor the client can cut

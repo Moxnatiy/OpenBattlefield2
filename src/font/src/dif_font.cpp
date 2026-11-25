@@ -6,7 +6,7 @@
 namespace obf2::font {
 namespace {
 
-// A line reader tolerant of CRLF: the font files came from Windows.
+// A line reader tolerant of CRLF and trailing padding: the font files came from Windows.
 class LineReader {
  public:
   explicit LineReader(std::string_view text) : text_(text) {}
@@ -17,7 +17,12 @@ class LineReader {
     line = text_.substr(position_,
                         end == std::string_view::npos ? std::string_view::npos : end - position_);
     position_ = (end == std::string_view::npos) ? text_.size() : end + 1;
-    if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+    // CR, and the runs of tabs some files pad every line with
+    // (Fonts_client.zip digitalNumbers.dif, digitalSmallNumbers.dif:
+    // "header\t\t\t…"), which made those two fonts fail at line 1.
+    while (!line.empty() && (line.back() == '\r' || line.back() == '\t' || line.back() == ' ')) {
+      line.remove_suffix(1);
+    }
     ++lineNumber_;
     return true;
   }

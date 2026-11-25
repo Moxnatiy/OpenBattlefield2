@@ -204,7 +204,23 @@ static void testOtherTargetsIgnored() {
   CHECK_EQ(registry.stats().propertiesSet, 0LL);
 }
 
+static void testGeometrySkipLods() {
+  // maxSkip3pLods / maxSkipWreckLods default to 1 (RendDX9.dll 0x10192960) and
+  // belong to the last GeometryTemplate.create.
+  MemoryFiles files;
+  files.files["a.con"] =
+      "GeometryTemplate.create StaticMesh wall\n"
+      "GeometryTemplate.maxSkip3pLods 0\n"
+      "GeometryTemplate.create StaticMesh bush\n";
+  const game::Registry registry = runInto(files, "a.con");
+  CHECK_EQ(registry.maxSkipLods("WALL", 0), 0);
+  CHECK_EQ(registry.maxSkipLods("wall", 1), 1);
+  CHECK_EQ(registry.maxSkipLods("bush", 0), 1);
+  CHECK_EQ(registry.maxSkipLods("bush", 2), 0);
+}
+
 TEST_MAIN({
+  testGeometrySkipLods();
   testCreateAndProperties();
   testTweakReopensTemplate();
   testAccumulatingProperties();

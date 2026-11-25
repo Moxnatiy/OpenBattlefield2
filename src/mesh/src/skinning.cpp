@@ -94,7 +94,8 @@ void slerp(const float from[4], const float to[4], float t, float out[4]) {
 
 }  // namespace
 
-std::vector<Mat4> poseSkeleton(const Skeleton& skeleton, const std::vector<PoseStage>& stages) {
+std::vector<Mat4> poseSkeleton(const Skeleton& skeleton, const std::vector<PoseStage>& stages,
+                               const std::vector<BonePost>& posts) {
   // Step 1: spread the clips over the bones the way the engine does —
   // a stack per bone, and a weight of 1 clears it.
   struct Applied {
@@ -151,6 +152,21 @@ std::vector<Mat4> poseSkeleton(const Skeleton& skeleton, const std::vector<PoseS
     const Mat4 local = fromRotationTranslation(rotation, position);
     world[i] = bone.parent >= 0 ? multiply(world[static_cast<std::size_t>(bone.parent)], local)
                                 : local;
+    // `Skeleton::transform` 0x6c8a8d..0x6c8ab4: world = (local * parent), then
+    // its rotation times the post one (`rotMult`), the position put back. In our
+    // column order the post rotation goes on the left.
+    for (const BonePost& post : posts) {
+      if (post.bone != i) continue;
+      Mat4 turn = post.rotation;
+      turn.m[12] = turn.m[13] = turn.m[14] = 0.0f;
+      turn.m[3] = turn.m[7] = turn.m[11] = 0.0f;
+      turn.m[15] = 1.0f;
+      Mat4 rotated = multiply(turn, world[i]);
+      rotated.m[12] = world[i].m[12];
+      rotated.m[13] = world[i].m[13];
+      rotated.m[14] = world[i].m[14];
+      world[i] = rotated;
+    }
   }
   return world;
 }

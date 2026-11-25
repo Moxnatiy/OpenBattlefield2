@@ -38,7 +38,32 @@ AmmoHud playerHud(const PlayerHudInput& input) {
   out.flags["PlayerStaminaShow"] = input.sprinting || input.stamina < 1.0f;
   putColor(out, "PlayerSprintColor", hudColor(input.stamina, 0.05f));
   out.flags["KilledState"] = !input.alive || input.manDown;
+  // 0x464870: `TimeInfoShow` (+0x1a9) is the time left above 0; `LevelTime` is
+  // written only then.
+  if (input.nextStateChangeTick) {
+    const float left = timeToNextStateChange(*input.nextStateChangeTick, input.tick);
+    out.flags["TimeInfoShow"] = left > 0.0f;
+    if (left > 0.0f) out.strings["LevelTime"] = levelTimeText(left);
+  }
   return out;
+}
+
+float timeToNextStateChange(std::uint32_t nextStateChangeTick, std::uint32_t tick) {
+  return tick < nextStateChangeTick ? static_cast<float>(nextStateChangeTick - tick) / 30.0f : 0.0f;
+}
+
+std::string levelTimeText(float seconds) {
+  const int total = static_cast<int>(std::nearbyint(seconds));  // ROUND, 0x46489a
+  const int hours = total / 3600;
+  const int minutes = (total - hours * 3600) / 60;
+  const int rest = total - (hours * 60 + minutes) * 60;
+  char text[48];
+  char hourText[16] = "";
+  char minuteText[16] = "";
+  if (hours >= 1) std::snprintf(hourText, sizeof hourText, "%d:", hours);
+  if (hours >= 1 || minutes >= 1) std::snprintf(minuteText, sizeof minuteText, "%02d:", minutes);
+  std::snprintf(text, sizeof text, "%s%s%02d", hourText, minuteText, rest);
+  return text;
 }
 
 }  // namespace obf2::app

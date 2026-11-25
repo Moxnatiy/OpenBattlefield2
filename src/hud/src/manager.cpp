@@ -10,9 +10,106 @@
 #include "obf2/hud/ingame.h"
 #include "obf2/hud/kit_list.h"
 #include "obf2/hud/spawn.h"
+#include "obf2/hud/strategic_objects.h"
+#include "obf2/server/collision_objects.h"
 
 namespace obf2::hud {
 namespace {
+
+int collisionPartOf(const game::ObjectTemplate& object) {
+  // `ObjectTemplate.collisionPart` (SimpleObjectTemplate +0x78, setter Linux
+  // 0x507830); 0 when not set.
+  if (const game::Property* part = object.property("collisionPart")) {
+    if (const auto value = part->asInt(0)) return *value;
+  }
+  return 0;
+}
+
+// `Object::getPhysicBoundingRadius` (Linux 0x687770) of an object made from a
+// template, before anything moves it:
+//
+//   * the collision mesh's radius (`Object+0x80`, vtable +0xf0 →
+//     `CollisionMesh::maxBoundingRadius`), 0 without one. The object's own mesh
+//     is the part its template names (`SimpleObject::SimpleObject`, 0x58a860,
+//     hands template +0x78 to the CollisionManager); a child without a mesh of
+//     its own takes its bundle's mesh at its part when that part is above 0,
+//     until the first child that has a mesh of its own
+//     (`setChildPartCollisionMeshes`, 0x574760; collision_objects.h);
+//   * plus `getBoundingRadiusModifier` (vtable +0x138): 0 for an `Object`
+//     (0x4bd530); for a `PlayerControlObject` (0x536af0) its template's float
+//     +0x3d0, `ObjectTemplate.boundingRadiusModifierWhenOccupied` (console
+//     command at 0x8f1b6e, named at 0x8ca949), 0 in the template's constructor
+//     (0x53ba88). Not ported: `ZiplineRope`'s (0x572460);
+//   * widened by each child whose own radius is above 0 to that radius plus
+//     the length of the child's offset (vtable +0x1e0 children, +0x1c0 offset).
+//
+// The early 0 for an object whose flag word (+0x8) has bit 0 set is not taken:
+// what sets that bit is not established.
+float physicRadiusOf(server::CollisionLibrary& meshes, const game::Registry& registry,
+                     const game::ObjectTemplate& object, const mesh::CollisionMesh* bundle,
+                     bool& bundleStopped, int depth, int rootPart = -1) {
+  constexpr int kMaxDepth = 16;  // the guard collision_objects.cpp uses against a cycle
+  const mesh::CollisionMesh* own = meshes.meshOf(object);
+  const int part = rootPart >= 0 ? rootPart : collisionPartOf(object);
+  float radius = 0.0f;
+  if (own != nullptr) {
+    radius = own->maxBoundingRadius(static_cast<std::size_t>(std::max(part, 0)));
+    bundleStopped = true;
+  } else if (bundle != nullptr && !bundleStopped && part > 0) {
+    radius = bundle->maxBoundingRadius(static_cast<std::size_t>(part));
+  }
+  if (object.className == "PlayerControlObject") {
+    if (const game::Property* modifier = object.property("boundingRadiusModifierWhenOccupied")) {
+      if (const auto value = modifier->asFloat(0)) radius += *value;
+    }
+  }
+  if (depth >= kMaxDepth) return radius;
+  const mesh::CollisionMesh* childBundle = own != nullptr ? own : bundle;
+  bool childStopped = own != nullptr ? false : bundleStopped;
+  for (const game::ChildTemplate& child : object.children) {
+    const game::ObjectTemplate* childObject = registry.find(child.name);
+    if (childObject == nullptr) continue;
+    const float childRadius =
+        physicRadiusOf(meshes, registry, *childObject, childBundle, childStopped, depth + 1);
+    if (childRadius > 0.0f) {
+      const float offset = std::sqrt(child.position.x * child.position.x +
+                                     child.position.y * child.position.y +
+                                     child.position.z * child.position.z);
+      radius = std::max(radius, offset + childRadius);
+    }
+  }
+  if (own == nullptr) bundleStopped = childStopped;
+  return radius;
+}
+
+float physicBoundingRadius(server::CollisionLibrary& meshes, const game::Registry& registry,
+                           const game::ObjectTemplate& object, int rootPart) {
+  bool stopped = false;
+  return physicRadiusOf(meshes, registry, object, nullptr, stopped, 0, rootPart);
+}
+
+// atan2 of the object's forward axis x over z: what 0x77e500 reads from its
+// matrix (vtable +0x80, row 2 at +0x20 and +0x28), here the placed object's
+// own rotation or ready matrix.
+float headingOf(const Mat4& transform) {
+  const Vec3f forward = transformDirection(transform, Vec3f{0.0f, 0.0f, 1.0f});
+  return std::atan2(forward.x, forward.z);
+}
+
+// 0x77e500's child walk (`FUN_0071b670`) with the filter at vtable 0x92ff4c
+// (0x6273a0): a child whose template answers class id 0x9c42 (0x91c394), the
+// Linux server's `CID_RemoteControlledObjectTemplate`.
+bool hasRemoteControlledChild(const game::Registry& registry, const game::ObjectTemplate& object,
+                              int depth) {
+  if (depth >= 16) return false;  // the cycle guard collision_objects.cpp uses
+  for (const game::ChildTemplate& child : object.children) {
+    const game::ObjectTemplate* found = registry.find(child.name);
+    if (found == nullptr) continue;
+    if (found->className == "RemoteControlledObject") return true;
+    if (hasRemoteControlledChild(registry, *found, depth + 1)) return true;
+  }
+  return false;
+}
 
 // The map's window is a square around the combat area, and the margin is a
 // fraction of the picture rather than of the area: 40 texels of the 512-wide map
@@ -104,6 +201,9 @@ bool Manager::load(FileSystem& files, engine::Engine& engine, const level::Level
 
   spawnScreen_.mutableChoice().kit = setup.kit;
   spawnScreen_.mutableChoice().team = setup.team == 2 ? 2 : 1;
+  squadList_.text = [&engine](const std::string& key) {
+    return std::string(engine.lexicon().text(key));
+  };
   bindCommands(engine.console());
 
   // The plates' alpha. This is not our invention and not zero: BF2.exe takes the
@@ -144,9 +244,10 @@ bool Manager::load(FileSystem& files, engine::Engine& engine, const level::Level
     // The map: its window follows the player and the zoom, so it must not be baked
     // in advance either.
     const bool mapNodeItself = node.type == NodeType::Map || node.type == NodeType::MiniMap;
-    // The scoreboard's lists: their rows follow the players, so they are rebuilt on
-    // their own whenever the scoreboard's contents change.
-    const bool scoreList = node.type == NodeType::List && scoreboard_.list(node.listData) != nullptr;
+    // The scoreboard's lists and the chat: their rows follow the game, so they are
+    // rebuilt on their own whenever their contents change.
+    const bool scoreList = node.type == NodeType::List &&
+                           (scoreboard_.list(node.listData) != nullptr || node.listData == 3);
     if (!ticketText && !cpBar && !centreMessage && !rotating && !mapNodeItself && !scoreList) {
       continue;
     }
@@ -254,9 +355,6 @@ void Manager::bindCommands(engine::Console& console) {
     std::printf("  scoreboard: tab %d\n", tab);
   });
   console.bind("sound.playSound", [](const con::Command&) {});
-  // `HudScoreboard::singleClick` (OpenBF2): only the manage page answers — column
-  // 4 mutes a player's voice, 7 and 8 start a kick vote. We have neither voice nor
-  // the vote manager, so both are said rather than done.
   // The map vote (OpenBF2 Menu/HudVoteMap.cpp). `setVoteMapShow 1` opens the
   // list only while the vote manager takes part in voting; with voting off on the
   // server it refuses, as the original's does. With it on, the vote itself (the
@@ -282,106 +380,99 @@ void Manager::bindCommands(engine::Console& console) {
     std::printf("  NOT DONE: %s favourite server (GeneralSettings' favourites are not kept)\n",
                 command.argInt(0).value_or(0) != 0 ? "add" : "remove");
   });
+  // A press on a scoreboard list's row (`setListNodeConCmd 1 "Scoreboard.singleClick
+  // <side>"`, HudElementsScoreboard.con; `HudScoreboard::singleClick`, OpenBF2).
+  // Only the manage page answers: column 4 is the player's voice, 7 and 8 the kick
+  // vote (0x7a3bae..0x7a3e5b). The row's player is in its hidden column 10.
   console.bind("Scoreboard.singleClick", [this](const con::Command& command) {
     const int side = command.argInt(0).value_or(2);
     if (scoreboard_.page() != 2) return;
     const int player = scoreboard_.playerAt(side, lastListHit_.row);
     if (player < 0) return;
-    if (lastListHit_.column == 4) {
-      std::printf("  NOT DONE: scoreboard — mute player %d (VoipPlayerMuteEvent, no voice yet)\n",
-                  player);
-    } else if (lastListHit_.column > 6 && lastListHit_.column <= 8) {
-      std::printf("  NOT DONE: scoreboard — kick vote on player %d (no vote manager yet)\n",
-                  player);
+    if (lastListHit_.column == 4 && hooks_.toggleMute) {
+      hooks_.toggleMute(player);
+    } else if ((lastListHit_.column == 7 || lastListHit_.column == 8) && hooks_.kickVote) {
+      hooks_.kickVote(player, lastListHit_.column);
     }
   });
 
-  // The squad tab (HudElementsSquadsNew.con; OpenBF2 Menu/HudConsoleBindings.cpp
-  // binds these `SquadMenu` names to `HudSquad`). A request goes out through
-  // `hooks_.squadAction`; what the original would do and we cannot yet is said.
-  const auto act = [this](const SquadList::Action& action) {
-    if (action.kind == SquadList::Action::Kind::NotDone) {
-      std::printf("  NOT DONE: squad tab — %s\n", action.what.c_str());
-      return;
+  // The squad tab's commands (handlers 0x76d8d5..0x76de3e,
+  // docs/functions/squad-menu.md). A request goes out through
+  // `hooks_.squadAction`.
+  const auto squadAction = [this](std::optional<SquadList::Action> action) {
+    if (action && hooks_.squadAction) hooks_.squadAction(*action);
+    if (const auto state = squadList_.takeRequestedState()) {
+      std::printf("  squad menu: HUD state %d asked (hud->vtbl[0x1dc])\n", *state);
     }
-    if (action.kind != SquadList::Action::Kind::None && hooks_.squadAction) {
-      hooks_.squadAction(action);
-    }
-    squadVariables();
+    pushSquadVariables();
   };
-  console.bind("SquadMenu.singleClickNew", [this, act](const con::Command&) {
-    act(squadList_.click(lastListHit_.row, lastListHit_.column));
+  console.bind("SquadMenu.singleClickNew",
+               [this, squadAction](const con::Command&) { squadAction(squadList_.singleClickNew()); });
+  console.bind("SquadMenu.createSquad",
+               [this, squadAction](const con::Command&) { squadAction(squadList_.createSquad()); });
+  console.bind("SquadMenu.setSquadCreateSelect", [this, squadAction](const con::Command& command) {
+    squadList_.setSquadCreateSelect(command.argInt(0).value_or(0) != 0);
+    squadAction(std::nullopt);
   });
-  console.bind("SquadMenu.doubleClickNew", [](const con::Command&) {
-    // `doubleClickNew` is the image's shared one-byte `ret` (OpenBF2 HudSquad.cpp).
+  console.bind("SquadMenu.squadCreateLockToggle", [this, squadAction](const con::Command&) {
+    squadList_.squadCreateLockToggle();
+    squadAction(std::nullopt);
   });
-  console.bind("SquadMenu.createSquad", [this, act](const con::Command&) {
-    act(squadList_.createSquad());
+  console.bind("SquadMenu.setShowInviteList", [this, squadAction](const con::Command& command) {
+    squadList_.setShowInviteList(command.argInt(0).value_or(0) != 0);
+    squadAction(std::nullopt);
   });
-  console.bind("SquadMenu.setSquadCreateSelect", [this, act](const con::Command& command) {
-    act(squadList_.setCreateMode(command.argInt(0).value_or(0) != 0));
+  // 0x83d270, a bare `ret`: Retail's double clicks do nothing.
+  console.bind("SquadMenu.doubleClickNew", [](const con::Command&) {});
+  console.bind("SquadMenu.doubleClickInvite", [](const con::Command&) {});
+  // The invite list: a checkbox toggles (0x791f50), APPLY sends (0x791fd0).
+  console.bind("SquadMenu.singleClickInvite", [this, squadAction](const con::Command&) {
+    squadList_.singleClickInvite();
+    squadAction(std::nullopt);
   });
-  console.bind("SquadMenu.squadCreateLockToggle", [this](const con::Command&) {
-    squadList_.toggleCreateLock();
-    squadVariables();
+  console.bind("SquadMenu.applyInviteList", [this, squadAction](const con::Command&) {
+    for (const auto& action : squadList_.applyInviteList()) squadAction(action);
+    squadAction(std::nullopt);
   });
-  for (const char* notDone : {"SquadMenu.setSquadNameSelect", "SquadMenu.setShowInviteList",
-                              "SquadMenu.applyInviteList", "SquadMenu.singleClickInvite",
-                              "SquadMenu.doubleClickInvite"}) {
-    console.bind(notDone, [notDone](const con::Command&) {
-      std::printf("  NOT DONE: %s (the squad-name edit box and the invite list are not ours yet)\n",
-                  notDone);
-    });
-  }
+  // The name box's button (HudElementsSquadsNew.con:180): focus it for typing
+  // (0x78f190 → 0x7b11e0); the frame loop hands it the keyboard.
+  console.bind("SquadMenu.setSquadNameSelect", [this](const con::Command&) {
+    if (squadList_.setSquadNameSelect()) std::printf("  squad menu: name box focused\n");
+  });
 }
 
 void Manager::squadWorld(const SquadWorld& world) {
-  scoreboard_.setSquadNames(world.name);
-  squadList_.update(world, [this](std::string_view key) {
-    return std::string(engine_->lexicon().text(key));
+  // `update(visible)` (0x792100) runs while the members tab is up: the spawn
+  // screen's SQUAD tab (`MembersShow`, SpawnManager.toggleMembers 1).
+  const bool visible = variables_["MembersShow"];
+  const int before = squadList_.revision();
+  squadList_.update(world, visible);
+  // The scoreboard's squads page heads each group with its squad's name; we
+  // know our own team's squads' names from the same world.
+  std::array<std::string, 10> names;
+  for (std::size_t i = 0; i < names.size(); ++i) names[i] = world.squads[i].name;
+  const int team = world.team;
+  scoreboard_.setSquadNames([names, team](int askedTeam, int squad) {
+    if (askedTeam != team || squad < 1 || squad > 9) return std::string();
+    return names[static_cast<std::size_t>(squad)];
   });
-  // The list is baked into the spawn screen's geometry, so a changed row (a
-  // player joined, a squad was named) has to rebuild it.
-  std::string fingerprint;
-  if (const ListData* list = squadList_.list(5)) {
-    for (const ListColumn& column : list->columns()) {
-      for (const ListCell& cell : column.cells) {
-        fingerprint += cell.text;
-        fingerprint += cell.texture;
-        fingerprint += std::to_string(cell.color.r + cell.color.g * 3 + cell.color.b * 7);
-        fingerprint += '|';
-      }
-    }
-  }
-  if (fingerprint != squadFingerprint_) {
-    squadFingerprint_ = std::move(fingerprint);
-    spawnDirty_ = true;
-  }
-  squadVariables();
+  if (squadList_.revision() != before) pushSquadVariables();
 }
 
-void Manager::squadVariables() {
-  // `HudSquad::registerData`: what the squad tab's nodes read.
-  const auto setBool = [this](const char* name, bool value) {
-    bool& slot = variables_[name];
-    if (slot != value) spawnDirty_ = true;
-    slot = value;
-  };
-  const auto setString = [this](const char* name, const std::string& value) {
-    std::string& slot = strings_[name];
-    if (slot != value) spawnDirty_ = true;
-    slot = value;
-  };
-  setBool("SquadMemberListShow", variables_["MembersShow"]);
-  setBool("IsInSquad", squadList_.inSquad());
-  setBool("IsSquadLeader", squadList_.squadLeader());
-  setBool("SquadCreateShow", squadList_.createVisible());
-  setBool("SquadCreateLockedShow", squadList_.createLocked());
-  setBool("InviteListShow", false);  // the invite list is not ours yet
-  setString("SquadCreateTagString", squadList_.createTag());
-  setString("NrOfSquads", squadList_.squadCountText());
-  setString("NrOfUnassigned", squadList_.unassignedText());
-  setString("TeamTopLabelString", squadList_.title());
+void Manager::pushSquadVariables() {
+  // The menu's own variables (init 0x78dcb0), written where the tree reads
+  // them. The lists are baked into the spawn screen, so it is rebuilt.
+  for (const char* name : {"SquadMemberListShow", "SquadCreateShow", "SquadRenameShow",
+                           "SquadCreateLockedShow", "InviteListShow", "IsInSquad", "IsSquadLeader"}) {
+    bool value = false;
+    if (squadList_.boolVariable(name, value)) variables_[name] = value;
+  }
+  for (const char* name :
+       {"NrOfSquads", "NrOfUnassigned", "SquadCreateTagString", "NewSquadName", "TeamTopLabelString"}) {
+    std::string value;
+    if (squadList_.stringVariable(name, value)) strings_[name] = value;
+  }
+  spawnDirty_ = true;
 }
 
 FontRef Manager::fontFor(std::string_view style) {
@@ -418,6 +509,19 @@ FontRef Manager::fontFor(std::string_view style) {
 void Manager::buildContexts(engine::Engine& engine) {
   context_.localize = [&engine](std::string_view key) { return engine.lexicon().text(key); };
   context_.fontFor = [this](std::string_view style) { return fontFor(style); };
+  chat_.setLocalize([this](std::string_view key) { return std::string(engine_->lexicon().text(key)); });
+  // The chat wraps on the `ChatList` node's fonts (`setListNodeFont … 0` / `1`),
+  // the way `BfListBoxData::measureText` asks the node's.
+  for (const Node& node : tree_.nodes()) {
+    if (node.type != NodeType::List || node.listData != 3) continue;
+    const std::vector<std::string> fonts = node.listFonts;
+    chat_.setMeasure([this, fonts](int number, std::string_view text) -> float {
+      if (number < 0 || static_cast<std::size_t>(number) >= fonts.size()) return 0.0f;
+      const FontRef face = fontFor(fonts[static_cast<std::size_t>(number)]);
+      return face.font != nullptr ? font::textWidth(*face.font, text, 1.0f) : 0.0f;
+    });
+    break;
+  }
   context_.isVisible = [this](std::string_view variable) {
     if (variable == "1") return true;
     const auto found = variables_.find(std::string(variable));
@@ -451,8 +555,13 @@ void Manager::buildContexts(engine::Engine& engine) {
     // computes it is **a source not found**.
     if (variable == "BottomRightAlpha") return bottomRightAlpha_;
     const auto found = alpha_.find(std::string(variable));
-    if (found == alpha_.end()) return std::nullopt;
-    return found->second;
+    if (found != alpha_.end()) return found->second;
+    // The ticket bleed's blinkers (`FriendlyTicketBleed`, `EnemyTicketBleed`,
+    // HUD/HudSetup/SpawnInterface/HudElementsMap.con:212, 218) are float
+    // variables the information layer holds beside the others (updateTickets).
+    const auto value = values_.find(std::string(variable));
+    if (value == values_.end()) return std::nullopt;
+    return value->second;
   };
   context_.variableText = [this](std::string_view variable) -> std::string_view {
     const auto found = strings_.find(std::string(variable));
@@ -461,9 +570,14 @@ void Manager::buildContexts(engine::Engine& engine) {
   // The show effects are seen by the geometry builder itself: alpha multiplies the
   // alpha, move shifts the rectangle.
   context_.showState = [this](const Node& node) { return animator_.state(node); };
-  // A list node's rows (0x7af170): the scoreboard's four; the other eight
-  // sources (chat, squads, the commander's, the level list) are not ours yet.
+  // A list node's rows (0x7af170): the chat's, the squads' and the
+  // scoreboard's four; the others (the commander's, the level list) are not
+  // ours yet.
+  // Edit nodes: the squad create panel's name box is string 2
+  // (`HudElementsSquadsNew.con`, `setEditNodeString 2`); 1 and 3 are not ours.
+  context_.editText = [this](int string) -> const std::string* { return squadList_.editString(string); };
   context_.listData = [this](int data) -> const ListData* {
+    if (data == 3) return &chat_.list();  // 0x7af170: `[hud+0x144]->getData()`
     if (const ListData* squads = squadList_.list(data)) return squads;
     return scoreboard_.list(data);
   };
@@ -485,7 +599,12 @@ void Manager::buildMapWindow(FileSystem& files, const level::Level* level,
   if (!setup_.levelName.empty()) {
     context_.mapTexture = "Levels/" + setup_.levelName + "/Hud/Minimap/ingameMap.tga";
   }
-  const auto gameplay = level != nullptr
+  // The capture points, the spawners and the combat area are the round's own
+  // layer when the session knows it (a 32- or 64-player server has other
+  // points, with other ids, than the 16 layer); Conquest 16 otherwise.
+  const auto gameplay = setup_.gameplay != nullptr
+                            ? std::optional<level::GameplayObjects>(*setup_.gameplay)
+                        : level != nullptr
                             ? level::loadGameplayObjects(files, level->name, "gpm_cq", 16)
                             : std::optional<level::GameplayObjects>{};
   if (!gameplay || gameplay->combatArea.empty()) {
@@ -586,6 +705,48 @@ void Manager::buildMapWindow(FileSystem& files, const level::Level* level,
     return path;
   };
 
+  // Strategic objects: one icon per holder, not per object, gathered in
+  // creation order: the placed objects as the level lists them, then what the
+  // spawners put down when the round starts.
+  server::CollisionLibrary meshes(files, registry);
+  std::vector<StrategicCandidate> candidates;
+  struct StrategicDraw {
+    std::string icon;
+    float heading = 0.0f;
+    bool remoteControlled = false;
+    bool spawner = false;
+    int team = 0;
+  };
+  std::vector<StrategicDraw> strategicDraws;
+  const auto addStrategic = [&](const game::ObjectTemplate& object, Vec3f position,
+                                const Mat4& transform, int rootPart, bool spawned,
+                                std::string icon, int team) {
+    StrategicCandidate candidate;
+    if (const auto* strategic = object.component("StrategicObject")) {
+      if (const auto at = strategic->properties.find("strategicobjectname");
+          at != strategic->properties.end() && !at->second.empty()) {
+        candidate.name = std::string(at->second.back().value());
+      }
+      if (const auto at = strategic->properties.find("isonepiece");
+          at != strategic->properties.end() && !at->second.empty()) {
+        candidate.onePiece = at->second.back().asBool().value_or(false);
+      }
+    }
+    candidate.position = position;
+    candidate.radius = physicBoundingRadius(meshes, registry, object, rootPart);
+    candidates.push_back(std::move(candidate));
+    strategicDraws.push_back(StrategicDraw{std::move(icon), headingOf(transform),
+                                           hasRemoteControlledChild(registry, object, 0), spawned,
+                                           team});
+  };
+  struct SpawnedStrategic {
+    const game::ObjectTemplate* object;
+    const level::ObjectSpawner* spawner;
+    std::string icon;
+    int team;
+  };
+  std::vector<SpawnedStrategic> spawnedStrategic;
+
   for (const auto& spawner : gameplay->spawners) {
     // Which side's vehicle stands there is the point's business; where the point
     // is neutral or unknown we take whichever template the spawner lists first,
@@ -605,48 +766,87 @@ void Manager::buildMapWindow(FileSystem& files, const level::Level* level,
     // A spawner can put a strategic object on the field rather than a vehicle —
     // the mobile radars, the artillery pieces. Those show the strategic icon at
     // its own size, which is why the original's map has a `Radar` and two `AirDef`
-    // on it and no vehicle icon in their place.
-    std::string icon = iconOf(vehicle, "StrategicObject", "intacticon");
-    float size = 19.0f;
-    if (icon.empty()) {
-      icon = iconOf(vehicle, "VehicleHud", "minimapicon");
-      size = 16.0f;
+    // on it and no vehicle icon in their place. They go through the holders below.
+    if (std::string icon = iconOf(vehicle, "StrategicObject", "intacticon"); !icon.empty()) {
+      if (const auto* object = registry.find(vehicle)) {
+        spawnedStrategic.push_back(
+            SpawnedStrategic{object, &spawner, std::move(icon), point ? point->team : 0});
+      }
+      continue;
     }
+    std::string icon = iconOf(vehicle, "VehicleHud", "minimapicon");
     if (icon.empty()) continue;
-    assetMarkers_.push_back(
-        Context::MapMarker{spawner.position.x, spawner.position.z, std::move(icon), {}, size, Color{}, 0.0f});
+    Context::MapMarker marker{spawner.position.x, spawner.position.z, std::move(icon), {}, 16.0f,
+                              Color{}, 0.0f};
+    marker.atIconAlpha = true;
+    assetMarkers_.push_back(std::move(marker));
   }
-  spawnerMarkers_ = assetMarkers_.size();
   if (level != nullptr) {
     for (const auto& object : level->objects) {
       std::string icon = iconOf(object.templateName, "StrategicObject", "intacticon");
       if (icon.empty()) continue;
-      assetMarkers_.push_back(
-          Context::MapMarker{object.position.x, object.position.z, std::move(icon), {}, 19.0f, Color{}, 0.0f});
+      const auto* found = registry.find(object.templateName);
+      if (found == nullptr) continue;
+      Mat4 transform = object.transform;
+      if (!object.hasTransform) {
+        transform = object.hasRotation ? rotationYawPitchRoll(object.rotation.x, object.rotation.y,
+                                                              object.rotation.z)
+                                       : Mat4::identity();
+      }
+      // A placed object's team is not in StaticObjects.con: 0.
+      addStrategic(*found, object.position, transform, -1, false, std::move(icon), 0);
     }
   }
+  for (auto& spawned : spawnedStrategic) {
+    // `ObjectSpawner::getCollisionMesh` asks for part 0 of what it spawns
+    // (Linux 0x52f8e7, collision_objects.h); the object stands at the spawner
+    // with its rotation.
+    const auto& at = *spawned.spawner;
+    addStrategic(*spawned.object, at.position,
+                 rotationYawPitchRoll(at.rotation.x, at.rotation.y, at.rotation.z), 0, true,
+                 std::move(spawned.icon), spawned.team);
+  }
+  // One icon per holder (`GameLogic::addStrategicObject`, client 0x4f1750,
+  // strategic_objects.h): a bridge's segments are one bridge.
+  const auto holders = groupStrategicObjects(candidates);
+  std::vector<Context::MapMarker> placedHolders;
+  for (const StrategicHolder& holder : holders) {
+    const StrategicDraw& first = strategicDraws[holder.members.front()];
+    Context::MapMarker marker{holder.position.x, holder.position.z, first.icon, {}, 19.0f,
+                              Color{}, 0.0f};
+    marker.atIconAlpha = true;
+    // 0x77e500: with no `RemoteControlledObject` child under the first object the
+    // icon turns by `map(+0x76c) − atan2(m[+0x20], m[+0x28]) + π/2`
+    // (0x77e689..0x77e69d, π/2 at 0x92fe8c). This map does not turn (+0x76c is
+    // 0), so the turn is fixed. With such a child the icon stays upright, and is
+    // skipped when the child's team is not the local player's; no template in
+    // the data adds such a child, and that team test is not ported.
+    if (!first.remoteControlled) {
+      constexpr float kHalfPi = 1.5707964f;  // 0x92fe8c
+      marker.rotation = kHalfPi - first.heading;
+    }
+    // A holder a spawner put down counts with the spawners' icons: those give
+    // way to the server's own objects once they are known (appendAssets).
+    if (first.spawner) {
+      assetMarkers_.push_back(std::move(marker));
+    } else {
+      placedHolders.push_back(std::move(marker));
+    }
+  }
+  spawnerMarkers_ = assetMarkers_.size();
+  assetMarkers_.insert(assetMarkers_.end(), placedHolders.begin(), placedHolders.end());
+  std::printf("  map: strategic objects %zu in %zu holders\n", candidates.size(), holders.size());
   appendAssets(context_.mapMarkers);
   std::printf("  map: vehicles and assets %zu\n", assetMarkers_.size());
-  iconOf_ = [this](const std::string& templateName, const char* component,
-                   const char* property) -> std::string {
-    const auto* object = registry_ != nullptr ? registry_->find(templateName) : nullptr;
-    if (object == nullptr) return {};
-    const auto* part = object->component(component);
-    if (part == nullptr) return {};
-    const auto at = part->properties.find(property);
-    if (at == part->properties.end() || at->second.empty()) return {};
-    std::string path(at->second.back().value());
-    for (char& c : path) {
-      if (c == '\\') c = '/';
-    }
-    return path;
-  };
+
 
   // The spawn screen's context is the general one plus its own gate; it is copied
   // after the map's window and markers are known.
   Context spawn = context_;
   spawn.isVisible = spawnContext_.isVisible;
   spawn.showState = spawnContext_.showState;
+  // The spawn state's icon alpha target, +0x704 = 0.5 (0x777fe8).
+  spawn.mapIconAlpha = 0.5f;
   spawnContext_ = std::move(spawn);
   dynamicContext_ = context_;
 }
@@ -706,92 +906,53 @@ void Manager::appendAssets(std::vector<Context::MapMarker>& out) const {
   const std::size_t from = liveObjectsKnown_ ? spawnerMarkers_ : 0;
   out.insert(out.end(), assetMarkers_.begin() + static_cast<std::ptrdiff_t>(from),
              assetMarkers_.end());
-  out.insert(out.end(), liveMarkers_.begin(), liveMarkers_.end());
 }
 
-void Manager::liveMap(const std::vector<LivePlayer>& players, const std::vector<LiveObject>& objects,
-                      int localTeam, int localSquad) {
-  // The map is baked geometry here (the engine paints it every frame): a rebuild
-  // costs a frame's worth of milliseconds, so the icons move four times a second.
-  // Chosen, not the original's rate.
+void Manager::setMinimapContacts(std::vector<MapContact> contacts) {
+  if (context_.minimapContacts == contacts) return;
+  // Once the server's vehicles are among them the level's spawner icons go
+  // (appendAssets).
+  if (!liveObjectsKnown_ &&
+      std::any_of(contacts.begin(), contacts.end(), [](const MapContact& contact) {
+        return !contact.texture.empty() && contact.kind != MapContact::Kind::Order;
+      })) {
+    liveObjectsKnown_ = true;
+    context_.mapMarkers.resize(contextFlagMarkers_);
+    appendAssets(context_.mapMarkers);
+    dirty_ = true;
+  }
+  context_.minimapContacts = std::move(contacts);
+  // The map nodes are rebuilt on their own; the spawn screen, which bakes the
+  // map, at most four times a second.
+  for (auto& live : dynamic_) {
+    if (live.node->type == NodeType::Map || live.node->type == NodeType::MiniMap) live.built = false;
+  }
   const auto now = std::chrono::steady_clock::now();
-  if (now - liveMapAt_ < std::chrono::milliseconds(250)) return;
-  liveMapAt_ = now;
-  constexpr float kDegrees = 3.14159265f / 180.0f;
-  // `mapObjectColors[2]` and `squadChatColors[2]` (OpenBF2 Menu/HudColors.cpp).
-  constexpr Color kTeam{0.254f, 0.552f, 0.89f, 1.0f};
-  constexpr Color kSquad{0.4470588f, 0.8901961f, 0.3450980f, 1.0f};
-  std::vector<Context::MapMarker> markers;
-  for (const LivePlayer& player : players) {
-    // `collectIconFamily783440`: the living, and of the other team only those
-    // near our own vehicle — which on the spawn screen is none. Ourselves is the
-    // local arrow (`collectLocalPlayerIcon`), not this.
-    if (player.local || player.team != localTeam) continue;
-    Context::MapMarker icon;
-    icon.worldX = player.x;
-    icon.worldZ = player.z;
-    icon.size = 16.0f;
-    icon.texture = "Ingame/Player/Icons/Minimap/mini_Soldier.tga";
-    bool heading = false;
-    // `populatePlayerMapIcon` with the role icons on: a squad leader's squad
-    // number, the commander's own mark, both with the heading arrow.
-    if (player.leader && player.squad > 0) {
-      icon.texture =
-          "Ingame/Player/Icons/Minimap/mini_Squad_" + std::to_string(player.squad) + "_small.tga";
-      heading = true;
-    } else if (player.commander) {
-      icon.texture = "Ingame/Player/Icons/Minimap/mini_commander2.tga";
-      icon.size = 32.0f;
-      heading = true;
-    }
-    // `colorMapIcon`: our squad green, the rest of the team blue; the commander white.
-    icon.color = (player.squad > 0 && player.squad == localSquad && !player.commander) ? kSquad
-                 : player.commander                                                   ? Color{}
-                                                                                      : kTeam;
-    if (heading) {
-      Context::MapMarker arrow = icon;
-      arrow.texture = "Ingame/Player/Icons/Minimap/mini_headingArrow.tga";
-      arrow.size = 32.0f;
-      arrow.color = Color{0.0f, 0.0f, 0.0f, 1.0f};
-      arrow.rotation = -player.yaw * kDegrees;
-      markers.push_back(std::move(arrow));
-    }
-    markers.push_back(std::move(icon));
+  if (now - spawnContactsAt_ >= std::chrono::milliseconds(250)) {
+    spawnContactsAt_ = now;
+    spawnDirty_ = true;
   }
-  for (const LiveObject& object : objects) {
-    if (!iconOf_) break;
-    std::string texture = iconOf_(object.templateName, "StrategicObject", "intacticon");
-    float size = 19.0f;
-    float rotation = 0.0f;
-    if (texture.empty()) {
-      texture = iconOf_(object.templateName, "VehicleHud", "minimapicon");
-      size = 16.0f;
-      rotation = -object.yaw * kDegrees;  // a vehicle turns with itself
-    }
-    if (texture.empty()) continue;
-    Context::MapMarker icon;
-    icon.worldX = object.x;
-    icon.worldZ = object.z;
-    icon.texture = std::move(texture);
-    icon.size = size;
-    icon.rotation = rotation;
-    markers.push_back(std::move(icon));
+}
+
+std::optional<float> Manager::satelliteDrawnWidth() const {
+  // 0x784a80 copies the map's rectangle to +0xb5c and clamps +0xb64 to its
+  // width (0x784c70..0x784c7d); in HUD units, the whole world's drawn width.
+  const MapView view = bigMap_ ? MapView::Maxi : MapView::Mini;
+  const float span = context_.mapU1 - context_.mapU0;
+  const float scale = static_cast<float>(screen_.height) / kReferenceHeight;
+  if (span <= 0.0f || scale <= 0.0f) return std::nullopt;
+  for (const Node& node : tree_.nodes()) {
+    if ((node.type != NodeType::MiniMap && node.type != NodeType::Map) || node.mapView != view)
+      continue;
+    const ScreenRect rect = nodeRect(node, screen_, &context_);
+    if (rect.width <= 0.0f || rect.height <= 0.0f) continue;
+    return std::min(rect.width / span, rect.width) / scale;
   }
-  if (!objects.empty()) liveObjectsKnown_ = true;
-  // Rebuilt only on a change worth a pixel.
-  bool same = markers.size() == liveMarkers_.size();
-  for (std::size_t i = 0; same && i < markers.size(); ++i) {
-    same = markers[i].texture == liveMarkers_[i].texture &&
-           std::abs(markers[i].worldX - liveMarkers_[i].worldX) < 1.0f &&
-           std::abs(markers[i].worldZ - liveMarkers_[i].worldZ) < 1.0f &&
-           std::abs(markers[i].rotation - liveMarkers_[i].rotation) < 0.05f;
-  }
-  if (same) return;
-  liveMarkers_ = std::move(markers);
-  context_.mapMarkers.resize(contextFlagMarkers_);
-  appendAssets(context_.mapMarkers);
-  dirty_ = true;
-  spawnDirty_ = true;
+  return std::nullopt;
+}
+
+void Manager::scoreboardVoting(bool enabled, bool teamOnly, int kickTarget) {
+  scoreboard_.setVoting(enabled, teamOnly, kickTarget);
 }
 
 void Manager::scoreboardRightClick() {
@@ -942,6 +1103,129 @@ void Manager::updateVariables(bool hasPlayer, bool mapFullSize) {
   variables_["SpawnInfoShow"] = !hasPlayer;
 }
 
+void Manager::updateTickets(const TeamTickets& friendly, const TeamTickets& enemy, float dt) {
+  strings_["FriendlyTicketsString"] = std::to_string(friendly.tickets);
+  strings_["EnemyTicketsString"] = std::to_string(enemy.tickets);
+  // The blinkers run every frame (`m_blinkers->update(dt)`, before the tickets).
+  // Until a first update the blinkers rest where a released gate leaves them: 1.
+  const float friendlyWas = values_.try_emplace("FriendlyTicketBleed", 1.0f).first->second;
+  const float enemyWas = values_.try_emplace("EnemyTicketBleed", 1.0f).first->second;
+  friendlyBleed_.update(dt, friendly.bleed, values_["FriendlyTicketBleed"]);
+  enemyBleed_.update(dt, enemy.bleed, values_["EnemyTicketBleed"]);
+  // They are the alpha of two of the spawn screen's map nodes
+  // (HudElementsMap.con:212, 218), which is baked: a change means a rebuild.
+  if (values_["FriendlyTicketBleed"] != friendlyWas || values_["EnemyTicketBleed"] != enemyWas) {
+    spawnDirty_ = true;
+  }
+  // The tens digit of our ticket state, floored for negatives the way the
+  // original's `state % 10` correction does.
+  int remainder = friendly.state % 10;
+  if (friendly.state < 0) remainder += 10;
+  const int level = (friendly.state - remainder) / 10;
+  if (level == 1 && !lowOnTickets_) {
+    lowOnTickets_ = true;
+    std::printf("  HUD: low on tickets — NOT DONE: the `lowOnTickets` sound (no sound)\n");
+  } else if (level == 0 && lowOnTickets_) {
+    lowOnTickets_ = false;
+    std::printf("  HUD: tickets no longer low — the `lowOnTickets` sound would stop\n");
+  }
+}
+
+void Manager::chatString(const ChatLine& line, bool hasLocalPlayer) {
+  const int team = line.senderKnown ? line.senderTeam : 0;
+  const bool always = line.channel == 12 || line.channel == 13;
+  const bool withPlayer = (line.channel >= 0 && line.channel <= 11) ||
+                          (line.channel >= 14 && line.channel <= 18);
+  if (!always && !(withPlayer && hasLocalPlayer)) return;
+  const int shownTeam = always ? 0 : team;
+  std::printf("  HUD chat: channel %d, type %d, %s: %s\n", line.channel, line.type,
+              line.senderKnown ? line.senderName.c_str() : "-", line.text.c_str());
+  switch (line.type) {
+    case 0:
+    case 1:
+      chat_.addGameMessage(line.text, nullptr, 0);  // `addTeamChat(text, 0, 0)`
+      return;
+    case 2:
+      // `addGlobalChat` → `addPlayerMessage`; the original dereferences the
+      // player unchecked, so an unknown sender is not shown here.
+      if (line.senderKnown) {
+        chat_.addPlayerMessage(line.text,
+                               Chat::Talker{line.senderName, line.senderTeam, line.senderCommander});
+      }
+      return;
+    case 3: {
+      // The squad radio line; `ECHud 60` with the sender's soldier (his marker on
+      // the map) is not ours.
+      // The line carries a lexicon key (PLAYER_SPOTTED_TM_enemyforcesspotted);
+      // an unknown key stays as sent. Which of a key's `_alt` lines the original
+      // picks is not traced: the base line is shown.
+      const std::string message(engine_->lexicon().text(line.text));
+      const std::string code(1, static_cast<char>(0xa7));
+      const std::string text =
+          line.senderKnown ? code + "0" + line.senderName + ": " + code + "1" + message : message;
+      if (!line.text.empty()) chat_.addKillMessage(text, &line.speaker, shownTeam);
+      return;
+    }
+    default:
+      std::printf("  HUD chat: unknown message type %d\n", line.type);
+      return;
+  }
+}
+
+void Manager::killedBy(const Kill& kill, const Local& local) {
+  // `BF2HudManager::handleGameLogicEvent` case 3 (OpenBF2
+  // BF2HudManagerGameLogicEvents.cpp; BF2.exe 0x753de0).
+  const auto localized = [this](std::string_view key) {
+    return std::string(engine_->lexicon().text(key));
+  };
+  const auto replace = [](std::string text, std::string_view token, const std::string& with) {
+    const std::size_t at = text.find(token);
+    if (at != std::string::npos) text.replace(at, token.size(), with);
+    return text;
+  };
+  chat_.setLocalTeam(local.team);
+  // Our kill of an enemy: a notice.
+  if (local.id >= 0 && kill.victimKnown && !local.commander && local.id == kill.killer &&
+      kill.killerAlive && kill.victimTeam != local.team) {
+    chat_.addNotice(replace(localized("HUD_CHAT_YOUGOTAKILLSCORE"), "#PLAYERNAME#", kill.victimName));
+  }
+  if (kill.killerAlive && kill.killerKnown) {
+    if (kill.victimKnown && kill.victim == kill.killer) {
+      chat_.addGameMessage(replace(localized("HUD_HUD_KILLEDBY_MYSELF"), "#PLAYERNAME#",
+                                   kill.victimName),
+                           nullptr, kill.victimTeam);
+      return;
+    }
+    if (local.id >= 0 && local.id == kill.victim) {
+      // `setDeathMessage(HUD_TEXT_MENU_YOU_WERE_KILLED)` on the information layer
+      // is not ours yet; the chat's half is.
+      chat_.addNotice(replace(localized("HUD_CHAT_YOUWEREKILLEDBY"), "#PLAYERNAME#", kill.killerName));
+    }
+    if (!kill.victimKnown) return;
+    const char* key = kill.victimTeam != kill.killerTeam
+                          ? (!kill.weaponKey.empty() && !kill.missingWeapon ? "HUD_HUD_KILLEDBY_KILLS"
+                                                                             : "HUD_HUD_KILLEDBY_KILLED")
+                          : "HUD_HUD_KILLEDBY_TEAMKILLS";
+    std::string text = localized(key);
+    text = replace(std::move(text), "#PLAYERNAME1#", kill.killerName);
+    text = replace(std::move(text), "#WEAPON#",
+                   kill.weaponKey.empty() ? std::string{} : localized(kill.weaponKey));
+    text = replace(std::move(text), "#PLAYERNAME2#", kill.victimName);
+    std::printf("  HUD kill feed: %s\n", text.c_str());
+    chat_.addGameMessage(text, &kill.killerSpeaker, kill.killerTeam);
+    return;
+  }
+  // No killer player: the commander's artillery (0xFD the enemy's, 0xFE the
+  // victim's own team's).
+  if (!kill.victimKnown || (kill.killer != 0xFD && kill.killer != 0xFE)) return;
+  const int team = kill.killer == 0xFD ? (kill.victimTeam == 1 ? 2 : 1) : kill.victimTeam;
+  std::string text = localized(kill.killer == 0xFD ? "HUD_HUD_KILLEDBY_KILLS" : "HUD_HUD_KILLEDBY_TEAMKILLS");
+  text = replace(std::move(text), "#PLAYERNAME1#", " ");
+  text = replace(std::move(text), "#WEAPON#", localized("HUD_TEXT_COMMANDER_ARTILLERY"));
+  text = replace(std::move(text), "#PLAYERNAME2#", kill.victimName);
+  chat_.addGameMessage(text, nullptr, team);
+}
+
 void Manager::applySpawnState() {
   const int selectedTeam = spawnScreen_.choice().team;
   const int selectedKit = spawnScreen_.choice().kit;
@@ -964,6 +1248,8 @@ void Manager::applySpawnState() {
   // not allowed.
   spawnContext_.mapMarkers.clear();
   spawnContext_.spawnMarkers.clear();
+  spawnContext_.minimapContacts = context_.minimapContacts;
+  spawnContext_.mapSpotsVisible = context_.mapSpotsVisible;
   std::vector<int> markerPoints;
   const auto addCircle = [&](float x, float z, int id) {
     const bool chosen =
@@ -1161,7 +1447,8 @@ void Manager::bakeKeyScreens() {
   // nor the order, and a tab clicked on it never showed, because the bake was
   // never made again.
   for (const KeyScreenSetup& setup : {
-           KeyScreenSetup{"RadioRose", "c_GIRadioComm", "RadioInterfaceShow"},
+           // The radio's rose is not baked here any more: all five roses are
+           // drawn live, with the entry under the pointer, by app::FieldUi.
            KeyScreenSetup{"MapMenu", "c_GIMapSize", "MapMenuShow"},
        }) {
     Context keyContext = context_;
@@ -1206,6 +1493,17 @@ void Manager::bakeKeyScreens() {
   }
 }
 
+std::vector<DrawPiece> Manager::buildLoose(const Node& node) {
+  Context loose;
+  loose.localize = context_.localize;
+  loose.fontFor = context_.fontFor;
+  return buildNode(node, font_.font, font_.atlasPath, screen_, loose);
+}
+
+int Manager::listRevision(const Node& node) const {
+  return node.listData == 3 ? chat_.revision() : scoreboard_.revision();
+}
+
 bool Manager::dynamicChanged(const DynamicNode& live) const {
   const Node& node = *live.node;
   const bool isMap = node.type == NodeType::Map || node.type == NodeType::MiniMap;
@@ -1215,7 +1513,7 @@ bool Manager::dynamicChanged(const DynamicNode& live) const {
   if (node.type == NodeType::List) {
     // The rows, and the fade the node is built with: the scoreboard fades in over
     // 0.1 s (`setNodeInTime 0.1`), and a list built at its start would stay clear.
-    return scoreboard_.revision() != live.shownRevision ||
+    return listRevision(node) != live.shownRevision ||
            std::abs(animator_.state(node).alpha - live.shownValue) > 0.001f;
   }
   // A rotation step below which nothing is visible on screen any more: the compass
@@ -1247,7 +1545,7 @@ std::vector<DrawPiece> Manager::buildDynamic(DynamicNode& live) {
   const bool isBar = node.type == NodeType::Bar;
   if (node.type == NodeType::List) {
     live.built = true;
-    live.shownRevision = scoreboard_.revision();
+    live.shownRevision = listRevision(node);
     live.shownValue = animator_.state(node).alpha;
     return buildNode(node, font_.font, font_.atlasPath, screen_, dynamicContext_);
   }
@@ -1283,6 +1581,9 @@ std::vector<DrawPiece> Manager::buildDynamic(DynamicNode& live) {
     single.mapU1 = context_.mapU1;
     single.mapV0 = context_.mapV0;
     single.mapV1 = context_.mapV1;
+    single.mapMarkers = context_.mapMarkers;
+    single.minimapContacts = context_.minimapContacts;
+    single.mapSpotsVisible = context_.mapSpotsVisible;
   } else if (isRotating) {
     single.variableValue = [angle](std::string_view) { return angle; };
   } else if (isBar) {
@@ -1317,7 +1618,53 @@ void Manager::zoomKey(bool down) {
   zoomKeyWasDown_ = down;
 }
 
+void Manager::controlPointTeams(const std::map<int, int>& teamById) {
+  bool changed = false;
+  for (auto& point : controlPoints_) {
+    const auto found = teamById.find(point.id);
+    if (found == teamById.end() || found->second == point.team) continue;
+    std::printf("  map: control point %d (%s) now team %d (was %d)\n", point.id,
+                point.templateName.c_str(), found->second, point.team);
+    point.team = found->second;
+    changed = true;
+  }
+  if (!changed) return;
+  // The combat map's flags are its first markers, one per point in this order
+  // (`load`); the spawn screen takes the teams on its next rebuild
+  // (applySpawnState).
+  for (std::size_t i = 0; i < controlPoints_.size() && i < contextFlagMarkers_ &&
+                          i < context_.mapMarkers.size();
+       ++i) {
+    const auto& point = controlPoints_[i];
+    const std::string side = point.team <= 0 || point.team > 2 || level_ == nullptr
+                                 ? std::string{}
+                                 : level_->teamNames[point.team];
+    context_.mapMarkers[i].texture = controlPointIcon(side, point.unableToChangeTeam);
+  }
+  for (auto& live : dynamic_) {
+    if (live.node->type == NodeType::Map || live.node->type == NodeType::MiniMap) live.built = false;
+  }
+  applySpawnState();
+  spawnDirty_ = true;
+  dirty_ = true;
+}
+
+void Manager::showAward(bool rank, const std::string& iconPath, float seconds) {
+  variables_[rank ? "ShowMedalIcon" : "ShowRankUpIcon"] = false;
+  strings_[rank ? "RankUpIconPathString" : "MedalIconPathString"] = iconPath;
+  variables_[rank ? "ShowRankUpIcon" : "ShowMedalIcon"] = seconds > 0.0f;
+  awardLeft_ = seconds;
+  dirty_ = true;
+}
+
 void Manager::animate(float seconds, float yaw, const Vec3f& eye) {
+  // `HudChat::update` every frame: the bands' timers.
+  chat_.update(seconds);
+  // The award window's time; at zero both show variables go off.
+  if (awardLeft_ > 0.0f && (awardLeft_ -= seconds) <= 0.0f) {
+    variables_["ShowMedalIcon"] = variables_["ShowRankUpIcon"] = false;
+    dirty_ = true;
+  }
   const float slice = seconds > 0.25f ? 0.25f : seconds;
   animator_.advance(slice);
   if (animator_.animating()) {
@@ -1363,12 +1710,19 @@ void Manager::animate(float seconds, float yaw, const Vec3f& eye) {
   }
   if (bottomLeft_.x != wasX || bottomLeft_.healthAlpha != wasHealth) dirty_ = true;
 
-  // The minimap's compass. 0x751d8b computes the direction as
-  // `atan2(direction.x, direction.z)`, and ours is exactly that: zero looks along
-  // +Z, so this is simply the look angle. The angle goes into a variable — the
+  // The minimap's compass. 0x751d8b computes `atan2(direction.x, direction.z)` of
+  // a direction its caller passes; the player marker below uses the look angle.
+  // The angle goes into a variable — the
   // compass is drawn by a live node, and it must not be routed through `dirty_`:
   // rebaking the whole HUD every frame is exactly the frame drop one can see.
-  mapAngle_.setTarget(yaw * 3.14159265358979323846f / 180.0f);
+  // The original draws the `MapCompass` ring (map_Compass.tga, N at the top of
+  // the file) unrotated, north up, at every heading: on foot facing south and
+  // in the AH-1Z facing north-west (stills of the original, 25 Nov). The angle
+  // 0x772470 stores is whatever direction the caller (BF2HudManager vtable
+  // slot at 0x926158) passes; that argument is not taken apart, and it is not
+  // the view. So the target is 0 until it is.
+  (void)yaw;
+  mapAngle_.setTarget(0.0f);
   mapAngle_.update(slice);
   values_["MinimapDelayedMapAngle"] = mapAngle_.delayed();
 
@@ -1383,6 +1737,20 @@ void Manager::animate(float seconds, float yaw, const Vec3f& eye) {
   const auto wasSize = map_.size();
   const auto wasPosition = map_.position();
   map_.update(slice);
+  // The spot blink (+0xa18) gates the position-only spots and the radio marks'
+  // yellow: the maps are rebuilt when it turns and something blinks.
+  if (map_.spotsVisible() != context_.mapSpotsVisible) {
+    context_.mapSpotsVisible = map_.spotsVisible();
+    const bool blinking =
+        std::any_of(context_.minimapContacts.begin(), context_.minimapContacts.end(),
+                    [](const MapContact& contact) { return contact.blinks || contact.radioBlink; });
+    if (blinking) {
+      for (auto& live : dynamic_) {
+        if (live.node->type == NodeType::Map || live.node->type == NodeType::MiniMap)
+          live.built = false;
+      }
+    }
+  }
   const auto position = map_.position();
   const auto size = map_.size();
   const bool moved = size.x != wasSize.x || size.y != wasSize.y || position.x != wasPosition.x ||
@@ -1444,6 +1812,13 @@ void Manager::clickSpawn(float x, float y, engine::Console& console) {
     const auto list = listAt(tree_, root, screen_, x, y, spawnContext_);
     if (!list || list->node == nullptr) continue;
     lastListHit_ = *list;
+    // The squad menu's lists read their pick back (0x7c40a0 sets the row and
+    // column on the press): the member list (5) and the invite list (8).
+    if (list->node->listData == 5 || list->node->listData == 8) {
+      ListData& picked = list->node->listData == 5 ? squadList_.memberList() : squadList_.inviteList();
+      picked.selectedRow = list->row;
+      picked.selectedColumn = list->column;
+    }
     std::printf("  spawn screen: list %s row %d column %d\n", list->node->name.c_str(), list->row,
                 list->column);
     if (list->row < 0) return;

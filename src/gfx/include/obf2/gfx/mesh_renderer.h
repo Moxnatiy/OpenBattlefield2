@@ -1,4 +1,6 @@
 #pragma once
+#include <algorithm>
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -34,6 +36,9 @@ struct GpuMesh {
     // says so: 0 or 2 are the only values in the game's static meshes, and 2 is
     // what leaves, fences and grates carry.
     bool alphaTest = false;
+    // A placed `objects/roads/` mesh: drawn at terrain quality 2 and 3 only
+    // (`obf2::mesh::markRoadMesh`).
+    bool roadMesh = false;
     // The test's reference: a material of `BundledMesh.fx` keeps every pixel whose
     // alpha is above 0 (`AlphaRef = 0`, `AlphaFunc = GREATER`, in each of its
     // techniques); the static-mesh shader's reference is 127 of 255.
@@ -50,6 +55,14 @@ struct GpuMesh {
     // (docs/functions/blended-materials.md).
     bool alphaBlend = false;
     bool additiveBlend = false;
+    // A bundled `ColormapGloss` technique: the colour map's alpha is its gloss
+    // (`obf2::mesh::materialColorMapGloss`).
+    bool colorMapGloss = false;
+    // The level's water (`level::buildWater`): drawn by the water's own shader,
+    // `lightmap` its patch's light map (docs/functions/water.md).
+    bool water = false;
+    // A placed `objects/water/` mesh: drawn as water when its item is baked.
+    bool waterMesh = false;
     // Drawn as leaves: its own shader in the original, and its own two colours
     // (`obf2::mesh::markVegetationLeaves`).
     bool leaf = false;
@@ -155,6 +168,10 @@ class MeshRenderer {
   // atlas, which many placements share. The renderer keeps it and frees it with
   // itself; nullptr when the upload failed.
   SDL_GPUTexture* uploadSharedTexture(const texture::Texture& source);
+  // A volume texture or a cube map (`texture::Texture::isVolume`/`isCube`),
+  // kept and freed like `uploadSharedTexture`; nullptr for a flat one or on
+  // failure.
+  SDL_GPUTexture* uploadVolumeOrCube(const texture::Texture& source);
 
   // New pixels for a texture already on the card, its top level only, BGRA8,
   // width × height × 4 bytes. For a picture that changes every frame (the
@@ -200,6 +217,20 @@ class MeshRenderer {
     // is where the deformation happens — the same division of labour as in the
     // original. Null draws the mesh as it lies in the file.
     const std::vector<mesh::Mat4>* pose = nullptr;
+    // A sprite particle: its opacity (0 draws the item as a mesh, anything
+    // above draws its ranges on the shader's particle branch, `Particles.fx`).
+    float particleOpacity = 0.0f;
+    // Its colour (Particles.fx); multiplies the texture on the particle branch
+    // only. w: the cos of its texcoord rotation.
+    float particleColor[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    // Its next animation frame: xy UV offset to its cell, z the blend
+    // (ParticleHigh). z = 0 draws one frame. w: the sin of its texcoord
+    // rotation (Particles.fx:78); 0 leaves the texcoords as they are, any other
+    // value needs uv2 to be the corner's offset from the cell centre.
+    float particleFrame[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    // Its bottom-corner colour (self-shadow, RendDX9.dll 0x10170070); w = 1
+    // uses it, which needs uv2 laid out as for the rotation.
+    float particleShadow[4] = {0.0f, 0.0f, 0.0f, 0.0f};
   };
 
   // The fog comes from the level's data (Sky.con). fogEnd == 0 disables it.
@@ -213,6 +244,9 @@ class MeshRenderer {
     float floorVisibility = 1.0f;
   };
   void setFog(const Fog& fog) { fog_ = fog; }
+  // The profile's `VideoSettings.setTerrainQuality` (1 low .. 3 high): below 2
+  // the road-path statics are not drawn (`RendDX9.dll` 0x100fe618).
+  void setTerrainQuality(int quality) { terrainQuality_ = quality; }
 
   // The texture-filtering setting, 1 to 3. What each level means is the
   // preamble the engine writes for the shader compiler — see the definition.
@@ -294,6 +328,28 @@ class MeshRenderer {
   // only because a highlight depends on who is looking.
   void setCameraPosition(Vec3f position) { cameraPosition_ = position; }
 
+  // The water's clock, in seconds. `WaterCycleTime` is made of it every frame
+  // (`RendDX9.dll`, 0x100dc130): see `setWater`.
+  void setWaterTime(float seconds) { waterTime_ = seconds; }
+
+  // The level's water, as `RaShaderWaterBase.fx` takes it
+  // (`docs/functions/water.md`). The textures are the caller's: `volume` the
+  // 3D `WaterMap` (`common/textures/watervolume.dds`), `cube` the level's
+  // `CubeMap`; either may be null, and then the water is not drawn.
+  struct Water {
+    float color[3]{};              // renderer.waterColor
+    float specularColor[4]{};      // renderer.waterSpecularColor
+    float specularPower = 1.0f;    // renderer.waterSpecularPower
+    float scroll[2]{};             // renderer.waterScroll
+    float animSpeed = 10.0f;       // renderer.waterAnimSpeed
+    float alphaHeightMul = 0.0f;   // renderer.waterAlphaHeightMul
+    float alphaAdd = 0.32f;        // renderer.waterAlphaAdd
+    float height = 0.0f;           // the sea level, `WaterHeight`
+    SDL_GPUTexture* volume = nullptr;
+    SDL_GPUTexture* cube = nullptr;
+  };
+  void setWater(const Water& water) { water_ = water; }
+
   // The specular highlight: `Lightmanager.staticSpecularColor` as the level
   // writes it, and `StaticGloss`. Both were measured in a frame dump of the
   // original — the colour reaches the pixel stage whole and the gloss is the
@@ -321,6 +377,23 @@ class MeshRenderer {
     staticSky_ = sky;
     sunDirection_ = direction;
     pointColor_ = point;
+  }
+
+  // A dynamic point light from an effect (`LightSource`, lightType Point):
+  // `attSqrInv` is 1 / attenuationRange2² (RendDX9.dll 0x100dfff0, light
+  // virtual +0x190), the colour already times intensity and flicker.
+  struct EffectLight {
+    Vec3f position;
+    float attSqrInv = 0.0f;
+    Vec3f color;
+  };
+  // How many the shader takes at once: ours. Retail's count is not measured.
+  static constexpr std::size_t kMaxEffectLights = 4;
+  // The lights for the frames that follow, until replaced. Extra lights past
+  // kMaxEffectLights are dropped.
+  void setEffectLights(const std::vector<EffectLight>& lights) {
+    effectLights_.assign(lights.begin(),
+                         lights.begin() + static_cast<std::ptrdiff_t>(std::min(lights.size(), kMaxEffectLights)));
   }
 
   // Which pass of a frame `renderScene` draws.
@@ -370,6 +443,14 @@ class MeshRenderer {
   // The blended ranges' pipelines (`GpuMesh::Range::alphaBlend`), indexed
   // [skinned][additive]: the same shaders, no culling, no depth write.
   SDL_GPUGraphicsPipeline* blendedPipelines_[2][2] = {};
+  // `water_fragment` behind the vertex stage everything uses: both sides,
+  // blended SRCALPHA/INVSRCALPHA, no depth write (`RaShaderWaterBase.fx`,
+  // technique defaultShader: CullMode NONE, AlphaBlendEnable).
+  SDL_GPUGraphicsPipeline* waterPipeline_ = nullptr;
+  // Its samplers as the effect declares them: the water map and the cube
+  // LINEAR on all three filters and WRAP, the light map LINEAR and CLAMP.
+  SDL_GPUSampler* waterSampler_ = nullptr;
+  SDL_GPUSampler* waterLightmapSampler_ = nullptr;
   SDL_GPUGraphicsPipeline* overlayPipeline_ = nullptr;
   // The open upload batch: the command buffer every `upload` writes into, the
   // transfer buffers to free once it has been submitted, and how deep the nesting
@@ -396,6 +477,7 @@ class MeshRenderer {
   // is owned by `sharedTextures_` and lives as long as the renderer.
   std::unordered_map<std::string, SDL_GPUTexture*> textureByPath_;
   Fog fog_;
+  int terrainQuality_ = 3;
   // Already scaled the way the engine stores them — see setTerrainLighting.
   Color terrainSun_{0.25f, 0.25f, 0.25f, 1.0f};
   Color terrainSky_{0.3f, 0.35f, 0.45f, 1.0f};
@@ -403,6 +485,9 @@ class MeshRenderer {
   Color staticSky_{0.3f, 0.35f, 0.4f, 1.0f};
   Vec3f sunDirection_{-0.26f, -0.80f, -0.54f};
   Color pointColor_{0.0f, 0.0f, 0.0f, 1.0f};
+  std::vector<EffectLight> effectLights_;
+  float waterTime_ = 0.0f;
+  Water water_;
   Vec3f cameraPosition_{0.0f, 0.0f, 0.0f};
   Color staticSpecular_{0.65f, 0.60f, 0.52f, 1.0f};
   float staticGloss_ = 0.2f;

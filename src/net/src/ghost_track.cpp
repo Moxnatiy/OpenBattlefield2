@@ -38,6 +38,32 @@ GhostSample& GhostTrack::push(float timeMs, bool hasPosition, bool hasRotation) 
 
 const GhostSample* GhostTrack::newest() const { return count_ > 0 ? &ring_[head_] : nullptr; }
 
+std::optional<GhostPose> GhostTrack::leadVehicle(float milliseconds, float maximumSpeed) const {
+  const auto* latest = newest();
+  if (!latest) return std::nullopt;
+  GhostPose pose{latest->position, latest->bodyYaw, latest->pitch, latest->aimYaw,
+                 latest->rotation, latest->stance, GhostPrediction::Newest};
+  if (count_ < 2) return pose;
+  const auto& previous = slot(head_ + kSlots - 1);
+  const float gap = latest->timeMs - previous.timeMs;
+  if (gap <= 0.0f || gap > 4.0f * kGhostTickMs) return pose;  // not measured
+  const float lead = std::clamp(milliseconds, 0.0f, 100.0f);   // not measured
+  const auto traveled = latest->position - previous.position;
+  if (length(traveled) * 1000.0f > gap * maximumSpeed) return pose;
+  pose.position = latest->position + traveled * (lead / gap);
+  if (latest->hasRotation && latest->rotation && previous.hasRotation && previous.rotation) {
+    const auto& a = *previous.rotation;
+    const auto& b = *latest->rotation;
+    const float similarity = std::abs(a[0]*b[0] + a[1]*b[1] + a[2]*b[2] + a[3]*b[3]);
+    const float radians = 2.0f * std::acos(std::min(similarity, 1.0f));
+    if (radians <= gap * 0.003f) {  // not measured
+      pose.rotation = interpolateGhostRotation(a, b, 1.0f + lead / gap);
+    }
+  }
+  if (lead > 0.0f) pose.mode = GhostPrediction::Extrapolated;
+  return pose;
+}
+
 std::optional<GhostPose> GhostTrack::poseAt(float nowMs, float interpolationMs,
                                             float extrapolationMs) const {
   const GhostSample* last = newest();

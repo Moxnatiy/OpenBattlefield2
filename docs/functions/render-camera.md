@@ -71,6 +71,29 @@ otherwise, with a local player and his camera (+0x17c):
 then: world->+0x38(GSViewDistance × renderer+0x74()->+0x28())    the far plane, 0x4533ae..
 ```
 
+`GSViewDistance` is an integer setting in metres, default 500 (the getter's
+default at 0x4533ae, 0x4cff3e and 0x4fc7e5). `GameLogic.MaximumLevelViewDistance`
+writes it, clamped to 20..3000 (Linux `GameLogic::setMaximumLevelViewDistance`,
+0x486380; the client's setter 0x4eca20, reached through function tables at
+0x8aaaa4, 0x8aaddc and 0x8abb14, clamps and rounds the same way). Entering a
+vehicle with its own view (0x4fc630) saves the value and sets 500; leaving puts
+the saved one back.
+
+Measured 25 Nov on Gulf of Oman, on foot (Retail under mtld3d, a dumped
+frame's projection rows in `vc0..3`): near 0.041, **far 300 m**. The level
+says `MaximumLevelViewDistance 400`, and the profile the game used (one it
+created itself, `Profiles/Default/Video.con`, video scheme auto-detected) says
+`VideoSettings.setViewDistanceScale 0.75`. 400 × 0.75 = 300, so the factor
+`renderer+0x74()->+0x28()` behaves as the profile's view distance scale. That
+is the measurement; the getter itself is not read. `VideoSettings` writes the
+scale from its +0x58 (0x4b2425). Player view distance cannot be set per player
+(Linux `Player::setViewDistance`, 0x49a330: "Set globally in BF2Render").
+
+Ours is the same product (`game.cpp`, the far plane). The scale is the
+profile's; with no profile the port uses 1.0, and Retail's default when its
+own detection writes the profile depends on the detected scheme (0.75 on this
+Mac under mtld3d). A Retail/port comparison has to use the same scale.
+
 `Player::getFov` is the player's +0xe0 (Linux 0x49a4f0). `Player::setFov(fov,
 time)` (Linux 0x495e00) moves it toward `fov` over `time`, and a `fov` of 0
 (0xb2d910) means the camera's own: `getActiveFOV` (0x5773c0), the camera

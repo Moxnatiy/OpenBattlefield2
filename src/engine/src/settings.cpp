@@ -128,6 +128,9 @@ void Settings::bind(Console& console) {
   console.bind("GeneralSettings.setMinimapTransparency", [this](const con::Command& c) {
     general.minimapTransparency = c.argInt(0).value_or(general.minimapTransparency);
   });
+  console.bind("GeneralSettings.setPlayedVOHelp", [this](const con::Command& c) {
+    if (!c.args.empty()) general.playedVoHelp.push_back(c.args[0]);
+  });
   console.bind("GeneralSettings.setConnectionType", [this](const con::Command& c) {
     general.connectionType = c.argInt(0).value_or(general.connectionType);
   });

@@ -4,6 +4,20 @@
 
 namespace obf2::app {
 
+// `PrimaryClipColor*` (+0x40..+0x4c): the effects object's colour pick
+// (vtbl +0x98) between the cream 0x97ddd0 and the red 0x97dde0, at threshold
+// 0.3 (0x7a8f5b) or −10 (0x7a8fee). The value it tests is not taken apart; the
+// −10 branch is always cream, and Retail draws the clip count cream
+// (vehicle-seats-20261125/retail-ah1z-11: on foot 4 of 5, in the AH-1Z 4 of 5).
+// Unset, the node drew white.
+void putClipColor(AmmoHud& out) {
+  const auto cream = hudColor(1.0f, -10.0f);
+  out.values["PrimaryClipColorRed"] = cream[0];
+  out.values["PrimaryClipColorGreen"] = cream[1];
+  out.values["PrimaryClipColorBlue"] = cream[2];
+  out.values["PrimaryClipColorAlpha"] = cream[3];
+}
+
 AmmoHud ammoHud(const game::WeaponAmmo& ammo, std::uint32_t tick, float reloadProgress) {
   AmmoHud out;
   const int magSize = ammo.tmpl().magSize;
@@ -27,6 +41,7 @@ AmmoHud ammoHud(const game::WeaponAmmo& ammo, std::uint32_t tick, float reloadPr
     out.flags["PrimaryClip3Show"] = spare > 2;
     out.flags["PrimaryClipStringShow"] = spare >= 0;
     if (spare >= 0) out.strings["PrimaryClipString"] = std::to_string(spare);
+    putClipColor(out);
   }
   const float progress = 1.0f - ammo.reloadLeft(tick);
   out.values["PrimaryReloadTime"] = progress;

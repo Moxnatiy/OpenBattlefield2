@@ -3643,6 +3643,8 @@ static mz_bool mz_zip_reader_locate_header_sig(mz_zip_archive *pZip, mz_uint32 r
     return MZ_TRUE;
 }
 
+static mz_bool mz_zip_file_stat_internal(mz_zip_archive *pZip, mz_uint file_index, const mz_uint8 *pCentral_dir_header, mz_zip_archive_file_stat *pStat, mz_bool *pFound_zip64_extra_data);
+
 static mz_bool mz_zip_reader_read_central_dir(mz_zip_archive *pZip, mz_uint flags)
 {
     mz_uint cdir_size = 0, cdir_entries_on_this_disk = 0, num_this_disk = 0, cdir_disk_index = 0;
@@ -3871,18 +3873,31 @@ static mz_bool mz_zip_reader_read_central_dir(mz_zip_archive *pZip, mz_uint flag
             if ((disk_index == MZ_UINT16_MAX) || ((disk_index != num_this_disk) && (disk_index != 1)))
                 return mz_zip_set_error(pZip, MZ_ZIP_UNSUPPORTED_MULTIDISK);
 
-            if (comp_size != MZ_UINT32_MAX)
+            if ((total_header_size = MZ_ZIP_CENTRAL_DIR_HEADER_SIZE + filename_size + ext_data_size + MZ_READ_LE16(p + MZ_ZIP_CDH_COMMENT_LEN_OFS)) > n)
+                return mz_zip_set_error(pZip, MZ_ZIP_INVALID_HEADER_OR_CORRUPTED);
+
+            /* OpenBattlefield2: ZIP APPNOTE 4.5.3: an entry may store only its header
+               offset in ZIP64 (its sizes stay 32-bit). The bounds check below read the
+               0xFFFFFFFF placeholder as the offset and refused such an archive; the real
+               offset is taken from the extra field first. tests/test_zip64.cpp. */
+            if (local_header_ofs == MZ_UINT32_MAX)
             {
-                if (((mz_uint64)MZ_READ_LE32(p + MZ_ZIP_CDH_LOCAL_HEADER_OFS) + MZ_ZIP_LOCAL_DIR_HEADER_SIZE + comp_size) > pZip->m_archive_size)
+                mz_zip_archive_file_stat stat;
+                mz_bool found_zip64;
+                if (!mz_zip_file_stat_internal(pZip, i, p, &stat, &found_zip64))
+                    return MZ_FALSE;
+                if (!found_zip64)
                     return mz_zip_set_error(pZip, MZ_ZIP_INVALID_HEADER_OR_CORRUPTED);
+                local_header_ofs = stat.m_local_header_ofs;
             }
+            if ((comp_size != MZ_UINT32_MAX) &&
+                ((local_header_ofs > pZip->m_archive_size) ||
+                 (MZ_ZIP_LOCAL_DIR_HEADER_SIZE + comp_size > pZip->m_archive_size - local_header_ofs)))
+                return mz_zip_set_error(pZip, MZ_ZIP_INVALID_HEADER_OR_CORRUPTED);
 
             bit_flags = MZ_READ_LE16(p + MZ_ZIP_CDH_BIT_FLAG_OFS);
             if (bit_flags & MZ_ZIP_GENERAL_PURPOSE_BIT_FLAG_LOCAL_DIR_IS_MASKED)
                 return mz_zip_set_error(pZip, MZ_ZIP_UNSUPPORTED_ENCRYPTION);
-
-            if ((total_header_size = MZ_ZIP_CENTRAL_DIR_HEADER_SIZE + MZ_READ_LE16(p + MZ_ZIP_CDH_FILENAME_LEN_OFS) + MZ_READ_LE16(p + MZ_ZIP_CDH_EXTRA_LEN_OFS) + MZ_READ_LE16(p + MZ_ZIP_CDH_COMMENT_LEN_OFS)) > n)
-                return mz_zip_set_error(pZip, MZ_ZIP_INVALID_HEADER_OR_CORRUPTED);
 
             n -= total_header_size;
             p += total_header_size;

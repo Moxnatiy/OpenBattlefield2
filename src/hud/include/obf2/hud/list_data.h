@@ -50,10 +50,10 @@ class ListData {
   ListData();
 
   void addColumn(float x, bool toNext);  // 0x7c5850
+  void addWidthColumn(float x, float width);  // 0x7c5900: `toNext` off, a width
+  // OpenBF2's name for the same (BfListBoxData.cpp `addIconColumn`).
+  void addIconColumn(float x, float width) { addWidthColumn(x, width); }
   void addHiddenColumn();                // 0x7c59b0
-  // An icon column: no `toNext`, its width given (OpenBF2 BfListBoxData.cpp
-  // `addIconColumn`, the width into +0x20).
-  void addIconColumn(float x, float width);
   void clear();                          // 0x7c89b0: every column's cells
 
   // Text and texture cells, appended to a column (0x7c8120, 0x7c8260).
@@ -62,6 +62,21 @@ class ListData {
                   float y, Color color);
   // A cell with nothing in it: the engine's empty texture name (0x7c8090 with "").
   void addEmpty(int column);
+  // A named cell that draws nothing but carries a string the menu reads back
+  // (0x7c8090 with "%i", as the squad menu's hidden id and kind columns).
+  void addNamed(int column, std::string name);
+  // The cell at `row` of a column turned into a text cell, the font it starts with
+  // given (OpenBF2 BfListBoxData `setWideCell` / `setWideCell0x7c87f0`). A row
+  // past the column's end is ignored, as there.
+  void setText(int column, int row, std::string text, Color color, int font = 0);
+  // The text of a cell, empty when there is none.
+  const std::string& text(int column, int row) const;
+  // Every column's cell at `from` moved over `to`, the source emptied (`moveRow`
+  // = `copyRow` + `clearCell`), and a row's cells emptied in every column
+  // (`clearRow`).
+  void moveRow(int from, int to);
+  void clearRow(int row);
+
   // The row's background, on column 0's cell of that row (0x7c4af0).
   void setRowBackground(int row, Color color, float x, float y, float height);
 
@@ -74,6 +89,13 @@ class ListData {
   bool reserveScrollbar = true;
   // `+0x22`: a column with `toNext` ends where the next visible one starts.
   bool columnsToNext = true;
+  // `+0x08` the row and `+0x0c` the column a press picked: the node writes them
+  // (`vtbl[0x80](row, 1)`, `vtbl[0x74](column)` from 0x7c40a0) and the list's
+  // owner reads the picked row's cells back through 0x7c48d0.
+  int selectedRow = -1;
+  int selectedColumn = -1;
+  // The text of the picked row's cell in `column` (0x7c48d0), empty when none.
+  const std::string& selectedText(int column) const { return text(column, selectedRow); }
 
  private:
   std::vector<ListColumn> columns_;

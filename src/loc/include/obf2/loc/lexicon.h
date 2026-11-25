@@ -24,6 +24,7 @@ class Lexicon {
  public:
   // Adds the contents of one .utxt. There are several files per language (the
   // main one, patches, add-ons), and later ones override earlier — as in the game.
+  // Within one file a key's first line wins (lexicon.cpp, addUtxt).
   bool addUtxt(std::span<const std::byte> bytes, std::string* error = nullptr);
   // The same, but a key already present keeps its text: the rest of a language
   // folder only fills in what the main files lack (English_Falcon.utxt's

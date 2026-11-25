@@ -104,6 +104,15 @@ class GhostTrack {
   std::optional<GhostPose> poseAt(float nowMs, float interpolationMs = kGhostInterpolationMs,
                                   float extrapolationMs = kGhostExtrapolationMs) const;
 
+  // The hull we drive, led `milliseconds` past its newest update along the last
+  // two updates' motion while the next one is in flight. **Ours, not the
+  // engine's**: the original runs the driven vehicle's own physics on the
+  // client, which is not ported. Every limit here is not measured:
+  //   * the two updates at most 4 ticks apart, the lead at most 100 ms;
+  //   * no lead past `maximumSpeed` m/s (a relocation stays where it is put);
+  //   * the turn led only below 0.003 rad/ms (about 172 degrees a second).
+  std::optional<GhostPose> leadVehicle(float milliseconds, float maximumSpeed) const;
+
  private:
   const GhostSample& slot(std::size_t index) const { return ring_[index % kSlots]; }
 

@@ -10,6 +10,7 @@
 // There are 855 distinct properties, so there can be no typed structure here —
 // only a universal bag of values. Typed views (weapon, vehicle) are built on
 // top when their turn comes.
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -95,6 +96,17 @@ class Registry {
   void feed(const con::Command& command);
 
   const ObjectTemplate* find(std::string_view name) const;
+  // The `.con` that ran `GeometryTemplate.create ... <name>`; empty if none did.
+  std::string_view geometryFile(std::string_view name) const;
+  // How many leading LODs geometry `index` of a geometry template may drop at
+  // load: `GeometryTemplate.maxSkip3pLods` for geometry 0, `maxSkipWreckLods`
+  // for geometry 1, 0 for any other (`RendDX9.dll` 0x10119a80). Both default to
+  // 1 (GeometryTemplate ctor 0x10192960, +0xc0/+0xc4; their saver 0x101921e0
+  // writes them only when not 1).
+  int maxSkipLods(std::string_view geometryName, std::size_t index) const;
+  // `GeometryTemplate.setSubGeometryLodDistance` as given, per geometry, per
+  // LOD (null if the template sets none).
+  const std::vector<std::vector<float>>* lodDistances(std::string_view geometryName) const;
   std::size_t size() const { return templates_.size(); }
   const Stats& stats() const { return stats_; }
 
@@ -108,6 +120,11 @@ class Registry {
 
   std::vector<std::unique_ptr<ObjectTemplate>> order_;
   std::unordered_map<std::string, ObjectTemplate*> templates_;  // the key is lower-case
+  std::unordered_map<std::string, std::string> geometryFiles_;  // lower-case name -> .con
+  // lower-case name -> {maxSkip3pLods, maxSkipWreckLods}; only those that set one.
+  std::unordered_map<std::string, std::array<int, 2>> geometrySkips_;
+  std::unordered_map<std::string, std::vector<std::vector<float>>> lodDistances_;
+  std::string activeGeometry_;  // lower-case; the last `GeometryTemplate.create`
   ObjectTemplate* active_ = nullptr;
   ChildTemplate* lastChild_ = nullptr;
   Stats stats_;

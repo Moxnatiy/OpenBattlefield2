@@ -376,7 +376,9 @@ namespace gameswf
 		// colour 0xCCFFFF00 (getCrosshairColor) came apart as 255/255/255.
 		static Uint32	to_uint32_bits(double d)
 		{
-			if (!(d == d) || d == 1.0 / 0.0 || d == -1.0 / 0.0) return 0;
+			// NaN and +-infinity: d - d is 0 only for finite d. (The constant
+			// 1.0 / 0.0 is rejected by MSVC, C2124; <cmath> clashes with gameswf's macros.)
+			if (!(d - d == 0)) return 0;
 			d = d < 0 ? -floor(-d) : floor(d);
 			d = fmod(d, 4294967296.0);
 			if (d < 0) d += 4294967296.0;

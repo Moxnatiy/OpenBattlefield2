@@ -17,7 +17,9 @@
 // 0x7718a0 with 0.3, 0, 0.7, 0.15, 1 — their behaviour is not read), the injury and
 // panting sounds, night vision, the commander's squad badge.
 #include <array>
+#include <cstdint>
 #include <optional>
+#include <string>
 
 #include "obf2/app/ammo_hud.h"
 
@@ -35,7 +37,22 @@ struct PlayerHudInput {
   bool sprinting = false;
   bool alive = true;
   bool manDown = false;
+
+  // The round clock (0x464870, the minimap's `TimeItems`): the BeginRound
+  // event's next change tick (`GameLogic` +0x42c on the server), and the game's
+  // tick. None: no round state has arrived, and the clock is not written.
+  std::optional<std::uint32_t> nextStateChangeTick;
+  std::uint32_t tick = 0;
 };
+
+// `GameLogic::getTimeToNextStateChange` (Linux 0x4754c0, BF2.exe vtbl +0x16c):
+// (next change tick − tick) / 30 while the tick is short of it, else 0.
+float timeToNextStateChange(std::uint32_t nextStateChangeTick, std::uint32_t tick);
+
+// `LevelTime` (+0x514) as 0x464870 prints it: the seconds rounded to nearest,
+// then "%d:" hours when there are any, "%02d:" minutes unless both hours and
+// minutes are 0 (then ""), and "%02d" seconds (0x89e610, 0x89e608, 0x89e600).
+std::string levelTimeText(float seconds);
 
 AmmoHud playerHud(const PlayerHudInput& input);
 

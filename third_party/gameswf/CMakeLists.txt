@@ -23,7 +23,13 @@ target_compile_definitions(gameswf PUBLIC
 set_target_properties(gameswf PROPERTIES CXX_STANDARD 14 CXX_EXTENSIONS ON)
 # The system zlib by name: ZLIB::ZLIB adds the SDK's include directory as
 # -isystem, which puts the C headers ahead of libc++'s and breaks <cstdlib>.
-target_link_libraries(gameswf PUBLIC z PRIVATE stb_image)
+# Windows has no system zlib; there miniz's zlib-compatible API stands in
+# (third_party/miniz, already in the build for the archives).
+if(WIN32)
+  target_link_libraries(gameswf PRIVATE miniz stb_image)
+else()
+  target_link_libraries(gameswf PUBLIC z PRIVATE stb_image)
+endif()
 if(MSVC)
   target_compile_options(gameswf PRIVATE /W0)
 else()

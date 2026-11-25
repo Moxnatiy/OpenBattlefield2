@@ -9,6 +9,7 @@
 
 #include "obf2/core/parallel.h"
 #include "obf2/game/object_mesh.h"
+#include "obf2/game/lod_switch.h"
 
 namespace obf2::app {
 namespace {
@@ -45,7 +46,7 @@ LevelScene buildLevelScene(FileSystem& files, level::Level& level, Scene& scene)
     ++roadsPlaced;
   }
   std::printf("  roads in the scene: %d\n", roadsPlaced);
-  scene.add(level::buildWaterPlane(level), Mat4::identity());
+  scene.add(level::buildWater(level, files), Mat4::identity());
 
   // The sky dome. Its place is the camera's, so it is not a scene instance:
   // it is uploaded on its own and put into the draw list every frame.
@@ -63,6 +64,7 @@ void placeObjects(FileSystem& files, const game::Registry& registry,
                   const std::vector<level::StaticObject>& placement, const SceneOptions& options,
                   LevelScene& levelScene, Scene& scene, const std::function<void()>& keepAlive) {
   std::unordered_map<std::string, int> meshIndexByTemplate;
+  std::unordered_map<int, int> chainByMesh;  // first mesh -> index into scene.lodChains
   std::map<std::string, int> missing;
   int placed = 0;
   int lightmapped = 0;
@@ -86,10 +88,48 @@ void placeObjects(FileSystem& files, const game::Registry& registry,
       built[i] = game::buildObjectMesh(files, registry, names[i], options.geometryIndex,
                                        options.lodIndex, false);
     });
+    // The LODs past the first one left, for the per-frame distance switch
+    // (`game::pickLod`). Only when the LOD follows the settings (`clampLod`),
+    // and only for a template drawn from one mesh file.
+    std::vector<std::vector<mesh::RenderMesh>> further(names.size());
+    if (options.clampLod) {
+      parallelFor(names.size(), [&](std::size_t i) {
+        if (!built[i] || built[i]->lodCount == 0) return;
+        for (std::size_t lod = built[i]->lodIndex + 1; lod < built[i]->lodCount; ++lod) {
+          auto next = game::buildObjectMesh(files, registry, names[i],
+                                            static_cast<int>(built[i]->geometryIndex),
+                                            static_cast<int>(lod), false, false);
+          if (!next) break;
+          further[i].push_back(std::move(*next));
+        }
+      });
+    }
     for (std::size_t i = 0; i < names.size(); ++i) {
       if (!built[i]) continue;
+      const std::size_t geometry = built[i]->geometryIndex;
+      const std::size_t skip = built[i]->lodIndex;
+      const float baseRadius = game::lodBaseRadius(built[i]->bounds);
       scene.meshes.push_back(std::move(*built[i]));
-      meshIndexByTemplate[names[i]] = static_cast<int>(scene.meshes.size()) - 1;
+      const int first = static_cast<int>(scene.meshes.size()) - 1;
+      meshIndexByTemplate[names[i]] = first;
+      if (further[i].empty()) continue;
+      Scene::LodChain chain;
+      chain.meshes.push_back(first);
+      for (auto& mesh : further[i]) {
+        scene.meshes.push_back(std::move(mesh));
+        chain.meshes.push_back(static_cast<int>(scene.meshes.size()) - 1);
+      }
+      const std::vector<float>* given = nullptr;
+      if (const auto* root = registry.find(names[i])) {
+        if (const auto* table = registry.lodDistances(root->text("geometry"));
+            table != nullptr && geometry < table->size()) {
+          given = &(*table)[geometry];
+        }
+      }
+      chain.switchDistances = game::lodSwitchDistances(given, skip, chain.meshes.size());
+      chain.baseRadius = baseRadius;
+      chainByMesh[first] = static_cast<int>(scene.lodChains.size());
+      scene.lodChains.push_back(std::move(chain));
     }
     if (keepAlive) keepAlive();
   }
@@ -116,13 +156,22 @@ void placeObjects(FileSystem& files, const game::Registry& registry,
     }
     Scene::Instance instance;
     instance.mesh = found->second;
+    if (const auto chain = chainByMesh.find(found->second); chain != chainByMesh.end()) {
+      instance.lodChain = chain->second;
+    }
     instance.transform = transform;
     // The baked light map is keyed by the template's name and the placement's own
     // position, so it is looked up here rather than with the geometry: the mesh is
     // shared between copies and the light map is not.
-    const auto* baked = options.noLightmaps
-                            ? nullptr
-                            : levelScene.objectLightmaps.find(object.templateName, object.position);
+    // Each LOD has a light map of its own, under geometry · 10 + LOD (see
+    // `ObjectLightmaps`).
+    const auto bakedFor = [&](int meshIndex) -> const level::LightmapPlacement* {
+      if (options.noLightmaps) return nullptr;
+      const auto& mesh = scene.meshes[static_cast<std::size_t>(meshIndex)];
+      const int code = static_cast<int>(mesh.geometryIndex * 10 + mesh.lodIndex);
+      return levelScene.objectLightmaps.find(object.templateName, object.position, code);
+    };
+    const auto* baked = bakedFor(found->second);
     if (baked != nullptr) {
       instance.lightmapAtlas = baked->atlas;
       instance.lightmapOffset[0] = baked->scaleU;
@@ -130,6 +179,19 @@ void placeObjects(FileSystem& files, const game::Registry& registry,
       instance.lightmapOffset[2] = baked->offsetU;
       instance.lightmapOffset[3] = baked->offsetV;
       ++lightmapped;
+    }
+    if (instance.lodChain >= 0) {
+      for (const int meshIndex : scene.lodChains[static_cast<std::size_t>(instance.lodChain)].meshes) {
+        Scene::Instance::LodLightmap light;
+        if (const auto* lod = bakedFor(meshIndex)) {
+          light.atlas = lod->atlas;
+          light.offset[0] = lod->scaleU;
+          light.offset[1] = lod->scaleV;
+          light.offset[2] = lod->offsetU;
+          light.offset[3] = lod->offsetV;
+        }
+        instance.lodLightmaps.push_back(light);
+      }
     }
     scene.instances.push_back(instance);
     ++placed;
@@ -140,6 +202,7 @@ void placeObjects(FileSystem& files, const game::Registry& registry,
               secondsSince(placementStarted));
   std::printf("  baked light maps: %d of %d objects, %d atlas pages\n", lightmapped, placed,
               levelScene.objectLightmaps.atlasCount());
+  std::printf("  distance LOD chains: %zu templates\n", scene.lodChains.size());
   int shown = 0;
   for (const auto& [name, count] : missing) {
     if (shown++ >= 5) break;

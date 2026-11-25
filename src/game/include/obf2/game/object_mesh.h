@@ -7,6 +7,7 @@
 // `geometryPart` (scene.h), while a control point has no mesh of its own and is
 // assembled from its children's. The engine does this in
 // `Code/BF2/Scene/Object/ObjectUtils.cpp`.
+#include <array>
 #include <optional>
 #include <string>
 
@@ -24,15 +25,29 @@ namespace obf2::game {
 // while the outside view has three or four.
 std::size_t pickGeometry(const mesh::Mesh& mesh, std::size_t lodIndex);
 
+// The geometry of a vehicle's mesh drawn from inside, for a seat with no
+// `cockpitSubGeom`: the first whose lod 0 uses a Cockpit technique
+// (BundledMesh.fx's CockpitNoHemiLight, as ahe_havoc.bundledmesh geometry 0 does).
+// Nullopt when no geometry has one. Whether the engine itself picks the interior
+// by the technique is not read: the technique is the data's own mark.
+std::optional<int> authoredCockpitGeometry(FileSystem& files, const Registry& registry,
+                                           const std::string& templateName);
+
 // The file beside the template's `.con`: `<dir>/meshes/<name>.<ext>` with the
 // three mesh extensions tried in turn. Empty when nothing is there.
 std::string resolveGeometryPath(FileSystem& files, const std::string& templateFile,
                                 const std::string& geometryName);
 
 // One mesh file, unpacked into drawable geometry. `geometryOverride` below zero
-// means "choose by `pickGeometry`".
+// means "choose by `pickGeometry`". `clampLod` picks the geometry for lod 0;
+// `lodIndex` is then how many leading LODs the quality drops, capped by
+// `maxSkip` for geometry 0 and 1 (0 for any other, by the mesh's kind — see
+// `loadMesh`) and by the mesh's last LOD, which also serves a mesh with fewer
+// LODs than asked for (a mesh particle's one).
 std::optional<mesh::RenderMesh> loadMesh(FileSystem& files, const std::string& path,
-                                         int geometryOverride, int lodIndex, bool verbose);
+                                         int geometryOverride, int lodIndex, bool verbose,
+                                         bool clampLod = false,
+                                         std::array<int, 2> maxSkip = {1 << 30, 1 << 30});
 
 // The whole tree of a template as one mesh, with the parts in their places.
 // When the root has no geometry of its own the children's meshes are merged —
@@ -40,7 +55,8 @@ std::optional<mesh::RenderMesh> loadMesh(FileSystem& files, const std::string& p
 // `ObjectTemplate.addTemplate flagpole`.
 std::optional<mesh::RenderMesh> buildObjectMesh(FileSystem& files, const Registry& registry,
                                                 const std::string& templateName,
-                                                int geometryOverride, int lodIndex, bool verbose);
+                                                int geometryOverride, int lodIndex, bool verbose,
+                                                bool clampLod = false);
 
 // At which step an object is lost on its way to the screen. Walks the same path
 // as `buildObjectMesh` but says where exactly it stopped: without that, "the

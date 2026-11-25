@@ -21,7 +21,9 @@
 #include "obf2/game/controls.h"
 #include "obf2/game/object_template.h"
 #include "obf2/hud/animation.h"
+#include "obf2/hud/blinker.h"
 #include "obf2/hud/bottom_left.h"
+#include "obf2/hud/chat.h"
 #include "obf2/hud/hud.h"
 #include "obf2/hud/map_node.h"
 #include "obf2/hud/render.h"
@@ -53,6 +55,11 @@ class Manager {
     std::function<void(const SquadList::Action& action)> squadAction;
     // `openbf2.spawnAt <group>` — a spawn straight by the server's group number.
     std::function<void(int team, int kit, int group)> spawnAtGroup;
+    // The scoreboard's manage page (OpenBF2 `HudScoreboard::singleClick`):
+    // column 4 mutes or unmutes a player's voice; 7 and 8 start a kick vote on
+    // him, or cast yes / no on the one already open.
+    std::function<void(int player)> toggleMute;
+    std::function<void(int player, int column)> kickVote;
     // `--hud-rects`: every rectangle drawn, in the original frame dump's format.
     std::function<void(const char* where, const std::vector<DrawPiece>& pieces)> reportRects;
   };
@@ -63,6 +70,10 @@ class Manager {
     int kit = 0;
     int team = 1;
     std::string levelName;
+    // The round's gameplay layer — the `GamePlayObjects.con` of the mode and
+    // size the server runs (`RemoteWorld::roundGameplay`). Null: the level's
+    // Conquest 16 layer, as before, for our own game and the menu.
+    const level::GameplayObjects* gameplay = nullptr;
   };
 
   // A screen visible only while a key is held: the scoreboard, the radio, the map
@@ -150,29 +161,21 @@ class Manager {
   // with the scoreboard held, the right button switches the HUD to its mouse mode
   // (12) — "Right click to activate mouse" — and letting go of the key ends both.
   void scoreboardRightClick();
+  // Who the manage page's kick-vote columns are for: whether the server takes
+  // votes, whether a kick is for our own team only, and the player an open kick
+  // vote is about (-1 for none).
+  void scoreboardVoting(bool enabled, bool teamOnly, int kickTarget);
 
-  // The map's live icons (OpenBF2 `Bf2MenuMapNode`): our team's living players
-  // (`collectIconFamily783440`, `populatePlayerMapIcon`, `colorMapIcon`) and the
-  // server's vehicles and strategic objects at their present places. Once the
-  // server's objects are known they replace the level's spawner icons.
-  struct LivePlayer {
-    float x = 0.0f, z = 0.0f;
-    float yaw = 0.0f;  // degrees
-    int team = 0;
-    int squad = 0;
-    bool leader = false;
-    bool commander = false;
-    bool local = false;
-  };
-  struct LiveObject {
-    std::string templateName;
-    float x = 0.0f, z = 0.0f;
-    float yaw = 0.0f;
-  };
+  // The map's live icons for this frame (obf2/app/map_contacts.h): players,
+  // vehicles, orders, commander assets and spots. Once any vehicle of the
+  // server's is among them, they replace the level's spawner icons.
+  void setMinimapContacts(std::vector<MapContact> contacts);
+  // The satellite line's width +0xb64 for the map shown now, in node units (the
+  // whole world drawn, clamped to the node's width, 0x784bb3..0x784c7d):
+  // RemoteWorld::stepMap takes it. Empty while no map node is laid out.
+  std::optional<float> satelliteDrawnWidth() const;
   // Whether a world point lies outside the level's combat area (its bounds).
   bool outsideCombatArea(float x, float z) const;
-  void liveMap(const std::vector<LivePlayer>& players, const std::vector<LiveObject>& objects,
-               int localTeam, int localSquad);
   // The server's name, address and port for the scoreboard's server info
   // (`HudInformationLayer::setServerInfo`, OpenBF2 — the menu calls it on a join)
   // and the level's name (`ActiveLevel`, "HUD_LEVELNAME_<map>").
@@ -199,6 +202,10 @@ class Manager {
   std::vector<DrawPiece> buildDynamic(DynamicNode& node);
 
   const std::vector<KeyScreen>& keyScreens() const { return keyScreens_; }
+  // A node from a layout outside the tree (the comm roses, obf2/app/field_ui.h),
+  // built on this screen with the HUD's fonts and localisation, in its final
+  // state. The pieces point at `node`, which has to outlive them.
+  std::vector<DrawPiece> buildLoose(const Node& node);
 
   // --- input ---
   // A click on the spawn screen: the circles on the map first, then the buttons,
@@ -210,10 +217,74 @@ class Manager {
   bool bigMap() const { return bigMap_; }
 
   // --- what the session fills in ---
+  // `HudInformationLayer::updateTickets` (PE 0x4646b0) for one frame: our team's
+  // and the other's tickets into `FriendlyTicketsString` / `EnemyTicketsString`,
+  // their bleed into the two float blinkers that drive `FriendlyTicketBleed` /
+  // `EnemyTicketBleed`, and our ticket state's tens digit for the low-ticket
+  // warning (a sound: 1 starts `lowOnTickets`, 0 stops it — we have no sound, so
+  // the change is logged).
+  struct TeamTickets {
+    int tickets = 0;
+    bool bleed = false;
+    int state = 0;
+  };
+  void updateTickets(const TeamTickets& friendly, const TeamTickets& enemy, float dt);
+  // The control points' owners as the server's `ControlPointNetworkable` says
+  // (the level's `controlPointId` → team): the map's flags follow them.
+  void controlPointTeams(const std::map<int, int>& teamById);
+  // The medal case's window (`MedalArea`, HudElementsActionIcons.con:105): a
+  // promotion (`rank`) or a medal, its icon, and how long it stays up. 0x74f6b0
+  // (medal) and 0x74f5b0 (rank): with a time above zero the other kind is
+  // hidden, the path goes into its string variable and its show variable comes
+  // on; when the time runs out both go off.
+  void showAward(bool rank, const std::string& iconPath, float seconds);
+
+  // The in-game chat (`HudChat`, list data 3 — chat.h).
+  Chat& chat() { return chat_; }
+  // A kill, as `BF2HudManager::handleGameLogicEvent` case 3 turns the
+  // `KilledByEvent` into lines (OpenBF2 BF2HudManagerGameLogicEvents.cpp;
+  // BF2.exe 0x753de0). The caller resolves the players and the weapon's HUD name;
+  // the manager makes the text and puts it where the original does.
+  struct Kill {
+    int killer = 0;            // the event's byte 0 (0xFD/0xFE: artillery)
+    int victim = 0;            // byte 1
+    bool killerAlive = false;  // byte 2: there is a killer player
+    bool killerKnown = false, victimKnown = false;
+    std::string killerName, victimName;
+    int killerTeam = 0, victimTeam = 0;
+    Chat::Speaker killerSpeaker;
+    // The weapon's or vehicle's `hudName` (a localisation key), and whether a
+    // soldier's weapon had no weapon HUD at all.
+    std::string weaponKey;
+    bool missingWeapon = false;
+  };
+  struct Local {
+    int id = -1;
+    int team = 0;
+    bool commander = false;
+  };
+  void killedBy(const Kill& kill, const Local& local);
+  // A chat string the server sent, as `Game::outputChatString` (OpenBF2
+  // Game/Main/Game.cpp) routes it: channels 12 and 13 always, the others only
+  // with a local player; type 0 and 1 are game lines, 2 a player's chat, 3 a
+  // squad radio line "Name: text".
+  struct ChatLine {
+    int channel = 0;
+    int type = 0;
+    std::string text;
+    bool senderKnown = false;
+    std::string senderName;
+    int senderTeam = 0;
+    bool senderCommander = false;
+    Chat::Speaker speaker;
+  };
+  void chatString(const ChatLine& line, bool hasLocalPlayer);
+
   VariableMap& variables() { return variables_; }
   std::map<std::string, std::string>& strings() { return strings_; }
   std::map<std::string, float>& values() { return values_; }
   SpawnInterface& spawnScreen() { return spawnScreen_; }
+  SquadList& squadList() { return squadList_; }
   const game::ControlMap& controls() const { return controls_; }
   const Builder& tree() const { return tree_; }
   Builder& tree() { return tree_; }
@@ -265,6 +336,15 @@ class Manager {
   VariableMap variables_;
   std::map<std::string, std::string> strings_;
   std::map<std::string, float> values_;
+  // `HudInformationLayer`'s two ticket blinkers (PE 0x46B500 registration):
+  // gate value true, period 1, smooth.
+  FloatBlinker friendlyBleed_{true, 1.0f, true};
+  FloatBlinker enemyBleed_{true, 1.0f, true};
+  bool lowOnTickets_ = false;  // +0x98
+  Chat chat_;
+  // A list node's revision: the chat's for list data 3, the scoreboard's
+  // otherwise (`dynamicChanged` rebuilds a list when it moves).
+  int listRevision(const Node& node) const;
   std::map<std::string, float> alpha_;
   float backgroundAlpha_ = 0.0f;
 
@@ -279,14 +359,14 @@ class Manager {
   bool localSquadLeader_ = false;
   std::vector<level::ControlPoint> controlPoints_;
   std::vector<Context::MapMarker> assetMarkers_;
-  std::vector<Context::MapMarker> liveMarkers_;
   std::size_t spawnerMarkers_ = 0;
   std::optional<std::array<float, 4>> combatBounds_;  // min x, max x, min z, max z       // the first of `assetMarkers_` are spawners'
   std::size_t contextFlagMarkers_ = 0;   // the combat map's flags, before the assets
   void appendAssets(std::vector<Context::MapMarker>& out) const;
   bool liveObjectsKnown_ = false;
-  std::chrono::steady_clock::time_point liveMapAt_{};
-  std::function<std::string(const std::string&, const char*, const char*)> iconOf_;
+  // The spawn screen bakes the map, so it takes the contacts at most four times
+  // a second (a rebuild costs a frame): a choice of ours, not the original's rate.
+  std::chrono::steady_clock::time_point spawnContactsAt_{};
   std::optional<texture::Texture> combatArea_;
 
   BottomLeftPanel bottomLeft_;
@@ -304,6 +384,7 @@ class Manager {
   bool bigMap_ = false;
   bool mapKeyWasDown_ = false;
   bool zoomKeyWasDown_ = false;
+  float awardLeft_ = 0.0f;  // the award window's time left (showAward)
 
   Animator animator_;
   Scoreboard scoreboard_;
@@ -311,10 +392,9 @@ class Manager {
   // The list cell the last click hit, for the list's own commands
   // (`SquadMenu.singleClickNew` reads the list's current row and column).
   ListHit lastListHit_;
-  std::string squadFingerprint_;
   bool scoreboardPointer_ = false;
   bool votingEnabled_ = false;
-  void squadVariables();
+  void pushSquadVariables();
   std::vector<KeyScreen> keyScreens_;
   std::vector<DynamicNode> dynamic_;
 

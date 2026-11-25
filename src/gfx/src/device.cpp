@@ -87,6 +87,18 @@ std::unique_ptr<Device> Device::create(const WindowDesc& desc, std::string* erro
   return device;
 }
 
+void Device::beginTextField(std::string text, std::size_t maxLength) {
+  fieldText_ = std::move(text);
+  fieldMax_ = maxLength;
+  fieldActive_ = SDL_StartTextInput(window_);
+}
+
+void Device::endTextField() {
+  if (!fieldActive_) return;
+  SDL_StopTextInput(window_);
+  fieldActive_ = false;
+}
+
 bool Device::pumpEvents() {
   SDL_Event event;
   while (SDL_PollEvent(&event)) {
@@ -98,7 +110,31 @@ bool Device::pumpEvents() {
         mouseDeltaX_ += event.motion.xrel;
         mouseDeltaY_ += event.motion.yrel;
         break;
+      case SDL_EVENT_TEXT_INPUT:
+        if (fieldActive_) {
+          // The HUD's .dif fonts draw single bytes: printable ASCII only.
+          for (const char* c = event.text.text; *c; ++c) {
+            if (fieldText_.size() >= fieldMax_) break;
+            if (*c >= 0x20 && *c < 0x7f) fieldText_ += *c;
+          }
+        }
+        break;
       case SDL_EVENT_KEY_DOWN:
+        if (fieldActive_) {
+          const auto key = event.key.key;
+          if (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_ESCAPE) endTextField();
+          else if (key == SDLK_BACKSPACE && !fieldText_.empty()) fieldText_.pop_back();
+          break;
+        }
+        if (!event.key.repeat && (event.key.scancode == SDL_SCANCODE_C ||
+                                  event.key.scancode == SDL_SCANCODE_F9 ||
+                                  event.key.scancode == SDL_SCANCODE_F10)) {
+          vehicleCameraPressed_ = event.key.scancode;
+        }
+        if (!event.key.repeat && event.key.scancode >= SDL_SCANCODE_F1 &&
+            event.key.scancode <= SDL_SCANCODE_F8) {
+          seatPressed_ |= 1u << (event.key.scancode - SDL_SCANCODE_F1);
+        }
         if (event.key.key == SDLK_ESCAPE && !event.key.repeat) {
           escape_ = true;
           if (escapeQuits_) quit_ = true;
@@ -166,6 +202,10 @@ bool Device::isKeyDown(std::string_view name) const {
 
 Device::InputState Device::readInput() {
   InputState state;
+  state.seatKeys = seatPressed_;
+  seatPressed_ = 0;
+  state.vehicleCameraKey = vehicleCameraPressed_;
+  vehicleCameraPressed_ = SDL_SCANCODE_UNKNOWN;
   const bool* keys = SDL_GetKeyboardState(nullptr);
   if (keys != nullptr) {
     // The layout as in the game: W/S forward and back, A/D sideways, Shift to run.
@@ -176,6 +216,10 @@ Device::InputState Device::readInput() {
     state.sprint = keys[SDL_SCANCODE_LSHIFT] || keys[SDL_SCANCODE_RSHIFT];
     state.jump = keys[SDL_SCANCODE_SPACE];
     state.reload = keys[SDL_SCANCODE_R];
+    state.use = keys[SDL_SCANCODE_E];
+    for (int n = 0; n < 8; ++n) {
+      if (keys[SDL_SCANCODE_F1 + n]) state.seatKeys |= 1u << n;
+    }
     // Controls.con: `c_PICrouch IDFKeyboard IDKey_LeftCtrl`, `c_PILie IDFKeyboard IDKey_Z`.
     state.crouch = keys[SDL_SCANCODE_LCTRL];
     state.prone = keys[SDL_SCANCODE_Z];
