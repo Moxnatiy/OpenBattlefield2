@@ -681,6 +681,8 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
   obf2::app::WorldView worldView;
   // Whether `--group` has already been asked for — it is a one-shot.
   bool askedForGroup = false;
+  int askedAtRefusals = 0;            // remote->spawnRefusals when --group last asked
+  std::vector<bool> spawnClicksDone;  // --click-at clicks used on the spawn screen
   if (remote != nullptr) {
     obf2::app::WorldView::Options viewOptions;
     viewOptions.drawPredicted = args.drawPredicted;
@@ -964,12 +966,19 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
       // own (it builds empty on some rounds), and without a soldier the client
       // sends the server nothing at all — which is a different measurement from
       // the one we want.
+      // A refusal (network event 6, "choose again") cleared our group on the
+      // server: ask once more, one ask per refusal. Before this a second
+      // client on a shared spawn point never spawned.
+      if (askedForGroup && askedAtRefusals != remote->spawnRefusals && !remote->combatAlive()) {
+        askedForGroup = false;
+      }
       if (args.spawnGroupGiven && args.spawnGroup != 0 && !askedForGroup &&
           !remote->world.spawnGroups().empty()) {
         std::printf("  --group %d: asking to spawn as team %d with kit %d\n", args.spawnGroup,
                     args.team, args.kit);
         remote->askSpawnGroup(args.team, args.kit, args.spawnGroup);
         askedForGroup = true;
+        askedAtRefusals = remote->spawnRefusals;
       }
       // The game tick runs whether we have a soldier or not; with one, the
       // soldier's branch below runs the same ticks.
@@ -1888,9 +1897,15 @@ int runSession(const Args& args, obf2::FileSystem& files, Args* next, RemoteWorl
           float clickX = args.click ? args.mouseX : input.mouseX;
           float clickY = args.click ? args.mouseY : input.mouseY;
           // `--click-at` reaches the spawn screen too: "DONE pressed straight after
-          // joining" has to be repeatable without a hand on the mouse.
-          for (const auto& scheduled : args.clicks) {
-            if (frame != scheduled.frame) continue;
+          // joining" has to be repeatable without a hand on the mouse. A click
+          // whose frame came before the screen was up is kept for the first
+          // frame it is: load time varies, and an exact-frame click was lost in
+          // some runs. Each click is used once.
+          spawnClicksDone.resize(args.clicks.size());
+          for (std::size_t i = 0; i < args.clicks.size(); ++i) {
+            const auto& scheduled = args.clicks[i];
+            if (frame < scheduled.frame || spawnClicksDone[i] || clicked) continue;
+            spawnClicksDone[i] = true;
             clicked = true;
             clickX = scheduled.x;
             clickY = scheduled.y;
