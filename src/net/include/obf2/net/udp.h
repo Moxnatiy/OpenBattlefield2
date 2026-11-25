@@ -26,10 +26,13 @@ class UdpSocket {
   std::optional<std::vector<std::byte>> receive(int timeoutMs);
 
   const std::string& describe() const { return description_; }
+  // The peer's numeric address and port ("a.b.c.d:port"), empty when unknown.
+  const std::string& peerEndpoint() const { return peerEndpoint_; }
 
  private:
   int handle_ = -1;
   std::string description_;
+  std::string peerEndpoint_;
 };
 
 }  // namespace obf2::net

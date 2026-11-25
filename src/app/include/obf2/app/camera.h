@@ -17,6 +17,7 @@ namespace obf2::app {
 struct CameraView {
   Vec3f eye;
   Vec3f target;
+  Vec3f up{0.0f, 1.0f, 0.0f};
 };
 
 // A direction from yaw and pitch in degrees. A zero angle looks along +Z — the
@@ -38,7 +39,7 @@ float aspectFieldOfView(float fov, float heightOverWidth);
 //      there, whatever the rest of the run is doing. It outranks the soldier on
 //      purpose: the point of it is to put our frame and the original's in the
 //      same spot, and the original is put there with the same numbers;
-//   2. the player's soldier, in first person;
+//   2. the player's vehicle view, or the soldier in first person;
 //   3. `--topdown` — straight down over the scene's centre;
 //   4. the level's before-spawn camera;
 //   5. an orbit around the scene, for the model viewer.
@@ -50,6 +51,7 @@ struct CameraInputs {
   float soldierYaw = 0.0f;
   float soldierPitch = 0.0f;
   bool topDown = false;
+  std::optional<CameraView> vehicle;  // the seat's camera (WorldView::occupiedCamera)
   std::optional<Vec3f> beforeSpawnPosition;
   Vec3f beforeSpawnRotation;  // yaw/pitch/roll in degrees
   Vec3f sceneCentre;

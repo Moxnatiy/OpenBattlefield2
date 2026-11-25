@@ -333,6 +333,7 @@ void Engine::scanLevels(FileSystem& files, const std::filesystem::path& modDir) 
       const std::string name = tagValue(xml, "name");
       if (!name.empty()) level.displayName = name;
       level.briefingKey = attributeValue(xml, "briefing", "locid");
+      level.music = tagValue(xml, "music");  // BF2.exe 0x4802fe
     }
     if (files.exists(base + "loadmap.png")) level.loadImage = base + "loadmap.png";
 
@@ -341,6 +342,11 @@ void Engine::scanLevels(FileSystem& files, const std::filesystem::path& modDir) 
 
   std::sort(levels_.begin(), levels_.end(),
             [](const LevelEntry& a, const LevelEntry& b) { return a.displayName < b.displayName; });
+}
+
+std::string readModMusic(FileSystem& files) {
+  const auto descriptor = files.loadText("mod.desc");  // BF2.exe 0x47ddab
+  return descriptor ? tagValue(*descriptor, "music") : std::string{};  // 0x47df11
 }
 
 bool Engine::startLoading(std::string_view levelDirectory) {

@@ -15,14 +15,15 @@ float soldierMouseSpeedMod(float playerFov, float cameraFov, float weaponMouseSp
 }
 
 void turnSoldier(SoldierLook& look, float mouseX, float mouseY, float forwardInput,
-                 const PhysicsConstants& constants, float mouseSpeedMod) {
+                 const PhysicsConstants& constants, float mouseSpeedMod,
+                 float recoilYaw, float recoilPitch) {
   // 0x5ae205..0x5ae288: factor, the 0.001 dead zone, then the speed mod.
   float lookX = mouseX * constants.lookFactorX;
   float lookY = mouseY * constants.lookFactorY;
   if (std::abs(lookX) < 0.001f) lookX = 0.0f;
   if (std::abs(lookY) < 0.001f) lookY = 0.0f;
-  lookX *= mouseSpeedMod;
-  lookY *= mouseSpeedMod;
+  lookX = lookX * mouseSpeedMod + recoilYaw;
+  lookY = lookY * mouseSpeedMod + recoilPitch;
   const float delta = lookX;
   const float maxYaw = constants.lookMaxYaw;
   float bodyDelta = delta;

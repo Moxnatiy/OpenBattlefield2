@@ -1,5 +1,6 @@
 #include "obf2/server/collision_objects.h"
 
+#include <cctype>
 #include <cstdio>
 
 #include "obf2/core/path.h"
@@ -41,26 +42,27 @@ const mesh::CollisionMesh* CollisionLibrary::meshOf(const game::ObjectTemplate& 
   return nullptr;
 }
 
-const std::vector<CollisionPiece>& CollisionLibrary::soldierPieces(
-    const std::string& templateName) {
-  const auto cached = pieces_.find(templateName);
-  if (cached != pieces_.end()) return cached->second;
+const std::vector<CollisionPiece>& CollisionLibrary::pieces(const std::string& templateName,
+                                                           mesh::ColType type) {
+  auto& cache = pieces_[static_cast<std::size_t>(type) & 3];
+  const auto cached = cache.find(templateName);
+  if (cached != cache.end()) return cached->second;
 
   std::vector<CollisionPiece> pieces;
   if (const game::ObjectTemplate* root = registry_.find(templateName)) {
     if (const mesh::CollisionMesh* mesh = meshOf(*root)) {
-      if (const auto* layer = mesh->validLayer(0, 0, mesh::ColType::Soldier)) {
-        pieces.push_back({layer, Mat4::identity()});
+      if (const auto* layer = mesh->validLayer(0, 0, type)) {
+        pieces.push_back({layer, Mat4::identity(), root});
       }
-      walkChildren(*root, Mat4::identity(), *mesh, pieces, 1);
+      walkChildren(*root, Mat4::identity(), *mesh, type, pieces, 1);
     }
   }
-  return pieces_.emplace(templateName, std::move(pieces)).first->second;
+  return cache.emplace(templateName, std::move(pieces)).first->second;
 }
 
 void CollisionLibrary::walkChildren(const game::ObjectTemplate& parent,
                                     const Mat4& parentTransform, const mesh::CollisionMesh& mesh,
-                                    std::vector<CollisionPiece>& out, int depth) {
+                                    mesh::ColType type, std::vector<CollisionPiece>& out, int depth) {
   if (depth > kMaxDepth) return;
   // The child list is taken in `addTemplate` order; the order the engine links
   // an object's children in is not established.
@@ -71,29 +73,46 @@ void CollisionLibrary::walkChildren(const game::ObjectTemplate& parent,
     // A child with a mesh of its own ends the walk (0x574760's loop condition);
     // it carries its own tree the way the root does.
     if (const mesh::CollisionMesh* own = meshOf(*object)) {
-      if (const auto* layer = own->validLayer(0, 0, mesh::ColType::Soldier)) {
-        out.push_back({layer, transform});
+      if (const auto* layer = own->validLayer(0, 0, type)) {
+        out.push_back({layer, transform, object});
       }
-      walkChildren(*object, transform, *own, out, depth + 1);
+      walkChildren(*object, transform, *own, type, out, depth + 1);
       return;
     }
     const int part = collisionPart(*object);
     if (part > 0) {
       if (const auto* layer =
-              mesh.validLayer(static_cast<std::size_t>(part), 0, mesh::ColType::Soldier)) {
-        out.push_back({layer, transform});
+              mesh.validLayer(static_cast<std::size_t>(part), 0, type)) {
+        out.push_back({layer, transform, object});
       }
     }
-    walkChildren(*object, transform, mesh, out, depth + 1);
+    walkChildren(*object, transform, mesh, type, out, depth + 1);
   }
 }
 
+bool hasCollisionPhysics(const game::ObjectTemplate& object) {
+  if (const auto value = object.number("hasCollisionPhysics")) return *value != 0;
+  std::string name = object.className;
+  for (char& c : name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  return name == "dynamicbundle";
+}
+
+std::vector<CollisionPiece> collisionPhysicsPieces(const std::vector<CollisionPiece>& pieces) {
+  std::vector<CollisionPiece> kept;
+  for (const CollisionPiece& piece : pieces)
+    if (piece.materialOwner && hasCollisionPhysics(*piece.materialOwner)) kept.push_back(piece);
+  return kept;
+}
+
 std::unique_ptr<CollisionWorld> buildCollisionWorld(CollisionLibrary& library,
-                                                    const std::vector<level::StaticObject>& objects) {
+                                                    const std::vector<level::StaticObject>& objects,
+                                                    mesh::ColType type, bool collisionPhysicsOnly) {
   auto world = std::make_unique<CollisionWorld>();
   int withCollision = 0, withoutCollision = 0;
   for (const level::StaticObject& object : objects) {
-    const auto& pieces = library.soldierPieces(object.templateName);
+    std::vector<CollisionPiece> kept;
+    if (collisionPhysicsOnly) kept = collisionPhysicsPieces(library.pieces(object.templateName, type));
+    const auto& pieces = collisionPhysicsOnly ? kept : library.pieces(object.templateName, type);
     if (pieces.empty()) {
       ++withoutCollision;
       continue;
@@ -107,7 +126,9 @@ std::unique_ptr<CollisionWorld> buildCollisionWorld(CollisionLibrary& library,
                                                      object.rotation.z);
       }
     }
-    for (const CollisionPiece& piece : pieces) world->addLayer(*piece.layer, transform * piece.local);
+    for (const CollisionPiece& piece : pieces) {
+      world->addLayer(*piece.layer, transform * piece.local, piece.materialOwner);
+    }
     ++withCollision;
   }
   std::printf("  collision: %d objects, %zu triangles in %zu cells (without geometry %d)\n",

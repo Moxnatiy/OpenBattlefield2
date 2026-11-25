@@ -84,6 +84,10 @@ struct Context {
   // Such a node's children are built as usual.
   std::function<bool(const Node&)> skipNode;
   std::function<std::string_view(std::string_view variable)> variableText;
+  // An edit node's text: string N (`setEditNodeString N`) of the HUD
+  // manager's string table (`BF2.exe` 0x7b13a0 writes it, 0x7b1410 reads it).
+  // Null, or null for a number, and the box draws empty.
+  std::function<const std::string*(int string)> editText;
   // A bar's fill, 0..1 (`setBarNodeValueVariable`).
   std::function<float(std::string_view variable)> variableValue;
   // A number some code has written, or nullopt when nobody has: what a node's
@@ -132,10 +136,23 @@ struct Context {
     // 19x19 (docs/functions/hud-map.md).
     float size = 0.0f;
     // A live icon's colour and turn (the map's player and vehicle icons); the
-    // level's markers keep white and upright.
+    // level's markers keep white, and a strategic icon turns with its object
+    // (0x77e500).
     Color color;
     float rotation = 0.0f;  // radians, counter-clockwise on screen
+    // Drawn at the map node's icon alpha, `mapIconAlpha` below: the strategic
+    // holders (layer 0x10, 0x77e500), the vehicles and their spawners (0x783f90)
+    // and the soldiers (0x783440, 0x782480). The flags (layer 3, 0x77e720) do
+    // not read it.
+    bool atIconAlpha = false;
   };
+  // The map node's icon alpha, +0x6fc, which the strategic (0x77e500), vehicle
+  // (0x783f90) and soldier (0x783440, 0x782480) layers draw with. It eases (0x77c330, 1 − e^(−10·dt))
+  // toward +0x704: 1.0 from the constructor (0x7818aa), 0.5 on the spawn screen
+  // (0x777fe8). The spawn screen is baked once, so it takes the settled value.
+  // In game the target is the setting `MenuMapIconAlpha` (0x777eef), not ported:
+  // the constructor's 1.0 stands.
+  float mapIconAlpha = 1.0f;
   std::vector<MapMarker> mapMarkers;
   // The spawn point selection circles. The game has separate textures for them —
   // Minimap/Icons/spawn_UnSelected and spawn_Selected (plus the Inactive and

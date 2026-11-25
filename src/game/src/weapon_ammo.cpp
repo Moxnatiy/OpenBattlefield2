@@ -61,6 +61,15 @@ void WeaponAmmo::setWeapon(const AmmoTemplate& weapon) {
   }
 }
 
+void WeaponAmmo::synchronize(int rounds, int magazines) {
+  if (rounds < (template_.magSize < 0 ? -1 : 0) || rounds > template_.magSize ||
+      magazines < (template_.nrOfMags < 0 ? -1 : 0) || magazines > template_.nrOfMags) {
+    return;
+  }
+  mags_.resize(static_cast<std::size_t>(std::max(1, magazines)), template_.magSize);
+  mags_.front() = rounds;
+}
+
 bool WeaponAmmo::canReload() const {
   // 0x5eb520: not when the magazine in the weapon is full, then when a spare is
   // left or the supply is endless.

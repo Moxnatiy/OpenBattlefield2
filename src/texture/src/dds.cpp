@@ -17,6 +17,7 @@ constexpr std::uint32_t kPfRgb = 0x40;
 
 // DDSCAPS2
 constexpr std::uint32_t kCapsCubemap = 0x200;
+constexpr std::uint32_t kCapsAllFaces = 0xfc00;  // POSITIVEX..NEGATIVEZ
 constexpr std::uint32_t kCapsVolume = 0x200000;
 
 std::uint32_t fourcc(const char* code) {
@@ -70,46 +71,44 @@ namespace {
 
 // A4R4G4B4 / R5G6B5 -> B8G8R8A8. Nibbles and five-bit fields are expanded so
 // that 0xF becomes 0xFF rather than 0xF0.
+//
+// Every two bytes become four wherever they lie, so the whole buffer is
+// converted at once and every offset and size doubles — which holds for the
+// slices of a volume and the faces of a cube as much as for a flat chain.
 void expandToBgra8(Texture& texture) {
   std::vector<std::byte> out;
-  std::vector<MipLevel> mips;
   out.reserve(texture.data.size() * 2);
 
-  for (const MipLevel& mip : texture.mips) {
-    const std::size_t pixels = static_cast<std::size_t>(mip.width) * mip.height;
-    const std::size_t start = out.size();
+  for (std::size_t at = 0; at + 1 < texture.data.size(); at += 2) {
+    const auto value = static_cast<std::uint32_t>(
+        static_cast<std::uint8_t>(texture.data[at]) |
+        (static_cast<std::uint32_t>(static_cast<std::uint8_t>(texture.data[at + 1])) << 8));
 
-    for (std::size_t i = 0; i < pixels; ++i) {
-      const std::size_t at = mip.offset + i * 2;
-      if (at + 1 >= texture.data.size()) break;
-      const auto value = static_cast<std::uint32_t>(
-          static_cast<std::uint8_t>(texture.data[at]) |
-          (static_cast<std::uint32_t>(static_cast<std::uint8_t>(texture.data[at + 1])) << 8));
-
-      std::uint8_t b = 0, g = 0, r = 0, a = 255;
-      if (texture.format == Format::Bgra4) {
-        const auto expand4 = [](std::uint32_t v) { return static_cast<std::uint8_t>(v * 17u); };
-        b = expand4(value & 0xF);
-        g = expand4((value >> 4) & 0xF);
-        r = expand4((value >> 8) & 0xF);
-        a = expand4((value >> 12) & 0xF);
-      } else {  // R5G6B5
-        b = static_cast<std::uint8_t>(((value & 0x1F) * 255 + 15) / 31);
-        g = static_cast<std::uint8_t>((((value >> 5) & 0x3F) * 255 + 31) / 63);
-        r = static_cast<std::uint8_t>((((value >> 11) & 0x1F) * 255 + 15) / 31);
-      }
-
-      out.push_back(static_cast<std::byte>(b));
-      out.push_back(static_cast<std::byte>(g));
-      out.push_back(static_cast<std::byte>(r));
-      out.push_back(static_cast<std::byte>(a));
+    std::uint8_t b = 0, g = 0, r = 0, a = 255;
+    if (texture.format == Format::Bgra4) {
+      const auto expand4 = [](std::uint32_t v) { return static_cast<std::uint8_t>(v * 17u); };
+      b = expand4(value & 0xF);
+      g = expand4((value >> 4) & 0xF);
+      r = expand4((value >> 8) & 0xF);
+      a = expand4((value >> 12) & 0xF);
+    } else {  // R5G6B5
+      b = static_cast<std::uint8_t>(((value & 0x1F) * 255 + 15) / 31);
+      g = static_cast<std::uint8_t>((((value >> 5) & 0x3F) * 255 + 31) / 63);
+      r = static_cast<std::uint8_t>((((value >> 11) & 0x1F) * 255 + 15) / 31);
     }
-    mips.push_back(MipLevel{mip.width, mip.height, start, out.size() - start});
-  }
 
+    out.push_back(static_cast<std::byte>(b));
+    out.push_back(static_cast<std::byte>(g));
+    out.push_back(static_cast<std::byte>(r));
+    out.push_back(static_cast<std::byte>(a));
+  }
+  for (MipLevel& mip : texture.mips) {
+    mip.offset *= 2;
+    mip.size *= 2;
+  }
+  texture.faceSize *= 2;
   texture.format = Format::Bgra8;
   texture.data = std::move(out);
-  texture.mips = std::move(mips);
 }
 
 }  // namespace
@@ -141,6 +140,7 @@ std::optional<Texture> loadDds(std::span<const std::byte> bytes, std::string* er
 
   const std::uint32_t height = readU32(bytes, 12);
   const std::uint32_t width = readU32(bytes, 16);
+  const std::uint32_t declaredDepth = readU32(bytes, 24);
   const std::uint32_t declaredMips = readU32(bytes, 28);
 
   const std::uint32_t pfFlags = readU32(bytes, 80);
@@ -151,8 +151,14 @@ std::optional<Texture> loadDds(std::span<const std::byte> bytes, std::string* er
   const std::uint32_t caps2 = readU32(bytes, 112);
 
   if (width == 0 || height == 0) return fail("texture has zero size");
-  if ((caps2 & kCapsCubemap) != 0) return fail("cube maps are not supported");
-  if ((caps2 & kCapsVolume) != 0) return fail("volume textures are not supported");
+  // A cube map is read only whole: DDSCAPS2_CUBEMAP with all six
+  // DDSCAPS2_CUBEMAP_POSITIVEX..NEGATIVEZ bits, which is what every one in the
+  // game has (0xfe00). One missing a face would need its faces told apart.
+  const bool cube = (caps2 & kCapsCubemap) != 0;
+  if (cube && (caps2 & kCapsAllFaces) != kCapsAllFaces) return fail("a cube map without all six faces");
+  const bool volume = (caps2 & kCapsVolume) != 0;
+  if (volume && declaredDepth == 0) return fail("a volume texture with no depth");
+  if (cube && volume) return fail("a cube map and a volume at once");
 
   Format format{};
   if ((pfFlags & kPfFourCC) != 0) {
@@ -202,10 +208,14 @@ std::optional<Texture> loadDds(std::span<const std::byte> bytes, std::string* er
     return fail("unsupported pixel format");
   }
 
+  if ((cube || volume) && format == Format::R8) return fail("an 8-bit cube or volume");
+
   Texture texture;
   texture.format = format;
   texture.width = width;
   texture.height = height;
+  texture.depth = volume ? declaredDepth : 1;
+  texture.faces = cube ? 6 : 1;
 
   const std::size_t payloadOffset = 128;
   const std::size_t available = bytes.size() - payloadOffset;
@@ -214,26 +224,34 @@ std::optional<Texture> loadDds(std::span<const std::byte> bytes, std::string* er
   // into the file. The game contains DDS files with mipCount=0 that in fact
   // have one level.
   const std::uint32_t wantedMips = std::max<std::uint32_t>(1, declaredMips);
+  // A cube's six faces share one chain, so it is measured against a sixth of
+  // the payload. A volume's level holds all its slices, and the slices halve
+  // with the sides (DirectX's own layout: 256x256x8 is followed by 128x128x4).
+  const std::size_t perFace = cube ? available / 6 : available;
   std::size_t offset = 0;
   std::uint32_t levelWidth = width;
   std::uint32_t levelHeight = height;
+  std::uint32_t levelDepth = texture.depth;
 
   for (std::uint32_t level = 0; level < wantedMips; ++level) {
-    const std::size_t size = levelSize(format, levelWidth, levelHeight);
-    if (size == 0 || offset + size > available) break;
+    const std::size_t size = levelSize(format, levelWidth, levelHeight) * levelDepth;
+    if (size == 0 || offset + size > perFace) break;
 
-    texture.mips.push_back(MipLevel{levelWidth, levelHeight, offset, size});
+    texture.mips.push_back(MipLevel{levelWidth, levelHeight, offset, size, levelDepth});
     offset += size;
 
-    if (levelWidth == 1 && levelHeight == 1) break;
+    if (levelWidth == 1 && levelHeight == 1 && levelDepth == 1) break;
     levelWidth = std::max<std::uint32_t>(1, levelWidth / 2);
     levelHeight = std::max<std::uint32_t>(1, levelHeight / 2);
+    levelDepth = std::max<std::uint32_t>(1, levelDepth / 2);
   }
 
   if (texture.mips.empty()) return fail("the texture's data is truncated");
 
-  texture.data.resize(offset);
-  std::memcpy(texture.data.data(), bytes.data() + payloadOffset, offset);
+  texture.faceSize = offset;
+  const std::size_t total = offset * texture.faces;
+  texture.data.resize(total);
+  std::memcpy(texture.data.data(), bytes.data() + payloadOffset, total);
 
   // 16-bit formats are expanded into B8G8R8A8 at load time.
   //

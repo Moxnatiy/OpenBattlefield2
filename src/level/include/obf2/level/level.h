@@ -45,6 +45,9 @@ struct TerrainInfo {
   std::string detailmapBase;
   std::string lowDetailmapBase;
   float seaLevel = 0.0f;
+  // Whether `heightmapcluster.setSeaWaterLevel` was given. Without it a
+  // Heightmap's sea level stays at its ctor's −10000 (BF2.exe 0x6f48f0, +0x60).
+  bool seaLevelSet = false;
 
   // The rest of the `terrain.*` block of Terrain.con. All of it, because it is
   // one block and going back for a field at a time is what rule 3 is about.
@@ -65,6 +68,23 @@ struct TerrainInfo {
   float farYOffset = 0.0f;           // slides the side planes up the texture
   Vec3f subdivideScale{2.0f, 1.0f, 2.0f};  // terrain.primaryWorldScale, kept whole
   Vec3f waterColor{0.10f, 0.13f, 0.16f};  // renderer.waterColor from Water.con
+
+  // The rest of the water's `Water.con` (`docs/functions/water.md`). The
+  // defaults are the water renderer's own when a level names none
+  // (`RendDX9.dll`, its constructor 0x100df7c0: +0x6c4 = 10.0, +0x6c8/+0x6cc =
+  // 0.1/0.1); all 22 levels name both.
+  float waterAnimSpeed = 10.0f;            // renderer.waterAnimSpeed: seconds per cycle
+  float waterScroll[2]{0.1f, 0.1f};        // renderer.waterScroll
+  // renderer.waterSpecularColor: rgb and a strength in w; ...SpecularPower the
+  // exponent. Every level names both. The renderer's defaults for them are not
+  // read, so a level without them gets no highlight rather than a made-up one.
+  float waterSpecularColor[4]{0.0f, 0.0f, 0.0f, 0.0f};
+  float waterSpecularPower = 1.0f;
+  // `renderer.waterAlphaHeightMul` / `renderer.waterAlphaAdd`: the water's
+  // alpha bias, `WaterColor.w` (`RendDX9.dll`, 0x100d9c30, see water.md). No
+  // level sets either; the constructor's 0 and 0.32 (+0x738, +0x73c = 0x3ea3d70a).
+  float waterAlphaHeightMul = 0.0f;
+  float waterAlphaAdd = 0.32f;
 
   // Fog. `Renderer.fogColor` is 0..255, not 0..1, and
   // `Renderer.fogStartEndAndBase` carries four numbers, not three: start, end,
@@ -420,10 +440,11 @@ std::vector<TerrainPatch> buildTerrainPatches(const Level& level, const FileSyst
 // mesh is not in the archives.
 std::optional<mesh::RenderMesh> buildSkyDome(const Level& level, const FileSystem& files);
 
-// The name the engine substitutes for the water surface's texture file: the
-// water's colour is given as a number in Water.con, not as a picture.
-inline constexpr const char* kWaterColorMap = "#waterColor";
-
-mesh::RenderMesh buildWaterPlane(const Level& level);
+// The water surface as the original lays it out: one 65x65 grid per terrain
+// patch that reaches down to the water, each a range of its own whose one map
+// is that patch's light map (`Lightmaps/txCCxRR.dds`, empty when the level has
+// none) — its red channel is the water's opacity, its green the shade
+// (`docs/functions/water.md`). The grid's [0, 1] is in each vertex's `uv`.
+mesh::RenderMesh buildWater(const Level& level, const FileSystem& files);
 
 }  // namespace obf2::level

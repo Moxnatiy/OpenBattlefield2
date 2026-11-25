@@ -95,6 +95,8 @@ class Registry {
   void feed(const con::Command& command);
 
   const ObjectTemplate* find(std::string_view name) const;
+  // The `.con` that ran `GeometryTemplate.create ... <name>`; empty if none did.
+  std::string_view geometryFile(std::string_view name) const;
   std::size_t size() const { return templates_.size(); }
   const Stats& stats() const { return stats_; }
 
@@ -108,6 +110,7 @@ class Registry {
 
   std::vector<std::unique_ptr<ObjectTemplate>> order_;
   std::unordered_map<std::string, ObjectTemplate*> templates_;  // the key is lower-case
+  std::unordered_map<std::string, std::string> geometryFiles_;  // lower-case name -> .con
   ObjectTemplate* active_ = nullptr;
   ChildTemplate* lastChild_ = nullptr;
   Stats stats_;

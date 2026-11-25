@@ -364,10 +364,16 @@ two values — `tools/mesh_info --materials` now prints the distribution:
 2 is the cut-out one. The pine `nc_pinebig01` shows it in miniature: its
 trunk range is `alphaMode 0` and its needles `alphaMode 2`.
 
-The test is on the **base** map's alpha, before the detail is multiplied
-in. With `_ALPHATEST_` the shader keeps `totalDiffuse.a` and only scales
-it by Transparency; without it the alpha is discarded and the detail's
-becomes gloss instead (`RaShaderSTM.fx:282`).
+The test uses the **composite** diffuse alpha. When a material has a
+detail texture, `getCompositeDiffuse` multiplies its alpha by the base
+alpha. The stock wire fence uses an opaque base atlas and stores the
+mesh openings in its detail texture. For opaque materials with a detail
+texture, the detail's alpha supplies gloss (`RaShaderSTM.fx:278–287`).
+
+The M24's zoom mesh also has a separate `Alpha` range. Its texture alpha
+blends the reticle over the world, while the opaque range draws the scope
+housing. The renderer draws blended ranges after opaque geometry with
+depth writes disabled.
 
 ## The sky's horizon, and which samplers clamp
 
