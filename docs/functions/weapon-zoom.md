@@ -23,8 +23,12 @@ field), setters 0x629620 (`setZoomDelay`), 0x629640 (`setChangeFovDelay`), 0x629
 | +0x54 | `zoom.disableMuzzleWhenZoomed` | 0 |
 
 The M24 (`usrif_m24.tweak`) is `zoomDelay 0.125`, `zoomLod 1`, factors 0 and **0.2**,
-`changeFovDelay 0.08`, `zoomOutAfterFire 1`, `disableMuzzleWhenZoomed 1`. The M4 and
-the SCAR have no zoom component at all.
+`changeFovDelay 0.08`, `zoomOutAfterFire 1`, `disableMuzzleWhenZoomed 1`. The M4
+(`USRIF_M4.tweak`, lines 63–68) is `zoomDelay 0.08`, `zoomLod 1`, factors 0 and
+**0.7**, `disableMuzzleWhenZoomed 1`; the SCAR (`usrif_fnscarl.tweak`, line 63 on)
+has a `DefaultZoomComp` too. An earlier note here said neither had a zoom
+component: it read the `.con`, and the component is in the `.tweak`.
+`WeaponZoom::hidesMuzzle` answers `disableMuzzleWhenZoomed` while zoomed.
 
 A zoom factor is the camera's field of view in radians, vertical (0.2 ≈ 11.5°
 against the soldier camera's own 1.1): `changeZoom` hands it to `Player::setFov(fov,

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <set>
 
 #include "obf2/con/interpreter.h"
@@ -230,7 +231,51 @@ std::optional<System> System::load(FileSystem& files, const std::string& scriptP
     if (error) *error = "the script has no triggers at all";
     return std::nullopt;
   }
+  // `AnimationSystemTemplate::loadScript` numbers the triggers once the script
+  // has run (Linux server 0x6b3626 calls `setPriosForTriggers` 0x6cfeb0).
+  system.assignPriorities();
   return system;
+}
+
+void System::assignPriorities() {
+  std::map<std::string, int> priorityOf;
+  int counter = 0;
+  // The engine's recursion is unbounded; a depth limit keeps a looped tree from
+  // hanging ours.
+  std::function<void(const std::string&, int)> walk = [&](const std::string& name, int depth) {
+    const auto found = triggers_.find(key(name));
+    if (found == triggers_.end() || depth > 64) return;
+    priorityOf[found->first] = ++counter;
+    for (const std::string& bundle : found->second.bundles) {
+      if (const auto owned = bundles_.find(key(bundle)); owned != bundles_.end()) {
+        owned->second.priority = counter;
+      }
+    }
+    for (const std::string& child : found->second.children) walk(child, depth + 1);
+  };
+  // The roots in the map's own order — our keys are lower-cased, which is the
+  // engine's `NoCaseStringCompare` order (`roots()` sorts by the spelling).
+  std::set<std::string> children;
+  for (const auto& [name, trigger] : triggers_) {
+    for (const std::string& child : trigger.children) children.insert(key(child));
+  }
+  for (const auto& [name, trigger] : triggers_) {
+    if (children.count(name) == 0) walk(name, 0);
+  }
+}
+
+bool System::isMovementBundle(std::string_view bundle) const {
+  const std::string wanted = key(bundle);
+  for (const auto& [name, trigger] : triggers_) {
+    switch (trigger.kind) {
+      case TriggerType::Movement: case TriggerType::Forward: case TriggerType::Side:
+      case TriggerType::Up: case TriggerType::Turn: break;
+      default: continue;
+    }
+    if (trigger.valueHolder.empty() && trigger.bundles.size() == 2) continue;
+    for (const auto& asked : trigger.bundles) if (key(asked) == wanted) return true;
+  }
+  return false;
 }
 
 const ValueHolder* System::holderForBundle(std::string_view bundle) const {
@@ -274,8 +319,12 @@ void System::applyBundles(const Trigger& trigger, const Random& random,
   if (trigger.bundles.empty()) return;
   // `RandomTrigger::applyAnimations` (`BF2.exe` 0x7fefa0) plays **one** of its
   // bundles, `rand() % count`; every other trigger plays all of them (0x7fe940).
+  // With no source given, the C library's `rand()` as the engine's; before,
+  // the first bundle every time, so a soldier only ever played `idle1`.
   if (trigger.kind == TriggerType::Random) {
-    const std::size_t index = random ? random(trigger.bundles.size()) % trigger.bundles.size() : 0;
+    const std::size_t drawn = random ? random(trigger.bundles.size())
+                                     : static_cast<std::size_t>(std::rand());
+    const std::size_t index = drawn % trigger.bundles.size();
     push(trigger.bundles[index]);
     return;
   }

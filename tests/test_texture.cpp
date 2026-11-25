@@ -25,6 +25,7 @@ class DdsBuilder {
     return *this;
   }
   DdsBuilder& mipCount(std::uint32_t count) { put32(28, count); return *this; }
+  DdsBuilder& depth(std::uint32_t slices) { put32(24, slices); return *this; }
 
   DdsBuilder& fourcc(const char* code) {
     put32(80, 0x4);  // DDPF_FOURCC
@@ -179,13 +180,17 @@ static void testRejects() {
   const auto dx10 = DdsBuilder().size(4, 4).fourcc("DX10").payload(8).build();
   CHECK(!loadDds(dx10, &error).has_value());
 
-  // Cube and volume textures are not supported yet — the game holds exactly one
-  // such file (common/textures/watervolume.dds).
+  // A volume needs its depth, and a cube map all six faces: the game's are
+  // whole (`docs/functions/water.md`), and one without a face is not read.
   const auto volume = DdsBuilder().size(4, 4).fourcc("DXT1").caps2(0x200000).payload(8).build();
   CHECK(!loadDds(volume, &error).has_value());
 
-  const auto cubemap = DdsBuilder().size(4, 4).fourcc("DXT1").caps2(0x200).payload(8).build();
+  const auto cubemap = DdsBuilder().size(4, 4).fourcc("DXT1").caps2(0x200).payload(48).build();
   CHECK(!loadDds(cubemap, &error).has_value());
+
+  // Six faces declared and the data for one.
+  const auto shortCube = DdsBuilder().size(4, 4).fourcc("DXT1").caps2(0xfe00).payload(8).build();
+  CHECK(!loadDds(shortCube, &error).has_value());
 
   // There is a header but no data.
   const auto empty = DdsBuilder().size(256, 256).mipCount(1).fourcc("DXT5").build();
@@ -245,6 +250,55 @@ static void testDecodeRgba8() {
 // `DDPF_PALETTEINDEXED8` (0x20): the palette follows the header, then one index
 // per pixel — `icon_Faded.dds`'s shape. Read as plain 8-bit it came out as the
 // palette's own bytes.
+// `Common_client.zip:Textures/watervolume.dds` in miniature: R5G6B5 slices
+// that halve with the sides, expanded to B8G8R8A8 like every 16-bit DDS.
+static void testVolume() {
+  // 4x4x2, then 2x2x1, then 1x1x1: 64 + 8 + 2 bytes of R5G6B5.
+  auto bytes = DdsBuilder().size(4, 4).depth(2).mipCount(3).rgb(16, 0xF800, 0)
+                   .caps2(0x200000).payload(74).build();
+  // The first texel of the second slice is pure red (0xF800).
+  bytes[128 + 32] = std::byte{0x00};
+  bytes[128 + 33] = std::byte{0xF8};
+  const auto texture = loadDds(bytes);
+  CHECK(texture.has_value());
+  if (!texture) return;
+  CHECK(texture->isVolume());
+  CHECK(!texture->isCube());
+  CHECK_EQ(texture->depth, 2u);
+  CHECK(texture->format == Format::Bgra8);
+  CHECK_EQ(texture->mips.size(), std::size_t(3));
+  CHECK_EQ(texture->mips[0].depth, 2u);
+  CHECK_EQ(texture->mips[0].size, std::size_t(4 * 4 * 2 * 4));
+  CHECK_EQ(texture->mips[1].depth, 1u);
+  CHECK_EQ(texture->mips[1].offset, std::size_t(128));
+  CHECK_EQ(texture->mips[2].offset, std::size_t(144));
+  CHECK_EQ(texture->data.size(), std::size_t(148));
+  // B, G, R, A of the second slice's first texel.
+  CHECK_EQ(static_cast<int>(texture->data[64]), 0);
+  CHECK_EQ(static_cast<int>(texture->data[66]), 255);
+  CHECK_EQ(static_cast<int>(texture->data[67]), 255);
+}
+
+// A level's `Water/EnvMap.dds` in miniature: six DXT1 faces one after the
+// other, each with its own chain.
+static void testCube() {
+  // 8x8 then 4x4: 32 + 8 bytes a face, 240 in all.
+  auto bytes = DdsBuilder().size(8, 8).mipCount(2).fourcc("DXT1").caps2(0xfe00)
+                   .payload(240).build();
+  // Mark the start of the fourth face (-Y).
+  bytes[128 + 3 * 40] = std::byte{0x11};
+  const auto texture = loadDds(bytes);
+  CHECK(texture.has_value());
+  if (!texture) return;
+  CHECK(texture->isCube());
+  CHECK_EQ(texture->faces, 6u);
+  CHECK_EQ(texture->faceSize, std::size_t(40));
+  CHECK_EQ(texture->mips.size(), std::size_t(2));
+  CHECK_EQ(texture->mips[1].offset, std::size_t(32));
+  CHECK_EQ(texture->data.size(), std::size_t(240));
+  CHECK_EQ(static_cast<int>(texture->data[3 * texture->faceSize]), 0x11);
+}
+
 static void testPaletted() {
   DdsBuilder builder;
   builder.size(2, 1);
@@ -277,6 +331,8 @@ static void testPaletted() {
 
 TEST_MAIN({
   testPaletted();
+  testVolume();
+  testCube();
   testLevelSize();
   testDecodeRgba8();
   testDxt5WithMips();

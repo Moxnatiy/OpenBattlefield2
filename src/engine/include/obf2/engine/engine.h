@@ -44,7 +44,19 @@ struct LevelEntry {
   std::string displayName; // <name> from the .desc
   std::string loadImage;   // Info/loadmap.png, if present
   std::string briefingKey; // the locid from <briefing> — the loading screen's description
+  // <music> from the .desc: the level's own music, a path in the archives
+  // (common/sound/menu/music/load_CH_music.ogg). The client's reader keeps it at
+  // +0x70 of its level description (BF2.exe 0x4802fe); who plays it, and when,
+  // is not established.
+  std::string music;
 };
+
+// <music> from the mod's own `mod.desc`: the mod's music, a path in the archives
+// (common/sound/menu/music/menu_music.ogg in bf2). The client builds the path
+// from the mod's folder and "mod.desc" (BF2.exe 0x47ddab) and keeps the tag at
+// +0x8c of its mod description (0x47df11); who plays it, and when, is not
+// established. Empty when the file or the tag is missing.
+std::string readModMusic(FileSystem& files);
 
 class Engine {
  public:

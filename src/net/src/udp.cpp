@@ -62,11 +62,17 @@ std::unique_ptr<UdpSocket> UdpSocket::connect(const std::string& host, std::uint
     if (error) *error = "could not bind to " + host;
     return nullptr;
   }
+  // The peer as a numeric address, for a second socket to the same host (the
+  // voice relay, app/match_voice.cpp).
+  char numericHost[INET_ADDRSTRLEN]{};
+  ::getnameinfo(found->ai_addr, found->ai_addrlen, numericHost, sizeof(numericHost), nullptr, 0,
+                NI_NUMERICHOST);
   ::freeaddrinfo(found);
 
   auto socket = std::unique_ptr<UdpSocket>(new UdpSocket());
   socket->handle_ = handle;
   socket->description_ = host + ":" + service;
+  if (*numericHost) socket->peerEndpoint_ = std::string(numericHost) + ":" + service;
   return socket;
 #endif
 }

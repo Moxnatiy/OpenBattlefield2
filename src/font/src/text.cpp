@@ -1,5 +1,7 @@
 #include "obf2/font/text.h"
 
+#include <cmath>
+
 #include "obf2/core/math.h"
 
 namespace obf2::font {
@@ -73,9 +75,16 @@ mesh::RenderMesh buildText(const Font& font, std::string_view text, const TextLa
       continue;
     }
     if (previous != 0) penX += font.kerning(previous, code) * layout.scale;
+    // 0x7aaef0: the glyph's place is the pen rounded to a pixel; past the
+    // box's right edge nothing more is drawn.
+    const float glyphX = layout.snapGlyphs ? std::floor(penX + 0.5f) : penX;
+    if (layout.clipRight >= 0.0f && glyphX >= layout.clipRight) break;
 
     if (glyph->pixelWidth() > 0 && glyph->pixelHeight() > 0) {
-      const float x0 = penX + glyph->bearingLeft * layout.scale;
+      // 0x7aaef0 puts the quad at the rounded pen itself and adds the glyph's
+      // three metric terms to the pen only after it (which of them is the left
+      // bearing is not named: the renderer's `vtbl[0x74]` is not read).
+      const float x0 = layout.snapGlyphs ? glyphX : glyphX + glyph->bearingLeft * layout.scale;
       const float y0 = layout.y + static_cast<float>(glyph->offsetY) * layout.scale;
       const float x1 = x0 + static_cast<float>(glyph->pixelWidth()) * layout.scale;
       const float y1 = y0 + static_cast<float>(glyph->pixelHeight()) * layout.scale;
