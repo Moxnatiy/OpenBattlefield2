@@ -26,6 +26,7 @@ constexpr float kRoadSlopeDepthBias = -1e-5f;
 // The shaders are supplied as MSL text: SDL_GPU hands them to the Metal compiler
 // at runtime, so for macOS a separate shader build step is not needed yet.
 // When Windows comes, these same shaders will also have to exist as SPIR-V/DXIL.
+// Keep individual raw literals within MSVC's string-literal limit.
 constexpr const char* kShaderSource = R"MSL(
 #include <metal_stdlib>
 using namespace metal;
@@ -166,7 +167,8 @@ struct Uniforms {
     // xy on the two side planes, z on the top, w slides the sides up the
     // texture. The engine pushes exactly this vector
     // (`Shaders_client.zip:TerrainShader.fx:67`, FARTEXTILING; the values are
-    // `terrain.farSideTiling`, `farTopTilingHi`, `farYOffset` from Terrain.con).
+)MSL"
+R"MSL(    // `terrain.farSideTiling`, `farTopTilingHi`, `farYOffset` from Terrain.con).
     float4 terrainTiling;
     // x, y: the half-texel correction the patch's own UV needs before it
     // addresses a per-patch map — the engine's DETAILTEX, `((n-1)/n, 1/(2n))`
@@ -306,7 +308,8 @@ vertex VertexOut vertex_skinned_main(SkinnedVertexIn in [[stage_in]],
                                        dot(palette.rows[first + 1u], point),
                                        dot(palette.rows[first + 2u], point));
     position += weightB * float3(dot(palette.rows[second], point),
-                                 dot(palette.rows[second + 1u], point),
+)MSL"
+R"MSL(                                 dot(palette.rows[second + 1u], point),
                                  dot(palette.rows[second + 2u], point));
 
     float3 normal = weightA * float3(dot(palette.rows[first], direction),
@@ -446,7 +449,8 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
     // reads it: 0 none, 1 the base map's, 2 the tiling one.
     const float normalStrength = in.fogShape.y > 0.5 ? 1.0 : 0.0;
     // The object's baked light map, or white where it has none. Declared here
-    // and not in the branch below: the specular is gated by its green channel
+)MSL"
+R"MSL(    // and not in the branch below: the specular is gated by its green channel
     // too, and that is computed after the branch chain.
     float3 lightmapValue = float3(1.0);
     if (in.fogParams.z > 1.5) {
@@ -586,7 +590,8 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
                         const float2 xPlaneUv = float2(patchUv.y, height) * tiling.xy +
                                                 float2(0.0, tiling.w);
                         const float2 zPlaneUv = float2(patchUv.x, height) * tiling.xy +
-                                                float2(0.0, tiling.w);
+)MSL"
+R"MSL(                                                float2(0.0, tiling.w);
                         const float3 onX =
                             materialMaps[i].sample(materialSamplers[i], xPlaneUv).rgb;
                         const float3 onZ =
@@ -726,7 +731,8 @@ fragment float4 fragment_main(VertexOut in [[stage_in]],
         // We added it to everything, gated by a red channel that is 1 where
         // there is no map — so on a level like Dalian Plant, whose
         // `singlePointColor` is 0.80 grey, every object without a baked light
-        // map was given 1.6 of flat white the game never gives it. That is the
+)MSL"
+R"MSL(        // map was given 1.6 of flat white the game never gives it. That is the
         // "some objects glow and some are darker".
         const float hasLightmap = in.lightmapOffset.x > 0.0 ? 1.0 : 0.0;
         if (in.lightmapOffset.x > 0.0) {

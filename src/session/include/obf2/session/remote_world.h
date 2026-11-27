@@ -52,7 +52,7 @@ struct Settings {
   std::string connectTo;
   std::string connectPassword;
   std::string playerName;
-  std::string modDir;
+  std::filesystem::path modDir;
   std::string recordTo;      // --record: where to write the captured traffic
   int ordinal = -1;          // --ordinal: which fingerprint of the archive list
   bool blockReady = false;
