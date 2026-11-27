@@ -82,6 +82,20 @@ std::unique_ptr<Device> Device::create(const WindowDesc& desc, std::string* erro
     return fail("SDL_ClaimWindowForGPUDevice");
   }
 
+#ifdef _WIN32
+  // BF2.exe 0x454370 defaults vsync off; RendDX9 0x1000a3d0 maps that
+  // setting to immediate presentation. Leave SDL's vsync default in place
+  // when requested or when the backend does not support immediate mode.
+  if (!SDL_GetHintBoolean("OBF2_VSYNC", false) &&
+      SDL_WindowSupportsGPUPresentMode(device->gpu_, device->window_,
+                                       SDL_GPU_PRESENTMODE_IMMEDIATE) &&
+      !SDL_SetGPUSwapchainParameters(device->gpu_, device->window_,
+                                    SDL_GPU_SWAPCHAINCOMPOSITION_SDR,
+                                    SDL_GPU_PRESENTMODE_IMMEDIATE)) {
+    return fail("Setting Windows presentation mode");
+  }
+#endif
+
   const char* driver = SDL_GetGPUDeviceDriver(device->gpu_);
   device->driver_ = driver != nullptr ? driver : "unknown";
   return device;
